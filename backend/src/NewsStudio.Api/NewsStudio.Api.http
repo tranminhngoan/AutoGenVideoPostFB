@@ -1,0 +1,6 @@
+@NewsStudio.Api_HostAddress = http://localhost:5127
+
+GET {{NewsStudio.Api_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

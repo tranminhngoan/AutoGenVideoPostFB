@@ -1,0 +1,47 @@
+# Build Stage
+FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
+WORKDIR /app
+
+# Copy solution and project files first to leverage Docker cache
+COPY backend/NewsStudio.sln ./backend/
+COPY backend/src/NewsStudio.Domain/*.csproj ./backend/src/NewsStudio.Domain/
+COPY backend/src/NewsStudio.Application/*.csproj ./backend/src/NewsStudio.Application/
+COPY backend/src/NewsStudio.Infrastructure/*.csproj ./backend/src/NewsStudio.Infrastructure/
+COPY backend/src/NewsStudio.Api/*.csproj ./backend/src/NewsStudio.Api/
+COPY backend/src/NewsStudio.Worker/*.csproj ./backend/src/NewsStudio.Worker/
+COPY backend/tests/NewsStudio.Tests/*.csproj ./backend/tests/NewsStudio.Tests/
+
+# Restore dependencies
+RUN dotnet restore ./backend/NewsStudio.sln
+
+# Copy the rest of the source code
+COPY backend/ ./backend/
+
+# Publish NewsStudio.Api
+RUN dotnet publish ./backend/src/NewsStudio.Api/NewsStudio.Api.csproj \
+    -c Release \
+    -o /app/publish \
+    --no-restore
+
+# Runtime Stage
+FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS runtime
+WORKDIR /app
+
+# Create non-root user and temp directories
+RUN mkdir -p /tmp/newsstudio && chmod -R 777 /tmp/newsstudio
+
+# Environment configuration
+ENV ASPNETCORE_URLS=http://+:8080 \
+    ASPNETCORE_ENVIRONMENT=Production \
+    PORT=8080 \
+    Storage__TempStoragePath=/tmp/newsstudio
+
+EXPOSE 8080
+
+COPY --from=build /app/publish .
+
+# Healthcheck
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD curl -f http://localhost:8080/health || exit 1
+
+ENTRYPOINT ["dotnet", "NewsStudio.Api.dll"]

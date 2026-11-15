@@ -1,0 +1,30 @@
+# .NET / C#
+bin/
+obj/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+logs/
+*.log
+
+# Temp processing files (Rule: never persist MP4, audio, images)
+tmp/
+/tmp/
+
+# Environment and Secret files
+.env
+*.env.local
+appsettings.*.local.json
+
+# Node / React
+node_modules/
+dist/
+.vite/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS Files
+.DS_Store
+Thumbs.db

@@ -1,0 +1,60 @@
+# Build Stage
+FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
+WORKDIR /app
+
+# Copy solution and project files first
+COPY backend/NewsStudio.sln ./backend/
+COPY backend/src/NewsStudio.Domain/*.csproj ./backend/src/NewsStudio.Domain/
+COPY backend/src/NewsStudio.Application/*.csproj ./backend/src/NewsStudio.Application/
+COPY backend/src/NewsStudio.Infrastructure/*.csproj ./backend/src/NewsStudio.Infrastructure/
+COPY backend/src/NewsStudio.Api/*.csproj ./backend/src/NewsStudio.Api/
+COPY backend/src/NewsStudio.Worker/*.csproj ./backend/src/NewsStudio.Worker/
+COPY backend/tests/NewsStudio.Tests/*.csproj ./backend/tests/NewsStudio.Tests/
+
+# Restore dependencies
+RUN dotnet restore ./backend/NewsStudio.sln
+
+# Copy the rest of the source code
+COPY backend/ ./backend/
+
+# Publish NewsStudio.Worker
+RUN dotnet publish ./backend/src/NewsStudio.Worker/NewsStudio.Worker.csproj \
+    -c Release \
+    -o /app/publish \
+    --no-restore
+
+# Runtime Stage with FFmpeg and Vietnamese Fonts
+FROM mcr.microsoft.com/dotnet/runtime:8.0 AS runtime
+WORKDIR /app
+
+# Install FFmpeg, fontconfig, and fonts for video caption rendering
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    fontconfig \
+    fonts-dejavu-core \
+    fonts-liberation \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Verify FFmpeg installation
+RUN ffmpeg -version
+
+# Setup temporary processing directories with write permissions
+RUN mkdir -p /tmp/newsstudio/images \
+    /tmp/newsstudio/audio \
+    /tmp/newsstudio/subtitles \
+    /tmp/newsstudio/render \
+    /tmp/newsstudio/output \
+    && chmod -R 777 /tmp/newsstudio
+
+# Environment configuration
+ENV DOTNET_ENVIRONMENT=Production \
+    Storage__TempStoragePath=/tmp/newsstudio \
+    Storage__MaxConcurrentRenderJobs=2 \
+    Storage__MaxTempStorageMb=5120 \
+    Storage__TempFileTtlMinutes=120
+
+COPY --from=build /app/publish .
+
+# Handling SIGTERM is built-in via .NET 8 BackgroundService & IHostApplicationLifetime
+ENTRYPOINT ["dotnet", "NewsStudio.Worker.dll"]

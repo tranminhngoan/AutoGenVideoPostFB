@@ -1,0 +1,61 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: newsstudio-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: newsstudio_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgrespassword
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d newsstudio_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  news-api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.api
+    container_name: newsstudio-api
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ConnectionStrings__DefaultConnection=Host=postgres;Port=5432;Database=newsstudio_db;Username=postgres;Password=postgrespassword
+      - Storage__TempStoragePath=/tmp/newsstudio
+      - Cors__AllowedOrigins__0=http://localhost:5173
+      - Cors__AllowedOrigins__1=http://localhost:3000
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - temp_storage:/tmp/newsstudio
+
+  news-worker:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.worker
+    container_name: newsstudio-worker
+    restart: unless-stopped
+    environment:
+      - DOTNET_ENVIRONMENT=Development
+      - ConnectionStrings__DefaultConnection=Host=postgres;Port=5432;Database=newsstudio_db;Username=postgres;Password=postgrespassword
+      - Storage__TempStoragePath=/tmp/newsstudio
+      - Storage__MaxConcurrentRenderJobs=2
+      - Storage__MaxTempStorageMb=5120
+      - Storage__TempFileTtlMinutes=120
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - temp_storage:/tmp/newsstudio
+
+volumes:
+  postgres_data:
+  temp_storage:
