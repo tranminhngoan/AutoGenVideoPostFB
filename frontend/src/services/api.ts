@@ -373,6 +373,83 @@ export const api = {
     } catch {
       return false;
     }
+  },
+
+  // Phase 7 Facebook Graph API & Reels Publishing
+  async getFacebookPages(): Promise<FacebookAccountDto[]> {
+    try {
+      const res = await fetch(`${API_BASE}/facebook/pages`);
+      if (!res.ok) return [];
+      return await res.json();
+    } catch {
+      return [];
+    }
+  },
+
+  async connectFacebookPage(data: ConnectFacebookPageRequestDto): Promise<FacebookAccountDto> {
+    const res = await fetch(`${API_BASE}/facebook/pages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.message || 'Kết nối Facebook Page thất bại');
+    }
+    return await res.json();
+  },
+
+  async verifyFacebookToken(token: string): Promise<VerifyTokenResultDto> {
+    const res = await fetch(`${API_BASE}/facebook/verify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pageAccessToken: token })
+    });
+    if (!res.ok) {
+      return { isValid: false, errorMessage: 'Không thể xác thực token với Meta' };
+    }
+    return await res.json();
+  },
+
+  async disconnectFacebookPage(id: string): Promise<boolean> {
+    try {
+      const res = await fetch(`${API_BASE}/facebook/pages/${id}`, { method: 'DELETE' });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  },
+
+  async publishReel(projectId: string, options?: PublishReelRequestDto): Promise<PublishReelResultDto> {
+    const res = await fetch(`${API_BASE}/video-projects/${projectId}/publish-reel`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(options || {})
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.message || 'Xuất bản Facebook Reels thất bại');
+    }
+    return await res.json();
+  },
+
+  async getProjectFacebookPosts(projectId: string): Promise<FacebookPostDto[]> {
+    try {
+      const res = await fetch(`${API_BASE}/video-projects/${projectId}/facebook-posts`);
+      if (!res.ok) return [];
+      return await res.json();
+    } catch {
+      return [];
+    }
+  },
+
+  async fetchPostMetrics(postId: string): Promise<VideoMetricDto> {
+    const res = await fetch(`${API_BASE}/facebook/posts/${postId}/metrics`);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.message || 'Cập nhật số liệu Insights thất bại');
+    }
+    return await res.json();
   }
 };
 
@@ -511,4 +588,77 @@ export interface VideoReviewDto {
   canPublish: boolean;
   reviewedAtUtc?: string;
   assessment?: QualityAssessmentResultDto;
+}
+
+export interface FacebookAccountDto {
+  id: string;
+  pageId: string;
+  pageName: string;
+  isActive: boolean;
+  hasToken: boolean;
+  maskedToken: string;
+  tokenExpiresAtUtc?: string;
+  status: string;
+  createdAtUtc: string;
+}
+
+export interface ConnectFacebookPageRequestDto {
+  pageId: string;
+  pageName: string;
+  pageAccessToken: string;
+  tokenExpiresAtUtc?: string;
+}
+
+export interface VerifyTokenResultDto {
+  isValid: boolean;
+  pageId?: string;
+  pageName?: string;
+  expiresAtUtc?: string;
+  scopes?: string[];
+  errorMessage?: string;
+}
+
+export interface PublishReelRequestDto {
+  facebookAccountId?: string;
+  pageId?: string;
+  customCaption?: string;
+  autoCleanupAssets?: boolean;
+}
+
+export interface PublishReelResultDto {
+  facebookPostRecordId: string;
+  facebookPostId: string;
+  facebookVideoId: string;
+  postUrl: string;
+  uploadStatus: string;
+  publishedAtUtc?: string;
+  errorMessage?: string;
+  ephemeralAssetsCleanedUp: boolean;
+}
+
+export interface FacebookPostDto {
+  id: string;
+  videoProjectId: string;
+  facebookAccountId?: string;
+  pageName?: string;
+  facebookPostId?: string;
+  facebookVideoId?: string;
+  postUrl?: string;
+  uploadStatus: string;
+  publishedAtUtc?: string;
+  status: string;
+  errorMessage?: string;
+  latestMetric?: VideoMetricDto;
+}
+
+export interface VideoMetricDto {
+  id: string;
+  facebookPostId: string;
+  views: number;
+  reach: number;
+  engagement: number;
+  shares: number;
+  comments: number;
+  watchTimeSeconds: number;
+  collectedAtUtc: string;
 }

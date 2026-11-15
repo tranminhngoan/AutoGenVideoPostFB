@@ -18,14 +18,23 @@ import {
   HardDrive,
   Edit3,
   AlertTriangle,
-  RotateCcw
+  RotateCcw,
+  ExternalLink,
+  Eye,
+  Users,
+  MessageSquare,
+  ThumbsUp,
+  BarChart3,
+  Check
 } from 'lucide-react';
 import {
   api,
   VideoScriptDto,
   VideoScenePlanDto,
   VideoAssetDto,
-  VideoReviewDto
+  VideoReviewDto,
+  FacebookPostDto,
+  FacebookAccountDto
 } from '../services/api';
 import { VideoProject } from '../types';
 
@@ -35,18 +44,22 @@ interface VideoDetailPageProps {
 }
 
 export const VideoDetailPage: React.FC<VideoDetailPageProps> = ({ projectId, onBack }) => {
-  const [activeTab, setActiveTab] = useState<'preview' | 'script' | 'scenes' | 'assets' | 'qc'>('preview');
+  const [activeTab, setActiveTab] = useState<'preview' | 'script' | 'scenes' | 'assets' | 'qc' | 'reels'>('preview');
   const [project, setProject] = useState<VideoProject | null>(null);
   const [script, setScript] = useState<VideoScriptDto | null>(null);
   const [scenes, setScenes] = useState<VideoScenePlanDto[]>([]);
   const [assets, setAssets] = useState<VideoAssetDto[]>([]);
   const [review, setReview] = useState<VideoReviewDto | null>(null);
+  const [fbPosts, setFbPosts] = useState<FacebookPostDto[]>([]);
+  const [pages, setPages] = useState<FacebookAccountDto[]>([]);
 
   const [loading, setLoading] = useState<boolean>(true);
   const [generating, setGenerating] = useState<boolean>(false);
   const [rendering, setRendering] = useState<boolean>(false);
   const [evaluating, setEvaluating] = useState<boolean>(false);
+  const [publishing, setPublishing] = useState<boolean>(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [metricsLoading, setMetricsLoading] = useState<string | null>(null);
 
   const [selectedProvider, setSelectedProvider] = useState<'Gemini' | 'Claude'>('Gemini');
 
@@ -56,6 +69,12 @@ export const VideoDetailPage: React.FC<VideoDetailPageProps> = ({ projectId, onB
   const [showEditModal, setShowEditModal] = useState<boolean>(false);
   const [editTitle, setEditTitle] = useState<string>('');
   const [editCaption, setEditCaption] = useState<string>('');
+
+  // Publish Modal
+  const [showPublishModal, setShowPublishModal] = useState<boolean>(false);
+  const [selectedPageId, setSelectedPageId] = useState<string>('');
+  const [publishCaption, setPublishCaption] = useState<string>('');
+  const [autoCleanup, setAutoCleanup] = useState<boolean>(true);
 
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
@@ -68,21 +87,31 @@ export const VideoDetailPage: React.FC<VideoDetailPageProps> = ({ projectId, onB
     setLoading(true);
     setErrorMsg(null);
     try {
-      const [projData, scriptData, scenesData, assetsData, reviewData] = await Promise.all([
+      const [projData, scriptData, scenesData, assetsData, reviewData, postsData, pagesData] = await Promise.all([
         api.getVideoProjectById(projectId),
         api.getScript(projectId),
         api.getScenes(projectId),
         api.getAssets(projectId),
-        api.getReview(projectId)
+        api.getReview(projectId),
+        api.getProjectFacebookPosts(projectId),
+        api.getFacebookPages()
       ]);
       setProject(projData);
       setScript(scriptData);
       setScenes(scenesData);
       setAssets(assetsData);
       setReview(reviewData);
+      setFbPosts(postsData);
+      setPages(pagesData);
+
+      if (pagesData.length > 0 && !selectedPageId) {
+        setSelectedPageId(pagesData[0].pageId);
+      }
 
       if (projData) {
         setEditTitle(projData.title);
+        var initialCaption = `${projData.title}\n\n${scriptData?.hook || ''}\n\n${scriptData?.sourceAttribution || ''}\n#News #Reels #TinTuc #AINewsStudio`;
+        setPublishCaption(initialCaption);
       }
       if (scenesData.length > 0 && scenesData[0].onScreenText) {
         setEditCaption(scenesData[0].onScreenText);
@@ -224,6 +253,40 @@ export const VideoDetailPage: React.FC<VideoDetailPageProps> = ({ projectId, onB
     }
   };
 
+  const handlePublishReel = async () => {
+    setPublishing(true);
+    setErrorMsg(null);
+    setSuccessMsg(null);
+    try {
+      const result = await api.publishReel(projectId, {
+        pageId: selectedPageId || undefined,
+        customCaption: publishCaption,
+        autoCleanupAssets: autoCleanup
+      });
+      setShowPublishModal(false);
+      setSuccessMsg(`🎉 Xuất bản Facebook Reels thành công! Mã video: ${result.facebookVideoId}`);
+      await loadData();
+      setActiveTab('reels');
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Lỗi khi xuất bản Reels lên Meta Graph API');
+    } finally {
+      setPublishing(false);
+    }
+  };
+
+  const handleFetchMetrics = async (postId: string) => {
+    setMetricsLoading(postId);
+    try {
+      await api.fetchPostMetrics(postId);
+      setSuccessMsg('Đã cập nhật số liệu tương tác mới nhất từ Meta Insights API.');
+      await loadData();
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Lỗi cập nhật số liệu Insights');
+    } finally {
+      setMetricsLoading(null);
+    }
+  };
+
   const handleDeleteProject = async () => {
     if (!confirm('Bạn có chắc chắn muốn xóa vĩnh viễn dự án video này cùng tất cả file tạm thời không?')) return;
     try {
@@ -254,6 +317,7 @@ export const VideoDetailPage: React.FC<VideoDetailPageProps> = ({ projectId, onB
   const hasAudio = assets.some(a => a.assetType === 'Audio' && !a.isCleanedUp);
   const isApproved = review?.decision === 'Approved';
   const hasFatalViolations = review?.seriousViolationsFound || (review?.assessment?.hasFatalViolations ?? false);
+  const publishedPost = fbPosts.find(p => p.uploadStatus === 'Published');
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto">
@@ -271,12 +335,14 @@ export const VideoDetailPage: React.FC<VideoDetailPageProps> = ({ projectId, onB
           {/* Status Decision Badge */}
           {review && (
             <div className="flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-bold border border-gray-800 bg-[#0B0F19]">
-              <span className="text-gray-400 font-normal">Trạng thái duyệt:</span>
+              <span className="text-gray-400 font-normal">Trạng thái:</span>
               <span className={
+                publishedPost ? 'text-indigo-400' :
                 review.decision === 'Approved' ? 'text-emerald-400' :
                 review.decision === 'Rejected' ? 'text-rose-400' : 'text-amber-400'
               }>
-                {review.decision === 'Approved' ? 'Đã duyệt (Approved)' :
+                {publishedPost ? 'Đã đăng Reels ✓' :
+                 review.decision === 'Approved' ? 'Đã duyệt (Approved)' :
                  review.decision === 'Rejected' ? 'Từ chối (Rejected)' :
                  'Chờ duyệt (Pending Review)'}
               </span>
@@ -319,7 +385,7 @@ export const VideoDetailPage: React.FC<VideoDetailPageProps> = ({ projectId, onB
             className="px-4 py-2 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white text-xs font-semibold flex items-center gap-1.5 transition disabled:opacity-50 shadow-lg shadow-indigo-600/20"
           >
             <Film className={`w-3.5 h-3.5 ${rendering ? 'animate-spin' : ''}`} />
-            <span>{rendering ? 'FFmpeg đang dựng...' : 'Dựng video 9:16 (FFmpeg)'}</span>
+            <span>{rendering ? 'FFmpeg đang dựng...' : 'Dựng video 9:16'}</span>
           </button>
 
           {/* Approve Button */}
@@ -512,7 +578,7 @@ export const VideoDetailPage: React.FC<VideoDetailPageProps> = ({ projectId, onB
               }`}
             >
               <FileText className="w-3.5 h-3.5" />
-              <span>Kịch bản tin tức</span>
+              <span>Kịch bản</span>
             </button>
             <button
               onClick={() => setActiveTab('scenes')}
@@ -521,7 +587,7 @@ export const VideoDetailPage: React.FC<VideoDetailPageProps> = ({ projectId, onB
               }`}
             >
               <Film className="w-3.5 h-3.5" />
-              <span>Phân cảnh ({scenes.length} Scenes)</span>
+              <span>Phân cảnh ({scenes.length})</span>
             </button>
             <button
               onClick={() => setActiveTab('assets')}
@@ -540,6 +606,15 @@ export const VideoDetailPage: React.FC<VideoDetailPageProps> = ({ projectId, onB
             >
               <ShieldCheck className="w-3.5 h-3.5" />
               <span>Kiểm định QC ({review?.internalQualityScore ?? 100}/100)</span>
+            </button>
+            <button
+              onClick={() => setActiveTab('reels')}
+              className={`px-3 py-2 rounded-lg flex items-center gap-1.5 transition ${
+                activeTab === 'reels' ? 'bg-indigo-600 text-white' : 'text-indigo-400 hover:text-indigo-300'
+              }`}
+            >
+              <Share2 className="w-3.5 h-3.5" />
+              <span>Facebook Reels {publishedPost ? '✓' : ''}</span>
             </button>
           </div>
 
@@ -615,7 +690,6 @@ export const VideoDetailPage: React.FC<VideoDetailPageProps> = ({ projectId, onB
             <div className="space-y-4">
               {script ? (
                 <div className="space-y-4">
-                  {/* Title & Hook Card */}
                   <div className="glass-panel p-5 rounded-2xl border border-gray-800 space-y-3">
                     <div className="flex items-center justify-between">
                       <span className="text-xs font-bold text-indigo-400 uppercase tracking-wider">Tiêu đề video (45-60s)</span>
@@ -630,9 +704,7 @@ export const VideoDetailPage: React.FC<VideoDetailPageProps> = ({ projectId, onB
                     </div>
                   </div>
 
-                  {/* Fact vs Commentary Grid */}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {/* FACT SECTION */}
                     <div className="glass-panel p-5 rounded-2xl border border-blue-500/30 bg-blue-950/10 space-y-2">
                       <div className="flex items-center justify-between">
                         <span className="text-xs font-bold text-blue-400 flex items-center gap-1.5">
@@ -650,7 +722,6 @@ export const VideoDetailPage: React.FC<VideoDetailPageProps> = ({ projectId, onB
                       </div>
                     </div>
 
-                    {/* COMMENTARY / ANALYSIS SECTION */}
                     <div className="glass-panel p-5 rounded-2xl border border-purple-500/30 bg-purple-950/10 space-y-2">
                       <div className="flex items-center justify-between">
                         <span className="text-xs font-bold text-purple-400 flex items-center gap-1.5">
@@ -669,7 +740,6 @@ export const VideoDetailPage: React.FC<VideoDetailPageProps> = ({ projectId, onB
                     </div>
                   </div>
 
-                  {/* Full Voice-Over Script */}
                   <div className="glass-panel p-5 rounded-2xl border border-gray-800 space-y-2">
                     <span className="text-xs font-bold text-gray-300 flex items-center gap-1.5">
                       <FileText className="w-3.5 h-3.5 text-indigo-400" />
@@ -851,10 +921,9 @@ export const VideoDetailPage: React.FC<VideoDetailPageProps> = ({ projectId, onB
             </div>
           )}
 
-          {/* QC & VIDEO REVIEW TAB (10 TIÊU CHÍ & REVIEW DECISION) */}
+          {/* QC & VIDEO REVIEW TAB */}
           {activeTab === 'qc' && (
             <div className="space-y-4">
-              {/* Header Score Card */}
               <div className="glass-panel p-5 rounded-2xl border border-gray-800 space-y-4">
                 <div className="flex flex-wrap items-center justify-between gap-4">
                   <div>
@@ -889,12 +958,10 @@ export const VideoDetailPage: React.FC<VideoDetailPageProps> = ({ projectId, onB
                   </div>
                 </div>
 
-                {/* Important Disclaimer Notice */}
                 <div className="p-3 rounded-xl bg-indigo-950/20 border border-indigo-500/20 text-[11px] text-indigo-300">
                   ℹ️ <strong>Lưu ý:</strong> {review?.assessment?.notice || 'Điểm kiểm định nội bộ là tiêu chuẩn biên tập của AI News Studio, không phản ánh thuật toán của Facebook.'}
                 </div>
 
-                {/* 10 Checklist Items */}
                 <div className="space-y-2 text-xs">
                   {review?.assessment?.checkItems ? (
                     review.assessment.checkItems.map((item, idx) => (
@@ -988,15 +1055,17 @@ export const VideoDetailPage: React.FC<VideoDetailPageProps> = ({ projectId, onB
                 </div>
               </div>
 
-              {/* Publish Action Box */}
+              {/* Quick Publish Entry Box */}
               <div className="p-5 rounded-2xl bg-indigo-950/30 border border-indigo-500/30 flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div>
                   <p className="font-bold text-sm text-white flex items-center gap-2">
                     <Share2 className="w-4 h-4 text-indigo-400" />
-                    Xuất bản lên Facebook Reels (Phase 7)
+                    Xuất bản lên Facebook Reels (Meta Graph API)
                   </p>
                   <p className="text-xs text-indigo-300 mt-0.5">
-                    {isApproved
+                    {publishedPost
+                      ? '✓ Video đã được xuất bản lên Reels. Xem phân tích số liệu tại tab Facebook Reels.'
+                      : isApproved
                       ? '✓ Video đã được bạn phê duyệt, sẵn sàng đăng tải lên Meta Graph API.'
                       : hasFatalViolations
                       ? '⚠️ Không thể xuất bản: Video vi phạm tiêu chí kiểm định nghiêm trọng.'
@@ -1005,17 +1074,252 @@ export const VideoDetailPage: React.FC<VideoDetailPageProps> = ({ projectId, onB
                 </div>
                 <button
                   disabled={!isApproved || hasFatalViolations}
-                  onClick={() => alert('Sẵn sàng cho Phase 7: Meta Graph API Reels Publishing!')}
+                  onClick={() => setShowPublishModal(true)}
                   className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-semibold text-xs flex items-center gap-2 transition shadow-lg shadow-indigo-600/30"
                 >
                   <Share2 className="w-4 h-4" />
-                  <span>Đăng ngay lên Fanpage</span>
+                  <span>{publishedPost ? 'Xem chi tiết bài đăng' : 'Đăng ngay lên Fanpage'}</span>
                 </button>
               </div>
             </div>
           )}
+
+          {/* REELS & INSIGHTS TAB (PHASE 7) */}
+          {activeTab === 'reels' && (
+            <div className="space-y-4">
+              {publishedPost ? (
+                <div className="space-y-4">
+                  {/* Published Reel Status Card */}
+                  <div className="glass-panel p-6 rounded-2xl border border-indigo-500/30 bg-gradient-to-br from-indigo-950/40 to-[#0B0F19] space-y-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-10 h-10 rounded-2xl bg-indigo-600/20 text-indigo-400 flex items-center justify-center font-bold">
+                          <Share2 className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                            <span>Facebook Reels đã xuất bản</span>
+                            <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 text-[10px] font-bold">
+                              Live on Meta ✓
+                            </span>
+                          </h4>
+                          <p className="text-xs text-gray-400 mt-0.5 font-mono">
+                            Post ID: {publishedPost.facebookPostId}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        {publishedPost.postUrl && (
+                          <a
+                            href={publishedPost.postUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold flex items-center gap-1.5 transition shadow-lg shadow-indigo-600/20"
+                          >
+                            <ExternalLink className="w-3.5 h-3.5" />
+                            <span>Mở trên Facebook</span>
+                          </a>
+                        )}
+
+                        <button
+                          onClick={() => handleFetchMetrics(publishedPost.id)}
+                          disabled={metricsLoading === publishedPost.id}
+                          className="px-3 py-2 rounded-xl bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs font-semibold flex items-center gap-1.5 transition"
+                          title="Cập nhật số liệu từ Meta Page Insights API"
+                        >
+                          <RefreshCw className={`w-3.5 h-3.5 ${metricsLoading === publishedPost.id ? 'animate-spin text-indigo-400' : ''}`} />
+                          <span>Cập nhật Insights</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="p-3.5 rounded-xl bg-black/40 border border-gray-800 text-xs text-gray-300 space-y-1">
+                      <p className="font-semibold text-white">Nội dung caption đã đăng:</p>
+                      <p className="text-gray-400 whitespace-pre-wrap text-[11px] font-sans">
+                        {project?.title} - {script?.sourceAttribution}
+                      </p>
+                    </div>
+
+                    {/* Insights Metrics Grid */}
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 pt-2">
+                      <div className="p-3.5 rounded-xl bg-[#0B0F19] border border-gray-800 space-y-1">
+                        <span className="text-[11px] text-gray-400 flex items-center gap-1.5">
+                          <Eye className="w-3.5 h-3.5 text-blue-400" />
+                          Tổng lượt xem (Views)
+                        </span>
+                        <p className="text-lg font-bold font-mono text-white">
+                          {publishedPost.latestMetric?.views.toLocaleString() ?? '0'}
+                        </p>
+                      </div>
+
+                      <div className="p-3.5 rounded-xl bg-[#0B0F19] border border-gray-800 space-y-1">
+                        <span className="text-[11px] text-gray-400 flex items-center gap-1.5">
+                          <Users className="w-3.5 h-3.5 text-emerald-400" />
+                          Tiếp cận (Reach)
+                        </span>
+                        <p className="text-lg font-bold font-mono text-white">
+                          {publishedPost.latestMetric?.reach.toLocaleString() ?? '0'}
+                        </p>
+                      </div>
+
+                      <div className="p-3.5 rounded-xl bg-[#0B0F19] border border-gray-800 space-y-1">
+                        <span className="text-[11px] text-gray-400 flex items-center gap-1.5">
+                          <ThumbsUp className="w-3.5 h-3.5 text-amber-400" />
+                          Tương tác (Engagement)
+                        </span>
+                        <p className="text-lg font-bold font-mono text-white">
+                          {publishedPost.latestMetric?.engagement.toLocaleString() ?? '0'}
+                        </p>
+                      </div>
+
+                      <div className="p-3.5 rounded-xl bg-[#0B0F19] border border-gray-800 space-y-1">
+                        <span className="text-[11px] text-gray-400 flex items-center gap-1.5">
+                          <Share2 className="w-3.5 h-3.5 text-purple-400" />
+                          Lượt chia sẻ (Shares)
+                        </span>
+                        <p className="text-lg font-bold font-mono text-white">
+                          {publishedPost.latestMetric?.shares.toLocaleString() ?? '0'}
+                        </p>
+                      </div>
+
+                      <div className="p-3.5 rounded-xl bg-[#0B0F19] border border-gray-800 space-y-1">
+                        <span className="text-[11px] text-gray-400 flex items-center gap-1.5">
+                          <MessageSquare className="w-3.5 h-3.5 text-cyan-400" />
+                          Bình luận (Comments)
+                        </span>
+                        <p className="text-lg font-bold font-mono text-white">
+                          {publishedPost.latestMetric?.comments.toLocaleString() ?? '0'}
+                        </p>
+                      </div>
+
+                      <div className="p-3.5 rounded-xl bg-[#0B0F19] border border-gray-800 space-y-1">
+                        <span className="text-[11px] text-gray-400 flex items-center gap-1.5">
+                          <BarChart3 className="w-3.5 h-3.5 text-rose-400" />
+                          Thời lượng xem TB
+                        </span>
+                        <p className="text-lg font-bold font-mono text-white">
+                          {publishedPost.latestMetric?.watchTimeSeconds.toFixed(1) ?? '0.0'}s
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="glass-panel p-8 text-center space-y-4 border border-gray-800">
+                  <div className="w-12 h-12 mx-auto rounded-2xl bg-indigo-600/10 text-indigo-400 flex items-center justify-center">
+                    <Share2 className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-bold text-white">Video chưa được xuất bản lên Facebook Reels</h4>
+                    <p className="text-xs text-gray-400 mt-1 max-w-md mx-auto">
+                      Để xuất bản, video bắt buộc phải được render hoàn chỉnh và vượt qua kiểm định chất lượng (được biên tập viên duyệt).
+                    </p>
+                  </div>
+                  <button
+                    disabled={!isApproved || hasFatalViolations}
+                    onClick={() => setShowPublishModal(true)}
+                    className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-semibold inline-flex items-center gap-2 transition"
+                  >
+                    <Share2 className="w-4 h-4" />
+                    <span>Mở hộp thoại xuất bản Reels</span>
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
+
+      {/* PUBLISH REELS MODAL (PHASE 7) */}
+      {showPublishModal && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="glass-panel p-6 rounded-2xl max-w-lg w-full border border-gray-800 space-y-5">
+            <div className="flex items-center justify-between border-b border-gray-800 pb-3">
+              <h3 className="text-base font-bold text-white flex items-center gap-2">
+                <Share2 className="w-5 h-5 text-indigo-400" />
+                Xuất bản video lên Facebook Reels (Meta Graph API)
+              </h3>
+              <button
+                onClick={() => setShowPublishModal(false)}
+                className="text-gray-400 hover:text-white text-xs"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-4 text-xs">
+              {/* Select Fanpage */}
+              <div>
+                <label className="block text-gray-400 font-semibold mb-1">Chọn Facebook Page xuất bản *</label>
+                {pages.length > 0 ? (
+                  <select
+                    value={selectedPageId}
+                    onChange={(e) => setSelectedPageId(e.target.value)}
+                    className="w-full p-2.5 rounded-xl bg-[#0B0F19] border border-gray-800 text-gray-200 focus:outline-none focus:border-indigo-500"
+                  >
+                    {pages.map((p) => (
+                      <option key={p.id} value={p.pageId}>
+                        {p.pageName} (ID: {p.pageId})
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300">
+                    Chưa có Fanpage nào được kết nối trong hệ thống. Hệ thống sẽ sử dụng Fanpage thử nghiệm mặc định của AI News Studio.
+                  </div>
+                )}
+              </div>
+
+              {/* Caption */}
+              <div>
+                <label className="block text-gray-400 font-semibold mb-1">Mô tả & Hashtags bài đăng</label>
+                <textarea
+                  value={publishCaption}
+                  onChange={(e) => setPublishCaption(e.target.value)}
+                  rows={4}
+                  className="w-full p-3 rounded-xl bg-[#0B0F19] border border-gray-800 text-gray-200 focus:outline-none focus:border-indigo-500"
+                />
+              </div>
+
+              {/* Ephemeral Auto-Cleanup Checkbox (Master Plan Requirement) */}
+              <label className="flex items-start gap-2.5 p-3 rounded-xl bg-[#0B0F19] border border-gray-800 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={autoCleanup}
+                  onChange={(e) => setAutoCleanup(e.target.checked)}
+                  className="rounded border-gray-700 text-indigo-600 focus:ring-0 mt-0.5"
+                />
+                <div className="space-y-0.5">
+                  <span className="font-semibold text-white">Tự động dọn dẹp file tạm sau khi đăng (Khuyến nghị)</span>
+                  <p className="text-[11px] text-gray-400">
+                    Tuân thủ Master Plan: Không lưu MP4/ảnh/audio lâu dài. File tạm trên ổ cứng sẽ được giải phóng ngay sau khi upload thành công lên Meta.
+                  </p>
+                </div>
+              </label>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-2 border-t border-gray-800">
+              <button
+                type="button"
+                onClick={() => setShowPublishModal(false)}
+                className="px-4 py-2 rounded-xl text-xs text-gray-400 hover:text-white"
+              >
+                Hủy bỏ
+              </button>
+              <button
+                type="button"
+                onClick={handlePublishReel}
+                disabled={publishing}
+                className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-semibold flex items-center gap-2 shadow-lg shadow-indigo-600/30"
+              >
+                <Share2 className={`w-3.5 h-3.5 ${publishing ? 'animate-spin' : ''}`} />
+                <span>{publishing ? 'Đang upload lên Meta Reels...' : 'Xác nhận đăng Reels'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* REJECT MODAL */}
       {showRejectModal && (

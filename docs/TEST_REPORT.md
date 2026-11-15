@@ -2,7 +2,7 @@
 
 **Thời gian kiểm thử:** 15/11/2026  
 **Môi trường:** Local Windows (PostgreSQL 16, Node v24.14.1, .NET 8 runtime)  
-**Tình trạng:** **44/44 PASS (100%)**
+**Tình trạng:** **51/51 PASS (100%)**
 
 ---
 
@@ -13,7 +13,7 @@ Lệnh thực thi:
 dotnet test backend/NewsStudio.sln
 ```
 
-### Chi tiết các ca kiểm thử (44/44 Passed):
+### Chi tiết các ca kiểm thử (51/51 Passed):
 
 | Mã kiểm thử | Nhóm | Tên Test Case | Mô tả & Kỳ vọng | Kết quả |
 |---|---|---|---|:---:|
@@ -61,8 +61,15 @@ dotnet test backend/NewsStudio.sln
 | **TC-42** | Phase 6 | `VideoReviewService_Submits_Rejection_With_Feedback_Notes` | Từ chối duyệt video kèm ghi chú phản hồi chi tiết từ ban biên tập, chặn xuất bản | **PASSED** |
 | **TC-43** | Phase 6 | `VideoReviewService_Updates_Metadata_Title_Hook_And_Caption` | Chỉnh sửa tiêu đề video, hook và caption hiển thị phân cảnh trực tiếp trước khi xuất bản | **PASSED** |
 | **TC-44** | Phase 6 | `VideoReviewController_Full_Workflow_Http` | Luồng REST API Review trọn vẹn: lấy review, chạy evaluate, phê duyệt qua API, sửa metadata và xóa dự án | **PASSED** |
+| **TC-45** | Phase 7 | `TokenProtection_Encrypts_Decrypts_And_Masks_Token_Safely` | Mã hóa AES-256 bảo vệ Access Token, giải mã chính xác và che giấu token an toàn (`EAAB••••••••0XYZ`) | **PASSED** |
+| **TC-46** | Phase 7 | `FacebookPublishingService_Connects_And_Retrieves_Pages_Safely` | Kết nối Facebook Page, lưu trữ token đã mã hóa trong PostgreSQL, truy vấn danh sách an toàn | **PASSED** |
+| **TC-47** | Phase 7 | `FacebookPublishingService_Blocks_Publish_If_Video_Not_Approved` | Chặn dứt khoát tác vụ xuất bản Reels nếu video chưa có quyết định `Approved` từ ban biên tập | **PASSED** |
+| **TC-48** | Phase 7 | `FacebookPublishingService_Prevents_Duplicate_Publishing_Idempotency` | Cơ chế Idempotency: ngăn chặn đăng trùng bài nhiều lần cho cùng một dự án video | **PASSED** |
+| **TC-49** | Phase 7 | `FacebookPublishingService_Publishes_Reel_And_Performs_Ephemeral_Cleanup` | Quy trình đăng Facebook Reels 3 pha và tự động dọn dẹp triệt để file MP4/audio/subtitles trên ổ đĩa tạm | **PASSED** |
+| **TC-50** | Phase 7 | `FacebookPublishingService_Fetches_Metrics_Without_Fabrication` | Thu thập chỉ số hiệu quả Meta Insights (Views, Reach, Engagement, Watch Time) chuẩn xác không bịa số | **PASSED** |
+| **TC-51** | Phase 7 | `FacebookController_Endpoints_Full_Workflow` | Luồng REST API trọn vẹn: xác minh token, kết nối page, xuất bản Reels, truy vấn posts và chỉ số metrics | **PASSED** |
 
-**Tổng kết kiểm thử:** `Failed: 0, Passed: 44, Skipped: 0, Total: 44. Duration: 10s`
+**Tổng kết kiểm thử:** `Failed: 0, Passed: 51, Skipped: 0, Total: 51. Duration: 12s`
 
 ---
 

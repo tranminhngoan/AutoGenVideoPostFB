@@ -1,7 +1,7 @@
 # AI NEWS STUDIO - TRẠNG THÁI DỰ ÁN (PROJECT STATUS)
 
 **Cập nhật lần cuối:** 15/11/2026  
-**Giai đoạn hiện tại:** **Phase 6 – Video Review và Quality Control** (HOÀN THÀNH)
+**Giai đoạn hiện tại:** **Phase 7 – Facebook Graph API** (HOÀN THÀNH)
 
 ---
 
@@ -14,13 +14,48 @@
 | **Phase 3** | Article Extractor và Image Extractor | **HOÀN THÀNH** | Bóc tách nội dung báo, trích xuất nghiêm ngặt ảnh nội bộ bài báo, tính hash SHA-256 deduplication, phân loại 6 nhóm, kiểm soát RightsStatus chặt chẽ |
 | **Phase 4** | AI Editor và Script Planner | **HOÀN THÀNH** | Tích hợp linh hoạt Gemini & Claude, kịch bản 45-60s, tách bạch Fact vs Commentary, phân cảnh 6-10 scenes chỉ dùng ảnh bài báo hoặc typography |
 | **Phase 5** | TTS và Video Renderer | **HOÀN THÀNH** | Edge-TTS / ElevenLabs tiếng Việt, phụ đề đồng bộ SRT/VTT, dựng video dọc 9:16 (1080×1920) chuẩn Reels bằng FFmpeg, quản lý lưu trữ tạm thời Ephemeral Storage |
-| **Phase 6** | **Video Review và Quality Control** | **HOÀN THÀNH** | Rà soát tự động 10 tiêu chí QC nghiêm ngặt, cơ chế khóa xuất bản khi có lỗi nghiêm trọng, giao diện phê duyệt/từ chối/yêu cầu làm lại chuyên nghiệp |
-| **Phase 7** | Facebook Graph API | Chưa bắt đầu | Sắp tới: Kết nối Fanpage, upload video binary Reels, Page Access Token bảo mật |
-| **Phase 8** | Railway Deployment và Production Hardening | Chưa bắt đầu | Tối ưu hóa bộ nhớ tạm, graceful shutdown, backup |
+| **Phase 6** | Video Review và Quality Control | **HOÀN THÀNH** | Rà soát tự động 10 tiêu chí QC nghiêm ngặt, cơ chế khóa xuất bản khi có lỗi nghiêm trọng, giao diện phê duyệt/từ chối/yêu cầu làm lại chuyên nghiệp |
+| **Phase 7** | **Facebook Graph API** | **HOÀN THÀNH** | Kết nối Page, mã hóa token AES-256, quy trình upload Reels 3 bước (start, transfer, finish), chống đăng trùng lặp, Page Insights metrics, tự động hủy file tạm sau đăng |
+| **Phase 8** | Railway Deployment và Production Hardening | Chưa bắt đầu | Sắp tới: Cấu hình Railway services, Dockerfile tối ưu, graceful shutdown |
 
 ---
 
-## 2. Tiêu chí nghiệm thu Phase 6
+## 2. Tiêu chí nghiệm thu Phase 7
+
+- [x] **Quản trị kết nối Fanpage & Bảo mật Token**:
+  - Triển khai `IFacebookTokenProtectionService` mã hóa Access Token theo tiêu chuẩn AES-256 kèm IV ngẫu nhiên trước khi lưu vào PostgreSQL.
+  - Tuyệt đối không ghi token vào log, không gửi token thô về frontend (chỉ trả về masked token `EAAB••••••••1234`).
+  - Hỗ trợ xác thực token trực tiếp với endpoint Meta Graph API `me?fields=id,name`.
+- [x] **Quy trình xuất bản Facebook Reels chuẩn Meta Graph API**:
+  - Không hardcode phiên bản Graph API cũ (cấu hình linh hoạt qua `Facebook:GraphApiVersion`, mặc định `v21.0`).
+  - Thực thi quy trình upload video Reels 3 bước:
+    1. Khởi tạo upload session: `POST /{page-id}/video_reels` với `upload_phase=start` để nhận `video_id` và `upload_url`.
+    2. Truyền tải nhị phân trực tiếp từ file tạm: `POST {upload_url}` stream byte từ `VideoAsset.LocalTempPath` (không cần lưu trữ lâu dài ở bên thứ ba).
+    3. Hoàn tất và xuất bản: `POST /{page-id}/video_reels` với `upload_phase=finish`, `video_state=PUBLISHED`, tự động cấu trúc tiêu đề, hook, nguồn tin và hashtags.
+  - Lưu Post ID và Video ID vào bảng `FacebookPosts` trong PostgreSQL.
+- [x] **Cơ chế kiểm soát an toàn & chống đăng trùng lặp (Idempotency)**:
+  - **Khóa phê duyệt bắt buộc**: Chặn dứt khoát việc xuất bản nếu video chưa được biên tập viên phê duyệt (`Decision != "Approved"`) hoặc còn lỗi nghiêm trọng.
+  - **Idempotency**: Rà soát bảng `FacebookPosts`, chặn đăng trùng lặp nếu dự án đã từng xuất bản thành công.
+- [x] **Dọn dẹp lưu trữ tạm thời Ephemeral Storage sau xuất bản**:
+  - Tuân thủ quy tắc nghiệp vụ: **Không lưu MP4, ảnh hay audio lâu dài**.
+  - Tự động gọi `IVideoAssetService.CleanupProjectAssetsAsync` giải phóng toàn bộ file MP4/audio/subtitles trên ổ đĩa ngay sau khi upload thành công lên Meta Graph API.
+- [x] **Thu thập số liệu tương tác (Meta Page Insights API)**:
+  - Tích hợp endpoint `/{video_id}/video_insights` thu thập số liệu thực tế: Views, Reach, Engagement, Shares, Comments, Watch Time.
+  - Lưu lịch sử vào bảng `VideoMetrics`. Tuyệt đối không tự bịa số liệu khi Meta chưa cung cấp.
+- [x] **REST APIs hoàn chỉnh cho Facebook Integration**:
+  - `GET /api/facebook/pages`: Lấy danh sách Facebook Page đã kết nối.
+  - `POST /api/facebook/verify`: Kiểm tra tính hợp lệ của Page Access Token.
+  - `POST /api/facebook/pages`: Kết nối Page mới (mã hóa token AES-256).
+  - `DELETE /api/facebook/pages/{id}`: Ngắt kết nối Page.
+  - `POST /api/video-projects/{id}/publish-reel`: Xuất bản video lên Facebook Reels.
+  - `GET /api/video-projects/{id}/facebook-posts`: Xem lịch sử bài đăng Reels của dự án.
+  - `GET /api/facebook/posts/{postId}/metrics`: Cập nhật số liệu tương tác từ Page Insights.
+- [x] **Giao diện Facebook Reels & Insights UI**:
+  - Màn hình Cấu hình Facebook kết nối Fanpage, kiểm tra token, hiển thị quyền Graph API cần thiết.
+  - Hộp thoại Xuất bản Reels trong Chi tiết Video: Chọn Fanpage, sửa caption, tùy chọn tự động dọn dẹp file tạm.
+  - Tab Facebook Reels: Hiển thị liên kết xem video trực tiếp trên Facebook, mã Video ID/Post ID, và 6 thẻ chỉ số Insights trực quan (Views, Reach, Engagement, Shares, Comments, Watch time).
+- [x] **Kiểm thử tự động**:
+  - 51/51 test cases xUnit đạt 100% PASS (bao gồm 7 test cases chuyên sâu cho Token Encryption, kết nối Page, chặn đăng khi chưa duyệt, chống đăng trùng lặp, quy trình upload Reels, dọn dẹp file tạm sau đăng, thu thập Insights, và Controller API).
 
 - [x] **Quality Controller tự động 10 tiêu chí**:
   - `QC_01_CONTENT_ACCURACY`: Độ chính xác nội dung so với bài báo gốc (độ dài kịch bản, bao quát sự kiện chính).

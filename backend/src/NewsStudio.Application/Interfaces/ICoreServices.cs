@@ -1,8 +1,6 @@
-using NewsStudio.Domain.Enums;
-
 namespace NewsStudio.Application.Interfaces;
 
-public interface IFacebookPublishingService
+// Common application markers and cross-cutting interfaces
+public interface ICoreAppService
 {
-    Task<bool> VerifyConnectionAsync(string pageAccessToken, CancellationToken cancellationToken = default);
 }

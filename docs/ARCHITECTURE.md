@@ -223,3 +223,38 @@ Hệ thống triển khai dịch vụ kiểm định tự động theo 10 tiêu 
   - `UpdateMetadata`: Cập nhật tiêu đề video, hook và caption phân cảnh trực tiếp.
   - `DeleteProject`: Xóa dự án và giải phóng toàn bộ file tạm thời.
 - **Tuyên bố minh bạch**: Điểm kiểm định nội bộ là tiêu chuẩn biên tập của AI News Studio, không phản ánh thuật toán xếp hạng của Facebook.
+
+---
+
+## 9. Tích hợp Meta Graph API & Xuất bản Facebook Reels (Phase 7)
+
+### 9.1. Quản lý Token & Mã hóa An toàn (`IFacebookTokenProtectionService`)
+- Áp dụng chuẩn mã hóa đối xứng **AES-256** với vector khởi tạo (IV) ngẫu nhiên cho mỗi bản ghi trước khi lưu trữ vào trường `EncryptedAccessToken` của bảng `FacebookAccounts`.
+- Khóa bảo mật được bảo vệ tập trung thông qua biến môi trường hoặc cấu hình hệ thống.
+- **Nguyên tắc an ninh nghiêm ngặt**:
+  - Không ghi token thô vào Serilog hoặc bất kỳ file log nào.
+  - Không gửi token thô về giao diện người dùng frontend (chỉ trả về masked token dạng `EAAB••••••••1234`).
+  - Hỗ trợ xác thực tính hợp lệ của token trực tiếp với Graph API endpoint `/me?fields=id,name`.
+
+### 9.2. Quy trình xuất bản Reels 3 bước (Page Reels Publishing Protocol)
+Hệ thống sử dụng quy trình upload chuẩn của Meta Graph API (phiên bản `v21.0` có thể cấu hình linh hoạt):
+1. **Khởi tạo session (Upload Phase: `start`)**:
+   - `POST https://graph.facebook.com/{version}/{page_id}/video_reels` kèm `upload_phase=start`.
+   - Nhận về `video_id` và `upload_url`.
+2. **Truyền tải dữ liệu video nhị phân (Upload Phase: `transfer`)**:
+   - `POST {upload_url}` stream trực tiếp mảng byte từ file tạm trên ổ đĩa (`VideoAsset.LocalTempPath`) với header `Authorization: OAuth {token}`, `file_offset: 0` và `Content-Type: application/octet-stream`.
+   - Không cần tải video lên dịch vụ lưu trữ bên thứ ba chỉ để đăng tải, tối ưu băng thông và bảo mật.
+3. **Hoàn tất và xuất bản (Upload Phase: `finish`)**:
+   - `POST https://graph.facebook.com/{version}/{page_id}/video_reels` với `upload_phase=finish`, `video_state=PUBLISHED`, `video_id` và `description` bao gồm Tiêu đề, Hook, Nguồn tin tức và Hashtags tự động.
+   - Lưu trữ bản ghi vào bảng `FacebookPosts`: `FacebookPostId`, `FacebookVideoId`, `PublishedAtUtc`, `UploadStatus = "Published"`.
+   - Cập nhật trạng thái `VideoProject.Status = VideoProjectStatus.Published`.
+
+### 9.3. Cơ chế bảo vệ, Chống trùng lặp & Dọn dẹp bộ nhớ tạm
+- **Khóa phê duyệt (Approval Guard)**: Chặn dứt khoát việc gọi xuất bản nếu video chưa có bản ghi `VideoReview` mang quyết định `Approved` hoặc còn tồn tại lỗi nghiêm trọng (`hasFatalViolations = true`).
+- **Chống đăng trùng (Idempotency Guard)**: Tự động kiểm tra bảng `FacebookPosts` theo `VideoProjectId`. Nếu đã có bản ghi ở trạng thái `Published`, hệ thống trả về kết quả đã đăng, ngăn ngừa tình trạng đăng lặp nhiều lần gây spam Fanpage.
+- **Dọn dẹp Ephemeral Storage sau xuất bản**: Ngay sau khi upload video thành công lên Meta, hệ thống tự động kích hoạt `IVideoAssetService.CleanupProjectAssetsAsync` xóa bỏ các file MP4, WAV, SRT tạm thời khỏi ổ đĩa, đảm bảo tuân thủ nghiêm ngặt nguyên tắc Master Plan: **Chỉ lưu dữ liệu nghiệp vụ, không lưu trữ lâu dài binary media**.
+
+### 9.4. Thu thập số liệu tương tác (Meta Page Insights API)
+- Dịch vụ `FetchMetricsAsync` kết nối endpoint `/{video_id}/video_insights` để đọc dữ liệu tương tác thực tế: `total_video_views` (Views), `post_impressions_unique` (Reach), `post_engaged_users` (Engagement), `total_video_avg_time_watched` (Watch Time).
+- Lưu bản ghi vào bảng `VideoMetrics` phục vụ phân tích hiệu quả nội dung.
+- Tuyệt đối không tự suy đoán hoặc bịa số liệu khi Meta chưa cung cấp (mặc định 0).

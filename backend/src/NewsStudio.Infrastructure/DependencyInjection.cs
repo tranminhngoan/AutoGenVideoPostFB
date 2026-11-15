@@ -11,6 +11,7 @@ using NewsStudio.Infrastructure.Jobs;
 using NewsStudio.Infrastructure.Persistence;
 using NewsStudio.Infrastructure.Rendering;
 using NewsStudio.Infrastructure.Review;
+using NewsStudio.Infrastructure.Facebook;
 using NewsStudio.Infrastructure.Services;
 
 namespace NewsStudio.Infrastructure;
@@ -81,6 +82,10 @@ public static class DependencyInjection
         // Phase 6: Video Review & Quality Control
         services.AddScoped<IQualityControllerService, QualityControllerService>();
         services.AddScoped<IVideoReviewService, VideoReviewService>();
+
+        // Phase 7: Facebook Graph API & Reels Publishing
+        services.AddSingleton<IFacebookTokenProtectionService, FacebookTokenProtectionService>();
+        services.AddHttpClient<IFacebookPublishingService, FacebookPublishingService>();
 
         return services;
     }

@@ -1,5 +1,41 @@
 # AI NEWS STUDIO - NHẬT KÝ TRIỂN KHAI (IMPLEMENTATION LOG)
 
+## Phase 7: Facebook Graph API (Kết nối Fanpage, Đăng Reels & Phân tích Insights)
+
+**Thời gian thực hiện:** 15/11/2026
+
+### 1. Công việc đã thực hiện
+1. **Xây dựng DTOs & Service Interfaces**:
+   - `NewsStudio.Application/DTOs/FacebookDtos.cs`: `FacebookAccountDto`, `ConnectFacebookPageRequestDto`, `VerifyTokenResultDto`, `PublishReelRequestDto`, `PublishReelResultDto`, `FacebookPostDto`, `VideoMetricDto`.
+   - `NewsStudio.Application/Interfaces/IFacebookServices.cs`: Định nghĩa `IFacebookTokenProtectionService` và `IFacebookPublishingService`.
+2. **Triển khai Dịch vụ Bảo mật Token (`FacebookTokenProtectionService`)**:
+   - Mã hóa đối xứng AES-256 kèm IV ngẫu nhiên trước khi lưu vào cột `EncryptedAccessToken` của PostgreSQL.
+   - Hàm `MaskToken` che giấu token theo chuẩn `EAAB••••••••1234`, không bao giờ lộ token thô.
+   - Đảm bảo tuyệt đối không ghi log chứa token và không gửi token thô về client.
+3. **Phát triển Dịch vụ Xuất bản Reels (`FacebookPublishingService`)**:
+   - Tích hợp Meta Graph API (Graph API Version `v21.0`).
+   - Quy trình xuất bản Reels 3 bước chuẩn: Khởi tạo session (`upload_phase=start`) -> Truyền tải luồng byte MP4 từ file tạm (`upload_phase=transfer`) -> Hoàn tất và xuất bản (`upload_phase=finish`).
+   - **Khóa phê duyệt (Approval Guard)**: Chặn dứt khoát nếu video chưa được duyệt hoặc còn lỗi nghiêm trọng.
+   - **Chống đăng trùng (Idempotency Guard)**: Ngăn chặn upload lặp lại nhiều lần nếu dự án đã có bài đăng trạng thái `Published`.
+   - **Tự động hủy file tạm sau đăng**: Tự động gọi `IVideoAssetService.CleanupProjectAssetsAsync` xóa toàn bộ file MP4/WAV/SRT trên ổ cứng ngay sau khi xuất bản thành công.
+   - **Thu thập Insights**: Endpoint đọc số liệu tương tác thực tế từ Meta Page Insights API (Views, Reach, Engagement, Watch Time) lưu vào bảng `VideoMetrics`.
+4. **Triển khai REST APIs (`FacebookController`)**:
+   - `GET /api/facebook/pages`: Danh sách Page đã kết nối (kèm token đã mask).
+   - `POST /api/facebook/verify`: Kiểm tra tính hợp lệ của Page Access Token.
+   - `POST /api/facebook/pages`: Kết nối Fanpage mới (mã hóa token AES-256).
+   - `DELETE /api/facebook/pages/{id}`: Ngắt kết nối Fanpage.
+   - `POST /api/video-projects/{id}/publish-reel`: Xuất bản video lên Facebook Reels.
+   - `GET /api/video-projects/{id}/facebook-posts`: Lấy lịch sử bài đăng Reels của dự án.
+   - `GET /api/facebook/posts/{postId}/metrics`: Thu thập số liệu tương tác từ Page Insights.
+5. **Nâng cấp Giao diện Frontend (ReactJS + TS)**:
+   - `FacebookConfigPage.tsx`: Danh sách Fanpage đã kết nối, form kết nối Page mới với token ẩn, kiểm tra token với Meta, hiển thị danh sách quyền Graph API.
+   - `VideoDetailPage.tsx`: Hộp thoại Xuất bản Reels (chọn Fanpage, sửa caption, tùy chọn dọn dẹp file tạm), tab Facebook Reels hiển thị link xem trực tiếp trên Facebook, Post ID, Video ID, và 6 thẻ số liệu Insights (Views, Reach, Engagement, Shares, Comments, Watch Time) kèm nút làm mới số liệu.
+6. **Kiểm thử tự động hoàn chỉnh (`Phase7FacebookGraphApiTests.cs`)**:
+   - 7 ca kiểm thử xUnit mới cho mã hóa token, kết nối Page, chặn đăng khi chưa duyệt, chống đăng trùng, quy trình xuất bản và dọn dẹp file tạm, thu thập số liệu Insights, và full controller API flow.
+   - Toàn bộ 51/51 tests xUnit đạt 100% PASS.
+
+---
+
 ## Phase 6: Video Review và Quality Control (10 Tiêu chí & Quản lý Phê duyệt)
 
 **Thời gian thực hiện:** 15/11/2026
