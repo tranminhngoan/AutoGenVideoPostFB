@@ -18,9 +18,8 @@ public class Worker : BackgroundService
 
     public override Task StartAsync(CancellationToken cancellationToken)
     {
-        _logger.LogInformation("NewsStudio.Worker is starting.");
-        
-        // Ensure temporary storage directory exists
+        _logger.LogInformation("NewsStudio.Worker is starting with Hangfire Background Server active.");
+
         var tempStoragePath = _configuration["Storage:TempStoragePath"] ?? "./tmp/newsstudio";
         try
         {
@@ -39,10 +38,9 @@ public class Worker : BackgroundService
             _logger.LogError(ex, "Failed to initialize temp storage directory: {Path}", tempStoragePath);
         }
 
-        // Register graceful shutdown actions
         _lifetime.ApplicationStopping.Register(() =>
         {
-            _logger.LogInformation("Worker received SIGTERM/Stop signal. Initiating graceful shutdown...");
+            _logger.LogInformation("Worker received SIGTERM/Stop signal. Gracefully waiting for in-flight Hangfire jobs to complete or pause...");
         });
 
         _lifetime.ApplicationStopped.Register(() =>
@@ -55,30 +53,21 @@ public class Worker : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        _logger.LogInformation("Worker loop started at: {time}", DateTimeOffset.Now);
+        _logger.LogInformation("Worker service loop is running. Awaiting jobs from Hangfire queues.");
 
-        // In Phase 1, the worker runs its lifecycle loop.
-        // In Phase 2, Hangfire Server will be hosted here to process asynchronous jobs.
         while (!stoppingToken.IsCancellationRequested)
         {
-            _logger.LogInformation("NewsStudio.Worker heartbeat active: {time}", DateTimeOffset.Now);
-
             try
             {
-                // Heartbeat interval 30 seconds
-                await Task.Delay(TimeSpan.FromSeconds(30), stoppingToken);
+                // Heartbeat every 60 seconds
+                await Task.Delay(TimeSpan.FromSeconds(60), stoppingToken);
+                _logger.LogDebug("NewsStudio.Worker heartbeat: ready for tasks.");
             }
             catch (OperationCanceledException)
             {
-                _logger.LogInformation("Worker cancellation requested.");
+                _logger.LogInformation("Worker execution cancellation triggered.");
                 break;
             }
         }
-    }
-
-    public override Task StopAsync(CancellationToken cancellationToken)
-    {
-        _logger.LogInformation("NewsStudio.Worker stopping.");
-        return base.StopAsync(cancellationToken);
     }
 }

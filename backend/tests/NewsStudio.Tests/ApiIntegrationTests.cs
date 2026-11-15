@@ -6,6 +6,7 @@ using Xunit;
 
 namespace NewsStudio.Tests;
 
+[Collection("DatabaseCollection")]
 public class ApiIntegrationTests : IClassFixture<WebApplicationFactory<Program>>
 {
     private readonly HttpClient _client;

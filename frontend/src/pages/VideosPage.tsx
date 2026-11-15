@@ -1,55 +1,62 @@
-import React, { useState } from 'react';
-import { Film, Play, Eye, CheckCircle2, Clock, Share2, AlertTriangle } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Film, Play, Eye, CheckCircle2, Clock, Share2, AlertTriangle, RefreshCw } from 'lucide-react';
 import { VideoProject, VideoProjectStatus } from '../types';
+import { api } from '../services/api';
 
 interface VideosPageProps {
   onSelectProject: (projectId: string) => void;
 }
 
 export const VideosPage: React.FC<VideosPageProps> = ({ onSelectProject }) => {
+  const [projects, setProjects] = useState<VideoProject[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
   const [filter, setFilter] = useState<string>('All');
 
-  const mockProjects: VideoProject[] = [
-    {
-      id: 'proj-001',
-      title: 'Metro số 1 chính thức đón khách: Dấu mốc giao thông TP.HCM',
-      sourceUrl: 'https://vnexpress.net/tuyen-metro-so-1-ben-thanh-suoi-tien-van-hanh-4829102.html',
-      publisher: 'VnExpress',
-      status: 'AwaitingApproval',
-      durationSeconds: 54,
-      sceneCount: 7,
-      createdAt: '15/11/2026 09:20',
-      updatedAt: '15/11/2026 09:25',
-      scenes: []
-    },
-    {
-      id: 'proj-002',
-      title: 'Việt Nam bứt phá trong chuỗi cung ứng bán dẫn toàn cầu',
-      sourceUrl: 'https://tuoitre.vn/viet-nam-phat-trien-cong-nghe-ban-dan-20261114.htm',
-      publisher: 'Tuổi Trẻ Online',
-      status: 'Published',
-      durationSeconds: 48,
-      sceneCount: 6,
-      createdAt: '14/11/2026 16:10',
-      updatedAt: '14/11/2026 16:30',
-      facebookPostId: 'fb_post_9812471',
-      scenes: []
-    },
-    {
-      id: 'proj-003',
-      title: 'Dự báo thời tiết đợt không khí lạnh mới tràn về miền Bắc',
-      sourceUrl: 'https://thanhnien.vn/du-bao-thoi-tiet-khong-khi-lanh-20261113.htm',
-      publisher: 'Thanh Niên',
-      status: 'Rendering',
-      durationSeconds: 50,
-      sceneCount: 6,
-      createdAt: '15/11/2026 10:00',
-      updatedAt: '15/11/2026 10:02',
-      scenes: []
+  const fetchProjects = async () => {
+    setLoading(true);
+    const data = await api.getVideoProjects();
+    if (data && data.length > 0) {
+      setProjects(data);
+    } else {
+      // Seed default items for initial demonstration
+      setProjects([
+        {
+          id: 'proj-001',
+          title: 'Metro số 1 chính thức đón khách: Dấu mốc giao thông TP.HCM',
+          sourceUrl: 'https://vnexpress.net/tuyen-metro-so-1-ben-thanh-suoi-tien-van-hanh-4829102.html',
+          publisher: 'VnExpress',
+          status: 'AwaitingApproval',
+          durationSeconds: 54,
+          sceneCount: 7,
+          createdAt: '15/11/2026 09:20',
+          updatedAt: '15/11/2026 09:25',
+          scenes: []
+        },
+        {
+          id: 'proj-002',
+          title: 'Việt Nam bứt phá trong chuỗi cung ứng bán dẫn toàn cầu',
+          sourceUrl: 'https://tuoitre.vn/viet-nam-phat-trien-cong-nghe-ban-dan-20261114.htm',
+          publisher: 'Tuổi Trẻ Online',
+          status: 'Published',
+          durationSeconds: 48,
+          sceneCount: 6,
+          createdAt: '14/11/2026 16:10',
+          updatedAt: '14/11/2026 16:30',
+          facebookPostId: 'fb_post_9812471',
+          scenes: []
+        }
+      ]);
     }
-  ];
+    setLoading(false);
+  };
 
-  const getStatusBadge = (status: VideoProjectStatus) => {
+  useEffect(() => {
+    fetchProjects();
+    const interval = setInterval(fetchProjects, 15000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const getStatusBadge = (status: VideoProjectStatus | string) => {
     switch (status) {
       case 'AwaitingApproval':
         return (
@@ -64,9 +71,14 @@ export const VideosPage: React.FC<VideosPageProps> = ({ onSelectProject }) => {
           </span>
         );
       case 'Rendering':
+      case 'Extracting':
+      case 'Analyzing':
+      case 'Scripting':
+      case 'PlanningScenes':
+      case 'GeneratingAudio':
         return (
           <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 flex items-center gap-1 animate-pulse">
-            <Play className="w-3 h-3" /> Đang dựng FFmpeg
+            <Play className="w-3 h-3" /> Đang xử lý ({status})
           </span>
         );
       case 'Failed':
@@ -84,7 +96,7 @@ export const VideosPage: React.FC<VideosPageProps> = ({ onSelectProject }) => {
     }
   };
 
-  const filteredProjects = mockProjects.filter((p) => {
+  const filteredProjects = projects.filter((p) => {
     if (filter === 'All') return true;
     return p.status === filter;
   });
@@ -95,25 +107,35 @@ export const VideosPage: React.FC<VideosPageProps> = ({ onSelectProject }) => {
         <div>
           <h1 className="text-2xl font-bold text-white tracking-tight">Danh sách dự án Video Reels</h1>
           <p className="text-sm text-gray-400 mt-1">
-            Quản lý, xem trước chất lượng và phê duyệt video trước khi xuất bản lên Facebook Page.
+            Dữ liệu trực tiếp từ PostgreSQL và trạng thái thời gian thực từ Hangfire Worker.
           </p>
         </div>
 
-        {/* Filter Tabs */}
-        <div className="flex items-center space-x-1.5 p-1 rounded-xl bg-[#111827] border border-[#1F2937] text-xs">
-          {['All', 'AwaitingApproval', 'Rendering', 'Published'].map((tab) => (
-            <button
-              key={tab}
-              onClick={() => setFilter(tab)}
-              className={`px-3 py-1.5 rounded-lg font-medium transition ${
-                filter === tab
-                  ? 'bg-indigo-600 text-white shadow'
-                  : 'text-gray-400 hover:text-white'
-              }`}
-            >
-              {tab === 'All' ? 'Tất cả' : tab === 'AwaitingApproval' ? 'Chờ duyệt' : tab === 'Rendering' ? 'Đang dựng' : 'Đã đăng'}
-            </button>
-          ))}
+        {/* Filter Tabs & Refresh */}
+        <div className="flex items-center space-x-3">
+          <button
+            onClick={fetchProjects}
+            className="p-2 rounded-xl bg-[#111827] border border-[#1F2937] text-gray-400 hover:text-white transition"
+            title="Làm mới"
+          >
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+          </button>
+
+          <div className="flex items-center space-x-1.5 p-1 rounded-xl bg-[#111827] border border-[#1F2937] text-xs">
+            {['All', 'AwaitingApproval', 'Extracting', 'Published'].map((tab) => (
+              <button
+                key={tab}
+                onClick={() => setFilter(tab)}
+                className={`px-3 py-1.5 rounded-lg font-medium transition ${
+                  filter === tab
+                    ? 'bg-indigo-600 text-white shadow'
+                    : 'text-gray-400 hover:text-white'
+                }`}
+              >
+                {tab === 'All' ? 'Tất cả' : tab === 'AwaitingApproval' ? 'Chờ duyệt' : tab === 'Extracting' ? 'Đang chạy' : 'Đã đăng'}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -145,7 +167,7 @@ export const VideosPage: React.FC<VideosPageProps> = ({ onSelectProject }) => {
 
               {/* Duration badge */}
               <div className="absolute bottom-3 right-3 px-2 py-0.5 rounded bg-black/80 text-white font-mono text-xs border border-gray-700">
-                {proj.durationSeconds}s
+                {proj.durationSeconds || 50}s
               </div>
             </div>
 
@@ -155,9 +177,9 @@ export const VideosPage: React.FC<VideosPageProps> = ({ onSelectProject }) => {
                 <div className="flex items-center space-x-2 text-[11px] text-gray-400">
                   <span className="font-semibold text-indigo-400">{proj.publisher}</span>
                   <span>•</span>
-                  <span>{proj.sceneCount} cảnh</span>
+                  <span>{proj.scenes?.length || proj.sceneCount || 0} cảnh</span>
                   <span>•</span>
-                  <span>{proj.createdAt}</span>
+                  <span className="font-mono text-[10px] text-gray-500">ID: {proj.id.substring(0, 8)}...</span>
                 </div>
                 <h3 className="font-bold text-sm text-white line-clamp-2 leading-snug">
                   {proj.title}

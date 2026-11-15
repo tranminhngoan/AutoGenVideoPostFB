@@ -8,8 +8,10 @@ import {
   ShieldAlert,
   ArrowRight,
   CheckCircle,
-  Loader2
+  Loader2,
+  AlertCircle
 } from 'lucide-react';
+import { api } from '../services/api';
 
 interface CreateVideoPageProps {
   onCreated: (projectId: string) => void;
@@ -17,23 +19,44 @@ interface CreateVideoPageProps {
 
 export const CreateVideoPage: React.FC<CreateVideoPageProps> = ({ onCreated }) => {
   const [url, setUrl] = useState('');
+  const [title, setTitle] = useState('');
   const [aiProvider, setAiProvider] = useState<'Gemini' | 'Claude'>('Gemini');
   const [targetDuration, setTargetDuration] = useState(50);
   const [voice, setVoice] = useState('vi-VN-HoaiMyNeural');
   const [subtitleStyle, setSubtitleStyle] = useState('breaking-yellow');
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [submitted, setSubmitted] = useState(false);
+  const [createdProjectId, setCreatedProjectId] = useState<string | null>(null);
+  const [jobId, setJobId] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!url) return;
 
     setIsSubmitting(true);
-    // Simulate job dispatch to Hangfire queue (Full processing logic in Phase 2 & 3)
-    setTimeout(() => {
+    setErrorMessage(null);
+
+    try {
+      // 1. Create Video Project in PostgreSQL
+      const project = await api.createVideoProject({
+        title: title || 'Bản tin tự động',
+        sourceUrl: url,
+        publisher: url.includes('vnexpress') ? 'VnExpress' : url.includes('tuoitre') ? 'Tuổi Trẻ' : 'Báo điện tử',
+        targetDurationSeconds: targetDuration,
+        aiProvider,
+        voice
+      });
+
+      // 2. Enqueue processing job into Hangfire via Worker
+      const job = await api.processVideoProject(project.id);
+
+      setCreatedProjectId(project.id);
+      setJobId(job.id);
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Không thể kết nối API hoặc cơ sở dữ liệu.');
+    } finally {
       setIsSubmitting(false);
-      setSubmitted(true);
-    }, 1200);
+    }
   };
 
   return (
@@ -41,30 +64,34 @@ export const CreateVideoPage: React.FC<CreateVideoPageProps> = ({ onCreated }) =
       <div>
         <h1 className="text-2xl font-bold text-white tracking-tight">Tạo video tin tức mới từ URL bài báo</h1>
         <p className="text-sm text-gray-400 mt-1">
-          Dán URL bài báo để hệ thống tự động đọc nội dung, trích xuất hình ảnh gốc và lên kịch bản video Reels.
+          Dán URL bài báo để hệ thống tự động đọc nội dung, trích xuất hình ảnh gốc và khởi chạy tiến trình xử lý bất đồng bộ qua Hangfire.
         </p>
       </div>
 
-      {submitted ? (
+      {createdProjectId ? (
         <div className="glass-panel p-8 rounded-2xl border border-emerald-500/30 text-center space-y-4">
           <div className="w-14 h-14 mx-auto rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center">
             <CheckCircle className="w-8 h-8" />
           </div>
-          <h2 className="text-xl font-bold text-white">Yêu cầu tạo video đã được tiếp nhận!</h2>
+          <h2 className="text-xl font-bold text-white">Yêu cầu đã được lưu vào PostgreSQL & chuyển tới Hangfire!</h2>
           <p className="text-sm text-gray-300 max-w-lg mx-auto">
-            Hệ thống đang chuẩn bị tiến trình trích xuất bài báo và các hình ảnh gốc. Bạn có thể theo dõi tiến độ trong danh sách video.
+            Mã dự án: <span className="font-mono text-indigo-400 font-semibold">{createdProjectId}</span><br />
+            Mã tác vụ: <span className="font-mono text-emerald-400">{jobId}</span><br />
+            Worker đang xử lý các bước trong pipeline. Bạn có thể xem trực tiếp tiến độ tại màn hình chi tiết.
           </p>
           <div className="pt-2 flex justify-center space-x-3">
             <button
-              onClick={() => onCreated('demo-project-id')}
-              className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-sm transition"
+              onClick={() => onCreated(createdProjectId)}
+              className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-sm transition shadow-lg shadow-indigo-600/30"
             >
-              Xem chi tiết video
+              Xem chi tiết & Theo dõi tiến độ
             </button>
             <button
               onClick={() => {
-                setSubmitted(false);
+                setCreatedProjectId(null);
+                setJobId(null);
                 setUrl('');
+                setTitle('');
               }}
               className="px-5 py-2.5 rounded-xl bg-[#1F2937] hover:bg-[#374151] text-gray-300 font-semibold text-sm transition"
             >
@@ -74,14 +101,21 @@ export const CreateVideoPage: React.FC<CreateVideoPageProps> = ({ onCreated }) =
         </div>
       ) : (
         <form onSubmit={handleSubmit} className="space-y-6">
-          {/* URL Input */}
-          <div className="glass-panel p-6 rounded-2xl border border-[#1F2937] space-y-3">
-            <label className="block text-sm font-semibold text-white flex items-center gap-2">
-              <LinkIcon className="w-4 h-4 text-indigo-400" />
-              <span>URL bài báo gốc</span>
-              <span className="text-rose-400">*</span>
-            </label>
-            <div className="relative">
+          {errorMessage && (
+            <div className="p-4 rounded-xl bg-rose-950/30 border border-rose-500/40 text-rose-300 text-xs flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
+              <span>{errorMessage}</span>
+            </div>
+          )}
+
+          {/* URL & Title Input */}
+          <div className="glass-panel p-6 rounded-2xl border border-[#1F2937] space-y-4">
+            <div>
+              <label className="block text-sm font-semibold text-white flex items-center gap-2 mb-2">
+                <LinkIcon className="w-4 h-4 text-indigo-400" />
+                <span>URL bài báo gốc</span>
+                <span className="text-rose-400">*</span>
+              </label>
               <input
                 type="url"
                 required
@@ -91,9 +125,19 @@ export const CreateVideoPage: React.FC<CreateVideoPageProps> = ({ onCreated }) =
                 className="w-full px-4 py-3.5 rounded-xl bg-[#0B0F19] border border-[#1F2937] text-white placeholder-gray-500 text-sm focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition"
               />
             </div>
-            <p className="text-xs text-gray-400">
-              Hệ thống hỗ trợ các trang báo uy tín tại Việt Nam (VnExpress, Tuổi Trẻ, Thanh Niên, Dân Trí, VietnamNet, v.v.).
-            </p>
+
+            <div>
+              <label className="block text-xs text-gray-400 mb-1">
+                Tiêu đề video mong muốn (Tùy chọn, để trống AI sẽ tự đặt)
+              </label>
+              <input
+                type="text"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                placeholder="Ví dụ: Tuyến metro số 1 Bến Thành - Suối Tiên chính thức vận hành..."
+                className="w-full px-3 py-2.5 rounded-xl bg-[#0B0F19] border border-[#1F2937] text-white text-xs focus:outline-none focus:border-indigo-500"
+              />
+            </div>
           </div>
 
           {/* Configuration Grid */}
@@ -208,12 +252,12 @@ export const CreateVideoPage: React.FC<CreateVideoPageProps> = ({ onCreated }) =
               {isSubmitting ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>Đang khởi tạo job trích xuất...</span>
+                  <span>Đang ghi PostgreSQL & tạo Hangfire Job...</span>
                 </>
               ) : (
                 <>
                   <Sparkles className="w-4 h-4" />
-                  <span>Bắt đầu trích xuất & tạo video</span>
+                  <span>Bắt đầu xử lý (Đẩy vào Worker)</span>
                   <ArrowRight className="w-4 h-4" />
                 </>
               )}

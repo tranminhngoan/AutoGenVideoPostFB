@@ -1,7 +1,9 @@
+using Hangfire;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.OpenApi.Models;
 using NewsStudio.Application;
 using NewsStudio.Infrastructure;
+using NewsStudio.Infrastructure.Persistence;
 using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -41,7 +43,8 @@ try
     });
 
     // Health Checks
-    builder.Services.AddHealthChecks();
+    builder.Services.AddHealthChecks()
+        .AddDbContextCheck<ApplicationDbContext>("PostgreSQL");
 
     // CORS Configuration
     var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ??
@@ -60,19 +63,27 @@ try
 
     // Clean Architecture Layers Dependency Injection
     builder.Services.AddApplicationServices();
-    builder.Services.AddInfrastructureServices();
+    builder.Services.AddInfrastructureServices(builder.Configuration);
 
     var app = builder.Build();
 
     // Configure Request Pipeline
     app.UseSerilogRequestLogging();
 
-    // Enable Swagger in Development and Staging / Production if desired
+    // Enable Swagger
     app.UseSwagger();
     app.UseSwaggerUI(c =>
     {
         c.SwaggerEndpoint("/swagger/v1/swagger.json", "AI News Studio API v1");
         c.RoutePrefix = "swagger";
+    });
+
+    // Hangfire Dashboard (Monitoring)
+    app.UseHangfireDashboard("/hangfire", new DashboardOptions
+    {
+        DashboardTitle = "AI News Studio - Hangfire Jobs Monitor",
+        DarkModeEnabled = true,
+        Authorization = new[] { new Hangfire.Dashboard.LocalRequestsOnlyAuthorizationFilter() }
     });
 
     app.UseRouting();
@@ -81,11 +92,11 @@ try
     app.UseAuthentication();
     app.UseAuthorization();
 
-    // Standard Health Check endpoints
+    // Health Check endpoints
     app.MapHealthChecks("/health");
     app.MapHealthChecks("/health/ready", new HealthCheckOptions
     {
-        Predicate = _ => true
+        Predicate = check => check.Tags.Contains("ready") || true
     });
     app.MapHealthChecks("/health/live", new HealthCheckOptions
     {
@@ -101,14 +112,16 @@ try
         version = "1.0.0",
         status = "Online",
         timestamp = DateTime.UtcNow,
-        docs = "/swagger"
+        docs = "/swagger",
+        hangfire = "/hangfire"
     }));
 
     app.Run();
 }
-catch (Exception ex)
+catch (Exception ex) when (ex is not HostAbortedException)
 {
     Log.Fatal(ex, "NewsStudio.Api terminated unexpectedly");
+    throw;
 }
 finally
 {

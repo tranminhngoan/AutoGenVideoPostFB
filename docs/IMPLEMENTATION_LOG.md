@@ -1,105 +1,52 @@
 # AI NEWS STUDIO - NHẬT KÝ TRIỂN KHAI (IMPLEMENTATION LOG)
 
-## Phase 1: Khởi tạo dự án và kiến trúc
+## Phase 2: Database, Hangfire và Job Processing
 
 **Thời gian thực hiện:** 15/11/2026
 
 ### 1. Công việc đã thực hiện
-1. **Kiểm tra hiện trạng thư mục**:
-   - Thư mục ban đầu hoàn toàn trống. Tiến hành khởi tạo toàn diện từ gốc theo đúng kiến trúc phân lớp quy định.
-2. **Khởi tạo Solution & Projects .NET 8**:
-   - `backend/NewsStudio.sln`
-   - `backend/src/NewsStudio.Domain` (.NET 8 Class Library)
-   - `backend/src/NewsStudio.Application` (.NET 8 Class Library)
-   - `backend/src/NewsStudio.Infrastructure` (.NET 8 Class Library)
-   - `backend/src/NewsStudio.Api` (.NET 8 Web API)
-   - `backend/src/NewsStudio.Worker` (.NET 8 Worker Service)
-   - `backend/tests/NewsStudio.Tests` (.NET 8 xUnit Test Project)
-3. **Cài đặt thư viện phụ thuộc (NuGet Packages)**:
-   - `Swashbuckle.AspNetCore` (6.6.2): Cấu hình Swagger/OpenAPI.
-   - `Serilog.AspNetCore` (8.0.3), `Serilog.Sinks.File` (6.0.0), `Serilog.Sinks.Console` (6.0.0): Ghi log có cấu trúc.
-   - `Microsoft.AspNetCore.Mvc.Testing` (8.0.14) & `FluentAssertions` (6.12.0): Kiểm thử tích hợp.
-   - `Microsoft.Extensions.DependencyInjection.Abstractions` & `Microsoft.Extensions.Hosting.Abstractions`.
-4. **Cấu hình API & Logging**:
-   - Tích hợp Serilog cho API và Worker với console sink và file sink có cơ chế xoay vòng theo ngày (`rollingInterval: Day`).
-   - Cung cấp Swagger UI tại `/swagger`.
-   - Cung cấp các endpoint kiểm tra sức khỏe hệ thống: `/health`, `/health/ready`, `/health/live`, `/api/health`.
-   - Cung cấp endpoint thông tin hệ sinh thái `/api/system/config-summary` (bảo đảm không làm lộ bí mật API key/token).
-5. **Cấu hình Worker Service**:
-   - Tạo `Worker.cs` chạy background heartbeat.
-   - Tạo cơ chế tự động tạo và phân quyền thư mục file tạm `/tmp/newsstudio`.
-   - Đăng ký bộ xử lý SIGTERM graceful shutdown qua `IHostApplicationLifetime`.
-6. **Xây dựng Frontend React 18 + TypeScript + Vite + Tailwind CSS**:
-   - Thiết lập giao diện phong cách AI-First hiện đại, tông màu Dark theme với Glassmorphism.
-   - Hoàn thiện 9 màn hình đầy đủ theo đặc tả MVP:
-     - Dashboard Studio
-     - Tạo video mới từ URL bài báo
-     - Danh sách bài báo đã trích xuất & kiểm tra quyền ảnh
-     - Danh sách dự án video Reels (với 14 trạng thái vòng đời)
-     - Chi tiết video & Kiểm duyệt QC (10 tiêu chí kiểm định, trình phát 9:16)
-     - Cấu hình AI Editor (Gemini & Claude)
-     - Cấu hình TTS giọng đọc tiếng Việt
-     - Cấu hình Facebook Page & Meta Graph API
-     - Lịch sử xử lý tác vụ & Hàng đợi
-7. **Container hóa Docker & Railway**:
-   - `docker/Dockerfile.api`: Multi-stage build .NET 8, exposed port 8080.
-   - `docker/Dockerfile.worker`: Multi-stage build .NET 8 runtime + FFmpeg + Fontconfig + Vietnamese Fonts (DejaVu & Liberation) cho phụ đề.
-   - `docker/docker-compose.yml`: Cụm PostgreSQL 16, API, Worker.
-   - `railway.json`: Sẵn sàng triển khai lên nền tảng Railway.
-   - `.env.example`: Mẫu biến môi trường bảo mật, không hardcode secret.
+1. **Thiết lập Database PostgreSQL**:
+   - Kiểm tra kết nối cục bộ tới PostgreSQL 16 (Port 5432) thành công.
+   - Tạo cơ sở dữ liệu `newsstudio_db`.
+2. **Cài đặt thư viện EF Core & Hangfire**:
+   - `Npgsql.EntityFrameworkCore.PostgreSQL` (8.0.11)
+   - `Microsoft.EntityFrameworkCore` & `Microsoft.EntityFrameworkCore.Design` (8.0.11)
+   - `Microsoft.Extensions.Diagnostics.HealthChecks.EntityFrameworkCore` (8.0.11)
+   - `Hangfire.Core` & `Hangfire.AspNetCore` (1.8.14)
+   - `Hangfire.PostgreSql` (1.20.10)
+3. **Mô hình hóa 13 thực thể nghiệp vụ (Domain Entities)**:
+   - `Article.cs`, `ArticleImage.cs`, `VideoProject.cs`, `VideoScene.cs`, `VideoScript.cs`, `VideoAsset.cs`, `ProcessingJob.cs`, `VideoReview.cs`, `FacebookEntities.cs`, `ManagementEntities.cs`.
+   - Đáp ứng đầy đủ quy tắc: Primary Key (Guid), Foreign Keys, Indexes, Timestamps, Status, Error Message, và không lưu binary media.
+4. **Xây dựng `ApplicationDbContext` & Migration**:
+   - Cấu hình fluent API trong `OnModelCreating`, thiết lập quan hệ Cascade và SetNull.
+   - Tự động gán `CreatedAtUtc` và `UpdatedAtUtc` trong `SaveChangesAsync`.
+   - Tạo migration `20261115034107_InitialCreate` và áp dụng thành công vào PostgreSQL.
+5. **Cấu hình Hangfire**:
+   - Thiết lập schema `hangfire` trong PostgreSQL.
+   - Tạo Hangfire Server bên trong `NewsStudio.Worker` với giới hạn 2 worker đồng thời.
+   - Thêm Hangfire Dashboard (`/hangfire`) trong `NewsStudio.Api` phục vụ giám sát hàng đợi.
+6. **Xây dựng Pipeline Executor & Services**:
+   - `IVideoProcessingJobExecutor` & `VideoProcessingJobExecutor`: Triển khai pipeline 14 trạng thái, cơ chế kiểm tra `IdempotencyKey`, `[AutomaticRetry(Attempts = 3)]`, timeout, và hủy job an toàn.
+   - `VideoProjectService` & `ProcessingJobService`: Cung cấp nghiệp vụ tạo project, truy vấn dữ liệu, enqueue job và cancel job.
+7. **Triển khai bộ REST API Phase 2**:
+   - `POST /api/video-projects`
+   - `GET /api/video-projects`
+   - `GET /api/video-projects/{id}`
+   - `POST /api/video-projects/{id}/process`
+   - `POST /api/jobs/{id}/cancel`
+   - `GET /api/jobs/{id}`
+8. **Cập nhật Frontend**:
+   - Cập nhật `frontend/src/services/api.ts` với các hàm kết nối API thật.
+   - Cập nhật `CreateVideoPage.tsx` gửi dữ liệu trực tiếp vào database và enqueue job tới Hangfire.
+   - Cập nhật `VideosPage.tsx` truy vấn danh sách dự án video thật từ `/api/video-projects`.
+9. **Kiểm thử tự động**:
+   - Thêm `Phase2DatabaseAndHangfireTests.cs` (5 ca kiểm thử mới cho DB, API, Hangfire, Pipeline).
+   - Chạy toàn bộ 13/13 tests: 100% PASS.
 
-### 2. Danh sách tệp quan trọng đã tạo
-- **Backend**:
-  - `backend/NewsStudio.sln`
-  - `backend/src/NewsStudio.Domain/Common/BaseEntity.cs`
-  - `backend/src/NewsStudio.Domain/Enums/VideoProjectStatus.cs`
-  - `backend/src/NewsStudio.Domain/Enums/RightsStatus.cs`
-  - `backend/src/NewsStudio.Domain/Enums/ProviderTypes.cs`
-  - `backend/src/NewsStudio.Application/DTOs/SystemHealthDto.cs`
-  - `backend/src/NewsStudio.Application/Interfaces/ISystemHealthService.cs`
-  - `backend/src/NewsStudio.Application/Interfaces/ICoreServices.cs`
-  - `backend/src/NewsStudio.Application/DependencyInjection.cs`
-  - `backend/src/NewsStudio.Infrastructure/Services/SystemHealthService.cs`
-  - `backend/src/NewsStudio.Infrastructure/DependencyInjection.cs`
-  - `backend/src/NewsStudio.Api/Program.cs`
-  - `backend/src/NewsStudio.Api/Controllers/HealthController.cs`
-  - `backend/src/NewsStudio.Api/Controllers/SystemController.cs`
-  - `backend/src/NewsStudio.Api/appsettings.json`
-  - `backend/src/NewsStudio.Api/appsettings.Development.json`
-  - `backend/src/NewsStudio.Api/appsettings.Production.json`
-  - `backend/src/NewsStudio.Worker/Program.cs`
-  - `backend/src/NewsStudio.Worker/Worker.cs`
-  - `backend/src/NewsStudio.Worker/appsettings.json`
-  - `backend/src/NewsStudio.Worker/appsettings.Development.json`
-  - `backend/src/NewsStudio.Worker/appsettings.Production.json`
-- **Tests**:
-  - `backend/tests/NewsStudio.Tests/ApiIntegrationTests.cs`
-  - `backend/tests/NewsStudio.Tests/ArchitectureTests.cs`
-- **Frontend**:
-  - `frontend/package.json`
-  - `frontend/vite.config.ts`
-  - `frontend/tailwind.config.js`
-  - `frontend/src/App.tsx`
-  - `frontend/src/components/Sidebar.tsx`
-  - `frontend/src/components/Header.tsx`
-  - `frontend/src/pages/DashboardPage.tsx`
-  - `frontend/src/pages/CreateVideoPage.tsx`
-  - `frontend/src/pages/ArticlesPage.tsx`
-  - `frontend/src/pages/VideosPage.tsx`
-  - `frontend/src/pages/VideoDetailPage.tsx`
-  - `frontend/src/pages/AiConfigPage.tsx`
-  - `frontend/src/pages/TtsConfigPage.tsx`
-  - `frontend/src/pages/FacebookConfigPage.tsx`
-  - `frontend/src/pages/JobHistoryPage.tsx`
-- **DevOps & Docs**:
-  - `docker/Dockerfile.api`
-  - `docker/Dockerfile.worker`
-  - `docker/docker-compose.yml`
-  - `railway.json`
-  - `.env.example`
-  - `.gitignore`
-  - `README.md`
-  - `docs/PROJECT_STATUS.md`
-  - `docs/ARCHITECTURE.md`
-  - `docs/IMPLEMENTATION_LOG.md`
-  - `docs/TEST_REPORT.md`
+---
+
+## Phase 1: Khởi tạo dự án và kiến trúc
+
+**Thời gian thực hiện:** 15/11/2026
+
+*(Xem chi tiết trong lịch sử git commit ban đầu)*

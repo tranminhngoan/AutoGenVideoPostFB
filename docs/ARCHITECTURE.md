@@ -17,6 +17,7 @@ Hệ thống được thiết kế theo nguyên lý **Clean Architecture** và h
                       |  - Swagger / OpenAPI        |
                       |  - Serilog Request Logging  |
                       |  - HealthCheck Endpoints    |
+                      |  - Hangfire Dashboard       |
                       +--------------+--------------+
                                      |
                           Tạo Job & Truy vấn DB
@@ -26,12 +27,12 @@ Hệ thống được thiết kế theo nguyên lý **Clean Architecture** và h
       v                                                              v
 +-----------------------------+                      +-------------------------------+
 |     NewsStudio.Worker       |                      |     PostgreSQL Database       |
-|  - Hangfire Server          |                      |  - Dữ liệu nghiệp vụ          |
-|  - Article / Image Extract  |<====================>|  - Metadata VideoProjects     |
-|  - AI Scripting (Gemini)    |                      |  - Trạng thái Job Hangfire    |
-|  - TTS Audio Synthesis      |                      |  (Không lưu binary media)     |
-|  - FFmpeg Video Renderer    |                      +-------------------------------+
-|  - Ephemeral Temp Storage   |
+|  - Hangfire Server          |                      |  - Schema public: 13 tables   |
+|  - Article / Image Extract  |<====================>|  - Schema hangfire: queue/jobs|
+|  - AI Scripting (Gemini)    |                      |  - Dữ liệu nghiệp vụ          |
+|  - TTS Audio Synthesis      |                      |  - Metadata VideoProjects     |
+|  - FFmpeg Video Renderer    |                      |  (Không lưu binary media)     |
+|  - Ephemeral Temp Storage   |                      +-------------------------------+
 +--------------+--------------+
                |
                v
@@ -43,49 +44,48 @@ Hệ thống được thiết kế theo nguyên lý **Clean Architecture** và h
 
 ---
 
-## 2. Chi tiết các tầng trong Clean Architecture
+## 2. Chi tiết Database Schema (PostgreSQL 16)
 
-### 2.1. `NewsStudio.Domain` (Core Domain)
-- Độc lập hoàn toàn, không phụ thuộc vào bất kỳ tầng nào khác.
-- Chứa:
-  - `BaseEntity`: Cung cấp `Id` (GUID), `CreatedAtUtc`, `UpdatedAtUtc`.
-  - `Enums`: `VideoProjectStatus` (14 trạng thái vòng đời), `RightsStatus` (quyền sử dụng ảnh), `AiProviderType`, `TtsProviderType`, `ImageCategory`.
-
-### 2.2. `NewsStudio.Application` (Business Logic Interfaces & DTOs)
-- Phụ thuộc duy nhất vào `NewsStudio.Domain`.
-- Chứa:
-  - `DTOs`: `SystemHealthDto`, `ComponentHealthDto`.
-  - Interfaces:
-    - `IAiEditorService`: Giao diện dịch vụ AI biên tập kịch bản (Gemini, Claude).
-    - `IScriptPlannerService`: Giao diện phân bổ phân cảnh.
-    - `ITtsService`: Giao diện tổng hợp giọng đọc tiếng Việt.
-    - `IFacebookPublishingService`: Giao diện kết nối và đăng Facebook Reels.
-    - `ISystemHealthService`: Giao diện kiểm tra chẩn đoán hệ thống.
-
-### 2.3. `NewsStudio.Infrastructure` (External Concerns & Implementations)
-- Phụ thuộc vào `NewsStudio.Application` và `NewsStudio.Domain`.
-- Chứa các triển khai dịch vụ ngoài, truy cập file tạm, kiểm tra phần cứng, và tích hợp bên thứ ba.
-
-### 2.4. `NewsStudio.Api` (Presentation / Entry Point)
-- Điểm tiếp nhận request từ người dùng và trình duyệt.
-- Chứa:
-  - Controllers: `HealthController`, `SystemController`.
-  - Swagger/OpenAPI 3.0.
-  - Serilog Request Logging.
-  - CORS policy.
-
-### 2.5. `NewsStudio.Worker` (Background Processing Service)
-- Phục vụ các tác vụ nặng: crawl bài báo, trích xuất ảnh, gọi AI, gọi TTS, render FFmpeg.
-- Tích hợp kiểm soát vòng đời ứng dụng (SIGTERM graceful shutdown).
-- Quản lý thư mục file tạm `/tmp/newsstudio`.
+Hệ thống quản lý 13 thực thể nghiệp vụ thông qua EF Core 8:
+1. **Articles**: Lưu trữ thông tin bài báo (Title, NormalizedTitle, Url, CanonicalUrl, Publisher, ContentBody, PublishedAtUtc, Status).
+2. **ArticleImages**: Quản lý hình ảnh gốc bài báo (OriginalImageUrl, LocalTempPath, Caption, AltText, Order, Width, Height, ImageHash, RightsStatus, Category, Status).
+3. **VideoProjects**: Trung tâm dự án video (Title, SourceUrl, Publisher, TargetDurationSeconds, Status theo 14 vòng đời, Resolution 1080x1920, AspectRatio 9:16).
+4. **VideoScenes**: Phân cảnh chi tiết (SceneNumber, StartTime, EndTime, VoiceText, OnScreenText, SelectedArticleImageId, MotionType, TransitionType, ScenePurpose).
+5. **VideoScripts**: Kịch bản do AI biên soạn (Title, Hook, VoiceOverScript, KeyFacts, Context, Analysis, Conclusion, SourceAttribution, TokenUsage).
+6. **VideoAssets**: Theo dõi các file tạm (AssetType, LocalTempPath, FileSizeBytes, MimeType, Sha256Hash, ExpiresAtUtc, IsCleanedUp).
+7. **ProcessingJobs**: Theo dõi tiến trình Hangfire (HangfireJobId, Step, Status, RetryCount, ProgressPercentage, IdempotencyKey, WorkerHost).
+8. **VideoReviews**: Báo cáo kiểm định chất lượng nội bộ (ReviewedBy, Decision, FeedbackNotes, InternalQualityScore, SeriousViolationsFound).
+9. **FacebookAccounts**: Quản lý kết nối Page (PageId, PageName, EncryptedAccessToken, TokenExpiresAtUtc, IsActive).
+10. **FacebookPosts**: Bản ghi xuất bản Reels (FacebookPostId, FacebookVideoId, UploadSessionId, UploadStatus, PublishedAtUtc).
+11. **VideoMetrics**: Chỉ số đo lường sau xuất bản (Views, Reach, Engagement, Shares, Comments, WatchTimeSeconds, CollectedAtUtc).
+12. **SystemSettings**: Bảng cấu hình động theo nhóm (AI, TTS, Storage, Facebook, Hangfire).
+13. **AuditLogs**: Nhật ký kiểm toán thao tác hệ thống (EntityName, EntityId, Action, PerformedBy, DetailsJson).
 
 ---
 
-## 3. Chính sách lưu trữ dữ liệu & File tạm (Ephemerality)
+## 3. Vòng đời tác vụ (Job Lifecycle)
 
-1. **PostgreSQL Database**:
-   - Chỉ lưu thông tin metadata, kịch bản text, phân cảnh, chỉ số metrics và nhật ký job.
-   - **Tuyệt đối không lưu binary ảnh, audio hoặc video MP4** trong Database.
-2. **Thư mục tạm Worker**:
-   - Mọi tệp ảnh gốc, audio lồng tiếng, phụ đề ass/srt và video MP4 được lưu trong `/tmp/newsstudio/{JobId}/`.
-   - Cơ chế tự dọn dẹp (Cleanup Policy): Sau khi đăng Reels thành công, hoặc người dùng từ chối video, hoặc hết hạn xem trước (TTL 120 phút), toàn bộ thư mục của Job sẽ bị xóa sạch khỏi ổ đĩa.
+Tác vụ xử lý video trải qua 14 trạng thái kế tiếp:
+1. `Pending`: Dự án vừa được tạo từ URL.
+2. `Extracting`: Worker đang tải và bóc tách HTML bài báo.
+3. `Extracted`: Nội dung và danh sách ảnh gốc đã sẵn sàng.
+4. `Analyzing`: AI đang phân tích dữ liệu, bối cảnh, sự kiện.
+5. `Scripting`: AI biên tập kịch bản 45-60 giây.
+6. `PlanningScenes`: Chia kịch bản thành 6-10 cảnh, ghép ảnh bài báo.
+7. `GeneratingAudio`: Lồng tiếng tiếng Việt qua TTS.
+8. `Rendering`: FFmpeg kết xuất video 9:16 (1080×1920).
+9. `QualityChecking`: Kiểm định tự động 10 tiêu chí chất lượng.
+10. `AwaitingApproval`: Video hoàn tất và **dừng lại chờ người dùng phê duyệt**.
+11. `Publishing`: Đang upload video binary lên Facebook Reels.
+12. `Published`: Đăng Reels thành công, lưu Post ID/Video ID.
+13. `Failed`: Tác vụ gặp lỗi không thể phục hồi.
+14. `Cancelled`: Tác vụ bị hủy bởi người dùng hoặc hệ thống.
+
+---
+
+## 4. Xử lý bất đồng bộ với Hangfire
+
+- **Storage**: Lưu trữ job state trong PostgreSQL schema `hangfire`.
+- **Worker Process**: `NewsStudio.Worker` khởi chạy `BackgroundJobServer` với số lượng worker xử lý đồng thời (`WorkerCount = 2`).
+- **Idempotency & Retry**: Mỗi job được gắn `IdempotencyKey`. Sử dụng `[AutomaticRetry(Attempts = 3)]` có giới hạn và ghi log rõ ràng theo `JobId`.
+- **API không chặn**: `NewsStudio.Api` chỉ tiếp nhận yêu cầu, sinh ID, lưu DB và chuyển giao cho Hangfire qua `IBackgroundJobClient.Enqueue`.
