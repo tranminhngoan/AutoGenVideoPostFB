@@ -5,6 +5,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using NewsStudio.Application.Common.Interfaces;
 using NewsStudio.Application.Interfaces;
+using NewsStudio.Infrastructure.Extractors;
 using NewsStudio.Infrastructure.Jobs;
 using NewsStudio.Infrastructure.Persistence;
 using NewsStudio.Infrastructure.Services;
@@ -48,6 +49,11 @@ public static class DependencyInjection
         services.AddScoped<IVideoProjectService, VideoProjectService>();
         services.AddScoped<IProcessingJobService, ProcessingJobService>();
         services.AddScoped<IVideoProcessingJobExecutor, VideoProcessingJobExecutor>();
+
+        // Phase 3: Article & Image Extraction Services
+        services.AddHttpClient<IArticleExtractorService, ArticleExtractorService>();
+        services.AddSingleton<IImageClassifierService, ImageClassifierService>();
+        services.AddScoped<IArticleService, ArticleService>();
 
         return services;
     }

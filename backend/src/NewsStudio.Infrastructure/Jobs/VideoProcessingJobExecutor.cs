@@ -11,13 +11,16 @@ namespace NewsStudio.Infrastructure.Jobs;
 public class VideoProcessingJobExecutor : IVideoProcessingJobExecutor
 {
     private readonly IApplicationDbContext _context;
+    private readonly IArticleService _articleService;
     private readonly ILogger<VideoProcessingJobExecutor> _logger;
 
     public VideoProcessingJobExecutor(
         IApplicationDbContext context,
+        IArticleService articleService,
         ILogger<VideoProcessingJobExecutor> logger)
     {
         _context = context;
+        _articleService = articleService;
         _logger = logger;
     }
 
@@ -71,7 +74,25 @@ public class VideoProcessingJobExecutor : IVideoProcessingJobExecutor
         {
             // Step 1: Extracting
             await AdvanceStepAsync(project, jobRecord, VideoProjectStatus.Extracting, "Extracting article content and original images", 15, cancellationToken);
-            await Task.Delay(1000, cancellationToken); // Simulation interval for pipeline step
+            if (project.ArticleId == null && !string.IsNullOrWhiteSpace(project.SourceUrl))
+            {
+                try
+                {
+                    var articleDto = await _articleService.ExtractAndSaveArticleAsync(project.SourceUrl, cancellationToken);
+                    project.ArticleId = articleDto.Id;
+                    if (string.IsNullOrWhiteSpace(project.Title) || project.Title == "New Video Project")
+                    {
+                        project.Title = articleDto.Title;
+                        project.Publisher = articleDto.Publisher;
+                    }
+                    await _context.SaveChangesAsync(cancellationToken);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Could not extract article automatically from {Url} during pipeline (may be offline/mock URL). Continuing pipeline.", project.SourceUrl);
+                }
+            }
+            await Task.Delay(500, cancellationToken);
 
             // Step 2: Extracted
             await AdvanceStepAsync(project, jobRecord, VideoProjectStatus.Extracted, "Article content and verified images extracted", 30, cancellationToken);

@@ -10,7 +10,7 @@ Hệ thống được thiết kế theo nguyên lý **Clean Architecture** và h
                       |   (Vite + Tailwind CSS)     |
                       +--------------+--------------+
                                      |
-                              REST API / JSON
+                               REST API / JSON
                                      v
                       +-----------------------------+
                       |       NewsStudio.Api        |
@@ -18,6 +18,7 @@ Hệ thống được thiết kế theo nguyên lý **Clean Architecture** và h
                       |  - Serilog Request Logging  |
                       |  - HealthCheck Endpoints    |
                       |  - Hangfire Dashboard       |
+                      |  - ArticlesController       |
                       +--------------+--------------+
                                      |
                           Tạo Job & Truy vấn DB
@@ -89,3 +90,34 @@ Tác vụ xử lý video trải qua 14 trạng thái kế tiếp:
 - **Worker Process**: `NewsStudio.Worker` khởi chạy `BackgroundJobServer` với số lượng worker xử lý đồng thời (`WorkerCount = 2`).
 - **Idempotency & Retry**: Mỗi job được gắn `IdempotencyKey`. Sử dụng `[AutomaticRetry(Attempts = 3)]` có giới hạn và ghi log rõ ràng theo `JobId`.
 - **API không chặn**: `NewsStudio.Api` chỉ tiếp nhận yêu cầu, sinh ID, lưu DB và chuyển giao cho Hangfire qua `IBackgroundJobClient.Enqueue`.
+
+---
+
+## 5. Kiến trúc trích xuất bài báo và kiểm soát hình ảnh (Phase 3)
+
+### 5.1. Mô hình Adapter bóc tách bài báo (`IWebsiteAdapter`)
+Áp dụng mẫu **Chain of Responsibility**:
+- `VnExpressAdapter`: Nhận diện `vnexpress.net`, bóc tách `h1.title-detail`, `p.description`, đoạn văn `p.Normal` trong `article.fck_detail`, khối ảnh `figure.tplCaption` kèm chú thích `figcaption p.Image`.
+- `TuoiTreAdapter`: Nhận diện `tuoitre.vn`, bóc tách `h1.article-title`, `h2.article-sapo`, khối ảnh `div.VCSortable` / `PhotoCMS_Caption`.
+- `ThanhNienAdapter`: Nhận diện `thanhnien.vn`, bóc tách cấu trúc bài báo Thanh Niên.
+- `DanTriAdapter`: Nhận diện `dantri.com.vn`, bóc tách cấu trúc bài báo Dân Trí.
+- `GenericArticleAdapter`: Bộ thích ứng cơ sở và dự phòng cho mọi trang tin: ưu tiên JSON-LD `NewsArticle` (`schema.org`), OpenGraph (`og:title`, `og:description`, `og:image`), semantic HTML (`<article>`, `<figure>`, `<figcaption>`).
+
+### 5.2. Nguyên tắc bất biến trích xuất hình ảnh
+- **Chỉ trích xuất ảnh gốc trong chính bài báo**: Không lấy ảnh từ Google Images, không dùng ảnh AI, không tạo nhân vật giả mạo.
+- **Lọc nhiễu triệt để**: Tự động loại bỏ ảnh banner quảng cáo (`/ads/`, `banner`), ảnh avatar, icon mạng xã hội, pixel theo dõi.
+- **Deduplication bằng SHA-256**: Băm toàn bộ URL ảnh để triệt tiêu trùng lặp và đánh chỉ số thứ tự rõ ràng (`ArticleImageOrder`).
+- **Xử lý bài báo không có ảnh**: Hệ thống bóc tách an toàn và cho phép kịch bản video sử dụng nền typography hoặc số liệu ở các phase sau.
+
+### 5.3. Kiểm soát quyền sử dụng (`RightsStatus`)
+- Các trạng thái: `Unknown`, `PermissionRequired`, `Licensed`, `Authorized`, `Rejected`.
+- **Quy tắc cứng**: Quyền hình ảnh khi trích xuất **bắt buộc mặc định là `Unknown`**. Hệ thống tuyệt đối không tự động nâng cấp lên `Authorized`. Việc cấp quyền phải do biên tập viên xác nhận trên giao diện kiểm duyệt.
+
+### 5.4. Phân loại hình ảnh tự động (`ImageClassifierService`)
+- Phân tích ngữ cảnh nội dung và caption ảnh thành 6 nhóm:
+  1. `Panorama` (Toàn cảnh / Không gian)
+  2. `Character` (Nhân vật / Chuyên gia - không tự suy đoán danh tính nếu không có căn cứ)
+  3. `Event` (Sự kiện / Hội nghị / Lễ ký kết)
+  4. `Document` (Tài liệu / Văn bản / Quyết định)
+  5. `Chart` (Biểu đồ / Đồ thị / Số liệu)
+  6. `Unsuitable` (Không phù hợp / Quảng cáo)

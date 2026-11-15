@@ -134,5 +134,92 @@ export const api = {
     } catch {
       return false;
     }
+  },
+
+  // Phase 3 Article & Image Extractor APIs
+  async extractArticle(url: string): Promise<ArticleDto> {
+    const res = await fetch(`${API_BASE}/articles/extract`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url })
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Trích xuất bài báo thất bại');
+    }
+    return await res.json();
+  },
+
+  async getArticles(page = 1, pageSize = 20): Promise<ArticleDto[]> {
+    try {
+      const res = await fetch(`${API_BASE}/articles?page=${page}&pageSize=${pageSize}`);
+      if (!res.ok) return [];
+      return await res.json();
+    } catch {
+      return [];
+    }
+  },
+
+  async getArticleById(id: string): Promise<ArticleDto | null> {
+    try {
+      const res = await fetch(`${API_BASE}/articles/${id}`);
+      if (!res.ok) return null;
+      return await res.json();
+    } catch {
+      return null;
+    }
+  },
+
+  async updateArticleImage(articleId: string, imageId: string, data: UpdateArticleImageRequest): Promise<ArticleImageDto> {
+    const res = await fetch(`${API_BASE}/articles/${articleId}/images/${imageId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Cập nhật thông tin ảnh thất bại');
+    }
+    return await res.json();
   }
 };
+
+export interface ArticleImageDto {
+  id: string;
+  articleId: string;
+  originalImageUrl: string;
+  localTempPath?: string;
+  caption?: string;
+  altText?: string;
+  articleImageOrder: number;
+  width?: number;
+  height?: number;
+  imageHash?: string;
+  rightsStatus: string;
+  category: string;
+  status: string;
+  selectedForVideo: boolean;
+}
+
+export interface ArticleDto {
+  id: string;
+  title: string;
+  url: string;
+  canonicalUrl: string;
+  publisher: string;
+  author?: string;
+  description?: string;
+  contentBody: string;
+  publishedAtUtc?: string;
+  status: string;
+  createdAtUtc: string;
+  imageCount: number;
+  images: ArticleImageDto[];
+}
+
+export interface UpdateArticleImageRequest {
+  caption?: string;
+  rightsStatus?: string;
+  category?: string;
+  selectedForVideo?: boolean;
+}

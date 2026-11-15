@@ -2,7 +2,7 @@
 
 **Thời gian kiểm thử:** 15/11/2026  
 **Môi trường:** Local Windows (PostgreSQL 16, Node v24.14.1, .NET 8 runtime)  
-**Tình trạng:** **13/13 PASS (100%)**
+**Tình trạng:** **23/23 PASS (100%)**
 
 ---
 
@@ -13,7 +13,7 @@ Lệnh thực thi:
 dotnet test backend/NewsStudio.sln
 ```
 
-### Chi tiết các ca kiểm thử (13/13 Passed):
+### Chi tiết các ca kiểm thử (23/23 Passed):
 
 | Mã kiểm thử | Nhóm | Tên Test Case | Mô tả & Kỳ vọng | Kết quả |
 |---|---|---|---|:---:|
@@ -30,17 +30,27 @@ dotnet test backend/NewsStudio.sln
 | **TC-11** | Phase 2 | `GetVideoProjectById_ReturnsCorrectProject_Or404IfNotFound` | Truy vấn chi tiết theo ID hoặc trả về 404 nếu không tồn tại | **PASSED** |
 | **TC-12** | Phase 2 | `ProcessVideoProject_EnqueuesJob_AndUpdatesStatus` | Enqueue job Hangfire, kiểm tra cập nhật trạng thái & hủy job | **PASSED** |
 | **TC-13** | Phase 2 | `JobExecutor_SimulatesFullLifecycleTransitions` | Chạy pipeline đầy đủ: kiểm tra chuyển đổi trạng thái và không lưu binary media | **PASSED** |
+| **TC-14** | Phase 3 | `VnExpressAdapter_Extracts_Title_Body_And_Figures` | Bóc tách bài báo VnExpress: trích xuất đúng tiêu đề, mô tả, nội dung, tác giả, và các khối ảnh `figure.tplCaption` kèm caption | **PASSED** |
+| **TC-15** | Phase 3 | `TuoiTreAdapter_Extracts_Correct_Content_And_Images` | Bóc tách bài báo Tuổi Trẻ Online: cấu trúc `VCSortableInLine`/`PhotoCMS_Caption`, lấy đúng ảnh và nội dung | **PASSED** |
+| **TC-16** | Phase 3 | `GenericAdapter_Extracts_OpenGraph_And_Standard_Figures` | Bóc tách trang tin chung qua OpenGraph và thẻ `figure` tiêu chuẩn | **PASSED** |
+| **TC-17** | Phase 3 | `ArticleExtractor_Filters_Ads_Icons_And_Extracts_Only_Valid_Images` | Lọc bỏ triệt để banner quảng cáo (`/ads/`), pixel 1x1, chỉ giữ lại ảnh nội dung chính quy | **PASSED** |
+| **TC-18** | Phase 3 | `ArticleExtractor_Handles_Article_Without_Images_Gracefully` | Xử lý bài báo không chứa ảnh an toàn, không sinh lỗi, danh sách ảnh trả về rỗng hợp lệ | **PASSED** |
+| **TC-19** | Phase 3 | `ImageClassifier_Categorizes_Correctly` | Phân loại chính xác 6 danh mục: Panorama, Character (không nhầm từ), Event, Document, Chart, Unsuitable | **PASSED** |
+| **TC-20** | Phase 3 | `ArticleService_Persists_Article_And_Images_With_RightsStatus_Unknown` | Kiểm tra quy định bản quyền: ảnh lưu vào PostgreSQL bắt buộc có `RightsStatus = Unknown`, không tự chuyển `Authorized` | **PASSED** |
+| **TC-21** | Phase 3 | `ArticlesController_GetArticles_Returns_200OK` | Kiểm tra endpoint GET `/api/articles` trả về 200 OK và danh sách bài báo | **PASSED** |
+| **TC-22** | Phase 3 | `ArticlesController_ExtractArticle_Validates_Url_Format` | Kiểm tra validation endpoint POST `/api/articles/extract` chặn URL không phải HTTP/HTTPS | **PASSED** |
+| **TC-23** | Phase 3 | `ArticlesController_UpdateArticleImage_Updates_RightsStatus_And_SelectedForVideo` | Kiểm tra PUT `/api/articles/{id}/images/{imageId}` cập nhật caption, RightsStatus sau kiểm duyệt và trạng thái chọn cho video | **PASSED** |
 
-**Tổng kết:** `Failed: 0, Passed: 13, Skipped: 0, Total: 13. Duration: 10s`
+**Tổng kết kiểm thử:** `Failed: 0, Passed: 23, Skipped: 0, Total: 23. Duration: 11s`
 
 ---
 
-## 2. Kết quả kiểm tra PostgreSQL Migration
+## 2. Kết quả kiểm tra PostgreSQL Migration & Storage
 
 - **Database:** `newsstudio_db` (PostgreSQL 16)
 - **Số bảng đã tạo:** 14 bảng (13 thực thể nghiệp vụ + 1 bảng lịch sử migration):
   - `Articles`, `ArticleImages`, `VideoProjects`, `VideoScenes`, `VideoScripts`, `VideoAssets`, `ProcessingJobs`, `VideoReviews`, `FacebookAccounts`, `FacebookPosts`, `VideoMetrics`, `SystemSettings`, `AuditLogs`, `__EFMigrationsHistory`.
-- **Hangfire Schema:** `hangfire` schema được tạo tự động với các bảng `job`, `state`, `counter`, `hash`, `set`.
+- **Dữ liệu hình ảnh:** Chỉ lưu trữ metadata (`OriginalImageUrl`, `Caption`, `AltText`, `Order`, `Width`, `Height`, `ImageHash`, `RightsStatus`, `Category`, `Status`), không lưu binary ảnh.
 
 ---
 
@@ -50,16 +60,9 @@ Lệnh thực thi:
 ```bash
 cd frontend && npm run build
 ```
-- **Kết quả:** `✓ built in 4.42s`
+- **Kết quả:** `✓ built in 4.77s`
 - **TypeScript:** Không có lỗi (`tsc` hoàn tất sạch sẽ).
-- Các chunk production được tạo:
+- Các bundle production:
   - `dist/index.html` (1.13 kB)
-  - `dist/assets/index-ytrZbSw7.css` (29.78 kB)
-  - `dist/assets/index-B2S8H7UZ.js` (220.64 kB)
-
----
-
-## 4. Đánh giá chất lượng & Độ sẵn sàng
-- Toàn bộ tiêu chí nghiệm thu của Phase 2 đã hoàn thành xuất sắc.
-- API tiếp nhận yêu cầu, Hangfire Worker nhận job bất đồng bộ, cập nhật trạng thái vào PostgreSQL, và Frontend theo dõi được tiến trình.
-- Sẵn sàng tiến sang Phase 3 (Article Extractor và Image Extractor).
+  - `dist/assets/index-CoxUP7cF.css` (32.63 kB)
+  - `dist/assets/index-n42ust0h.js` (237.01 kB)

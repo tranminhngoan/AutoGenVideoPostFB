@@ -1,47 +1,53 @@
 # AI NEWS STUDIO - NHẬT KÝ TRIỂN KHAI (IMPLEMENTATION LOG)
 
-## Phase 2: Database, Hangfire và Job Processing
+## Phase 3: Article Extractor và Image Extractor
 
 **Thời gian thực hiện:** 15/11/2026
 
 ### 1. Công việc đã thực hiện
-1. **Thiết lập Database PostgreSQL**:
-   - Kiểm tra kết nối cục bộ tới PostgreSQL 16 (Port 5432) thành công.
-   - Tạo cơ sở dữ liệu `newsstudio_db`.
-2. **Cài đặt thư viện EF Core & Hangfire**:
-   - `Npgsql.EntityFrameworkCore.PostgreSQL` (8.0.11)
-   - `Microsoft.EntityFrameworkCore` & `Microsoft.EntityFrameworkCore.Design` (8.0.11)
-   - `Microsoft.Extensions.Diagnostics.HealthChecks.EntityFrameworkCore` (8.0.11)
-   - `Hangfire.Core` & `Hangfire.AspNetCore` (1.8.14)
-   - `Hangfire.PostgreSql` (1.20.10)
-3. **Mô hình hóa 13 thực thể nghiệp vụ (Domain Entities)**:
-   - `Article.cs`, `ArticleImage.cs`, `VideoProject.cs`, `VideoScene.cs`, `VideoScript.cs`, `VideoAsset.cs`, `ProcessingJob.cs`, `VideoReview.cs`, `FacebookEntities.cs`, `ManagementEntities.cs`.
-   - Đáp ứng đầy đủ quy tắc: Primary Key (Guid), Foreign Keys, Indexes, Timestamps, Status, Error Message, và không lưu binary media.
-4. **Xây dựng `ApplicationDbContext` & Migration**:
-   - Cấu hình fluent API trong `OnModelCreating`, thiết lập quan hệ Cascade và SetNull.
-   - Tự động gán `CreatedAtUtc` và `UpdatedAtUtc` trong `SaveChangesAsync`.
-   - Tạo migration `20261115034107_InitialCreate` và áp dụng thành công vào PostgreSQL.
-5. **Cấu hình Hangfire**:
-   - Thiết lập schema `hangfire` trong PostgreSQL.
-   - Tạo Hangfire Server bên trong `NewsStudio.Worker` với giới hạn 2 worker đồng thời.
-   - Thêm Hangfire Dashboard (`/hangfire`) trong `NewsStudio.Api` phục vụ giám sát hàng đợi.
-6. **Xây dựng Pipeline Executor & Services**:
-   - `IVideoProcessingJobExecutor` & `VideoProcessingJobExecutor`: Triển khai pipeline 14 trạng thái, cơ chế kiểm tra `IdempotencyKey`, `[AutomaticRetry(Attempts = 3)]`, timeout, và hủy job an toàn.
-   - `VideoProjectService` & `ProcessingJobService`: Cung cấp nghiệp vụ tạo project, truy vấn dữ liệu, enqueue job và cancel job.
-7. **Triển khai bộ REST API Phase 2**:
-   - `POST /api/video-projects`
-   - `GET /api/video-projects`
-   - `GET /api/video-projects/{id}`
-   - `POST /api/video-projects/{id}/process`
-   - `POST /api/jobs/{id}/cancel`
-   - `GET /api/jobs/{id}`
-8. **Cập nhật Frontend**:
-   - Cập nhật `frontend/src/services/api.ts` với các hàm kết nối API thật.
-   - Cập nhật `CreateVideoPage.tsx` gửi dữ liệu trực tiếp vào database và enqueue job tới Hangfire.
-   - Cập nhật `VideosPage.tsx` truy vấn danh sách dự án video thật từ `/api/video-projects`.
-9. **Kiểm thử tự động**:
-   - Thêm `Phase2DatabaseAndHangfireTests.cs` (5 ca kiểm thử mới cho DB, API, Hangfire, Pipeline).
-   - Chạy toàn bộ 13/13 tests: 100% PASS.
+1. **Bổ sung thư viện bóc tách HTML**:
+   - Tích hợp `HtmlAgilityPack` (1.11.71) vào `NewsStudio.Infrastructure`.
+2. **Xây dựng DTOs & Interfaces**:
+   - `NewsStudio.Application/DTOs/ArticleDtos.cs`: `ExtractArticleRequestDto`, `ArticleResponseDto`, `ArticleImageResponseDto`, `UpdateArticleImageDto`.
+   - `NewsStudio.Application/Interfaces/IArticleServices.cs`: Định nghĩa `IArticleExtractorService`, `IArticleService`, cấu trúc trung gian `ExtractedArticleRaw`, `ExtractedImageRaw`.
+   - `NewsStudio.Application/Interfaces/IImageClassifierService.cs`: Định nghĩa dịch vụ phân loại ảnh tự động.
+3. **Phát triển Adapter bóc tách bài báo (`IWebsiteAdapter`)**:
+   - `GenericArticleAdapter`: Phân tích JSON-LD `NewsArticle`, OpenGraph (`og:title`, `og:description`, `og:image`), semantic HTML (`<article>`, `<figure>`, `<figcaption>`). Tự động xử lý fallback title/author/description/body, loại bỏ quảng cáo (`/ads/`, banners), pixel theo dõi, icon SVG.
+   - `VnExpressAdapter`: Tối ưu hóa bóc tách cho `vnexpress.net` (`h1.title-detail`, `p.description`, đoạn văn `p.Normal` trong `article.fck_detail`, khối ảnh `figure.tplCaption` kèm chú thích `figcaption p.Image`).
+   - `TuoiTreAdapter`: Tối ưu hóa bóc tách cho `tuoitre.vn` (`h1.article-title`, `h2.article-sapo`, khối ảnh `div.VCSortable` / `PhotoCMS_Caption`).
+   - `ThanhNienAdapter` & `DanTriAdapter`: Hỗ trợ chuyên sâu cấu trúc bài viết của báo Thanh Niên và Dân Trí.
+4. **Phát triển dịch vụ trích xuất & chống trùng lặp (`ArticleExtractorService`)**:
+   - Tự động phát hiện domain và ủy quyền adapter phù hợp.
+   - Băm SHA-256 nội dung/URL ảnh để triệt tiêu trùng lặp và đánh thứ tự rõ ràng (`Order`).
+   - Giữ nguyên vẹn thứ tự xuất hiện ảnh trong bài viết.
+5. **Dịch vụ phân loại hình ảnh (`ImageClassifierService`)**:
+   - Phân tích ngữ cảnh nội dung bài và caption để phân loại thành 6 nhóm: `Panorama`, `Character`, `Event`, `Document`, `Chart`, `Unsuitable`.
+   - Sử dụng regex phân tách token chính xác, không tự suy đoán danh tính nhân vật nếu không có căn cứ.
+6. **Dịch vụ lưu trữ nghiệp vụ (`ArticleService`)**:
+   - Kiểm tra trùng lặp URL trước khi bóc tách mới.
+   - Lưu trữ toàn bộ siêu dữ liệu bài báo và hình ảnh vào PostgreSQL.
+   - **Thực thi nghiêm ngặt quy tắc bản quyền**: Mọi hình ảnh trích xuất luôn mặc định `RightsStatus = Unknown`, tuyệt đối không tự nâng cấp thành `Authorized`.
+7. **Tích hợp vào Pipeline Worker (`VideoProcessingJobExecutor`)**:
+   - Trong bước `Extracting`, nếu dự án chưa liên kết bài báo (`ArticleId == null`), worker tự động bóc tách bài báo từ `SourceUrl`, lưu vào DB và gắn `ArticleId`.
+8. **Triển khai REST API (`ArticlesController`)**:
+   - `POST /api/articles/extract`: Tiếp nhận URL, kiểm tra hợp lệ, tải và trích xuất bài báo + ảnh.
+   - `GET /api/articles`: Lấy danh sách bài báo đã trích xuất phân trang.
+   - `GET /api/articles/{id}`: Xem chi tiết bài báo kèm danh sách toàn bộ ảnh và metadata.
+   - `PUT /api/articles/{id}/images/{imageId}`: Cập nhật caption, phân loại ảnh, trạng thái bản quyền (RightsStatus) và cờ chọn dùng cho video.
+9. **Cập nhật giao diện Frontend (ReactJS + TS)**:
+   - Cập nhật `frontend/src/services/api.ts` với đầy đủ API bài báo và cập nhật ảnh.
+   - Nâng cấp màn hình `ArticlesPage.tsx`: Form dán link trích xuất bài báo trực tiếp, danh sách bài báo đã crawl, modal xem chi tiết nội dung, modal chỉnh sửa caption và phân quyền ảnh, thông báo cảnh báo bản quyền trực quan.
+10. **Kiểm thử tự động**:
+    - Xây dựng `Phase3ArticleAndImageExtractorTests.cs` (10 ca kiểm thử bao phủ bóc tách VnExpress, Tuổi Trẻ, Generic, lọc quảng cáo, xử lý bài không có ảnh, phân loại ảnh, lưu DB quyền Unknown, và các endpoint API).
+    - Toàn bộ 23/23 tests xUnit đạt 100% PASS.
+
+---
+
+## Phase 2: Database, Hangfire và Job Processing
+
+**Thời gian thực hiện:** 15/11/2026
+
+*(Xem chi tiết trong tài liệu nghiệm thu Phase 2)*
 
 ---
 
