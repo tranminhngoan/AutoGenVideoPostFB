@@ -2,7 +2,7 @@
 
 **Thời gian kiểm thử:** 15/11/2026  
 **Môi trường:** Local Windows (PostgreSQL 16, Node v24.14.1, .NET 8 runtime)  
-**Tình trạng:** **23/23 PASS (100%)**
+**Tình trạng:** **30/30 PASS (100%)**
 
 ---
 
@@ -13,7 +13,7 @@ Lệnh thực thi:
 dotnet test backend/NewsStudio.sln
 ```
 
-### Chi tiết các ca kiểm thử (23/23 Passed):
+### Chi tiết các ca kiểm thử (30/30 Passed):
 
 | Mã kiểm thử | Nhóm | Tên Test Case | Mô tả & Kỳ vọng | Kết quả |
 |---|---|---|---|:---:|
@@ -40,17 +40,24 @@ dotnet test backend/NewsStudio.sln
 | **TC-21** | Phase 3 | `ArticlesController_GetArticles_Returns_200OK` | Kiểm tra endpoint GET `/api/articles` trả về 200 OK và danh sách bài báo | **PASSED** |
 | **TC-22** | Phase 3 | `ArticlesController_ExtractArticle_Validates_Url_Format` | Kiểm tra validation endpoint POST `/api/articles/extract` chặn URL không phải HTTP/HTTPS | **PASSED** |
 | **TC-23** | Phase 3 | `ArticlesController_UpdateArticleImage_Updates_RightsStatus_And_SelectedForVideo` | Kiểm tra PUT `/api/articles/{id}/images/{imageId}` cập nhật caption, RightsStatus sau kiểm duyệt và trạng thái chọn cho video | **PASSED** |
+| **TC-24** | Phase 4 | `AIEditor_Generates_Script_With_Target_Duration_45_To_60_Seconds` | Kịch bản biên tập đạt chuẩn thời lượng đọc 45–60 giây, dung lượng từ chuẩn, có đầy đủ Hook, Title, VoiceOver, SourceAttribution | **PASSED** |
+| **TC-25** | Phase 4 | `AIEditor_Separates_KeyFacts_And_Commentary` | Tách bạch tuyệt đối giữa Sự thật khách quan (Key Facts) và Bình luận biên tập (Analysis) | **PASSED** |
+| **TC-26** | Phase 4 | `ScriptPlanner_Creates_6_To_10_Scenes_Matching_Duration` | Lập 6–10 phân cảnh liên tiếp, tổng thời lượng chuẩn 45–60 giây, thời gian các cảnh nối tiếp chính xác | **PASSED** |
+| **TC-27** | Phase 4 | `ScriptPlanner_Strictly_Uses_Article_Images_Or_Falls_Back_To_Typography` | Chỉ gán ảnh thuộc bài báo hiện tại; các cảnh thiếu ảnh tự động chuyển sang Typography / MetricChart (không sinh ảnh AI / ảnh ngoài) | **PASSED** |
+| **TC-28** | Phase 4 | `ScriptPlanner_When_Article_Has_Zero_Images_All_Scenes_Use_Typography` | Xử lý an toàn khi bài báo không có ảnh: 100% scenes chuyển sang Typography và MetricChart nền tối | **PASSED** |
+| **TC-29** | Phase 4 | `AiEditorFactory_Switches_Between_Gemini_And_Claude` | Factory chuyển đổi chính xác nhà cung cấp AI theo tham số cấu hình: Gemini và Claude | **PASSED** |
+| **TC-30** | Phase 4 | `VideoProjectScriptsController_Full_Workflow` | Luồng REST API trọn vẹn: tạo kịch bản AI, truy vấn kịch bản, sửa kịch bản, và đồng bộ 6-10 phân cảnh | **PASSED** |
 
-**Tổng kết kiểm thử:** `Failed: 0, Passed: 23, Skipped: 0, Total: 23. Duration: 11s`
+**Tổng kết kiểm thử:** `Failed: 0, Passed: 30, Skipped: 0, Total: 30. Duration: 10s`
 
 ---
 
 ## 2. Kết quả kiểm tra PostgreSQL Migration & Storage
 
 - **Database:** `newsstudio_db` (PostgreSQL 16)
-- **Số bảng đã tạo:** 14 bảng (13 thực thể nghiệp vụ + 1 bảng lịch sử migration):
-  - `Articles`, `ArticleImages`, `VideoProjects`, `VideoScenes`, `VideoScripts`, `VideoAssets`, `ProcessingJobs`, `VideoReviews`, `FacebookAccounts`, `FacebookPosts`, `VideoMetrics`, `SystemSettings`, `AuditLogs`, `__EFMigrationsHistory`.
-- **Dữ liệu hình ảnh:** Chỉ lưu trữ metadata (`OriginalImageUrl`, `Caption`, `AltText`, `Order`, `Width`, `Height`, `ImageHash`, `RightsStatus`, `Category`, `Status`), không lưu binary ảnh.
+- **Bảng `VideoScripts`**: Đã lưu trữ kịch bản biên tập (Title, Hook, VoiceOverScript, KeyFacts, Context, Analysis, Conclusion, SourceAttribution, TokenUsage, EstimatedCostUsd).
+- **Bảng `VideoScenes`**: Đã lưu trữ 6–10 phân cảnh (SceneNumber, StartTimeSeconds, EndTimeSeconds, VoiceText, OnScreenText, SelectedArticleImageId, MotionType, TransitionType, ScenePurpose).
+- **Ràng buộc:** Chỉ liên kết `ArticleImageId` của bài báo hiện tại. Tuyệt đối không lưu binary media vào PostgreSQL.
 
 ---
 
@@ -60,9 +67,9 @@ Lệnh thực thi:
 ```bash
 cd frontend && npm run build
 ```
-- **Kết quả:** `✓ built in 4.77s`
+- **Kết quả:** `✓ built in 4.89s`
 - **TypeScript:** Không có lỗi (`tsc` hoàn tất sạch sẽ).
-- Các bundle production:
+- Bundle production:
   - `dist/index.html` (1.13 kB)
-  - `dist/assets/index-CoxUP7cF.css` (32.63 kB)
-  - `dist/assets/index-n42ust0h.js` (237.01 kB)
+  - `dist/assets/index-8XrZ7pwz.css` (33.45 kB)
+  - `dist/assets/index-DuMiR1ox.js` (244.99 kB)

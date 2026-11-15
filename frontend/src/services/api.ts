@@ -181,8 +181,116 @@ export const api = {
       throw new Error(err.error || 'Cập nhật thông tin ảnh thất bại');
     }
     return await res.json();
+  },
+
+  // Phase 4 AI Editor & Script Planner APIs
+  async generateScript(projectId: string, options?: { aiProvider?: string; modelName?: string; targetDurationSeconds?: number }): Promise<VideoScriptDto> {
+    const res = await fetch(`${API_BASE}/video-projects/${projectId}/script/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(options || {})
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Tạo kịch bản AI thất bại');
+    }
+    return await res.json();
+  },
+
+  async getScript(projectId: string): Promise<VideoScriptDto | null> {
+    try {
+      const res = await fetch(`${API_BASE}/video-projects/${projectId}/script`);
+      if (!res.ok) return null;
+      return await res.json();
+    } catch {
+      return null;
+    }
+  },
+
+  async updateScript(projectId: string, data: Partial<VideoScriptDto>): Promise<VideoScriptDto> {
+    const res = await fetch(`${API_BASE}/video-projects/${projectId}/script`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Cập nhật kịch bản thất bại');
+    }
+    return await res.json();
+  },
+
+  async planScenes(projectId: string): Promise<VideoScenePlanDto[]> {
+    const res = await fetch(`${API_BASE}/video-projects/${projectId}/scenes/plan`, {
+      method: 'POST'
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Phân cảnh kịch bản thất bại');
+    }
+    return await res.json();
+  },
+
+  async getScenes(projectId: string): Promise<VideoScenePlanDto[]> {
+    try {
+      const res = await fetch(`${API_BASE}/video-projects/${projectId}/scenes`);
+      if (!res.ok) return [];
+      return await res.json();
+    } catch {
+      return [];
+    }
+  },
+
+  async updateScenes(projectId: string, scenes: VideoScenePlanDto[]): Promise<VideoScenePlanDto[]> {
+    const res = await fetch(`${API_BASE}/video-projects/${projectId}/scenes`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ scenes })
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Cập nhật phân cảnh thất bại');
+    }
+    return await res.json();
   }
 };
+
+export interface VideoScriptDto {
+  id: string;
+  videoProjectId: string;
+  title: string;
+  hook: string;
+  voiceOverScript: string;
+  keyFacts: string;
+  context: string;
+  analysis: string;
+  conclusion: string;
+  sourceAttribution: string;
+  aiProvider: string;
+  modelName: string;
+  tokenUsage: number;
+  estimatedCostUsd?: number;
+  status: string;
+  wordCount: number;
+  estimatedReadingSeconds: number;
+}
+
+export interface VideoScenePlanDto {
+  id?: string;
+  sceneNumber: number;
+  startTimeSeconds: number;
+  endTimeSeconds: number;
+  durationSeconds: number;
+  voiceText: string;
+  onScreenText: string;
+  selectedArticleImageId?: string;
+  imageUrl?: string;
+  imageCaption?: string;
+  visualType: string;
+  motionType: string;
+  transitionType: string;
+  scenePurpose: string;
+}
 
 export interface ArticleImageDto {
   id: string;

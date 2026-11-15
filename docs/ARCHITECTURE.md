@@ -121,3 +121,32 @@ Tác vụ xử lý video trải qua 14 trạng thái kế tiếp:
   4. `Document` (Tài liệu / Văn bản / Quyết định)
   5. `Chart` (Biểu đồ / Đồ thị / Số liệu)
   6. `Unsuitable` (Không phù hợp / Quảng cáo)
+
+---
+
+## 6. Kiến trúc AI Editor và Script Planner (Phase 4)
+
+### 6.1. Thiết kế đa nhà cung cấp AI (`IAIEditorService` & `IAiEditorFactory`)
+Hệ thống áp dụng mẫu **Factory / Strategy** cho phép thay đổi nhà cung cấp AI linh hoạt giữa Google Gemini và Anthropic Claude:
+- `GeminiAiEditorService`: Sử dụng REST API của Gemini (`gemini-1.5-flash`, `gemini-1.5-pro`), tính toán token usage và chi phí ước tính ($0.075 / 1M input, $0.30 / 1M output).
+- `ClaudeAiEditorService`: Sử dụng REST API của Claude (`claude-3-5-haiku-20241022`, `claude-3-5-sonnet-20241022`), tính toán token usage và chi phí ước tính.
+- `Deterministic Editorial Engine`: Động cơ tổng hợp tin tức ngữ nghĩa cục bộ đảm bảo hệ thống và các luồng kiểm thử chạy ổn định ngay cả khi chưa có API key ngoài hoặc mất kết nối mạng.
+
+### 6.2. Cấu trúc kịch bản tin tức ngắn (45–60 giây)
+- **Chuẩn thời lượng**: 110–150 từ tiếng Việt, tốc độ đọc 2.3 từ/giây.
+- **Tách bạch Fact vs Commentary**:
+  - `KeyFacts`: Dữ kiện khách quan (số liệu, thời gian, sự kiện, địa điểm).
+  - `Context`: Bối cảnh cần biết.
+  - `Analysis`: Đánh giá tác động, góc nhìn chuyên môn, tạo giá trị gia tăng riêng cho video.
+  - `Hook`: 3-5 giây mở đầu cuốn hút, giữ chân người xem lướt Reels.
+  - `Conclusion`: Lời kết súc tích hoặc câu hỏi mở.
+  - `SourceAttribution`: Dẫn nguồn báo chí chính thức (ví dụ: 'Theo VnExpress').
+
+### 6.3. Script Planner (6–10 Scenes) & Quy tắc gán hình ảnh
+- `ScriptPlannerService` tự động phân tách kịch bản thành 6 đến 10 phân cảnh liên tục:
+  - `StartTimeSeconds` và `EndTimeSeconds` phân bổ theo độ dài lời thoại, tổng thời lượng nằm trọn vẹn trong 45–60 giây.
+  - `OnScreenText`: Dòng chữ nổi bật ngắn gọn (3-7 từ) viết hoa điểm nhấn.
+  - **Quy tắc gán hình ảnh**:
+    - **Chỉ sử dụng `ArticleImageId` của bài báo hiện tại**, ưu tiên ảnh hợp lệ (`RightsStatus != Rejected`, `Category != Unsuitable`).
+    - Nếu bài báo thiếu ảnh hoặc không có ảnh: Tự động gán `VisualType = "Typography"` hoặc `"MetricChart"`, hiển thị typography chuyển động trên nền tối. Tuyệt đối không sinh ảnh AI, không lấy ảnh ngoài.
+  - Cấu hình chuyển động: `MotionType` (`ZoomIn`, `ZoomOut`, `PanLeft`, `PanRight`, `KenBurns`) và `TransitionType` (`Fade`, `Slide`, `Cut`).

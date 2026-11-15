@@ -1,45 +1,53 @@
 # AI NEWS STUDIO - NHẬT KÝ TRIỂN KHAI (IMPLEMENTATION LOG)
 
-## Phase 3: Article Extractor và Image Extractor
+## Phase 4: AI Editor và Script Planner
 
 **Thời gian thực hiện:** 15/11/2026
 
 ### 1. Công việc đã thực hiện
-1. **Bổ sung thư viện bóc tách HTML**:
-   - Tích hợp `HtmlAgilityPack` (1.11.71) vào `NewsStudio.Infrastructure`.
-2. **Xây dựng DTOs & Interfaces**:
-   - `NewsStudio.Application/DTOs/ArticleDtos.cs`: `ExtractArticleRequestDto`, `ArticleResponseDto`, `ArticleImageResponseDto`, `UpdateArticleImageDto`.
-   - `NewsStudio.Application/Interfaces/IArticleServices.cs`: Định nghĩa `IArticleExtractorService`, `IArticleService`, cấu trúc trung gian `ExtractedArticleRaw`, `ExtractedImageRaw`.
-   - `NewsStudio.Application/Interfaces/IImageClassifierService.cs`: Định nghĩa dịch vụ phân loại ảnh tự động.
-3. **Phát triển Adapter bóc tách bài báo (`IWebsiteAdapter`)**:
-   - `GenericArticleAdapter`: Phân tích JSON-LD `NewsArticle`, OpenGraph (`og:title`, `og:description`, `og:image`), semantic HTML (`<article>`, `<figure>`, `<figcaption>`). Tự động xử lý fallback title/author/description/body, loại bỏ quảng cáo (`/ads/`, banners), pixel theo dõi, icon SVG.
-   - `VnExpressAdapter`: Tối ưu hóa bóc tách cho `vnexpress.net` (`h1.title-detail`, `p.description`, đoạn văn `p.Normal` trong `article.fck_detail`, khối ảnh `figure.tplCaption` kèm chú thích `figcaption p.Image`).
-   - `TuoiTreAdapter`: Tối ưu hóa bóc tách cho `tuoitre.vn` (`h1.article-title`, `h2.article-sapo`, khối ảnh `div.VCSortable` / `PhotoCMS_Caption`).
-   - `ThanhNienAdapter` & `DanTriAdapter`: Hỗ trợ chuyên sâu cấu trúc bài viết của báo Thanh Niên và Dân Trí.
-4. **Phát triển dịch vụ trích xuất & chống trùng lặp (`ArticleExtractorService`)**:
-   - Tự động phát hiện domain và ủy quyền adapter phù hợp.
-   - Băm SHA-256 nội dung/URL ảnh để triệt tiêu trùng lặp và đánh thứ tự rõ ràng (`Order`).
-   - Giữ nguyên vẹn thứ tự xuất hiện ảnh trong bài viết.
-5. **Dịch vụ phân loại hình ảnh (`ImageClassifierService`)**:
-   - Phân tích ngữ cảnh nội dung bài và caption để phân loại thành 6 nhóm: `Panorama`, `Character`, `Event`, `Document`, `Chart`, `Unsuitable`.
-   - Sử dụng regex phân tách token chính xác, không tự suy đoán danh tính nhân vật nếu không có căn cứ.
-6. **Dịch vụ lưu trữ nghiệp vụ (`ArticleService`)**:
-   - Kiểm tra trùng lặp URL trước khi bóc tách mới.
-   - Lưu trữ toàn bộ siêu dữ liệu bài báo và hình ảnh vào PostgreSQL.
-   - **Thực thi nghiêm ngặt quy tắc bản quyền**: Mọi hình ảnh trích xuất luôn mặc định `RightsStatus = Unknown`, tuyệt đối không tự nâng cấp thành `Authorized`.
-7. **Tích hợp vào Pipeline Worker (`VideoProcessingJobExecutor`)**:
-   - Trong bước `Extracting`, nếu dự án chưa liên kết bài báo (`ArticleId == null`), worker tự động bóc tách bài báo từ `SourceUrl`, lưu vào DB và gắn `ArticleId`.
-8. **Triển khai REST API (`ArticlesController`)**:
-   - `POST /api/articles/extract`: Tiếp nhận URL, kiểm tra hợp lệ, tải và trích xuất bài báo + ảnh.
-   - `GET /api/articles`: Lấy danh sách bài báo đã trích xuất phân trang.
-   - `GET /api/articles/{id}`: Xem chi tiết bài báo kèm danh sách toàn bộ ảnh và metadata.
-   - `PUT /api/articles/{id}/images/{imageId}`: Cập nhật caption, phân loại ảnh, trạng thái bản quyền (RightsStatus) và cờ chọn dùng cho video.
-9. **Cập nhật giao diện Frontend (ReactJS + TS)**:
-   - Cập nhật `frontend/src/services/api.ts` với đầy đủ API bài báo và cập nhật ảnh.
-   - Nâng cấp màn hình `ArticlesPage.tsx`: Form dán link trích xuất bài báo trực tiếp, danh sách bài báo đã crawl, modal xem chi tiết nội dung, modal chỉnh sửa caption và phân quyền ảnh, thông báo cảnh báo bản quyền trực quan.
-10. **Kiểm thử tự động**:
-    - Xây dựng `Phase3ArticleAndImageExtractorTests.cs` (10 ca kiểm thử bao phủ bóc tách VnExpress, Tuổi Trẻ, Generic, lọc quảng cáo, xử lý bài không có ảnh, phân loại ảnh, lưu DB quyền Unknown, và các endpoint API).
-    - Toàn bộ 23/23 tests xUnit đạt 100% PASS.
+1. **Xây dựng DTOs & Domain Models**:
+   - `NewsStudio.Application/DTOs/ScriptDtos.cs`: `EditorialScriptPromptInput`, `EditorialScriptResult`, `ScriptPlanningInput`, `VideoScenePlanDto`, `GenerateScriptRequestDto`, `UpdateScriptRequestDto`, `VideoScriptResponseDto`, `UpdateScenesRequestDto`.
+2. **Thiết kế Prompt Biên tập Chuyên biệt**:
+   - `NewsStudio.Infrastructure/Ai/PromptTemplates.cs`: Xây dựng prompt chuẩn báo chí truyền hình cho video ngắn 45–60 giây (110–150 từ), câu ngắn ngắt nhịp dứt khoát, cấu trúc JSON bắt buộc tách riêng: `VideoTitle`, `Hook`, `VoiceOverScript`, `KeyFacts`, `Context`, `Analysis`, `Conclusion`, `SourceAttribution`.
+3. **Phát triển AI Editor Service cho Gemini & Claude**:
+   - `GeminiAiEditorService`: Tích hợp Google Gemini qua REST API, đọc API key từ cấu hình/env, hỗ trợ `gemini-1.5-flash` và `gemini-1.5-pro`, tính toán token usage và chi phí ước tính. Có deterministic editorial synthesis engine đảm bảo chạy mượt mà ngay cả khi offline.
+   - `ClaudeAiEditorService`: Tích hợp Anthropic Claude qua REST API (`/v1/messages`), hỗ trợ `claude-3-5-haiku` và `claude-3-5-sonnet`, theo dõi token input/output và chi phí ước tính.
+   - `AiEditorFactory`: Cho phép thay đổi nhà cung cấp AI theo yêu cầu (`AiProviderType.Gemini` / `AiProviderType.Claude`).
+4. **Phát triển Script Planner Service (`ScriptPlannerService`)**:
+   - Phân chia kịch bản thành **6 đến 10 scenes** liên tiếp, thời lượng mỗi scene từ 4 đến 9 giây, tổng thời lượng nằm trọn vẹn trong 45–60 giây.
+   - **Thực thi nghiêm ngặt quy tắc hình ảnh**: Chỉ sử dụng `ArticleImageId` của bài báo hiện tại. Nếu thiếu ảnh hoặc bài báo không có ảnh: tự động chuyển `VisualType` sang **Typography** hoặc **MetricChart** / **Timeline**, hiển thị câu nổi bật `OnScreenText`. Tuyệt đối không sinh ảnh AI, không tìm ảnh ngoài.
+   - Gán `MotionType` (`ZoomIn`, `ZoomOut`, `PanLeft`, `PanRight`, `KenBurns`) và `TransitionType` (`Fade`, `Slide`, `Cut`).
+5. **Xây dựng dịch vụ quản lý kịch bản (`ScriptService`)**:
+   - Tự động bóc tách bài báo nếu dự án chưa có nội dung.
+   - Lưu trữ `VideoScript` và danh sách `VideoScenes` vào PostgreSQL.
+   - Cung cấp các thao tác tạo, truy vấn, chỉnh sửa kịch bản và phân cảnh.
+6. **Tích hợp vào Pipeline Worker (`VideoProcessingJobExecutor`)**:
+   - Bước `Analyzing` & `Scripting`: Tự động gọi `IScriptService.GenerateScriptForProjectAsync` tạo kịch bản 45-60s.
+   - Bước `PlanningScenes`: Tự động gọi `IScriptService.PlanScenesForProjectAsync` lập 6-10 scenes và lưu DB.
+7. **Triển khai REST API (`VideoProjectScriptsController`)**:
+   - `POST /api/video-projects/{id}/script/generate`: Tạo kịch bản AI (chọn Gemini hoặc Claude).
+   - `GET /api/video-projects/{id}/script`: Xem kịch bản hiện tại.
+   - `PUT /api/video-projects/{id}/script`: Chỉnh sửa kịch bản thủ công.
+   - `POST /api/video-projects/{id}/scenes/plan`: Lập 6-10 phân cảnh từ kịch bản.
+   - `GET /api/video-projects/{id}/scenes`: Lấy danh sách phân cảnh.
+   - `PUT /api/video-projects/{id}/scenes`: Cập nhật phân cảnh.
+8. **Nâng cấp giao diện Frontend (ReactJS + TS - AI First)**:
+   - Cập nhật `frontend/src/services/api.ts` với các API kịch bản và phân cảnh.
+   - Nâng cấp `VideoDetailPage.tsx`:
+     - Tích hợp switcher nhà cung cấp AI (Gemini / Claude).
+     - Tab Kịch bản: Hiển thị tách biệt **Key Facts** (sự thật bài báo) và **Analysis** (bình luận biên tập).
+     - Tab Phân cảnh: Hiển thị 6-10 cards phân cảnh với mốc thời gian, loại visual (Ảnh bài viết vs Nền Typography), motion, transition, giọng đọc và chữ nổi bật.
+9. **Kiểm thử tự động**:
+   - Xây dựng `Phase4AiEditorAndScriptPlannerTests.cs` (7 ca kiểm thử chuyên sâu cho thời lượng 45-60s, tách Fact vs Commentary, phân chia 6-10 scenes, chỉ dùng ảnh bài báo hoặc typography, chuyển đổi provider Gemini/Claude, và trọn vẹn luồng REST API).
+   - Chạy toàn bộ 30/30 tests xUnit: 100% PASS.
+
+---
+
+## Phase 3: Article Extractor và Image Extractor
+
+**Thời gian thực hiện:** 15/11/2026
+
+*(Xem chi tiết trong tài liệu nghiệm thu Phase 3)*
 
 ---
 

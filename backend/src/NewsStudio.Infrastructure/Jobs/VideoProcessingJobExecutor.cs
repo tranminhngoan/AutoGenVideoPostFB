@@ -12,15 +12,18 @@ public class VideoProcessingJobExecutor : IVideoProcessingJobExecutor
 {
     private readonly IApplicationDbContext _context;
     private readonly IArticleService _articleService;
+    private readonly IScriptService _scriptService;
     private readonly ILogger<VideoProcessingJobExecutor> _logger;
 
     public VideoProcessingJobExecutor(
         IApplicationDbContext context,
         IArticleService articleService,
+        IScriptService scriptService,
         ILogger<VideoProcessingJobExecutor> logger)
     {
         _context = context;
         _articleService = articleService;
+        _scriptService = scriptService;
         _logger = logger;
     }
 
@@ -100,14 +103,36 @@ public class VideoProcessingJobExecutor : IVideoProcessingJobExecutor
 
             // Step 3: Analyzing & Scripting
             await AdvanceStepAsync(project, jobRecord, VideoProjectStatus.Analyzing, "AI analyzing key facts and context", 45, cancellationToken);
-            await Task.Delay(1000, cancellationToken);
+            await Task.Delay(300, cancellationToken);
 
             await AdvanceStepAsync(project, jobRecord, VideoProjectStatus.Scripting, "AI generating editorial script (45-60s)", 60, cancellationToken);
-            await Task.Delay(1000, cancellationToken);
+            if (project.ArticleId != null)
+            {
+                try
+                {
+                    await _scriptService.GenerateScriptForProjectAsync(project.Id, null, cancellationToken);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Could not generate AI script automatically for Project {ProjectId}: {Msg}", project.Id, ex.Message);
+                }
+            }
+            await Task.Delay(300, cancellationToken);
 
             // Step 4: Planning Scenes
             await AdvanceStepAsync(project, jobRecord, VideoProjectStatus.PlanningScenes, "Storyboarding 6-10 scenes with article images", 75, cancellationToken);
-            await Task.Delay(1000, cancellationToken);
+            if (project.ArticleId != null)
+            {
+                try
+                {
+                    await _scriptService.PlanScenesForProjectAsync(project.Id, cancellationToken);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Could not plan scenes automatically for Project {ProjectId}: {Msg}", project.Id, ex.Message);
+                }
+            }
+            await Task.Delay(300, cancellationToken);
 
             // Step 5: Generating Audio (TTS)
             await AdvanceStepAsync(project, jobRecord, VideoProjectStatus.GeneratingAudio, "Synthesizing Vietnamese voice-over audio", 85, cancellationToken);

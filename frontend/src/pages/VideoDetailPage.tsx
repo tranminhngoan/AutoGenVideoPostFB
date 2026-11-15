@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   ArrowLeft,
   Play,
@@ -10,8 +10,16 @@ import {
   Film,
   FileText,
   Sliders,
-  CheckSquare
+  CheckSquare,
+  Sparkles,
+  Layers,
+  Clock,
+  Eye,
+  Type,
+  AlertCircle
 } from 'lucide-react';
+import { api, VideoScriptDto, VideoScenePlanDto } from '../services/api';
+import { VideoProject } from '../types';
 
 interface VideoDetailPageProps {
   projectId: string;
@@ -19,64 +27,121 @@ interface VideoDetailPageProps {
 }
 
 export const VideoDetailPage: React.FC<VideoDetailPageProps> = ({ projectId, onBack }) => {
-  const [activeTab, setActiveTab] = useState<'script' | 'scenes' | 'qc'>('qc');
+  const [activeTab, setActiveTab] = useState<'script' | 'scenes' | 'qc'>('script');
+  const [project, setProject] = useState<VideoProject | null>(null);
+  const [script, setScript] = useState<VideoScriptDto | null>(null);
+  const [scenes, setScenes] = useState<VideoScenePlanDto[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [generating, setGenerating] = useState<boolean>(false);
+  const [selectedProvider, setSelectedProvider] = useState<'Gemini' | 'Claude'>('Gemini');
   const [approved, setApproved] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  const scenes = [
-    {
-      num: 1,
-      purpose: 'Hook',
-      duration: '6s',
-      voice: 'Sáng nay, tuyến metro số 1 Bến Thành - Suối Tiên chính thức mở cửa đón những vị khách đầu tiên sau hơn 10 năm chờ đợi.',
-      text: 'METRO SỐ 1 CHÍNH THỨC VẬN HÀNH THƯƠNG MẠI',
-      motion: 'ZoomIn',
-      img: 'https://images.unsplash.com/photo-1544620347-c4fd4a3d5957?w=400'
-    },
-    {
-      num: 2,
-      purpose: 'Fact',
-      duration: '8s',
-      voice: 'Toàn tuyến dài gần 20 km với 14 ga, kết nối trung tâm Quận 1 tới cửa ngõ TP. Thủ Đức trong chỉ 30 phút.',
-      text: 'CHIỀU DÀI 20 KM • 14 GA HIỆN ĐẠI',
-      motion: 'PanLeft',
-      img: 'https://images.unsplash.com/photo-1517649763962-0c623266ddc0?w=400'
-    },
-    {
-      num: 3,
-      purpose: 'Context',
-      duration: '7s',
-      voice: 'Trong tháng đầu tiên, hành khách được trải nghiệm hoàn toàn miễn phí, mang lại diện mạo giao thông công cộng hiện đại cho đô thị.',
-      text: 'MIỄN PHÍ VÉ THÁNG ĐẦU TIÊN CHO TOÀN DÂN',
-      motion: 'KenBurns',
-      img: 'https://images.unsplash.com/photo-1518770660439-4636190af475?w=400'
+  useEffect(() => {
+    loadData();
+  }, [projectId]);
+
+  const loadData = async () => {
+    setLoading(true);
+    setErrorMsg(null);
+    try {
+      const [projData, scriptData, scenesData] = await Promise.all([
+        api.getVideoProjectById(projectId),
+        api.getScript(projectId),
+        api.getScenes(projectId)
+      ]);
+      setProject(projData);
+      setScript(scriptData);
+      setScenes(scenesData);
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Lỗi tải thông tin dự án');
+    } finally {
+      setLoading(false);
     }
-  ];
+  };
+
+  const handleGenerateScript = async () => {
+    setGenerating(true);
+    setErrorMsg(null);
+    try {
+      const generatedScript = await api.generateScript(projectId, {
+        aiProvider: selectedProvider
+      });
+      setScript(generatedScript);
+
+      // Reload scenes planned automatically
+      const updatedScenes = await api.getScenes(projectId);
+      setScenes(updatedScenes);
+      setActiveTab('script');
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Lỗi tạo kịch bản AI');
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const handlePlanScenes = async () => {
+    setGenerating(true);
+    setErrorMsg(null);
+    try {
+      const planned = await api.planScenes(projectId);
+      setScenes(planned);
+      setActiveTab('scenes');
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Lỗi lập phân cảnh');
+    } finally {
+      setGenerating(false);
+    }
+  };
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto">
       {/* Top Bar Navigation */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <button
           onClick={onBack}
-          className="inline-flex items-center space-x-2 text-xs font-semibold text-gray-400 hover:text-white transition"
+          className="inline-flex items-center space-x-2 text-xs font-semibold text-gray-400 hover:text-white transition self-start"
         >
           <ArrowLeft className="w-4 h-4" />
           <span>Quay lại danh sách video</span>
         </button>
-        <div className="flex items-center space-x-3">
+
+        <div className="flex flex-wrap items-center gap-3">
+          {/* AI Provider Switcher */}
+          <div className="flex items-center bg-[#0B0F19] rounded-xl border border-gray-800 p-1 text-xs">
+            <button
+              onClick={() => setSelectedProvider('Gemini')}
+              className={`px-3 py-1 rounded-lg transition font-medium ${
+                selectedProvider === 'Gemini' ? 'bg-indigo-600 text-white' : 'text-gray-400 hover:text-white'
+              }`}
+            >
+              Gemini
+            </button>
+            <button
+              onClick={() => setSelectedProvider('Claude')}
+              className={`px-3 py-1 rounded-lg transition font-medium ${
+                selectedProvider === 'Claude' ? 'bg-indigo-600 text-white' : 'text-gray-400 hover:text-white'
+              }`}
+            >
+              Claude
+            </button>
+          </div>
+
           <button
-            onClick={() => alert('Yêu cầu render lại video đã được gửi đến Worker!')}
-            className="px-3.5 py-2 rounded-xl bg-[#1F2937] hover:bg-[#374151] text-gray-300 text-xs font-medium flex items-center gap-1.5 transition"
+            onClick={handleGenerateScript}
+            disabled={generating}
+            className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white text-xs font-semibold flex items-center gap-1.5 transition disabled:opacity-50 shadow-md shadow-indigo-600/20"
           >
-            <RefreshCw className="w-3.5 h-3.5" />
-            <span>Render lại</span>
+            <Sparkles className={`w-3.5 h-3.5 ${generating ? 'animate-spin' : ''}`} />
+            <span>{generating ? 'AI đang viết...' : 'Tạo kịch bản AI'}</span>
           </button>
+
           <button
             onClick={() => setApproved(!approved)}
             className={`px-4 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition ${
               approved
                 ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
-                : 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-600/30'
+                : 'bg-gray-800 hover:bg-gray-700 text-gray-200 border border-gray-700'
             }`}
           >
             <CheckCircle className="w-4 h-4" />
@@ -84,6 +149,13 @@ export const VideoDetailPage: React.FC<VideoDetailPageProps> = ({ projectId, onB
           </button>
         </div>
       </div>
+
+      {errorMsg && (
+        <div className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-center gap-2">
+          <AlertCircle className="w-4 h-4 shrink-0" />
+          <span>{errorMsg}</span>
+        </div>
+      )}
 
       {/* Main Review Workspace */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
@@ -96,7 +168,7 @@ export const VideoDetailPage: React.FC<VideoDetailPageProps> = ({ projectId, onB
                 TIN NÓNG 24H
               </span>
               <span className="text-[10px] font-mono text-gray-400 bg-black/60 px-2 py-0.5 rounded">
-                00:54 / 00:54
+                00:{script ? script.estimatedReadingSeconds : '50'} / 00:60
               </span>
             </div>
 
@@ -111,59 +183,259 @@ export const VideoDetailPage: React.FC<VideoDetailPageProps> = ({ projectId, onB
             {/* Simulated Animated Subtitle & Attribution */}
             <div className="relative z-10 space-y-3">
               <div className="p-2.5 rounded-xl bg-black/80 backdrop-blur border border-amber-500/40 text-center">
-                <span className="text-amber-300 font-extrabold text-xs tracking-wide">
-                  METRO SỐ 1 CHÍNH THỨC VẬN HÀNH THƯƠNG MẠI
+                <span className="text-amber-300 font-extrabold text-xs tracking-wide uppercase line-clamp-2">
+                  {script ? script.title : (project ? project.title : 'METRO SỐ 1 CHÍNH THỨC VẬN HÀNH THƯƠNG MẠI')}
                 </span>
               </div>
               <div className="flex items-center justify-between text-[10px] text-gray-400 px-1">
-                <span>Nguồn: VnExpress</span>
-                <span>FFmpeg 1080×1920</span>
+                <span>{project ? project.publisher : 'Báo điện tử'}</span>
+                <span>FFmpeg 1080×1920 (9:16)</span>
               </div>
             </div>
 
-            {/* Temporary background */}
-            <div className="absolute inset-0 bg-gradient-to-t from-black via-gray-900 to-black opacity-90" />
+            {/* Background Image / Gradient */}
+            {scenes.length > 0 && scenes[0].imageUrl ? (
+              <img
+                src={scenes[0].imageUrl}
+                alt="Scene visual"
+                className="absolute inset-0 w-full h-full object-cover opacity-60"
+              />
+            ) : (
+              <div className="absolute inset-0 bg-gradient-to-t from-black via-gray-900 to-black opacity-90" />
+            )}
           </div>
 
           <p className="text-xs text-gray-500 mt-3 text-center">
-            * File video tạm sẽ tự động dọn dẹp sau khi đăng hoặc hết hạn xem trước.
+            * File media tạm thời, không lưu binary MP4 lâu dài trong database.
           </p>
         </div>
 
-        {/* Right Column: Editorial & QC Inspection */}
+        {/* Right Column: Editorial & Storyboard Inspection */}
         <div className="lg:col-span-7 space-y-6">
           {/* Sub Navigation */}
           <div className="flex space-x-2 border-b border-[#1F2937] pb-3 text-xs font-semibold">
             <button
+              onClick={() => setActiveTab('script')}
+              className={`px-3.5 py-2 rounded-lg flex items-center gap-1.5 transition ${
+                activeTab === 'script' ? 'bg-indigo-600 text-white' : 'text-gray-400 hover:text-white'
+              }`}
+            >
+              <FileText className="w-3.5 h-3.5" />
+              <span>Kịch bản tin tức (AI Editor)</span>
+            </button>
+            <button
+              onClick={() => setActiveTab('scenes')}
+              className={`px-3.5 py-2 rounded-lg flex items-center gap-1.5 transition ${
+                activeTab === 'scenes' ? 'bg-indigo-600 text-white' : 'text-gray-400 hover:text-white'
+              }`}
+            >
+              <Film className="w-3.5 h-3.5" />
+              <span>Phân cảnh ({scenes.length} Scenes)</span>
+            </button>
+            <button
               onClick={() => setActiveTab('qc')}
-              className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition ${
+              className={`px-3.5 py-2 rounded-lg flex items-center gap-1.5 transition ${
                 activeTab === 'qc' ? 'bg-indigo-600 text-white' : 'text-gray-400 hover:text-white'
               }`}
             >
               <CheckSquare className="w-3.5 h-3.5" />
               <span>Kiểm định chất lượng (QC)</span>
             </button>
-            <button
-              onClick={() => setActiveTab('scenes')}
-              className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition ${
-                activeTab === 'scenes' ? 'bg-indigo-600 text-white' : 'text-gray-400 hover:text-white'
-              }`}
-            >
-              <Film className="w-3.5 h-3.5" />
-              <span>Phân cảnh (Storyboard)</span>
-            </button>
-            <button
-              onClick={() => setActiveTab('script')}
-              className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition ${
-                activeTab === 'script' ? 'bg-indigo-600 text-white' : 'text-gray-400 hover:text-white'
-              }`}
-            >
-              <FileText className="w-3.5 h-3.5" />
-              <span>Kịch bản tin tức</span>
-            </button>
           </div>
 
-          {/* QC Tab */}
+          {/* SCRIPT TAB: TÁCH BẠCH FACT VS COMMENTARY */}
+          {activeTab === 'script' && (
+            <div className="space-y-4">
+              {loading ? (
+                <div className="p-8 text-center text-gray-400">
+                  <RefreshCw className="w-6 h-6 animate-spin mx-auto text-indigo-400 mb-2" />
+                  <p className="text-xs">Đang tải kịch bản...</p>
+                </div>
+              ) : script ? (
+                <div className="space-y-4">
+                  {/* Script Meta Header */}
+                  <div className="glass-panel p-4 rounded-xl border border-gray-800 flex flex-wrap items-center justify-between gap-3 text-xs">
+                    <div className="flex items-center gap-2">
+                      <span className="px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300 font-semibold font-mono">
+                        {script.aiProvider} ({script.modelName})
+                      </span>
+                      <span className="text-gray-400 flex items-center gap-1">
+                        <Clock className="w-3 h-3" /> {script.estimatedReadingSeconds}s (~{script.wordCount} từ)
+                      </span>
+                    </div>
+                    <span className="text-[11px] text-emerald-400 font-mono">
+                      Tokens: {script.tokenUsage} | Ước tính: ${(script.estimatedCostUsd || 0.0001).toFixed(5)}
+                    </span>
+                  </div>
+
+                  {/* Video Title & Hook */}
+                  <div className="glass-panel p-5 rounded-2xl border border-gray-800 space-y-3">
+                    <div>
+                      <span className="text-[11px] uppercase tracking-wider text-indigo-400 font-bold">Tiêu đề video (Reels Title)</span>
+                      <h3 className="text-base font-bold text-white mt-1">{script.title}</h3>
+                    </div>
+
+                    <div className="pt-2 border-t border-gray-800/80">
+                      <span className="text-[11px] uppercase tracking-wider text-amber-400 font-bold">Mở đầu cuốn hút (The Hook 3-5s)</span>
+                      <p className="text-xs text-amber-200/90 font-medium mt-1 leading-relaxed">{script.hook}</p>
+                    </div>
+                  </div>
+
+                  {/* Fact vs Commentary Split Grid */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {/* FACT SECTION */}
+                    <div className="glass-panel p-5 rounded-2xl border border-blue-500/30 bg-blue-950/10 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-blue-400 flex items-center gap-1.5">
+                          <CheckCircle className="w-3.5 h-3.5" />
+                          SỰ THẬT CỐT LÕI (KEY FACTS)
+                        </span>
+                        <span className="text-[10px] text-blue-300 bg-blue-500/20 px-2 py-0.5 rounded font-medium">Báo chí</span>
+                      </div>
+                      <p className="text-xs text-gray-300 whitespace-pre-line leading-relaxed">
+                        {script.keyFacts}
+                      </p>
+                      {script.context && (
+                        <div className="pt-2 border-t border-blue-900/40 text-[11px] text-gray-400">
+                          <span className="font-semibold text-blue-300">Bối cảnh: </span>
+                          {script.context}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* COMMENTARY / ANALYSIS SECTION */}
+                    <div className="glass-panel p-5 rounded-2xl border border-purple-500/30 bg-purple-950/10 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-purple-400 flex items-center gap-1.5">
+                          <Sparkles className="w-3.5 h-3.5" />
+                          BÌNH LUẬN BIÊN TẬP (ANALYSIS)
+                        </span>
+                        <span className="text-[10px] text-purple-300 bg-purple-500/20 px-2 py-0.5 rounded font-medium">Giá trị gia tăng</span>
+                      </div>
+                      <p className="text-xs text-gray-300 leading-relaxed">
+                        {script.analysis}
+                      </p>
+                      <div className="pt-2 border-t border-purple-900/40 text-[11px] text-gray-400">
+                        <span className="font-semibold text-purple-300">Kết luận: </span>
+                        {script.conclusion}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Full Voice-Over Script */}
+                  <div className="glass-panel p-5 rounded-2xl border border-gray-800 space-y-2">
+                    <span className="text-xs font-bold text-gray-300 flex items-center gap-1.5">
+                      <FileText className="w-3.5 h-3.5 text-indigo-400" />
+                      TOÀN VĂN LỜI THOẠI LỒNG TIẾNG (VOICE-OVER SCRIPT)
+                    </span>
+                    <div className="p-4 rounded-xl bg-[#0B0F19] border border-gray-800 text-xs text-gray-200 leading-relaxed whitespace-pre-wrap font-sans">
+                      {script.voiceOverScript}
+                    </div>
+                    <p className="text-[11px] text-gray-500 italic text-right">
+                      {script.sourceAttribution}
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div className="glass-panel p-8 text-center space-y-3 border border-gray-800">
+                  <FileText className="w-10 h-10 mx-auto text-gray-600" />
+                  <p className="text-sm text-gray-300 font-medium">Chưa có kịch bản AI cho dự án này</p>
+                  <p className="text-xs text-gray-500 max-w-sm mx-auto">
+                    Bấm "Tạo kịch bản AI" phía trên để hệ thống tự động đọc bài báo và viết lại thành bản tin 45-60s.
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* SCENES TAB: 6-10 PHÂN CẢNH VỚI ẢNH GỐC / TYPOGRAPHY */}
+          {activeTab === 'scenes' && (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-gray-400">
+                  Phân cảnh chi tiết ({scenes.length} Scenes • Tổng thời lượng: {scenes.length > 0 ? scenes[scenes.length - 1].endTimeSeconds : 0}s)
+                </span>
+                <button
+                  onClick={handlePlanScenes}
+                  disabled={generating}
+                  className="px-3 py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs font-semibold flex items-center gap-1 transition"
+                >
+                  <RefreshCw className={`w-3 h-3 ${generating ? 'animate-spin' : ''}`} />
+                  <span>Phân cảnh lại</span>
+                </button>
+              </div>
+
+              {scenes.length === 0 ? (
+                <div className="glass-panel p-8 text-center space-y-3 border border-gray-800">
+                  <Film className="w-10 h-10 mx-auto text-gray-600" />
+                  <p className="text-sm text-gray-300 font-medium">Chưa có phân cảnh nào được lập</p>
+                  <button
+                    onClick={handlePlanScenes}
+                    className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold"
+                  >
+                    Lập 6-10 phân cảnh từ kịch bản
+                  </button>
+                </div>
+              ) : (
+                scenes.map((s) => (
+                  <div key={s.sceneNumber} className="glass-panel p-4 rounded-xl border border-[#1F2937] space-y-3">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-mono font-bold text-indigo-400">
+                        CẢNH #{s.sceneNumber} ({s.startTimeSeconds}s - {s.endTimeSeconds}s • {s.durationSeconds}s)
+                      </span>
+                      <div className="flex items-center gap-1.5">
+                        <span className="px-2 py-0.5 rounded bg-gray-800 text-gray-300 font-semibold text-[10px]">
+                          {s.scenePurpose}
+                        </span>
+                        {s.visualType === 'Image' ? (
+                          <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-semibold text-[10px]">
+                            Ảnh bài viết
+                          </span>
+                        ) : (
+                          <span className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 font-semibold text-[10px] flex items-center gap-1">
+                            <Type className="w-2.5 h-2.5" /> Nền Typography
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-center">
+                      <div className="h-24 rounded-lg overflow-hidden bg-gray-900 border border-gray-800 relative flex items-center justify-center">
+                        {s.imageUrl ? (
+                          <img src={s.imageUrl} alt={`Scene ${s.sceneNumber}`} className="w-full h-full object-cover" />
+                        ) : (
+                          <div className="text-center p-2 text-[10px] text-gray-400 font-bold uppercase">
+                            {s.onScreenText}
+                          </div>
+                        )}
+                        <span className="absolute bottom-1 right-1 px-1 py-0.5 rounded text-[9px] bg-black/80 font-mono text-gray-300">
+                          {s.motionType}
+                        </span>
+                      </div>
+
+                      <div className="md:col-span-3 space-y-1.5 text-xs">
+                        <p className="text-gray-200 font-medium">🗣️ Giọng đọc: {s.voiceText}</p>
+                        <p className="text-amber-300 font-mono text-[11px]">📺 Chữ nổi bật: {s.onScreenText}</p>
+                        <div className="flex items-center gap-3 text-[10px] text-gray-500 pt-1">
+                          <span>Chuyển cảnh: {s.transitionType}</span>
+                          <span>•</span>
+                          <span>Hiệu ứng: {s.motionType}</span>
+                          {s.imageCaption && (
+                            <>
+                              <span>•</span>
+                              <span className="truncate max-w-xs" title={s.imageCaption}>Caption: {s.imageCaption}</span>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+
+          {/* QC TAB */}
           {activeTab === 'qc' && (
             <div className="space-y-4">
               <div className="glass-panel p-5 rounded-2xl border border-[#1F2937] space-y-3">
@@ -212,50 +484,6 @@ export const VideoDetailPage: React.FC<VideoDetailPageProps> = ({ projectId, onB
                   <Share2 className="w-3.5 h-3.5" />
                   <span>Đăng ngay lên Fanpage</span>
                 </button>
-              </div>
-            </div>
-          )}
-
-          {/* Scenes Tab */}
-          {activeTab === 'scenes' && (
-            <div className="space-y-4">
-              {scenes.map((s) => (
-                <div key={s.num} className="glass-panel p-4 rounded-xl border border-[#1F2937] space-y-3">
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="font-mono font-bold text-indigo-400">CẢNH #{s.num} ({s.duration})</span>
-                    <span className="px-2 py-0.5 rounded bg-gray-800 text-gray-300 font-semibold">{s.purpose}</span>
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                    <div className="h-20 rounded-lg overflow-hidden bg-gray-900">
-                      <img src={s.img} alt={`Scene ${s.num}`} className="w-full h-full object-cover" />
-                    </div>
-                    <div className="md:col-span-3 space-y-1 text-xs">
-                      <p className="text-gray-300 font-medium">🗣️ Giọng đọc: {s.voice}</p>
-                      <p className="text-amber-300 font-mono text-[11px]">📺 Chữ hiển thị: {s.text}</p>
-                      <p className="text-gray-500 text-[10px]">Hiệu ứng: {s.motion} • Chuyển cảnh: Fade</p>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* Script Tab */}
-          {activeTab === 'script' && (
-            <div className="glass-panel p-5 rounded-2xl border border-[#1F2937] space-y-4 text-xs">
-              <div>
-                <h4 className="font-bold text-white mb-2 text-sm">Tiêu đề video biên tập:</h4>
-                <p className="p-3 rounded-xl bg-[#0B0F19] text-indigo-300 font-medium border border-gray-800">
-                  Metro số 1 chính thức đón khách: Dấu mốc giao thông TP.HCM
-                </p>
-              </div>
-              <div>
-                <h4 className="font-bold text-white mb-2 text-sm">Toàn văn kịch bản lồng tiếng (Voice-over):</h4>
-                <div className="p-4 rounded-xl bg-[#0B0F19] text-gray-300 leading-relaxed font-mono space-y-2 border border-gray-800">
-                  <p>Sáng nay, tuyến metro số 1 Bến Thành - Suối Tiên chính thức mở cửa đón những vị khách đầu tiên sau hơn 10 năm chờ đợi.</p>
-                  <p>Toàn tuyến dài gần 20 km với 14 ga hiện đại, kết nối trung tâm Quận 1 tới cửa ngõ TP. Thủ Đức trong chỉ 30 phút.</p>
-                  <p>Trong tháng đầu tiên, hành khách được trải nghiệm hoàn toàn miễn phí, mang lại diện mạo giao thông công cộng hiện đại cho đô thị.</p>
-                </div>
               </div>
             </div>
           )}

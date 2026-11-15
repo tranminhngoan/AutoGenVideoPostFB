@@ -5,6 +5,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using NewsStudio.Application.Common.Interfaces;
 using NewsStudio.Application.Interfaces;
+using NewsStudio.Infrastructure.Ai;
 using NewsStudio.Infrastructure.Extractors;
 using NewsStudio.Infrastructure.Jobs;
 using NewsStudio.Infrastructure.Persistence;
@@ -54,6 +55,15 @@ public static class DependencyInjection
         services.AddHttpClient<IArticleExtractorService, ArticleExtractorService>();
         services.AddSingleton<IImageClassifierService, ImageClassifierService>();
         services.AddScoped<IArticleService, ArticleService>();
+
+        // Phase 4: AI Editor & Script Planner Services
+        services.AddHttpClient<GeminiAiEditorService>();
+        services.AddHttpClient<ClaudeAiEditorService>();
+        services.AddScoped<IAIEditorService>(sp => sp.GetRequiredService<GeminiAiEditorService>());
+        services.AddScoped<IAIEditorService>(sp => sp.GetRequiredService<ClaudeAiEditorService>());
+        services.AddScoped<IAiEditorFactory, AiEditorFactory>();
+        services.AddSingleton<IScriptPlannerService, ScriptPlannerService>();
+        services.AddScoped<IScriptService, ScriptService>();
 
         return services;
     }
