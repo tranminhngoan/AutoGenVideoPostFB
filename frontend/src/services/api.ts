@@ -292,6 +292,87 @@ export const api = {
     } catch {
       return false;
     }
+  },
+
+  // Phase 6 Video Review & Quality Control APIs
+  async getReview(projectId: string): Promise<VideoReviewDto | null> {
+    try {
+      const res = await fetch(`${API_BASE}/video-projects/${projectId}/review`);
+      if (!res.ok) return null;
+      return await res.json();
+    } catch {
+      return null;
+    }
+  },
+
+  async evaluateQuality(projectId: string): Promise<VideoReviewDto> {
+    const res = await fetch(`${API_BASE}/video-projects/${projectId}/review/evaluate`, { method: 'POST' });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.message || 'Kiểm định chất lượng video thất bại');
+    }
+    return await res.json();
+  },
+
+  async approveReview(projectId: string, reviewer = 'Editor', notes = 'Đạt chuẩn biên tập'): Promise<VideoReviewDto> {
+    const res = await fetch(`${API_BASE}/video-projects/${projectId}/review/approve`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ decision: 'Approved', reviewedBy: reviewer, feedbackNotes: notes })
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.message || 'Không thể phê duyệt video do lỗi nghiêm trọng');
+    }
+    return await res.json();
+  },
+
+  async rejectReview(projectId: string, reviewer = 'Editor', notes: string): Promise<VideoReviewDto> {
+    const res = await fetch(`${API_BASE}/video-projects/${projectId}/review/reject`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ decision: 'Rejected', reviewedBy: reviewer, feedbackNotes: notes })
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.message || 'Gửi từ chối video thất bại');
+    }
+    return await res.json();
+  },
+
+  async requestReviewAction(projectId: string, action: string, notes?: string): Promise<boolean> {
+    const res = await fetch(`${API_BASE}/video-projects/${projectId}/review/request-action`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, notes })
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.message || `Yêu cầu thực hiện ${action} thất bại`);
+    }
+    return true;
+  },
+
+  async updateVideoMetadata(projectId: string, data: { title: string; hook?: string; caption?: string }): Promise<boolean> {
+    const res = await fetch(`${API_BASE}/video-projects/${projectId}/review/metadata`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.message || 'Cập nhật tiêu đề & caption thất bại');
+    }
+    return true;
+  },
+
+  async deleteVideoProject(projectId: string): Promise<boolean> {
+    try {
+      const res = await fetch(`${API_BASE}/video-projects/${projectId}`, { method: 'DELETE' });
+      return res.ok;
+    } catch {
+      return false;
+    }
   }
 };
 
@@ -394,4 +475,40 @@ export interface UpdateArticleImageRequest {
   rightsStatus?: string;
   category?: string;
   selectedForVideo?: boolean;
+}
+
+export interface QualityCheckItemDto {
+  checkCode: string;
+  title: string;
+  category: string;
+  passed: boolean;
+  score: number;
+  isFatal: boolean;
+  details: string;
+  recommendation?: string;
+}
+
+export interface QualityAssessmentResultDto {
+  totalScore: number;
+  hasFatalViolations: boolean;
+  canPublish: boolean;
+  summary: string;
+  fatalViolations: string[];
+  checkItems: QualityCheckItemDto[];
+  evaluatedAtUtc: string;
+  notice: string;
+}
+
+export interface VideoReviewDto {
+  id: string;
+  videoProjectId: string;
+  reviewedBy: string;
+  decision: string; // Pending, Approved, Rejected, NeedsScriptRegen, NeedsAudioRegen, NeedsReRender
+  feedbackNotes?: string;
+  internalQualityScore: number;
+  seriousViolationsFound: boolean;
+  violationDetails?: string;
+  canPublish: boolean;
+  reviewedAtUtc?: string;
+  assessment?: QualityAssessmentResultDto;
 }

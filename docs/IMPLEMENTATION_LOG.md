@@ -1,5 +1,52 @@
 # AI NEWS STUDIO - NHẬT KÝ TRIỂN KHAI (IMPLEMENTATION LOG)
 
+## Phase 6: Video Review và Quality Control (10 Tiêu chí & Quản lý Phê duyệt)
+
+**Thời gian thực hiện:** 15/11/2026
+
+### 1. Công việc đã thực hiện
+1. **Xây dựng DTOs & Service Interfaces**:
+   - `NewsStudio.Application/DTOs/ReviewDtos.cs`: `QualityCheckItemDto`, `QualityAssessmentResultDto`, `VideoReviewDto`, `SubmitReviewDecisionRequestDto`, `UpdateVideoMetadataRequestDto`, `ReviewActionRequestDto`.
+   - `NewsStudio.Application/Interfaces/IReviewServices.cs`: Định nghĩa `IQualityControllerService` và `IVideoReviewService`.
+2. **Phát triển Động cơ Kiểm soát Chất lượng Tự động (`QualityControllerService`)**:
+   - Triển khai thuật toán rà soát 10 tiêu chí độc lập:
+     - `QC_01`: Độ chính xác nội dung so với bài báo.
+     - `QC_02`: Kiểm chứng số liệu và dữ kiện thực tế (Key Facts).
+     - `QC_03`: Xác minh nhân vật và thực thể.
+     - `QC_04`: Phù hợp hình ảnh và phân cảnh.
+     - `QC_05`: Bản quyền & nguồn gốc hình ảnh (phát hiện và chặn ảnh `Rejected`/`Unsuitable`).
+     - `QC_06`: Chất lượng và đồng bộ phụ đề (SRT/VTT).
+     - `QC_07`: Chất lượng âm thanh thuyết minh (WAV).
+     - `QC_08`: Kiểm tra màn hình đen / cảnh trống hoàn toàn.
+     - `QC_09`: Kỹ thuật Facebook Reels: 9:16 (1080×1920), 30 fps, thời lượng 45–60 giây.
+     - `QC_10`: Giá trị biên tập gia tăng, bối cảnh, phân tích và trích nguồn bài báo.
+   - Tính toán tổng điểm thang 100, phát hiện lỗi nghiêm trọng (Fatal Violations).
+   - Tuyên bố minh bạch: Điểm kiểm định nội bộ không phản ánh thuật toán của Facebook.
+3. **Phát triển Dịch vụ Phê duyệt Video (`VideoReviewService`)**:
+   - Quản lý trạng thái quyết định: `Approved`, `Rejected`, `NeedsScriptRegen`, `NeedsAudioRegen`, `NeedsReRender`.
+   - **Thực thi cơ chế chặn duyệt nghiêm ngặt**: Khi có lỗi nghiêm trọng (`hasFatalViolations = true`), phương thức phê duyệt lập tức quăng `InvalidOperationException` chặn đứng hành động duyệt.
+   - Hỗ trợ chỉnh sửa metadata (tiêu đề, hook, caption) trước khi xuất bản.
+   - Hỗ trợ yêu cầu làm lại từng khâu (kịch bản, audio, video).
+   - Hỗ trợ xóa dự án kèm dọn dẹp file tạm trên ổ đĩa.
+4. **Triển khai REST APIs (`VideoReviewController`)**:
+   - `GET /api/video-projects/{id}/review`: Lấy thông tin review và 10 tiêu chí kiểm định.
+   - `POST /api/video-projects/{id}/review/evaluate`: Chạy kiểm định 10 tiêu chí tự động.
+   - `POST /api/video-projects/{id}/review/approve`: Phê duyệt video (bảo vệ chống lỗi nghiêm trọng).
+   - `POST /api/video-projects/{id}/review/reject`: Từ chối video kèm lý do chi tiết.
+   - `POST /api/video-projects/{id}/review/request-action`: Yêu cầu AI/Renderer tạo lại kịch bản/audio/video.
+   - `PUT /api/video-projects/{id}/review/metadata`: Chỉnh sửa tiêu đề video, hook và caption.
+   - `DELETE /api/video-projects/{id}`: Xóa dự án và dọn sạch file tạm.
+5. **Nâng cấp Giao diện Frontend (`VideoDetailPage.tsx` & `api.ts`)**:
+   - Tab QC động: Hiển thị điểm số nội bộ (x/100), bảng 10 tiêu chí chi tiết kèm điểm số (x/10), trạng thái Đạt/Vi phạm và gợi ý khắc phục.
+   - Banner cảnh báo lỗi nghiêm trọng khi phát hiện vi phạm bản quyền ảnh hoặc thiếu kịch bản.
+   - Thanh công cụ duyệt: Phê duyệt (chặn khi có lỗi), Từ chối (Modal ghi nhận feedback), Sửa tiêu đề (Modal), Yêu cầu tạo lại kịch bản/audio/video.
+   - Nút đăng Facebook Reels được khóa chặt chẽ cho đến khi video được phê duyệt và không còn lỗi nghiêm trọng.
+6. **Kiểm thử tự động hoàn chỉnh (`Phase6VideoReviewAndQualityControlTests.cs`)**:
+   - 7 ca kiểm thử xUnit mới cho toàn bộ các khía cạnh QC, kiểm soát bản quyền ảnh, chặn duyệt khi vi phạm, phê duyệt hợp lệ, từ chối kèm lý do, sửa metadata, và full API flow.
+   - Toàn bộ 44/44 tests xUnit đạt 100% PASS.
+
+---
+
 ## Phase 5: TTS và Video Renderer (FFmpeg 9:16, Subtitles & Ephemeral Storage)
 
 **Thời gian thực hiện:** 15/11/2026

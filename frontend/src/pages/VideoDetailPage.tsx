@@ -9,20 +9,24 @@ import {
   ShieldCheck,
   Film,
   FileText,
-  Sliders,
-  CheckSquare,
   Sparkles,
-  Layers,
-  Clock,
-  Eye,
   Type,
   AlertCircle,
   Volume2,
   Download,
   Trash2,
-  HardDrive
+  HardDrive,
+  Edit3,
+  AlertTriangle,
+  RotateCcw
 } from 'lucide-react';
-import { api, VideoScriptDto, VideoScenePlanDto, VideoAssetDto } from '../services/api';
+import {
+  api,
+  VideoScriptDto,
+  VideoScenePlanDto,
+  VideoAssetDto,
+  VideoReviewDto
+} from '../services/api';
 import { VideoProject } from '../types';
 
 interface VideoDetailPageProps {
@@ -36,12 +40,23 @@ export const VideoDetailPage: React.FC<VideoDetailPageProps> = ({ projectId, onB
   const [script, setScript] = useState<VideoScriptDto | null>(null);
   const [scenes, setScenes] = useState<VideoScenePlanDto[]>([]);
   const [assets, setAssets] = useState<VideoAssetDto[]>([]);
+  const [review, setReview] = useState<VideoReviewDto | null>(null);
+
   const [loading, setLoading] = useState<boolean>(true);
   const [generating, setGenerating] = useState<boolean>(false);
   const [rendering, setRendering] = useState<boolean>(false);
+  const [evaluating, setEvaluating] = useState<boolean>(false);
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
+
   const [selectedProvider, setSelectedProvider] = useState<'Gemini' | 'Claude'>('Gemini');
-  const [selectedVoice, setSelectedVoice] = useState<'vi-VN-HoaiMyNeural' | 'vi-VN-NamMinhNeural'>('vi-VN-HoaiMyNeural');
-  const [approved, setApproved] = useState(false);
+
+  // Modals / forms
+  const [showRejectModal, setShowRejectModal] = useState<boolean>(false);
+  const [rejectNotes, setRejectNotes] = useState<string>('');
+  const [showEditModal, setShowEditModal] = useState<boolean>(false);
+  const [editTitle, setEditTitle] = useState<string>('');
+  const [editCaption, setEditCaption] = useState<string>('');
+
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
@@ -53,16 +68,25 @@ export const VideoDetailPage: React.FC<VideoDetailPageProps> = ({ projectId, onB
     setLoading(true);
     setErrorMsg(null);
     try {
-      const [projData, scriptData, scenesData, assetsData] = await Promise.all([
+      const [projData, scriptData, scenesData, assetsData, reviewData] = await Promise.all([
         api.getVideoProjectById(projectId),
         api.getScript(projectId),
         api.getScenes(projectId),
-        api.getAssets(projectId)
+        api.getAssets(projectId),
+        api.getReview(projectId)
       ]);
       setProject(projData);
       setScript(scriptData);
       setScenes(scenesData);
       setAssets(assetsData);
+      setReview(reviewData);
+
+      if (projData) {
+        setEditTitle(projData.title);
+      }
+      if (scenesData.length > 0 && scenesData[0].onScreenText) {
+        setEditCaption(scenesData[0].onScreenText);
+      }
     } catch (err: any) {
       setErrorMsg(err.message || 'Lỗi tải thông tin dự án');
     } finally {
@@ -84,6 +108,7 @@ export const VideoDetailPage: React.FC<VideoDetailPageProps> = ({ projectId, onB
       setScenes(updatedScenes);
       setActiveTab('script');
       setSuccessMsg('Đã tạo kịch bản AI (45-60s) và phân chia 6-10 phân cảnh thành công!');
+      await handleRunEvaluation();
     } catch (err: any) {
       setErrorMsg(err.message || 'Lỗi tạo kịch bản AI');
     } finally {
@@ -99,6 +124,7 @@ export const VideoDetailPage: React.FC<VideoDetailPageProps> = ({ projectId, onB
       setScenes(planned);
       setActiveTab('scenes');
       setSuccessMsg('Đã lập lại 6-10 phân cảnh khớp với hình ảnh bài viết!');
+      await handleRunEvaluation();
     } catch (err: any) {
       setErrorMsg(err.message || 'Lỗi lập phân cảnh');
     } finally {
@@ -111,14 +137,105 @@ export const VideoDetailPage: React.FC<VideoDetailPageProps> = ({ projectId, onB
     setErrorMsg(null);
     setSuccessMsg(null);
     try {
-      const result = await api.renderVideo(projectId, 'EdgeTts');
+      await api.renderVideo(projectId, 'EdgeTts');
       setSuccessMsg('Render video 9:16 (1080×1920) hoàn tất! Video sẵn sàng để xem trước.');
       await loadData();
       setActiveTab('preview');
+      await handleRunEvaluation();
     } catch (err: any) {
       setErrorMsg(err.message || 'Lỗi render video');
     } finally {
       setRendering(false);
+    }
+  };
+
+  const handleRunEvaluation = async () => {
+    setEvaluating(true);
+    try {
+      const updatedReview = await api.evaluateQuality(projectId);
+      setReview(updatedReview);
+    } catch (err: any) {
+      console.warn('Evaluation failed:', err);
+    } finally {
+      setEvaluating(false);
+    }
+  };
+
+  const handleApprove = async () => {
+    setErrorMsg(null);
+    setSuccessMsg(null);
+    try {
+      const updated = await api.approveReview(projectId, 'Editor', 'Đạt chuẩn kiểm duyệt biên tập nội bộ.');
+      setReview(updated);
+      setSuccessMsg('✓ Video đã được phê duyệt! Sẵn sàng xuất bản lên Facebook Reels.');
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Không thể phê duyệt video do vi phạm lỗi nghiêm trọng');
+    }
+  };
+
+  const handleReject = async () => {
+    if (!rejectNotes.trim()) {
+      alert('Vui lòng nhập lý do từ chối để biên tập viên khắc phục.');
+      return;
+    }
+    setErrorMsg(null);
+    setSuccessMsg(null);
+    try {
+      const updated = await api.rejectReview(projectId, 'Editor', rejectNotes);
+      setReview(updated);
+      setShowRejectModal(false);
+      setRejectNotes('');
+      setSuccessMsg('Đã ghi nhận từ chối video kèm lý do phản hồi.');
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Lỗi khi từ chối video');
+    }
+  };
+
+  const handleRequestAction = async (action: 'RegenerateScript' | 'RegenerateAudio' | 'ReRender') => {
+    setActionLoading(action);
+    setErrorMsg(null);
+    try {
+      await api.requestReviewAction(projectId, action);
+      if (action === 'RegenerateScript') {
+        await handleGenerateScript();
+      } else if (action === 'RegenerateAudio' || action === 'ReRender') {
+        await handleRenderVideo();
+      }
+      setSuccessMsg(`Đã yêu cầu thực hiện lại: ${action}`);
+    } catch (err: any) {
+      setErrorMsg(err.message || `Lỗi yêu cầu thực hiện ${action}`);
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleUpdateMetadata = async () => {
+    if (!editTitle.trim()) {
+      alert('Tiêu đề video không được để trống');
+      return;
+    }
+    try {
+      await api.updateVideoMetadata(projectId, { title: editTitle, caption: editCaption });
+      setShowEditModal(false);
+      setSuccessMsg('Cập nhật tiêu đề & caption thành công.');
+      await loadData();
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Lỗi cập nhật metadata');
+    }
+  };
+
+  const handleDeleteProject = async () => {
+    if (!confirm('Bạn có chắc chắn muốn xóa vĩnh viễn dự án video này cùng tất cả file tạm thời không?')) return;
+    try {
+      const ok = await api.deleteVideoProject(projectId);
+      if (ok) {
+        alert('Đã xóa dự án thành công.');
+        onBack();
+      } else {
+        setErrorMsg('Không thể xóa dự án');
+      }
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Lỗi xóa dự án');
     }
   };
 
@@ -135,10 +252,12 @@ export const VideoDetailPage: React.FC<VideoDetailPageProps> = ({ projectId, onB
 
   const hasVideo = assets.some(a => (a.assetType === 'FinalVideo' || a.assetType === 'Video') && !a.isCleanedUp);
   const hasAudio = assets.some(a => a.assetType === 'Audio' && !a.isCleanedUp);
+  const isApproved = review?.decision === 'Approved';
+  const hasFatalViolations = review?.seriousViolationsFound || (review?.assessment?.hasFatalViolations ?? false);
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto">
-      {/* Top Bar Navigation */}
+      {/* Top Bar Navigation & Actions */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <button
           onClick={onBack}
@@ -149,6 +268,21 @@ export const VideoDetailPage: React.FC<VideoDetailPageProps> = ({ projectId, onB
         </button>
 
         <div className="flex flex-wrap items-center gap-3">
+          {/* Status Decision Badge */}
+          {review && (
+            <div className="flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-bold border border-gray-800 bg-[#0B0F19]">
+              <span className="text-gray-400 font-normal">Trạng thái duyệt:</span>
+              <span className={
+                review.decision === 'Approved' ? 'text-emerald-400' :
+                review.decision === 'Rejected' ? 'text-rose-400' : 'text-amber-400'
+              }>
+                {review.decision === 'Approved' ? 'Đã duyệt (Approved)' :
+                 review.decision === 'Rejected' ? 'Từ chối (Rejected)' :
+                 'Chờ duyệt (Pending Review)'}
+              </span>
+            </div>
+          )}
+
           {/* AI Provider Switcher */}
           <div className="flex items-center bg-[#0B0F19] rounded-xl border border-gray-800 p-1 text-xs">
             <button
@@ -188,20 +322,51 @@ export const VideoDetailPage: React.FC<VideoDetailPageProps> = ({ projectId, onB
             <span>{rendering ? 'FFmpeg đang dựng...' : 'Dựng video 9:16 (FFmpeg)'}</span>
           </button>
 
+          {/* Approve Button */}
           <button
-            onClick={() => setApproved(!approved)}
-            className={`px-4 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition ${
-              approved
+            onClick={handleApprove}
+            disabled={hasFatalViolations || !hasVideo}
+            title={hasFatalViolations ? 'Chặn duyệt: Còn lỗi nghiêm trọng vi phạm kiểm định' : (!hasVideo ? 'Cần render video trước khi duyệt' : 'Phê duyệt video')}
+            className={`px-4 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition disabled:opacity-40 disabled:cursor-not-allowed ${
+              isApproved
                 ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
-                : 'bg-gray-800 hover:bg-gray-700 text-gray-200 border border-gray-700'
+                : 'bg-emerald-700 hover:bg-emerald-600 text-white shadow-lg shadow-emerald-700/20'
             }`}
           >
             <CheckCircle className="w-4 h-4" />
-            <span>{approved ? 'Đã duyệt video ✓' : 'Phê duyệt video'}</span>
+            <span>{isApproved ? 'Đã duyệt video ✓' : 'Phê duyệt video'}</span>
+          </button>
+
+          {/* Reject Button */}
+          <button
+            onClick={() => setShowRejectModal(true)}
+            className="px-3 py-2 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 text-xs font-semibold flex items-center gap-1.5 transition border border-rose-500/30"
+          >
+            <XCircle className="w-3.5 h-3.5" />
+            <span>Từ chối</span>
+          </button>
+
+          {/* Edit Metadata */}
+          <button
+            onClick={() => setShowEditModal(true)}
+            className="px-3 py-2 rounded-xl bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs font-semibold flex items-center gap-1.5 transition"
+          >
+            <Edit3 className="w-3.5 h-3.5" />
+            <span>Sửa tiêu đề</span>
+          </button>
+
+          {/* Delete Project */}
+          <button
+            onClick={handleDeleteProject}
+            className="px-3 py-2 rounded-xl bg-rose-950/40 hover:bg-rose-900/60 text-rose-400 text-xs font-semibold flex items-center gap-1.5 transition border border-rose-900/40"
+            title="Xóa dự án và dọn sạch file tạm"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
           </button>
         </div>
       </div>
 
+      {/* Error & Warning Banners */}
       {errorMsg && (
         <div className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-center gap-2">
           <AlertCircle className="w-4 h-4 shrink-0" />
@@ -216,9 +381,24 @@ export const VideoDetailPage: React.FC<VideoDetailPageProps> = ({ projectId, onB
         </div>
       )}
 
+      {/* Fatal Violations Warning Banner */}
+      {hasFatalViolations && review?.assessment?.fatalViolations && (
+        <div className="p-4 rounded-2xl bg-rose-950/40 border border-rose-500/40 space-y-2">
+          <div className="flex items-center gap-2 text-rose-300 text-xs font-bold">
+            <AlertTriangle className="w-4 h-4 text-rose-400 animate-pulse" />
+            <span>CẢNH BÁO KIỂM DUYỆT: PHÁT HIỆN LỖI NGHIÊM TRỌNG (CHẶN XUẤT BẢN)</span>
+          </div>
+          <ul className="list-disc list-inside text-xs text-rose-200/90 space-y-1">
+            {review.assessment.fatalViolations.map((v, i) => (
+              <li key={i}>{v}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {/* Main Review Workspace */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-        {/* Left Column: 9:16 Video Player */}
+        {/* Left Column: 9:16 Video Player Preview */}
         <div className="lg:col-span-5 flex flex-col items-center">
           <div className="w-[320px] h-[568px] rounded-3xl bg-black border-4 border-gray-800 shadow-2xl relative overflow-hidden flex flex-col justify-between group">
             {hasVideo ? (
@@ -312,7 +492,7 @@ export const VideoDetailPage: React.FC<VideoDetailPageProps> = ({ projectId, onB
           </p>
         </div>
 
-        {/* Right Column: Editorial, Storyboard, Audio & QC Inspection */}
+        {/* Right Column: Editorial, Storyboard, Audio & QC Tabs */}
         <div className="lg:col-span-7 space-y-6">
           {/* Sub Navigation */}
           <div className="flex flex-wrap space-x-2 border-b border-[#1F2937] pb-3 text-xs font-semibold">
@@ -350,152 +530,124 @@ export const VideoDetailPage: React.FC<VideoDetailPageProps> = ({ projectId, onB
               }`}
             >
               <HardDrive className="w-3.5 h-3.5" />
-              <span>File tạm ({assets.filter(a => !a.isCleanedUp).length})</span>
+              <span>File tạm ({assets.length})</span>
             </button>
             <button
               onClick={() => setActiveTab('qc')}
               className={`px-3 py-2 rounded-lg flex items-center gap-1.5 transition ${
-                activeTab === 'qc' ? 'bg-indigo-600 text-white' : 'text-gray-400 hover:text-white'
+                activeTab === 'qc' ? 'bg-emerald-600 text-white' : 'text-emerald-400 hover:text-emerald-300'
               }`}
             >
-              <CheckSquare className="w-3.5 h-3.5" />
-              <span>Kiểm định QC</span>
+              <ShieldCheck className="w-3.5 h-3.5" />
+              <span>Kiểm định QC ({review?.internalQualityScore ?? 100}/100)</span>
             </button>
           </div>
 
-          {/* PREVIEW TAB: AUDIO & SUBTITLES */}
+          {/* PREVIEW / AUDIO & SUBTITLES TAB */}
           {activeTab === 'preview' && (
             <div className="space-y-4">
-              {/* Voice-over Audio Player Card */}
-              <div className="glass-panel p-5 rounded-2xl border border-gray-800 space-y-3">
+              <div className="glass-panel p-5 rounded-2xl border border-gray-800 space-y-4">
                 <div className="flex items-center justify-between">
                   <h4 className="text-sm font-bold text-white flex items-center gap-2">
                     <Volume2 className="w-4 h-4 text-indigo-400" />
-                    Giọng đọc lồng tiếng tiếng Việt (Voice-Over)
+                    Thuyết minh giọng đọc tiếng Việt (TTS)
                   </h4>
-                  <div className="flex items-center gap-2 text-xs">
-                    <select
-                      value={selectedVoice}
-                      onChange={(e: any) => setSelectedVoice(e.target.value)}
-                      className="bg-[#0B0F19] border border-gray-700 text-gray-300 rounded-lg px-2.5 py-1 text-xs"
-                    >
-                      <option value="vi-VN-HoaiMyNeural">Hoài My (Nữ miền Nam)</option>
-                      <option value="vi-VN-NamMinhNeural">Nam Minh (Nam miền Bắc)</option>
-                    </select>
-                  </div>
+                  <span className="text-xs text-gray-400 font-mono">Edge-TTS (vi-VN-HoaiMyNeural)</span>
                 </div>
 
                 {hasAudio ? (
-                  <div className="space-y-2 pt-1">
-                    <audio controls className="w-full h-10 rounded-lg" src={`/api/video-projects/${projectId}/audio`}>
-                      Trình duyệt không hỗ trợ audio HTML5.
+                  <div className="space-y-3">
+                    <audio controls className="w-full h-10">
+                      <source src={`/api/video-projects/${projectId}/audio`} type="audio/wav" />
+                      Trình duyệt không hỗ trợ phát audio HTML5.
                     </audio>
-                    <p className="text-[11px] text-gray-400">
-                      Audio giọng đọc được đồng bộ tự động với phụ đề và điều chỉnh âm lượng nền (audio ducking).
-                    </p>
+                    <div className="flex items-center justify-between text-xs text-gray-400">
+                      <span>Định dạng: WAV PCM 24kHz 16-bit Mono</span>
+                      <a
+                        href={`/api/video-projects/${projectId}/audio`}
+                        download="voiceover.wav"
+                        className="text-indigo-400 hover:underline flex items-center gap-1"
+                      >
+                        <Download className="w-3 h-3" /> Tải file WAV
+                      </a>
+                    </div>
                   </div>
                 ) : (
-                  <div className="p-4 rounded-xl bg-gray-900/50 text-center text-xs text-gray-400 space-y-2">
-                    <p>Chưa có file audio giọng đọc được tạo cho dự án này.</p>
-                    <button
-                      onClick={handleRenderVideo}
-                      disabled={rendering}
-                      className="px-3.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold"
-                    >
-                      Tạo giọng đọc & Render video
-                    </button>
+                  <div className="p-6 text-center text-xs text-gray-500 bg-gray-900/40 rounded-xl">
+                    Chưa tạo âm thanh thuyết minh. Bấm "Dựng video 9:16" để hệ thống tổng hợp giọng đọc và dựng phim.
                   </div>
                 )}
               </div>
 
-              {/* Subtitles Inspector */}
+              {/* Subtitles Download Card */}
               <div className="glass-panel p-5 rounded-2xl border border-gray-800 space-y-3">
                 <div className="flex items-center justify-between">
                   <h4 className="text-sm font-bold text-white flex items-center gap-2">
-                    <FileText className="w-4 h-4 text-amber-400" />
-                    Phụ đề đồng bộ (SRT / WebVTT)
+                    <FileText className="w-4 h-4 text-purple-400" />
+                    Phụ đề tự động (Synchronized Subtitles)
                   </h4>
-                  <a
-                    href={`/api/video-projects/${projectId}/subtitles?format=srt`}
-                    download="subtitles.srt"
-                    className="text-xs text-indigo-400 hover:underline flex items-center gap-1"
-                  >
-                    <Download className="w-3 h-3" />
-                    <span>Tải file .SRT</span>
-                  </a>
+                  <div className="flex items-center gap-2">
+                    <a
+                      href={`/api/video-projects/${projectId}/subtitles?format=srt`}
+                      download="subtitles.srt"
+                      className="px-2.5 py-1 rounded bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs font-semibold flex items-center gap-1"
+                    >
+                      <Download className="w-3 h-3" /> .SRT
+                    </a>
+                    <a
+                      href={`/api/video-projects/${projectId}/subtitles?format=vtt`}
+                      download="subtitles.vtt"
+                      className="px-2.5 py-1 rounded bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs font-semibold flex items-center gap-1"
+                    >
+                      <Download className="w-3 h-3" /> .VTT
+                    </a>
+                  </div>
                 </div>
-
-                <div className="p-4 rounded-xl bg-[#0B0F19] border border-gray-800 font-mono text-xs text-gray-300 space-y-2 max-h-56 overflow-y-auto">
-                  {scenes.map((s, idx) => (
-                    <div key={idx} className="pb-2 border-b border-gray-900 last:border-0">
-                      <span className="text-indigo-400 font-bold">{s.sceneNumber}. </span>
-                      <span className="text-gray-500">[{s.startTimeSeconds}s → {s.endTimeSeconds}s] </span>
-                      <span className="text-gray-200">{s.voiceText}</span>
-                    </div>
-                  ))}
-                </div>
+                <p className="text-xs text-gray-400">
+                  Phụ đề được tự động căn chỉnh timestamp theo từng mili-giây, hỗ trợ hiệu ứng karaoke highlight trên khung hình 9:16.
+                </p>
               </div>
             </div>
           )}
 
-          {/* SCRIPT TAB: TÁCH BẠCH FACT VS COMMENTARY */}
+          {/* SCRIPT TAB: FACT VS COMMENTARY */}
           {activeTab === 'script' && (
             <div className="space-y-4">
-              {loading ? (
-                <div className="p-8 text-center text-gray-400">
-                  <RefreshCw className="w-6 h-6 animate-spin mx-auto text-indigo-400 mb-2" />
-                  <p className="text-xs">Đang tải kịch bản...</p>
-                </div>
-              ) : script ? (
+              {script ? (
                 <div className="space-y-4">
-                  {/* Script Meta Header */}
-                  <div className="glass-panel p-4 rounded-xl border border-gray-800 flex flex-wrap items-center justify-between gap-3 text-xs">
-                    <div className="flex items-center gap-2">
-                      <span className="px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300 font-semibold font-mono">
-                        {script.aiProvider} ({script.modelName})
-                      </span>
-                      <span className="text-gray-400 flex items-center gap-1">
-                        <Clock className="w-3 h-3" /> {script.estimatedReadingSeconds}s (~{script.wordCount} từ)
-                      </span>
-                    </div>
-                    <span className="text-[11px] text-emerald-400 font-mono">
-                      Tokens: {script.tokenUsage} | Ước tính: ${(script.estimatedCostUsd || 0.0001).toFixed(5)}
-                    </span>
-                  </div>
-
-                  {/* Video Title & Hook */}
+                  {/* Title & Hook Card */}
                   <div className="glass-panel p-5 rounded-2xl border border-gray-800 space-y-3">
-                    <div>
-                      <span className="text-[11px] uppercase tracking-wider text-indigo-400 font-bold">Tiêu đề video (Reels Title)</span>
-                      <h3 className="text-base font-bold text-white mt-1">{script.title}</h3>
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-indigo-400 uppercase tracking-wider">Tiêu đề video (45-60s)</span>
+                      <span className="text-[11px] text-gray-400 font-mono">
+                        ~{script.wordCount} từ • {script.estimatedReadingSeconds}s đọc
+                      </span>
                     </div>
-
-                    <div className="pt-2 border-t border-gray-800/80">
-                      <span className="text-[11px] uppercase tracking-wider text-amber-400 font-bold">Mở đầu cuốn hút (The Hook 3-5s)</span>
-                      <p className="text-xs text-amber-200/90 font-medium mt-1 leading-relaxed">{script.hook}</p>
+                    <h3 className="text-base font-bold text-white">{script.title}</h3>
+                    <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-xs text-amber-200">
+                      <span className="font-bold text-amber-400">HOOK (3-5s đầu): </span>
+                      {script.hook}
                     </div>
                   </div>
 
-                  {/* Fact vs Commentary Split Grid */}
+                  {/* Fact vs Commentary Grid */}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     {/* FACT SECTION */}
                     <div className="glass-panel p-5 rounded-2xl border border-blue-500/30 bg-blue-950/10 space-y-2">
                       <div className="flex items-center justify-between">
                         <span className="text-xs font-bold text-blue-400 flex items-center gap-1.5">
                           <CheckCircle className="w-3.5 h-3.5" />
-                          SỰ THẬT CỐT LÕI (KEY FACTS)
+                          SỰ THẬT KHÁCH QUAN (KEY FACTS)
                         </span>
                         <span className="text-[10px] text-blue-300 bg-blue-500/20 px-2 py-0.5 rounded font-medium">Báo chí</span>
                       </div>
-                      <p className="text-xs text-gray-300 whitespace-pre-line leading-relaxed">
+                      <div className="text-xs text-gray-300 whitespace-pre-wrap leading-relaxed">
                         {script.keyFacts}
-                      </p>
-                      {script.context && (
-                        <div className="pt-2 border-t border-blue-900/40 text-[11px] text-gray-400">
-                          <span className="font-semibold text-blue-300">Bối cảnh: </span>
-                          {script.context}
-                        </div>
-                      )}
+                      </div>
+                      <div className="pt-2 border-t border-blue-900/40 text-[11px] text-gray-400">
+                        <span className="font-semibold text-blue-300">Bối cảnh: </span>
+                        {script.context}
+                      </div>
                     </div>
 
                     {/* COMMENTARY / ANALYSIS SECTION */}
@@ -699,53 +851,164 @@ export const VideoDetailPage: React.FC<VideoDetailPageProps> = ({ projectId, onB
             </div>
           )}
 
-          {/* QC TAB */}
+          {/* QC & VIDEO REVIEW TAB (10 TIÊU CHÍ & REVIEW DECISION) */}
           {activeTab === 'qc' && (
             <div className="space-y-4">
-              <div className="glass-panel p-5 rounded-2xl border border-[#1F2937] space-y-3">
-                <h3 className="font-bold text-sm text-white flex items-center gap-2">
-                  <ShieldCheck className="w-4 h-4 text-emerald-400" />
-                  Báo cáo kiểm soát chất lượng nội bộ (10 tiêu chí)
-                </h3>
-                <div className="space-y-2.5 text-xs">
-                  {[
-                    { label: 'Nội dung bám sát bài báo gốc', pass: true },
-                    { label: 'Không bịa số liệu hoặc sự kiện', pass: true },
-                    { label: 'Không sai tên hoặc danh tính nhân vật', pass: true },
-                    { label: 'Chỉ sử dụng hình ảnh nằm trong chính bài báo', pass: true },
-                    { label: 'Không có ảnh vi phạm quyền sử dụng', pass: true },
-                    { label: 'Phụ đề tiếng Việt đồng bộ với giọng đọc', pass: true },
-                    { label: 'Âm thanh tự nhiên, không bị rè hoặc mất tiếng', pass: true },
-                    { label: 'Không có cảnh trống (blank scene)', pass: true },
-                    { label: 'Video chuẩn tỷ lệ 9:16 (1080×1920) và thời lượng 45-60s', pass: true },
-                    { label: 'Có giá trị biên tập, tóm tắt và phân tích riêng', pass: true },
-                  ].map((item, idx) => (
-                    <div key={idx} className="flex items-center justify-between p-2 rounded-lg bg-[#0B0F19]">
-                      <span className="text-gray-300">{item.label}</span>
-                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-300 flex items-center gap-1">
-                        <CheckCircle className="w-3 h-3" /> Đạt
+              {/* Header Score Card */}
+              <div className="glass-panel p-5 rounded-2xl border border-gray-800 space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-4">
+                  <div>
+                    <h3 className="font-bold text-sm text-white flex items-center gap-2">
+                      <ShieldCheck className="w-5 h-5 text-emerald-400" />
+                      Báo cáo kiểm định chất lượng video (10 tiêu chí)
+                    </h3>
+                    <p className="text-xs text-gray-400 mt-1">
+                      {review?.assessment?.summary || 'Hệ thống tự động rà soát nội dung, dữ kiện, bản quyền ảnh và kỹ thuật video.'}
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={handleRunEvaluation}
+                      disabled={evaluating}
+                      className="px-3 py-1.5 rounded-xl bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs font-semibold flex items-center gap-1.5 transition"
+                    >
+                      <RefreshCw className={`w-3.5 h-3.5 ${evaluating ? 'animate-spin' : ''}`} />
+                      <span>Kiểm định lại</span>
+                    </button>
+
+                    <div className="flex items-center gap-2 px-4 py-2 rounded-2xl bg-[#0B0F19] border border-gray-800">
+                      <span className="text-xs text-gray-400">Điểm nội bộ:</span>
+                      <span className={`font-mono text-lg font-extrabold ${
+                        (review?.internalQualityScore ?? 0) >= 85 ? 'text-emerald-400' :
+                        (review?.internalQualityScore ?? 0) >= 70 ? 'text-amber-400' : 'text-rose-400'
+                      }`}>
+                        {review?.internalQualityScore ?? 100}/100
                       </span>
                     </div>
-                  ))}
+                  </div>
+                </div>
+
+                {/* Important Disclaimer Notice */}
+                <div className="p-3 rounded-xl bg-indigo-950/20 border border-indigo-500/20 text-[11px] text-indigo-300">
+                  ℹ️ <strong>Lưu ý:</strong> {review?.assessment?.notice || 'Điểm kiểm định nội bộ là tiêu chuẩn biên tập của AI News Studio, không phản ánh thuật toán của Facebook.'}
+                </div>
+
+                {/* 10 Checklist Items */}
+                <div className="space-y-2 text-xs">
+                  {review?.assessment?.checkItems ? (
+                    review.assessment.checkItems.map((item, idx) => (
+                      <div
+                        key={idx}
+                        className={`p-3 rounded-xl border flex flex-col md:flex-row md:items-center justify-between gap-2 ${
+                          item.isFatal && !item.passed
+                            ? 'bg-rose-950/20 border-rose-500/40'
+                            : item.passed
+                            ? 'bg-[#0B0F19] border-gray-800/80'
+                            : 'bg-amber-950/10 border-amber-500/30'
+                        }`}
+                      >
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2">
+                            <span className="font-bold text-gray-200">
+                              #{idx + 1}. {item.title}
+                            </span>
+                            <span className="px-1.5 py-0.5 rounded text-[9px] font-mono bg-gray-800 text-gray-400">
+                              {item.category}
+                            </span>
+                            {item.isFatal && (
+                              <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-rose-500/20 text-rose-300">
+                                Tiêu chí bắt buộc
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-[11px] text-gray-400">{item.details}</p>
+                          {item.recommendation && (
+                            <p className="text-[10px] text-amber-300/90 font-medium">💡 Gợi ý: {item.recommendation}</p>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-2 shrink-0 self-end md:self-center">
+                          <span className="font-mono text-[11px] text-gray-400">
+                            {item.score}/10 đ
+                          </span>
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold flex items-center gap-1 ${
+                            item.passed
+                              ? 'bg-emerald-500/20 text-emerald-300'
+                              : item.isFatal
+                              ? 'bg-rose-500/20 text-rose-300'
+                              : 'bg-amber-500/20 text-amber-300'
+                          }`}>
+                            {item.passed ? <CheckCircle className="w-3 h-3" /> : <XCircle className="w-3 h-3" />}
+                            {item.passed ? 'Đạt' : (item.isFatal ? 'Vi phạm' : 'Cần lưu ý')}
+                          </span>
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="p-4 text-center text-gray-500 text-xs">
+                      Bấm "Kiểm định lại" để chạy rà soát 10 tiêu chí chất lượng.
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Review Actions Toolbar */}
+              <div className="glass-panel p-5 rounded-2xl border border-gray-800 space-y-3">
+                <h4 className="text-xs font-bold text-gray-300 uppercase tracking-wider">
+                  Thao tác kiểm duyệt & điều hướng quy trình
+                </h4>
+                <div className="flex flex-wrap items-center gap-3">
+                  <button
+                    onClick={() => handleRequestAction('RegenerateScript')}
+                    disabled={actionLoading !== null}
+                    className="px-3 py-2 rounded-xl bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs font-semibold flex items-center gap-1.5 transition disabled:opacity-50"
+                  >
+                    <RotateCcw className={`w-3.5 h-3.5 ${actionLoading === 'RegenerateScript' ? 'animate-spin' : ''}`} />
+                    <span>Yêu cầu tạo lại kịch bản</span>
+                  </button>
+
+                  <button
+                    onClick={() => handleRequestAction('RegenerateAudio')}
+                    disabled={actionLoading !== null}
+                    className="px-3 py-2 rounded-xl bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs font-semibold flex items-center gap-1.5 transition disabled:opacity-50"
+                  >
+                    <Volume2 className="w-3.5 h-3.5" />
+                    <span>Yêu cầu tạo lại audio</span>
+                  </button>
+
+                  <button
+                    onClick={() => handleRequestAction('ReRender')}
+                    disabled={actionLoading !== null}
+                    className="px-3 py-2 rounded-xl bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs font-semibold flex items-center gap-1.5 transition disabled:opacity-50"
+                  >
+                    <Film className="w-3.5 h-3.5" />
+                    <span>Render lại video</span>
+                  </button>
                 </div>
               </div>
 
               {/* Publish Action Box */}
-              <div className="p-4 rounded-xl bg-indigo-950/30 border border-indigo-500/30 flex items-center justify-between">
+              <div className="p-5 rounded-2xl bg-indigo-950/30 border border-indigo-500/30 flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div>
-                  <p className="font-bold text-sm text-white">Xuất bản lên Facebook Reels</p>
-                  <p className="text-xs text-indigo-300">
-                    {approved
-                      ? 'Video đã được bạn phê duyệt, sẵn sàng đẩy lên Fanpage.'
+                  <p className="font-bold text-sm text-white flex items-center gap-2">
+                    <Share2 className="w-4 h-4 text-indigo-400" />
+                    Xuất bản lên Facebook Reels (Phase 7)
+                  </p>
+                  <p className="text-xs text-indigo-300 mt-0.5">
+                    {isApproved
+                      ? '✓ Video đã được bạn phê duyệt, sẵn sàng đăng tải lên Meta Graph API.'
+                      : hasFatalViolations
+                      ? '⚠️ Không thể xuất bản: Video vi phạm tiêu chí kiểm định nghiêm trọng.'
                       : 'Cần bấm "Phê duyệt video" phía trên trước khi xuất bản.'}
                   </p>
                 </div>
                 <button
-                  disabled={!approved}
-                  onClick={() => alert('Bắt đầu quy trình upload video binary lên Meta Reels!')}
-                  className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white font-semibold text-xs flex items-center gap-1.5 transition"
+                  disabled={!isApproved || hasFatalViolations}
+                  onClick={() => alert('Sẵn sàng cho Phase 7: Meta Graph API Reels Publishing!')}
+                  className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-semibold text-xs flex items-center gap-2 transition shadow-lg shadow-indigo-600/30"
                 >
-                  <Share2 className="w-3.5 h-3.5" />
+                  <Share2 className="w-4 h-4" />
                   <span>Đăng ngay lên Fanpage</span>
                 </button>
               </div>
@@ -753,6 +1016,88 @@ export const VideoDetailPage: React.FC<VideoDetailPageProps> = ({ projectId, onB
           )}
         </div>
       </div>
+
+      {/* REJECT MODAL */}
+      {showRejectModal && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="glass-panel p-6 rounded-2xl max-w-md w-full border border-gray-800 space-y-4">
+            <h3 className="text-base font-bold text-white flex items-center gap-2">
+              <XCircle className="w-5 h-5 text-rose-400" />
+              Từ chối duyệt video
+            </h3>
+            <p className="text-xs text-gray-400">
+              Vui lòng nhập lý do từ chối để ghi lại lịch sử kiểm duyệt và hướng dẫn người biên tập chỉnh sửa.
+            </p>
+            <textarea
+              value={rejectNotes}
+              onChange={(e) => setRejectNotes(e.target.value)}
+              placeholder="Ví dụ: Kịch bản chưa làm rõ số liệu, cần kiểm tra lại bản quyền ảnh phân cảnh số 3..."
+              className="w-full h-24 p-3 rounded-xl bg-[#0B0F19] border border-gray-800 text-xs text-gray-200 focus:outline-none focus:border-rose-500"
+            />
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                onClick={() => setShowRejectModal(false)}
+                className="px-4 py-2 rounded-xl text-xs text-gray-400 hover:text-white"
+              >
+                Hủy bỏ
+              </button>
+              <button
+                onClick={handleReject}
+                className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold"
+              >
+                Xác nhận từ chối
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* EDIT METADATA MODAL */}
+      {showEditModal && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="glass-panel p-6 rounded-2xl max-w-lg w-full border border-gray-800 space-y-4">
+            <h3 className="text-base font-bold text-white flex items-center gap-2">
+              <Edit3 className="w-5 h-5 text-indigo-400" />
+              Chỉnh sửa tiêu đề & Caption video
+            </h3>
+            <div className="space-y-3 text-xs">
+              <div>
+                <label className="block text-gray-400 font-semibold mb-1">Tiêu đề video</label>
+                <input
+                  type="text"
+                  value={editTitle}
+                  onChange={(e) => setEditTitle(e.target.value)}
+                  className="w-full p-2.5 rounded-xl bg-[#0B0F19] border border-gray-800 text-gray-200 focus:outline-none focus:border-indigo-500"
+                />
+              </div>
+              <div>
+                <label className="block text-gray-400 font-semibold mb-1">Caption / Chữ nổi bật phân cảnh</label>
+                <input
+                  type="text"
+                  value={editCaption}
+                  onChange={(e) => setEditCaption(e.target.value)}
+                  placeholder="TIÊU ĐIỂM: ..."
+                  className="w-full p-2.5 rounded-xl bg-[#0B0F19] border border-gray-800 text-gray-200 focus:outline-none focus:border-indigo-500"
+                />
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                onClick={() => setShowEditModal(false)}
+                className="px-4 py-2 rounded-xl text-xs text-gray-400 hover:text-white"
+              >
+                Hủy
+              </button>
+              <button
+                onClick={handleUpdateMetadata}
+                className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold"
+              >
+                Lưu thay đổi
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

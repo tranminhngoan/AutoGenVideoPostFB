@@ -186,3 +186,40 @@ Hệ thống áp dụng mẫu **Factory / Strategy** cho phép thay đổi nhà 
 - Toàn bộ file media phát sinh được lưu tạm trong thư mục đệm hệ thống: `./tmp/newsstudio/{projectId}/`.
 - Mỗi file được ghi nhận vào bảng `VideoAssets` với metadata: `AssetType`, `LocalTempPath`, `FileSizeBytes`, `MimeType`, `Sha256Hash`, `ExpiresAtUtc` (mặc định 2 giờ).
 - Dịch vụ `IVideoAssetService` chịu trách nhiệm quét dọn và hủy các tệp hết hạn cả trên ổ cứng vật lý lẫn cập nhật cờ `IsCleanedUp = true` trong database. Có API cho phép chủ động dọn dẹp hoặc dọn dẹp tự động sau khi xuất bản lên Facebook.
+
+---
+
+## 8. Động cơ Video Review & Quality Control (Phase 6)
+
+### 8.1. Hệ thống rà soát 10 tiêu chí chất lượng (`IQualityControllerService`)
+Hệ thống triển khai dịch vụ kiểm định tự động theo 10 tiêu chí nghiêm ngặt, cho điểm từng tiêu chí (thang điểm 10/tiêu chí, tổng điểm 100):
+1. **QC_01_CONTENT_ACCURACY** (Content): Nội dung kịch bản bám sát thông điệp bài báo, dung lượng từ chuẩn (110-150 từ).
+2. **QC_02_NO_FABRICATION** (Factuality): Dữ kiện số liệu thực tế được trích xuất minh bạch, không tự bịa đặt.
+3. **QC_03_CHARACTER_ACCURACY** (Factuality): Tên nhân vật, danh tính và tổ chức chuẩn xác theo nguồn bài viết.
+4. **QC_04_IMAGE_SCENE_MATCH** (Visual): Hình ảnh hoặc typography đồ họa ăn khớp với nhịp độ phân cảnh.
+5. **QC_05_IMAGE_RIGHTS** (Legal & Compliance): Bản quyền và nguồn gốc hình ảnh. Phát hiện ảnh bị `Rejected` hoặc `Unknown` cần rà soát.
+6. **QC_06_SUBTITLE_QUALITY** (Subtitles): Chất lượng phụ đề SRT/VTT, timestamp mili-giây không chồng chéo.
+7. **QC_07_AUDIO_QUALITY** (Audio): Âm thanh thuyết minh PCM WAV hợp lệ, không mất tiếng, âm lượng chuẩn.
+8. **QC_08_NO_BLANK_SCENES** (Visual): Không có cảnh trống hoặc màn hình đen (mỗi cảnh đều có ảnh bài báo hoặc typography).
+9. **QC_09_SPECS_COMPLIANCE** (Technical): Chuẩn Facebook Reels 9:16 (1080×1920), 30 fps, thời lượng 45–60 giây.
+10. **QC_10_EDITORIAL_VALUE** (Editorial): Giá trị biên tập gia tăng: Có Hook mở đầu, tách biệt Fact vs Analysis, có Source Attribution.
+
+### 8.2. Cơ chế khóa xuất bản khi có lỗi nghiêm trọng (Fatal Violations)
+- **Danh mục lỗi nghiêm trọng**:
+  - Sai thông tin (`FalseInformation`)
+  - Sai nhân vật (`WrongCharacter`)
+  - Ảnh không được phép sử dụng (`UnauthorizedImage` / `Rejected`)
+  - Âm thanh hỏng (`AudioBroken`)
+  - Video hỏng (`VideoBroken`)
+  - Cảnh trống hoàn toàn (`BlankScene`)
+- **Nguyên tắc bảo vệ**: Khi phát hiện lỗi nghiêm trọng, hệ thống tự động gán `HasFatalViolations = true` và **CHẶN PHÊ DUYỆT (`PublishingBlocked = true`)**. Mọi yêu cầu phê duyệt thông qua API đều bị chặn với thông báo lỗi rõ ràng.
+
+### 8.3. Quản lý vòng đời kiểm duyệt (`IVideoReviewService`)
+- Bản ghi `VideoReview` lưu giữ lịch sử kiểm định: `InternalQualityScore`, `Decision` (`Pending`, `Approved`, `Rejected`, `NeedsScriptRegen`, `NeedsAudioRegen`, `NeedsReRender`), `FeedbackNotes`, `ViolationDetails`.
+- Hỗ trợ các hành động điều hướng nhanh:
+  - `Approve`: Phê duyệt video cho xuất bản (chỉ khả dụng khi không có lỗi nghiêm trọng và video đã render).
+  - `Reject`: Từ chối video kèm lý do chi tiết từ biên tập viên.
+  - `RequestAction`: Yêu cầu AI/Renderer tạo lại kịch bản, audio hoặc render lại video.
+  - `UpdateMetadata`: Cập nhật tiêu đề video, hook và caption phân cảnh trực tiếp.
+  - `DeleteProject`: Xóa dự án và giải phóng toàn bộ file tạm thời.
+- **Tuyên bố minh bạch**: Điểm kiểm định nội bộ là tiêu chuẩn biên tập của AI News Studio, không phản ánh thuật toán xếp hạng của Facebook.

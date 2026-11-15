@@ -2,7 +2,7 @@
 
 **Thời gian kiểm thử:** 15/11/2026  
 **Môi trường:** Local Windows (PostgreSQL 16, Node v24.14.1, .NET 8 runtime)  
-**Tình trạng:** **37/37 PASS (100%)**
+**Tình trạng:** **44/44 PASS (100%)**
 
 ---
 
@@ -13,7 +13,7 @@ Lệnh thực thi:
 dotnet test backend/NewsStudio.sln
 ```
 
-### Chi tiết các ca kiểm thử (37/37 Passed):
+### Chi tiết các ca kiểm thử (44/44 Passed):
 
 | Mã kiểm thử | Nhóm | Tên Test Case | Mô tả & Kỳ vọng | Kết quả |
 |---|---|---|---|:---:|
@@ -54,8 +54,15 @@ dotnet test backend/NewsStudio.sln
 | **TC-35** | Phase 5 | `VideoAssetService_Cleans_Up_Expired_Assets` | Tự động dọn dẹp các asset hết hạn: xóa file vật lý trên đĩa và cập nhật trạng thái trong database | **PASSED** |
 | **TC-36** | Phase 5 | `TtsFactory_Switches_Between_EdgeTts_And_ElevenLabs` | Factory chuyển đổi nhà cung cấp TTS linh hoạt giữa EdgeTTS và ElevenLabs | **PASSED** |
 | **TC-37** | Phase 5 | `VideoMediaController_Endpoints_Full_Workflow` | Luồng REST API media trọn vẹn: kích hoạt render, lấy trạng thái, stream MP4/WAV, tải SRT, liệt kê assets | **PASSED** |
+| **TC-38** | Phase 6 | `QualityController_Evaluates_All_10_Criteria_Successfully` | Đánh giá trọn vẹn 10 tiêu chí QC: Content, Factuality, Character, Visual, Rights, Subtitles, Audio, NoBlank, Specs, Editorial | **PASSED** |
+| **TC-39** | Phase 6 | `QualityController_Detects_Fatal_Violations_When_Image_Is_Rejected` | Phát hiện lỗi nghiêm trọng khi ảnh gán vào cảnh bị từ chối quyền (Rejected), tự động gắn cờ Fatal và chặn xuất bản | **PASSED** |
+| **TC-40** | Phase 6 | `VideoReviewService_Blocks_Approval_When_Fatal_Violations_Exist` | Chặn phê duyệt dứt khoát khi tồn tại lỗi nghiêm trọng (quăng ngoại lệ InvalidOperationException) | **PASSED** |
+| **TC-41** | Phase 6 | `VideoReviewService_Submits_Approval_Successfully_When_Standards_Met` | Phê duyệt video thành công khi đạt chuẩn, cập nhật quyết định `Approved`, người duyệt và thời gian duyệt | **PASSED** |
+| **TC-42** | Phase 6 | `VideoReviewService_Submits_Rejection_With_Feedback_Notes` | Từ chối duyệt video kèm ghi chú phản hồi chi tiết từ ban biên tập, chặn xuất bản | **PASSED** |
+| **TC-43** | Phase 6 | `VideoReviewService_Updates_Metadata_Title_Hook_And_Caption` | Chỉnh sửa tiêu đề video, hook và caption hiển thị phân cảnh trực tiếp trước khi xuất bản | **PASSED** |
+| **TC-44** | Phase 6 | `VideoReviewController_Full_Workflow_Http` | Luồng REST API Review trọn vẹn: lấy review, chạy evaluate, phê duyệt qua API, sửa metadata và xóa dự án | **PASSED** |
 
-**Tổng kết kiểm thử:** `Failed: 0, Passed: 37, Skipped: 0, Total: 37. Duration: 10s`
+**Tổng kết kiểm thử:** `Failed: 0, Passed: 44, Skipped: 0, Total: 44. Duration: 10s`
 
 ---
 

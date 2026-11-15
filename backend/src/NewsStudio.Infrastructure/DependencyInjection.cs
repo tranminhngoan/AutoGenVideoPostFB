@@ -10,6 +10,7 @@ using NewsStudio.Infrastructure.Extractors;
 using NewsStudio.Infrastructure.Jobs;
 using NewsStudio.Infrastructure.Persistence;
 using NewsStudio.Infrastructure.Rendering;
+using NewsStudio.Infrastructure.Review;
 using NewsStudio.Infrastructure.Services;
 
 namespace NewsStudio.Infrastructure;
@@ -76,6 +77,10 @@ public static class DependencyInjection
         services.AddScoped<IVideoAssetService, VideoAssetService>();
         services.AddScoped<IVideoRendererService, FFmpegRendererService>();
         services.AddScoped<IVideoProductionService, VideoProductionService>();
+
+        // Phase 6: Video Review & Quality Control
+        services.AddScoped<IQualityControllerService, QualityControllerService>();
+        services.AddScoped<IVideoReviewService, VideoReviewService>();
 
         return services;
     }
