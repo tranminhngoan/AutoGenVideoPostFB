@@ -252,8 +252,72 @@ export const api = {
       throw new Error(err.error || 'Cập nhật phân cảnh thất bại');
     }
     return await res.json();
+  },
+
+  // Phase 5 Video Rendering & Ephemeral Media APIs
+  async renderVideo(projectId: string, ttsProvider?: string): Promise<RenderStatusResponseDto> {
+    const url = `${API_BASE}/video-projects/${projectId}/render${ttsProvider ? `?ttsProvider=${ttsProvider}` : ''}`;
+    const res = await fetch(url, { method: 'POST' });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Yêu cầu render video thất bại');
+    }
+    return await res.json();
+  },
+
+  async getRenderStatus(projectId: string): Promise<RenderStatusResponseDto> {
+    try {
+      const res = await fetch(`${API_BASE}/video-projects/${projectId}/render-status`);
+      if (!res.ok) return { projectId, status: 'Unknown', progressPercentage: 0 };
+      return await res.json();
+    } catch {
+      return { projectId, status: 'Unknown', progressPercentage: 0 };
+    }
+  },
+
+  async getAssets(projectId: string): Promise<VideoAssetDto[]> {
+    try {
+      const res = await fetch(`${API_BASE}/video-projects/${projectId}/assets`);
+      if (!res.ok) return [];
+      return await res.json();
+    } catch {
+      return [];
+    }
+  },
+
+  async cleanupAssets(projectId: string): Promise<boolean> {
+    try {
+      const res = await fetch(`${API_BASE}/video-projects/${projectId}/assets`, { method: 'DELETE' });
+      return res.ok;
+    } catch {
+      return false;
+    }
   }
 };
+
+export interface RenderStatusResponseDto {
+  projectId: string;
+  status: string;
+  progressPercentage: number;
+  videoUrl?: string;
+  audioUrl?: string;
+  subtitleUrl?: string;
+  durationSeconds?: number;
+  errorMessage?: string;
+}
+
+export interface VideoAssetDto {
+  id: string;
+  videoProjectId: string;
+  assetType: string;
+  localTempPath: string;
+  fileSizeBytes: number;
+  mimeType: string;
+  sha256Hash?: string;
+  expiresAtUtc?: string;
+  isCleanedUp: boolean;
+  createdAtUtc: string;
+}
 
 export interface VideoScriptDto {
   id: string;

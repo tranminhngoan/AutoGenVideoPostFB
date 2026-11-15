@@ -13,17 +13,20 @@ public class VideoProcessingJobExecutor : IVideoProcessingJobExecutor
     private readonly IApplicationDbContext _context;
     private readonly IArticleService _articleService;
     private readonly IScriptService _scriptService;
+    private readonly IVideoProductionService _productionService;
     private readonly ILogger<VideoProcessingJobExecutor> _logger;
 
     public VideoProcessingJobExecutor(
         IApplicationDbContext context,
         IArticleService articleService,
         IScriptService scriptService,
+        IVideoProductionService productionService,
         ILogger<VideoProcessingJobExecutor> logger)
     {
         _context = context;
         _articleService = articleService;
         _scriptService = scriptService;
+        _productionService = productionService;
         _logger = logger;
     }
 
@@ -134,13 +137,20 @@ public class VideoProcessingJobExecutor : IVideoProcessingJobExecutor
             }
             await Task.Delay(300, cancellationToken);
 
-            // Step 5: Generating Audio (TTS)
+            // Step 5 & 6: Generating Audio (TTS) & Rendering Video (FFmpeg 9:16)
             await AdvanceStepAsync(project, jobRecord, VideoProjectStatus.GeneratingAudio, "Synthesizing Vietnamese voice-over audio", 85, cancellationToken);
-            await Task.Delay(1000, cancellationToken);
-
-            // Step 6: Rendering (FFmpeg 9:16)
-            await AdvanceStepAsync(project, jobRecord, VideoProjectStatus.Rendering, "FFmpeg rendering vertical 1080x1920 video", 95, cancellationToken);
-            await Task.Delay(1000, cancellationToken);
+            if (project.ArticleId != null)
+            {
+                try
+                {
+                    await _productionService.ProduceVideoAsync(project.Id, null, cancellationToken);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Production rendering encountered issue for Project {ProjectId}: {Msg}", project.Id, ex.Message);
+                }
+            }
+            await Task.Delay(300, cancellationToken);
 
             // Step 7: Quality Checking & Awaiting Approval
             await AdvanceStepAsync(project, jobRecord, VideoProjectStatus.QualityChecking, "Automated 10-point QC validation completed", 98, cancellationToken);

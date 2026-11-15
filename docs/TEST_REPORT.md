@@ -2,7 +2,7 @@
 
 **Thời gian kiểm thử:** 15/11/2026  
 **Môi trường:** Local Windows (PostgreSQL 16, Node v24.14.1, .NET 8 runtime)  
-**Tình trạng:** **30/30 PASS (100%)**
+**Tình trạng:** **37/37 PASS (100%)**
 
 ---
 
@@ -13,7 +13,7 @@ Lệnh thực thi:
 dotnet test backend/NewsStudio.sln
 ```
 
-### Chi tiết các ca kiểm thử (30/30 Passed):
+### Chi tiết các ca kiểm thử (37/37 Passed):
 
 | Mã kiểm thử | Nhóm | Tên Test Case | Mô tả & Kỳ vọng | Kết quả |
 |---|---|---|---|:---:|
@@ -47,8 +47,15 @@ dotnet test backend/NewsStudio.sln
 | **TC-28** | Phase 4 | `ScriptPlanner_When_Article_Has_Zero_Images_All_Scenes_Use_Typography` | Xử lý an toàn khi bài báo không có ảnh: 100% scenes chuyển sang Typography và MetricChart nền tối | **PASSED** |
 | **TC-29** | Phase 4 | `AiEditorFactory_Switches_Between_Gemini_And_Claude` | Factory chuyển đổi chính xác nhà cung cấp AI theo tham số cấu hình: Gemini và Claude | **PASSED** |
 | **TC-30** | Phase 4 | `VideoProjectScriptsController_Full_Workflow` | Luồng REST API trọn vẹn: tạo kịch bản AI, truy vấn kịch bản, sửa kịch bản, và đồng bộ 6-10 phân cảnh | **PASSED** |
+| **TC-31** | Phase 5 | `EdgeTts_Synthesizes_Vietnamese_Speech_Within_Target_Duration` | Sinh giọng đọc tiếng Việt chuẩn, thời lượng 45-60s, định dạng WAV PCM 24kHz, tạo mã băm SHA-256 | **PASSED** |
+| **TC-32** | Phase 5 | `SubtitleGenerator_Produces_Synchronized_Srt_And_Vtt_Cues` | Sinh phụ đề chuẩn đồng bộ `.srt` và WebVTT `.vtt` từ kịch bản phân cảnh | **PASSED** |
+| **TC-33** | Phase 5 | `FFmpegRenderer_Builds_Vertical_9x16_Filtergraph_And_Renders` | Xây dựng filtergraph 1080×1920 (9:16), 30 fps, làm mờ ảnh ngang, hiệu ứng Ken Burns, xuất video MP4 | **PASSED** |
+| **TC-34** | Phase 5 | `VideoAssetService_Registers_And_Enforces_Ephemeral_Storage` | Lưu trữ tạm thời `./tmp/newsstudio/{id}/`, kiểm tra metadata TTL 2h, kiểm định không lưu binary vào PostgreSQL | **PASSED** |
+| **TC-35** | Phase 5 | `VideoAssetService_Cleans_Up_Expired_Assets` | Tự động dọn dẹp các asset hết hạn: xóa file vật lý trên đĩa và cập nhật trạng thái trong database | **PASSED** |
+| **TC-36** | Phase 5 | `TtsFactory_Switches_Between_EdgeTts_And_ElevenLabs` | Factory chuyển đổi nhà cung cấp TTS linh hoạt giữa EdgeTTS và ElevenLabs | **PASSED** |
+| **TC-37** | Phase 5 | `VideoMediaController_Endpoints_Full_Workflow` | Luồng REST API media trọn vẹn: kích hoạt render, lấy trạng thái, stream MP4/WAV, tải SRT, liệt kê assets | **PASSED** |
 
-**Tổng kết kiểm thử:** `Failed: 0, Passed: 30, Skipped: 0, Total: 30. Duration: 10s`
+**Tổng kết kiểm thử:** `Failed: 0, Passed: 37, Skipped: 0, Total: 37. Duration: 10s`
 
 ---
 

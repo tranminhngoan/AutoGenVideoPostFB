@@ -1,5 +1,53 @@
 # AI NEWS STUDIO - NHẬT KÝ TRIỂN KHAI (IMPLEMENTATION LOG)
 
+## Phase 5: TTS và Video Renderer (FFmpeg 9:16, Subtitles & Ephemeral Storage)
+
+**Thời gian thực hiện:** 15/11/2026
+
+### 1. Công việc đã thực hiện
+1. **Xây dựng DTOs & Service Interfaces**:
+   - `NewsStudio.Application/DTOs/RenderingDtos.cs`: `TtsSynthesisRequest`, `TtsSynthesisResult`, `SubtitleCueDto`, `VideoRenderRequest`, `VideoRenderResult`, `VideoAssetDto`, `RenderStatusResponseDto`.
+   - `NewsStudio.Application/Interfaces/IRenderingServices.cs`: Định nghĩa các interface chuẩn `ITtsService`, `ITtsFactory`, `ISubtitleGeneratorService`, `IVideoRendererService`, `IVideoAssetService`, `IVideoProductionService`.
+2. **Phát triển Động cơ TTS Tiếng Việt (`EdgeTtsService` & `ElevenLabsTtsService`)**:
+   - Hỗ trợ giọng đọc thần kinh tự nhiên của Microsoft Edge (`vi-VN-HoaiMyNeural`, `vi-VN-NamMinhNeural`) và ElevenLabs.
+   - Chuẩn hóa đầu ra âm thanh PCM WAV 24kHz 16-bit Mono, băm SHA-256 để chống trùng lặp dữ liệu và tái sử dụng cache khi văn bản không đổi.
+   - Căn chỉnh tốc độ đọc và thời lượng khớp chính xác với kế hoạch phân cảnh (45–60 giây).
+3. **Phát triển Bộ sinh phụ đề chuẩn (`SubtitleGeneratorService`)**:
+   - Tự động sinh file phụ đề `.srt` (cho FFmpeg burner) và `.vtt` (cho trình phát Web).
+   - Phân tách cụm từ tiếng Việt súc tích (4-7 từ), timestamp mili-giây chuẩn xác.
+4. **Phát triển Động cơ Dựng Video Dọc FFmpeg 9:16 (`FFmpegRendererService`)**:
+   - Tự động thiết lập filtergraph 1080×1920 (9:16), 30 fps.
+   - Xử lý ảnh ngang: Background mờ (`boxblur=15:5`) + foreground sắc nét.
+   - Hiệu ứng chuyển động Ken Burns (`zoompan`), zoom, pan, fade, slide.
+   - Dựng thẻ tin tức Typography trên nền gradient chuyển động khi phân cảnh không có ảnh.
+   - Hòa âm giọng đọc với nhạc nền tin tức nhẹ nhàng (Audio Ducking).
+   - Hỗ trợ Dev/Test Fallback tự động khi chạy trên máy chưa cài sẵn FFmpeg binary.
+5. **Quản lý lưu trữ tạm thời Ephemeral Storage (`VideoAssetService`)**:
+   - Tuân thủ nguyên tắc: **Không lưu binary MP4, ảnh hay audio vào PostgreSQL**.
+   - Lưu trữ tạm thời vào `./tmp/newsstudio/{projectId}/` và theo dõi trong `VideoAssets` với TTL 2 giờ (`ExpiresAtUtc`).
+   - Tự động dọn dẹp các tệp hết hạn trên ổ đĩa và cập nhật trạng thái trong database.
+6. **Dịch vụ tích hợp sản xuất video hoàn chỉnh (`VideoProductionService`)**:
+   - Điều phối toàn bộ luồng: TTS giọng đọc -> Phụ đề SRT/VTT -> FFmpeg render MP4 -> Đăng ký assets -> Cập nhật trạng thái `AwaitingApproval`.
+   - Tích hợp trực tiếp vào worker pipeline `VideoProcessingJobExecutor`.
+7. **Xây dựng REST APIs (`VideoMediaController`)**:
+   - `POST /api/video-projects/{id}/render`: Kích hoạt render video.
+   - `GET /api/video-projects/{id}/render-status`: Lấy trạng thái render thời gian thực.
+   - `GET /api/video-projects/{id}/video`: Stream video MP4 9:16.
+   - `GET /api/video-projects/{id}/audio`: Stream audio WAV giọng đọc tiếng Việt.
+   - `GET /api/video-projects/{id}/subtitles?format=srt|vtt`: Tải phụ đề SRT/VTT.
+   - `GET /api/video-projects/{id}/assets`: Danh sách các file tạm thời và hạn TTL.
+   - `DELETE /api/video-projects/{id}/assets`: Xóa sạch file tạm của dự án.
+8. **Nâng cấp Giao diện Frontend (`VideoDetailPage.tsx` & `api.ts`)**:
+   - Tích hợp video player dọc chuẩn 9:16 xem trước trực tiếp trên web.
+   - Trình nghe thử audio giọng đọc tiếng Việt.
+   - Bảng quản lý Ephemeral Storage hiển thị chi tiết các asset tạm và thời hạn TTL.
+   - Nút Render Video và Tải file MP4.
+9. **Kiểm thử tự động hoàn chỉnh (`Phase5TtsAndVideoRendererTests.cs`)**:
+   - 7 ca kiểm thử chuyên sâu cho TTS, Subtitles, FFmpeg, Ephemeral storage, TTL cleanup, Factory switching, Controller API.
+   - Tổng cộng 37/37 tests xUnit đạt 100% PASS.
+
+---
+
 ## Phase 4: AI Editor và Script Planner
 
 **Thời gian thực hiện:** 15/11/2026

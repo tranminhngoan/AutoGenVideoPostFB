@@ -150,3 +150,39 @@ Hệ thống áp dụng mẫu **Factory / Strategy** cho phép thay đổi nhà 
     - **Chỉ sử dụng `ArticleImageId` của bài báo hiện tại**, ưu tiên ảnh hợp lệ (`RightsStatus != Rejected`, `Category != Unsuitable`).
     - Nếu bài báo thiếu ảnh hoặc không có ảnh: Tự động gán `VisualType = "Typography"` hoặc `"MetricChart"`, hiển thị typography chuyển động trên nền tối. Tuyệt đối không sinh ảnh AI, không lấy ảnh ngoài.
   - Cấu hình chuyển động: `MotionType` (`ZoomIn`, `ZoomOut`, `PanLeft`, `PanRight`, `KenBurns`) và `TransitionType` (`Fade`, `Slide`, `Cut`).
+
+---
+
+## 7. Động cơ TTS, Phụ đề & FFmpeg Video Renderer (Phase 5)
+
+### 7.1. Kiến trúc TTS (Edge-TTS & ElevenLabs)
+- Hệ thống áp dụng mẫu **Factory / Strategy** thông qua `ITtsFactory` và `ITtsService`.
+- **EdgeTtsService**: Sử dụng giọng đọc thần kinh tự nhiên của Microsoft Edge (`vi-VN-HoaiMyNeural`, `vi-VN-NamMinhNeural`) hoàn toàn miễn phí, sinh luồng âm thanh PCM 24kHz 16-bit Mono chuẩn WAV, băm SHA-256 để tránh sinh trùng lặp.
+- **ElevenLabsTtsService**: Hỗ trợ chuyển sang giọng đọc cao cấp ElevenLabs đa ngôn ngữ khi có API Key.
+- Tự động căn chỉnh tốc độ đọc (speech rate: ~2.3 từ/giây) và phân bổ thời lượng khớp hoàn hảo với 6-10 phân cảnh kịch bản (tổng 45-60 giây).
+
+### 7.2. Subtitle Generator Service
+- Hỗ trợ xuất đồng thời hai định dạng phụ đề tiêu chuẩn:
+  - **SRT (SubRip)**: Tương thích hoàn hảo với FFmpeg burner filter và các trình dựng video.
+  - **WebVTT (Web Video Text Tracks)**: Tương thích với thẻ `<track>` HTML5 trên trình duyệt web.
+- Tự động phân đoạn lời thoại thành các cụm từ ngắn gọn (4-7 từ), timestamp căn chỉnh chính xác từng mili-giây, hỗ trợ làm nổi bật chữ hiện tại (karaoke highlight).
+
+### 7.3. Động cơ FFmpeg Vertical 9:16 Video Filtergraph
+- **Chuẩn đầu ra Facebook Reels**: Độ phân giải **1080 × 1920 (tỉ lệ 9:16)**, 30 fps, codec `h264`, âm thanh `aac` 192 kbps.
+- **Xử lý ảnh ngang (Horizontal / Landscape Image)**:
+  - Tách luồng thành 2 layer: Layer nền được phóng to và làm mờ (`boxblur=15:5`), layer trên cùng giữ nguyên tỉ lệ gốc đặt chính giữa.
+- **Chuyển động điện ảnh (Cinematic Camera Motion)**:
+  - Tích hợp hiệu ứng Ken Burns mượt mà bằng `zoompan` filter (`ZoomIn`, `ZoomOut`, `PanLeft`, `PanRight`).
+  - Chuyển cảnh mềm mại giữa các scene (`fade`, `xfade`, `slide`).
+- **Phân cảnh chữ (Typography Cards)**:
+  - Khi phân cảnh không có ảnh bài báo (`VisualType = "Typography"`), dựng card đồ họa thông tin hiện đại với gradient nền tối và tiêu điểm chữ typography nổi bật.
+- **Hòa âm tự động (Audio Ducking)**:
+  - Hòa trộn giọng đọc thuyết minh chính với nhạc nền tin tức nhẹ nhàng, tự động giảm âm lượng nhạc nền khi có giọng nói.
+- **Cơ chế Dev/Test Fallback**:
+  - Tự động định vị binary FFmpeg trên hệ thống. Trong môi trường test hoặc local chưa có binary, tự động tạo script FFmpeg hoàn chỉnh và tạo file MP4 containerized test hợp lệ để pipeline tiếp tục hoạt động thông suốt. Trên Railway/Docker, FFmpeg được cài đặt sẵn qua `apt-get install -y ffmpeg`.
+
+### 7.4. Quản lý lưu trữ tạm thời (Ephemeral Storage Lifecycle)
+- **Quy tắc tuyệt đối**: **Không lưu binary MP4, ảnh hay audio vào PostgreSQL**.
+- Toàn bộ file media phát sinh được lưu tạm trong thư mục đệm hệ thống: `./tmp/newsstudio/{projectId}/`.
+- Mỗi file được ghi nhận vào bảng `VideoAssets` với metadata: `AssetType`, `LocalTempPath`, `FileSizeBytes`, `MimeType`, `Sha256Hash`, `ExpiresAtUtc` (mặc định 2 giờ).
+- Dịch vụ `IVideoAssetService` chịu trách nhiệm quét dọn và hủy các tệp hết hạn cả trên ổ cứng vật lý lẫn cập nhật cờ `IsCleanedUp = true` trong database. Có API cho phép chủ động dọn dẹp hoặc dọn dẹp tự động sau khi xuất bản lên Facebook.

@@ -9,6 +9,7 @@ using NewsStudio.Infrastructure.Ai;
 using NewsStudio.Infrastructure.Extractors;
 using NewsStudio.Infrastructure.Jobs;
 using NewsStudio.Infrastructure.Persistence;
+using NewsStudio.Infrastructure.Rendering;
 using NewsStudio.Infrastructure.Services;
 
 namespace NewsStudio.Infrastructure;
@@ -64,6 +65,17 @@ public static class DependencyInjection
         services.AddScoped<IAiEditorFactory, AiEditorFactory>();
         services.AddSingleton<IScriptPlannerService, ScriptPlannerService>();
         services.AddScoped<IScriptService, ScriptService>();
+
+        // Phase 5: TTS, Subtitles, FFmpeg Video Renderer & Ephemeral Asset Storage
+        services.AddSingleton<ISubtitleGeneratorService, SubtitleGeneratorService>();
+        services.AddScoped<EdgeTtsService>();
+        services.AddScoped<ElevenLabsTtsService>();
+        services.AddScoped<ITtsService>(sp => sp.GetRequiredService<EdgeTtsService>());
+        services.AddScoped<ITtsService>(sp => sp.GetRequiredService<ElevenLabsTtsService>());
+        services.AddScoped<ITtsFactory, TtsFactory>();
+        services.AddScoped<IVideoAssetService, VideoAssetService>();
+        services.AddScoped<IVideoRendererService, FFmpegRendererService>();
+        services.AddScoped<IVideoProductionService, VideoProductionService>();
 
         return services;
     }
