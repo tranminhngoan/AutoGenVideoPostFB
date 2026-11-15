@@ -1,17 +1,35 @@
+using System;
+using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Hosting;
+using NewsStudio.Application.DTOs;
+using NewsStudio.Application.Interfaces;
 
 namespace NewsStudio.Api.Controllers;
 
 [ApiController]
-[Route("api/[controller]")]
+[Route("api/system")]
 [Produces("application/json")]
 public class SystemController : ControllerBase
 {
+    private readonly ISystemMetricsService _metricsService;
+    private readonly IStorageCleanupService _storageCleanupService;
+    private readonly IJobRecoveryService _jobRecoveryService;
     private readonly IConfiguration _configuration;
     private readonly IHostEnvironment _environment;
 
-    public SystemController(IConfiguration configuration, IHostEnvironment environment)
+    public SystemController(
+        ISystemMetricsService metricsService,
+        IStorageCleanupService storageCleanupService,
+        IJobRecoveryService jobRecoveryService,
+        IConfiguration configuration,
+        IHostEnvironment environment)
     {
+        _metricsService = metricsService;
+        _storageCleanupService = storageCleanupService;
+        _jobRecoveryService = jobRecoveryService;
         _configuration = configuration;
         _environment = environment;
     }
@@ -42,7 +60,7 @@ public class SystemController : ControllerBase
             {
                 provider = ttsProvider,
                 voice = ttsVoice,
-                isConfigured = true // EdgeTts is built-in/free
+                isConfigured = true
             },
             facebook = new
             {
@@ -73,5 +91,49 @@ public class SystemController : ControllerBase
             osPlatform = Environment.OSVersion.Platform.ToString(),
             serverTimeUtc = DateTime.UtcNow
         });
+    }
+
+    /// <summary>
+    /// Gets real-time system metrics: CPU, RAM, Temp Storage disk usage, Job counts, and DB latency.
+    /// </summary>
+    [HttpGet("metrics")]
+    [ProducesResponseType(typeof(SystemMetricsDto), 200)]
+    public async Task<IActionResult> GetMetrics(CancellationToken cancellationToken)
+    {
+        var metrics = await _metricsService.GetSystemMetricsAsync(cancellationToken);
+        return Ok(metrics);
+    }
+
+    /// <summary>
+    /// Gets cost and token tracking across AI and TTS providers.
+    /// </summary>
+    [HttpGet("costs")]
+    [ProducesResponseType(typeof(SystemCostSummaryDto), 200)]
+    public async Task<IActionResult> GetCosts(CancellationToken cancellationToken)
+    {
+        var costs = await _metricsService.GetCostSummaryAsync(cancellationToken);
+        return Ok(costs);
+    }
+
+    /// <summary>
+    /// Triggers an immediate storage cleanup of expired assets and enforces storage quotas.
+    /// </summary>
+    [HttpPost("storage/cleanup")]
+    [ProducesResponseType(typeof(StorageCleanupReportDto), 200)]
+    public async Task<IActionResult> TriggerStorageCleanup(CancellationToken cancellationToken)
+    {
+        var report = await _storageCleanupService.RunStorageCleanupAsync(cancellationToken);
+        return Ok(report);
+    }
+
+    /// <summary>
+    /// Triggers a job recovery audit for any interrupted or dangling jobs.
+    /// </summary>
+    [HttpPost("jobs/recover")]
+    [ProducesResponseType(typeof(JobRecoveryReportDto), 200)]
+    public async Task<IActionResult> TriggerJobRecovery(CancellationToken cancellationToken)
+    {
+        var report = await _jobRecoveryService.RecoverDanglingJobsAsync(cancellationToken);
+        return Ok(report);
     }
 }

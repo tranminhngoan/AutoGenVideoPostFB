@@ -1,5 +1,9 @@
+using System.Threading.RateLimiting;
 using Hangfire;
+using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.OpenApi.Models;
 using NewsStudio.Application;
 using NewsStudio.Infrastructure;
@@ -44,24 +48,62 @@ try
                 Name = "AI News Studio Engineering Team"
             }
         });
+
+        // Add Security definition for Admin API Key if configured
+        c.AddSecurityDefinition("AdminApiKey", new OpenApiSecurityScheme
+        {
+            Description = "Admin API Key header for authenticating management requests: X-Admin-Api-Key: <key>",
+            Name = "X-Admin-Api-Key",
+            In = ParameterLocation.Header,
+            Type = SecuritySchemeType.ApiKey
+        });
     });
 
     // Health Checks
     builder.Services.AddHealthChecks()
         .AddDbContextCheck<ApplicationDbContext>("PostgreSQL");
 
-    // CORS Configuration
-    var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ??
-                         new[] { "http://localhost:5173", "http://localhost:3000", "http://127.0.0.1:5173" };
+    // Dynamic CORS Configuration
+    var allowedOrigins = new List<string> { "http://localhost:5173", "http://localhost:3000", "http://127.0.0.1:5173" };
+    var configuredOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>();
+    if (configuredOrigins != null)
+    {
+        allowedOrigins.AddRange(configuredOrigins);
+    }
+
+    var frontendUrl = Environment.GetEnvironmentVariable("FRONTEND_URL");
+    if (!string.IsNullOrWhiteSpace(frontendUrl))
+    {
+        allowedOrigins.Add(frontendUrl.TrimEnd('/'));
+    }
+
+    var railwayDomain = Environment.GetEnvironmentVariable("RAILWAY_PUBLIC_DOMAIN");
+    if (!string.IsNullOrWhiteSpace(railwayDomain))
+    {
+        allowedOrigins.Add($"https://{railwayDomain}");
+    }
 
     builder.Services.AddCors(options =>
     {
         options.AddPolicy("DefaultCorsPolicy", policy =>
         {
-            policy.WithOrigins(allowedOrigins)
+            policy.WithOrigins(allowedOrigins.Distinct().ToArray())
                   .AllowAnyHeader()
                   .AllowAnyMethod()
                   .AllowCredentials();
+        });
+    });
+
+    // Rate Limiting (Production Hardening)
+    builder.Services.AddRateLimiter(options =>
+    {
+        options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+        options.AddFixedWindowLimiter("global", opt =>
+        {
+            opt.PermitLimit = 120;
+            opt.Window = TimeSpan.FromMinutes(1);
+            opt.QueueProcessingOrder = QueueProcessingOrder.OldestFirst;
+            opt.QueueLimit = 30;
         });
     });
 
@@ -70,6 +112,33 @@ try
     builder.Services.AddInfrastructureServices(builder.Configuration);
 
     var app = builder.Build();
+
+    // Global Exception Handling (RFC 7807 ProblemDetails)
+    app.UseExceptionHandler(errorApp =>
+    {
+        errorApp.Run(async context =>
+        {
+            context.Response.StatusCode = StatusCodes.Status500InternalServerError;
+            context.Response.ContentType = "application/problem+json";
+
+            var exceptionHandlerPathFeature = context.Features.Get<IExceptionHandlerPathFeature>();
+            var exception = exceptionHandlerPathFeature?.Error;
+
+            Log.Error(exception, "Unhandled exception on path: {Path}", context.Request.Path);
+
+            var problem = new
+            {
+                type = "https://tools.ietf.org/html/rfc7807",
+                title = "An unexpected error occurred processing your request.",
+                status = 500,
+                detail = app.Environment.IsDevelopment() ? exception?.Message : "Internal server error. Please contact administrator.",
+                instance = context.Request.Path.Value,
+                traceId = context.TraceIdentifier
+            };
+
+            await context.Response.WriteAsJsonAsync(problem);
+        });
+    });
 
     // Configure Request Pipeline
     app.UseSerilogRequestLogging();
@@ -92,6 +161,47 @@ try
 
     app.UseRouting();
     app.UseCors("DefaultCorsPolicy");
+    app.UseRateLimiter();
+
+    // Optional Admin API Key Guard Middleware
+    var adminApiKey = builder.Configuration["Security:AdminApiKey"];
+    if (!string.IsNullOrWhiteSpace(adminApiKey))
+    {
+        app.Use(async (context, next) =>
+        {
+            var path = context.Request.Path.Value ?? string.Empty;
+
+            // Exempt public & telemetry endpoints
+            if (path == "/" || 
+                path.StartsWith("/health") || 
+                path.StartsWith("/swagger") || 
+                path.StartsWith("/hangfire"))
+            {
+                await next();
+                return;
+            }
+
+            // Check header
+            if (context.Request.Headers.TryGetValue("X-Admin-Api-Key", out var headerKey) &&
+                headerKey == adminApiKey)
+            {
+                await next();
+                return;
+            }
+
+            // Check Authorization: Bearer <key>
+            if (context.Request.Headers.TryGetValue("Authorization", out var authHeader) &&
+                authHeader.ToString().StartsWith("Bearer ") &&
+                authHeader.ToString().Substring(7).Trim() == adminApiKey)
+            {
+                await next();
+                return;
+            }
+
+            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+            await context.Response.WriteAsJsonAsync(new { error = "Unauthorized: Invalid or missing X-Admin-Api-Key header" });
+        });
+    }
 
     app.UseAuthentication();
     app.UseAuthorization();
@@ -107,7 +217,7 @@ try
         Predicate = _ => false
     });
 
-    app.MapControllers();
+    app.MapControllers().RequireRateLimiting("global");
 
     // Fallback info root endpoint
     app.MapGet("/", () => Results.Ok(new
@@ -117,8 +227,27 @@ try
         status = "Online",
         timestamp = DateTime.UtcNow,
         docs = "/swagger",
-        hangfire = "/hangfire"
+        hangfire = "/hangfire",
+        metrics = "/api/system/metrics",
+        costs = "/api/system/costs"
     }));
+
+    // Apply database migrations automatically on startup with retry
+    if (app.Environment.IsProduction() || builder.Configuration.GetValue<bool>("Database:AutoMigrate", true))
+    {
+        try
+        {
+            using var scope = app.Services.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+            Log.Information("Applying PostgreSQL database migrations on startup...");
+            db.Database.Migrate();
+            Log.Information("PostgreSQL database migrations verified/applied successfully.");
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Database migration on startup check encountered an exception (tables may already exist or DB is warming up).");
+        }
+    }
 
     app.Run();
 }

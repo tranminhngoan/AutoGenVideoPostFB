@@ -6,6 +6,7 @@ using Microsoft.Extensions.DependencyInjection;
 using NewsStudio.Application.Common.Interfaces;
 using NewsStudio.Application.Interfaces;
 using NewsStudio.Infrastructure.Ai;
+using NewsStudio.Infrastructure.Common;
 using NewsStudio.Infrastructure.Extractors;
 using NewsStudio.Infrastructure.Jobs;
 using NewsStudio.Infrastructure.Persistence;
@@ -22,8 +23,8 @@ public static class DependencyInjection
         this IServiceCollection services,
         IConfiguration configuration)
     {
-        var connectionString = configuration.GetConnectionString("DefaultConnection") ??
-                               "Host=localhost;Port=5432;Database=newsstudio_db;Username=postgres;Password=postgres";
+        // Support standard .NET connection string OR Railway DATABASE_URL (postgresql://...)
+        var connectionString = ConnectionStringHelper.ResolveConnectionString(configuration);
 
         // EF Core with PostgreSQL
         services.AddDbContext<ApplicationDbContext>(options =>
@@ -86,6 +87,11 @@ public static class DependencyInjection
         // Phase 7: Facebook Graph API & Reels Publishing
         services.AddSingleton<IFacebookTokenProtectionService, FacebookTokenProtectionService>();
         services.AddHttpClient<IFacebookPublishingService, FacebookPublishingService>();
+
+        // Phase 8: Production Hardening, Job Recovery, Metrics & Storage Cleanup
+        services.AddScoped<IJobRecoveryService, JobRecoveryService>();
+        services.AddScoped<ISystemMetricsService, SystemMetricsService>();
+        services.AddScoped<IStorageCleanupService, StorageCleanupService>();
 
         return services;
     }

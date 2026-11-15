@@ -1,5 +1,58 @@
 # AI NEWS STUDIO - NHẬT KÝ TRIỂN KHAI (IMPLEMENTATION LOG)
 
+## Phase 8: Railway Deployment và Production Hardening
+
+**Thời gian thực hiện:** 15/11/2026
+
+### 1. Công việc đã thực hiện
+1. **Phân tích Chuỗi Kết nối Động cho Railway (`ConnectionStringHelper`)**:
+   - `NewsStudio.Infrastructure/Common/ConnectionStringHelper.cs`: Hỗ trợ biến môi trường `DATABASE_URL` dạng URI (`postgresql://user:pass@host:port/database`) do Railway tự động cấp phát, chuyển đổi sang định dạng Npgsql kết hợp pooling và keep-alive.
+2. **Triển khai Dịch vụ Phục hồi Tác vụ khi Worker Restart (`JobRecoveryService`)**:
+   - `NewsStudio.Infrastructure/Jobs/JobRecoveryService.cs`:
+     - Rà soát các dự án dang dở (`Rendering`, `GeneratingAudio`, `Publishing`).
+     - Bảo vệ chống xuất bản lặp (Idempotency): Nếu bài đăng Facebook đã tồn tại, hòa giải ngay về `Published`.
+     - Kiểm tra sự tồn tại của file video trên ổ đĩa tạm. Chuyển về `AwaitingApproval` nếu video còn nguyên vẹn; đánh dấu `Failed` kèm hướng dẫn render lại nếu file bị mất do container restart.
+     - Đánh dấu các `ProcessingJobs` gián đoạn sang `Failed`.
+3. **Triển khai Dịch vụ Dọn dẹp & Quản lý Hạn ngạch Ổ đĩa Tạm (`StorageCleanupService`)**:
+   - `NewsStudio.Infrastructure/Rendering/StorageCleanupService.cs`:
+     - Xóa các tệp tin tạm có hạn TTL quá hạn (`ExpiresAtUtc < DateTime.UtcNow`).
+     - Rà soát trần dung lượng đĩa `Storage:MaxTempStorageMb` (5120 MB). Tự động dọn dẹp các tệp cũ nhất khi vượt ngưỡng để giữ dung lượng dưới 80% hạn ngạch.
+4. **Triển khai Dịch vụ Telemetry & Theo dõi Chi phí (`SystemMetricsService`)**:
+   - `NewsStudio.Infrastructure/Services/SystemMetricsService.cs`:
+     - Thu thập RAM WorkingSet, CPU usage %, dung lượng ổ đĩa tạm thực tế, trạng thái kết nối và độ trễ PostgreSQL (ms), số lượng Jobs, Uptime.
+     - Tính toán tổng chi phí AI và TTS, số lượng tokens tiêu thụ, và chi phí trung bình trên mỗi video.
+5. **Nâng cấp Worker Service (`Worker.cs`)**:
+   - Tự động chạy `IJobRecoveryService.RecoverDanglingJobsAsync` ngay khi khởi động.
+   - Vòng lặp chạy ngầm thực thi dọn dẹp ổ đĩa định kỳ mỗi 15 phút.
+   - Ghi nhận heartbeat và xử lý tín hiệu SIGTERM graceful shutdown qua `IHostApplicationLifetime`.
+6. **Mở rộng REST APIs (`SystemController.cs`)**:
+   - `GET /api/system/metrics`: Chỉ số vận hành thời gian thực.
+   - `GET /api/system/costs`: Thống kê chi phí AI & TTS.
+   - `POST /api/system/storage/cleanup`: Kích hoạt dọn dẹp đĩa tạm thủ công.
+   - `POST /api/system/jobs/recover`: Kích hoạt kiểm toán phục hồi job thủ công.
+   - Giữ nguyên `GET /api/system/config-summary` và `GET /api/system/info`.
+7. **Củng cố Bảo mật & Ổn định Production (`Program.cs`)**:
+   - Tự động thực thi `Database.Migrate()` khi khởi động API với cơ chế thử lại.
+   - Tích hợp ASP.NET Core RateLimiter (120 req/min).
+   - Tùy chọn bảo mật `X-Admin-Api-Key` cho các endpoint quản trị.
+   - Dynamic CORS tương thích tự động với domain Railway.
+   - Global Exception Handler trả về RFC 7807 ProblemDetails.
+8. **Nâng cấp Giao diện Frontend (`DashboardPage.tsx` & `api.ts`)**:
+   - Thêm thanh đo dung lượng ổ đĩa tạm thời gian thực kèm nút **Dọn dẹp đĩa**.
+   - Thêm thẻ độ trễ PostgreSQL, RAM WorkingSet, Uptime và nút **Kiểm toán Job**.
+   - Thống kê chi phí AI & TTS trung bình và tổng cộng.
+9. **Bộ Tài liệu Triển khai & Vận hành Hoàn chỉnh**:
+   - `docs/DEPLOYMENT_GUIDE.md`
+   - `docs/ENVIRONMENT_VARIABLES.md`
+   - `docs/OPERATIONS_GUIDE.md`
+   - `docs/RECOVERY_GUIDE.md`
+   - `docs/FINAL_TEST_REPORT.md`
+10. **Kiểm thử Tự động Hoàn chỉnh (`Phase8ProductionHardeningTests.cs`)**:
+    - 8 ca kiểm thử xUnit mới: phân tích URI Railway, phục hồi job gián đoạn, chống duplicate publish, dọn dẹp ổ đĩa tạm, telemetry metrics, full system API controller, và mô phỏng tải đa video đồng thời.
+    - Toàn bộ 59/59 tests xUnit đạt 100% PASS.
+
+---
+
 ## Phase 7: Facebook Graph API (Kết nối Fanpage, Đăng Reels & Phân tích Insights)
 
 **Thời gian thực hiện:** 15/11/2026

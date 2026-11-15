@@ -1,7 +1,7 @@
 # AI NEWS STUDIO - TRẠNG THÁI DỰ ÁN (PROJECT STATUS)
 
 **Cập nhật lần cuối:** 15/11/2026  
-**Giai đoạn hiện tại:** **Phase 7 – Facebook Graph API** (HOÀN THÀNH)
+**Giai đoạn hiện tại:** **Phase 8 – Railway Deployment và Production Hardening** (HOÀN THÀNH - TOÀN BỘ 8 PHASE ĐẠT CHUẨN PRODUCTION)
 
 ---
 
@@ -15,8 +15,45 @@
 | **Phase 4** | AI Editor và Script Planner | **HOÀN THÀNH** | Tích hợp linh hoạt Gemini & Claude, kịch bản 45-60s, tách bạch Fact vs Commentary, phân cảnh 6-10 scenes chỉ dùng ảnh bài báo hoặc typography |
 | **Phase 5** | TTS và Video Renderer | **HOÀN THÀNH** | Edge-TTS / ElevenLabs tiếng Việt, phụ đề đồng bộ SRT/VTT, dựng video dọc 9:16 (1080×1920) chuẩn Reels bằng FFmpeg, quản lý lưu trữ tạm thời Ephemeral Storage |
 | **Phase 6** | Video Review và Quality Control | **HOÀN THÀNH** | Rà soát tự động 10 tiêu chí QC nghiêm ngặt, cơ chế khóa xuất bản khi có lỗi nghiêm trọng, giao diện phê duyệt/từ chối/yêu cầu làm lại chuyên nghiệp |
-| **Phase 7** | **Facebook Graph API** | **HOÀN THÀNH** | Kết nối Page, mã hóa token AES-256, quy trình upload Reels 3 bước (start, transfer, finish), chống đăng trùng lặp, Page Insights metrics, tự động hủy file tạm sau đăng |
-| **Phase 8** | Railway Deployment và Production Hardening | Chưa bắt đầu | Sắp tới: Cấu hình Railway services, Dockerfile tối ưu, graceful shutdown |
+| **Phase 7** | Facebook Graph API | **HOÀN THÀNH** | Kết nối Page, mã hóa token AES-256, quy trình upload Reels 3 bước (start, transfer, finish), chống đăng trùng lặp, Page Insights metrics, tự động hủy file tạm sau đăng |
+| **Phase 8** | **Railway Deployment và Production Hardening** | **HOÀN THÀNH** | Cấu hình Railway multi-service, Dockerfile tối ưu (FFmpeg, fonts, curl), cơ chế tự động phục hồi Job gián đoạn, Rate Limiting, Admin Security, Quota đĩa tạm, Telemetry API |
+
+---
+
+## 2. Tiêu chí nghiệm thu Phase 8 (Production Hardening & Railway)
+
+- [x] **Cấu hình Nền tảng Railway & Dockerfile Độc lập**:
+  - `docker/Dockerfile.api`: Tối ưu hóa multi-stage build .NET 8 ASP.NET runtime, cài đặt `curl` cho healthcheck, cấp quyền thư mục tạm `/tmp/newsstudio`.
+  - `docker/Dockerfile.worker`: Multi-stage build .NET 8 runtime, cài đặt đầy đủ `ffmpeg`, `fontconfig`, bộ phông chữ tiếng Việt (`fonts-dejavu-core`, `fonts-liberation`), thư mục tạm có quyền ghi, xử lý tín hiệu dừng ứng dụng an toàn qua `IHostApplicationLifetime` (SIGTERM graceful shutdown).
+  - Tự động chuyển đổi `DATABASE_URL` dạng URI của Railway (`postgresql://...`) sang chuỗi kết nối Npgsql hợp lệ qua `ConnectionStringHelper`.
+- [x] **Cơ chế Phục hồi Tác vụ khi Worker Khởi động lại (Job Recovery Service)**:
+  - Triển khai `IJobRecoveryService` tự động chạy khi Worker khởi động:
+    - Đối chiếu các dự án dang dở trong PostgreSQL (`Rendering`, `GeneratingAudio`, `Publishing`).
+    - Kiểm tra tính nguyên vẹn của tệp video trên ổ đĩa tạm.
+    - Chuyển an toàn về `AwaitingApproval` nếu video còn nguyên vẹn, hoặc đánh dấu `Failed` kèm thông báo rõ ràng nếu file tạm bị xóa.
+    - **Bảo vệ tuyệt đối chống xuất bản lặp**: Nếu bài đăng đã tồn tại trên Facebook, dự án được chuyển về `Published`, cam kết không bao giờ đăng 2 lần.
+- [x] **Quản trị Ổ đĩa Tạm & Thực thi Quota (Storage Cleanup Service)**:
+  - Triển khai `IStorageCleanupService` chạy ngầm định kỳ 15 phút và có thể kích hoạt thủ công.
+  - Tự động xóa các file tạm có `ExpiresAtUtc < DateTime.UtcNow`.
+  - Kiểm tra tổng dung lượng ổ đĩa tạm so với ngưỡng `Storage:MaxTempStorageMb` (5120 MB). Tự động dọn dẹp các tệp cũ nhất khi vượt ngưỡng.
+- [x] **Giám sát Telemetry & Theo dõi Chi phí AI/TTS (System Metrics Service)**:
+  - Endpoint `GET /api/system/metrics`: Đo lường trực tiếp RAM WorkingSet (MB), CPU usage %, dung lượng ổ đĩa tạm (MB & %), độ trễ kết nối PostgreSQL (ms), số lượng Jobs trong hàng đợi, Uptime hệ thống.
+  - Endpoint `GET /api/system/costs`: Thống kê tổng chi phí AI ($ USD), chi phí TTS ($ USD), số lượng tokens, ký tự, và chi phí trung bình trên mỗi video.
+  - Nâng cấp màn hình **Dashboard Studio** hiển thị thanh đo dung lượng ổ đĩa tạm, độ trễ database, chỉ số RAM/Uptime, và các nút thao tác nhanh: **Dọn dẹp đĩa** & **Kiểm toán Job**.
+- [x] **Bảo mật và Ổn định Production**:
+  - Tự động chạy migrations PostgreSQL khi khởi động với retry logic.
+  - Bổ sung ASP.NET Core RateLimiter (120 req/min).
+  - Hỗ trợ khóa bảo vệ `Security__AdminApiKey` qua header `X-Admin-Api-Key`.
+  - Cấu hình Dynamic CORS thích ứng với domain Railway (`FRONTEND_URL`, `RAILWAY_PUBLIC_DOMAIN`).
+  - Middleware xử lý lỗi toàn cục theo chuẩn RFC 7807 ProblemDetails.
+- [x] **Bộ Tài liệu Triển khai và Vận hành Đầy đủ**:
+  - `docs/DEPLOYMENT_GUIDE.md`: Hướng dẫn triển khai chi tiết từng bước lên Railway.
+  - `docs/ENVIRONMENT_VARIABLES.md`: Danh mục đầy đủ tất cả biến môi trường.
+  - `docs/OPERATIONS_GUIDE.md`: Sổ tay vận hành, giám sát hàng ngày và tối ưu hóa chi phí.
+  - `docs/RECOVERY_GUIDE.md`: Sổ tay xử lý sự cố, an toàn dữ liệu và sao lưu PostgreSQL.
+  - `docs/FINAL_TEST_REPORT.md`: Báo cáo kiểm thử tổng kết toàn dự án.
+- [x] **Kiểm thử Tự động Toàn diện**:
+  - 59/59 test cases xUnit đạt 100% PASS (bao gồm 8 ca kiểm thử mới chuyên sâu cho Phase 8: phân tích URI Railway, phục hồi tác vụ, chống đăng trùng lặp, dọn dẹp ổ đĩa tạm, telemetry metrics, full system API controller, và mô phỏng tải đa dự án video đồng thời).
 
 ---
 

@@ -450,8 +450,84 @@ export const api = {
       throw new Error(err.message || 'Cập nhật số liệu Insights thất bại');
     }
     return await res.json();
+  },
+
+  // Phase 8: Production Monitoring, System Metrics & Maintenance
+  async getSystemMetrics(): Promise<SystemMetricsDto> {
+    const res = await fetch(`${API_BASE}/system/metrics`);
+    if (!res.ok) throw new Error('Không thể lấy chỉ số hệ thống');
+    return await res.json();
+  },
+
+  async getSystemCosts(): Promise<SystemCostSummaryDto> {
+    const res = await fetch(`${API_BASE}/system/costs`);
+    if (!res.ok) throw new Error('Không thể lấy thống kê chi phí');
+    return await res.json();
+  },
+
+  async triggerStorageCleanup(): Promise<StorageCleanupReportDto> {
+    const res = await fetch(`${API_BASE}/system/storage/cleanup`, { method: 'POST' });
+    if (!res.ok) throw new Error('Dọn dẹp bộ nhớ tạm thất bại');
+    return await res.json();
+  },
+
+  async triggerJobRecovery(): Promise<JobRecoveryReportDto> {
+    const res = await fetch(`${API_BASE}/system/jobs/recover`, { method: 'POST' });
+    if (!res.ok) throw new Error('Khôi phục job thất bại');
+    return await res.json();
   }
 };
+
+export interface SystemMetricsDto {
+  cpuUsagePercent: number;
+  memoryWorkingSetMb: number;
+  tempStorageUsedMb: number;
+  tempStorageLimitMb: number;
+  tempStorageUsagePercent: number;
+  tempStoragePath: string;
+  activeJobsCount: number;
+  pendingJobsCount: number;
+  completedJobsCount: number;
+  failedJobsCount: number;
+  databaseStatus: string;
+  databaseLatencyMs: number;
+  uptime: string;
+  serverTimeUtc: string;
+  environment: string;
+}
+
+export interface SystemCostSummaryDto {
+  totalAiCostUsd: number;
+  totalTtsCostUsd: number;
+  totalCostUsd: number;
+  totalProjectsCount: number;
+  publishedProjectsCount: number;
+  averageCostPerProjectUsd: number;
+  totalTokensUsed: number;
+  totalTtsCharactersSynthesized: number;
+  preferredAiProvider: string;
+  preferredTtsProvider: string;
+}
+
+export interface StorageCleanupReportDto {
+  expiredAssetsCleanedCount: number;
+  orphanedDirectoriesRemovedCount: number;
+  totalBytesFreedMb: number;
+  currentStorageUsedMb: number;
+  storageLimitMb: number;
+  storageWithinLimits: boolean;
+  executedAtUtc: string;
+}
+
+export interface JobRecoveryReportDto {
+  totalDanglingProjectsExamined: number;
+  recoveredToAwaitingApprovalCount: number;
+  resetToPendingCount: number;
+  markedFailedCount: number;
+  protectedPublishedProjectsCount: number;
+  actionLogs: string[];
+  executedAtUtc: string;
+}
 
 export interface RenderStatusResponseDto {
   projectId: string;

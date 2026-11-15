@@ -2,7 +2,7 @@
 
 **Thời gian kiểm thử:** 15/11/2026  
 **Môi trường:** Local Windows (PostgreSQL 16, Node v24.14.1, .NET 8 runtime)  
-**Tình trạng:** **51/51 PASS (100%)**
+**Tình trạng:** **59/59 PASS (100%)**
 
 ---
 
@@ -13,7 +13,7 @@ Lệnh thực thi:
 dotnet test backend/NewsStudio.sln
 ```
 
-### Chi tiết các ca kiểm thử (51/51 Passed):
+### Chi tiết các ca kiểm thử (59/59 Passed):
 
 | Mã kiểm thử | Nhóm | Tên Test Case | Mô tả & Kỳ vọng | Kết quả |
 |---|---|---|---|:---:|
@@ -68,8 +68,16 @@ dotnet test backend/NewsStudio.sln
 | **TC-49** | Phase 7 | `FacebookPublishingService_Publishes_Reel_And_Performs_Ephemeral_Cleanup` | Quy trình đăng Facebook Reels 3 pha và tự động dọn dẹp triệt để file MP4/audio/subtitles trên ổ đĩa tạm | **PASSED** |
 | **TC-50** | Phase 7 | `FacebookPublishingService_Fetches_Metrics_Without_Fabrication` | Thu thập chỉ số hiệu quả Meta Insights (Views, Reach, Engagement, Watch Time) chuẩn xác không bịa số | **PASSED** |
 | **TC-51** | Phase 7 | `FacebookController_Endpoints_Full_Workflow` | Luồng REST API trọn vẹn: xác minh token, kết nối page, xuất bản Reels, truy vấn posts và chỉ số metrics | **PASSED** |
+| **TC-52** | Phase 8 | `ConnectionStringHelper_Parses_Railway_Postgres_Uri_Format_Accurately` | Tự động phân tích URI Railway `DATABASE_URL` thành chuỗi kết nối Npgsql hợp lệ | **PASSED** |
+| **TC-53** | Phase 8 | `JobRecoveryService_Reconciles_Dangling_Rendering_Jobs_When_Files_Missing` | Phục hồi tác vụ bị gián đoạn do container sập, xử lý an toàn khi mất file tạm | **PASSED** |
+| **TC-54** | Phase 8 | `JobRecoveryService_Protects_Already_Published_Jobs_From_Duplicate_Publish` | Đảm bảo an toàn tuyệt đối: không bao giờ xuất bản 2 lần khi worker restart | **PASSED** |
+| **TC-55** | Phase 8 | `JobRecoveryService_Advances_To_Review_When_Intact_Video_Found` | Tự động chuyển về `AwaitingApproval` nếu video render còn nguyên trên đĩa | **PASSED** |
+| **TC-56** | Phase 8 | `StorageCleanupService_Purges_Expired_Assets_And_Enforces_Quota` | Dọn dẹp tệp tin hết hạn TTL và thực thi trần dung lượng ổ đĩa tạm (Quota) | **PASSED** |
+| **TC-57** | Phase 8 | `SystemMetricsService_Computes_Cpu_Memory_Storage_And_Cost_Aggregations` | Thu thập và tính toán chính xác chỉ số CPU, RAM, Disk, DB latency, và chi phí AI | **PASSED** |
+| **TC-58** | Phase 8 | `SystemController_Endpoints_Full_Workflow` | Luồng REST API: telemetry `/metrics`, chi phí `/costs`, kích hoạt cleanup & recovery | **PASSED** |
+| **TC-59** | Phase 8 | `ProductionHardening_Simulates_Multi_Video_And_Concurrent_Jobs_Safely` | Mô phỏng tải đa video liên tiếp và đồng thời, không xảy ra xung đột hay deadlock | **PASSED** |
 
-**Tổng kết kiểm thử:** `Failed: 0, Passed: 51, Skipped: 0, Total: 51. Duration: 12s`
+**Tổng kết kiểm thử:** `Failed: 0, Passed: 59, Skipped: 0, Total: 59. Duration: 36s`
 
 ---
 

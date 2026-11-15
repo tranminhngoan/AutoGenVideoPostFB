@@ -258,3 +258,35 @@ Hệ thống sử dụng quy trình upload chuẩn của Meta Graph API (phiên 
 - Dịch vụ `FetchMetricsAsync` kết nối endpoint `/{video_id}/video_insights` để đọc dữ liệu tương tác thực tế: `total_video_views` (Views), `post_impressions_unique` (Reach), `post_engaged_users` (Engagement), `total_video_avg_time_watched` (Watch Time).
 - Lưu bản ghi vào bảng `VideoMetrics` phục vụ phân tích hiệu quả nội dung.
 - Tuyệt đối không tự suy đoán hoặc bịa số liệu khi Meta chưa cung cấp (mặc định 0).
+
+---
+
+## 10. Kiến trúc Triển khai Railway & Production Hardening (Phase 8)
+
+### 10.1. Tự động tương thích Railway Connection String (`ConnectionStringHelper`)
+- Railway cung cấp biến `DATABASE_URL` theo định dạng URI chuẩn RFC: `postgresql://user:password@host:port/database`.
+- Lớp `ConnectionStringHelper` tự động phân tích URI thành chuỗi kết nối chuẩn Npgsql (`Host=...;Port=...;Database=...;Username=...;Password=...`), tương thích 100% với cả Entity Framework Core và Hangfire PostgreSQL storage mà không cần cấu hình thủ công.
+
+### 10.2. Cơ chế Phục hồi Tác vụ khi Worker Restart (`IJobRecoveryService`)
+- Khi Worker khởi động lại:
+  1. Quét tìm tất cả các dự án có trạng thái chuyển tiếp dở dang (`Extracting`, `Analyzing`, `Scripting`, `PlanningScenes`, `GeneratingAudio`, `Rendering`, `Publishing`).
+  2. Đối chiếu cơ sở dữ liệu:
+     - Nếu dự án ở bước `Publishing` và đã tồn tại bài đăng trong `FacebookPosts`, hòa giải ngay về `Published` (**Cam kết không bao giờ xuất bản trùng lặp**).
+     - Nếu dự án ở bước `Rendering`/`GeneratingAudio`, kiểm tra sự tồn tại của file video trên ổ đĩa tạm. Nếu còn nguyên vẹn, chuyển tiếp về `AwaitingApproval`. Nếu file đã bị xóa do container restart, chuyển về `Failed` kèm thông báo để biên tập viên bấm render lại.
+  3. Cập nhật các bản ghi `ProcessingJobs` dang dở thành `Failed` để tránh treo trạng thái vĩnh viễn.
+
+### 10.3. Thực thi Hạn ngạch & Dọn dẹp Ổ đĩa Tạm (`IStorageCleanupService`)
+- Dịch vụ nền chạy định kỳ (mỗi 15 phút) trong Worker Service:
+  - Quét bảng `VideoAssets`, xóa các tệp tin có `ExpiresAtUtc < DateTime.UtcNow` và cập nhật `IsCleanedUp = true`.
+  - Giám sát trần dung lượng đĩa `Storage:MaxTempStorageMb` (5120 MB). Nếu vượt ngưỡng, tự động xóa các file tạm cũ nhất cho đến khi mức sử dụng dưới 80% hạn mức.
+
+### 10.4. Giám sát Vận hành & Đo lường Chi phí (`ISystemMetricsService`)
+- API Endpoint `GET /api/system/metrics`: Cung cấp thông tin đo lường thời gian thực về RAM WorkingSet, CPU usage %, dung lượng ổ đĩa tạm, trạng thái và độ trễ kết nối PostgreSQL (ms), số lượng Jobs trong hàng đợi, Uptime.
+- API Endpoint `GET /api/system/costs`: Tính toán tổng chi phí AI (tokens), chi phí TTS và chi phí trung bình trên mỗi video.
+
+### 10.5. Các Lớp Bảo vệ Production Hardening
+- **Tự động áp dụng Migration**: API tự động kích hoạt `Database.Migrate()` khi khởi động với cơ chế thử lại.
+- **Rate Limiting**: Giới hạn 120 yêu cầu / phút qua ASP.NET Core RateLimiter.
+- **Admin API Key Guard**: Tùy chọn bảo vệ các API quản trị qua header `X-Admin-Api-Key` khi triển khai production.
+- **Dynamic CORS**: Tự động nhận diện domain frontend Railway qua biến môi trường `FRONTEND_URL` và `RAILWAY_PUBLIC_DOMAIN`.
+- **RFC 7807 ProblemDetails**: Chuẩn hóa thông điệp lỗi toàn cục.

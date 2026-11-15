@@ -27,8 +27,10 @@ RUN dotnet publish ./backend/src/NewsStudio.Api/NewsStudio.Api.csproj \
 FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS runtime
 WORKDIR /app
 
-# Create non-root user and temp directories
-RUN mkdir -p /tmp/newsstudio && chmod -R 777 /tmp/newsstudio
+# Install curl for healthcheck and configure temp storage permissions
+RUN apt-get update && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /tmp/newsstudio && chmod -R 777 /tmp/newsstudio
 
 # Environment configuration
 ENV ASPNETCORE_URLS=http://+:8080 \

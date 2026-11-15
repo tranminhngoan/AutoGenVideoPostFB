@@ -1,3 +1,14 @@
+using System;
+using System.Diagnostics;
+using System.IO;
+using System.Threading;
+using System.Threading.Tasks;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using NewsStudio.Application.Interfaces;
+
 namespace NewsStudio.Worker;
 
 public class Worker : BackgroundService
@@ -5,15 +16,18 @@ public class Worker : BackgroundService
     private readonly ILogger<Worker> _logger;
     private readonly IConfiguration _configuration;
     private readonly IHostApplicationLifetime _lifetime;
+    private readonly IServiceProvider _serviceProvider;
 
     public Worker(
         ILogger<Worker> logger,
         IConfiguration configuration,
-        IHostApplicationLifetime lifetime)
+        IHostApplicationLifetime lifetime,
+        IServiceProvider serviceProvider)
     {
         _logger = logger;
         _configuration = configuration;
         _lifetime = lifetime;
+        _serviceProvider = serviceProvider;
     }
 
     public override Task StartAsync(CancellationToken cancellationToken)
@@ -55,18 +69,61 @@ public class Worker : BackgroundService
     {
         _logger.LogInformation("Worker service loop is running. Awaiting jobs from Hangfire queues.");
 
+        // 1. Startup: Recover dangling jobs from previous container crash/restart
+        try
+        {
+            using var scope = _serviceProvider.CreateScope();
+            var recoveryService = scope.ServiceProvider.GetRequiredService<IJobRecoveryService>();
+            var recoveryReport = await recoveryService.RecoverDanglingJobsAsync(stoppingToken);
+            _logger.LogInformation("Worker Startup Recovery: Examined {Count} dangling jobs. Recovered to Review: {Awaiting}, Reset: {Reset}, Marked Failed: {Failed}",
+                recoveryReport.TotalDanglingProjectsExamined,
+                recoveryReport.RecoveredToAwaitingApprovalCount,
+                recoveryReport.ResetToPendingCount,
+                recoveryReport.MarkedFailedCount);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to execute startup Job Recovery check.");
+        }
+
+        // 2. Main execution loop with periodic storage cleanup and heartbeat
+        var cleanupIntervalMinutes = _configuration.GetValue<int>("Storage:CleanupIntervalMinutes", 15);
+        var lastCleanupTime = DateTime.UtcNow;
+
         while (!stoppingToken.IsCancellationRequested)
         {
             try
             {
                 // Heartbeat every 60 seconds
                 await Task.Delay(TimeSpan.FromSeconds(60), stoppingToken);
-                _logger.LogDebug("NewsStudio.Worker heartbeat: ready for tasks.");
+
+                var proc = Process.GetCurrentProcess();
+                var memMb = Math.Round(proc.WorkingSet64 / (1024.0 * 1024.0), 1);
+                _logger.LogDebug("NewsStudio.Worker heartbeat: ready for tasks. Memory WorkingSet: {MemMb} MB", memMb);
+
+                // Periodic storage quota & TTL enforcement
+                if (DateTime.UtcNow - lastCleanupTime >= TimeSpan.FromMinutes(cleanupIntervalMinutes))
+                {
+                    lastCleanupTime = DateTime.UtcNow;
+                    using var cleanupScope = _serviceProvider.CreateScope();
+                    var cleanupService = cleanupScope.ServiceProvider.GetRequiredService<IStorageCleanupService>();
+                    var report = await cleanupService.RunStorageCleanupAsync(stoppingToken);
+
+                    _logger.LogInformation("Periodic Storage Cleanup: Freed {FreedMb} MB. Current usage: {UsageMb} MB / {LimitMb} MB (Within limits: {Status})",
+                        report.TotalBytesFreedMb,
+                        report.CurrentStorageUsedMb,
+                        report.StorageLimitMb,
+                        report.StorageWithinLimits);
+                }
             }
             catch (OperationCanceledException)
             {
                 _logger.LogInformation("Worker execution cancellation triggered.");
                 break;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error in worker background service loop.");
             }
         }
     }
