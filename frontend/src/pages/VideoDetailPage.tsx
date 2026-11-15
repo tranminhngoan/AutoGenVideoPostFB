@@ -313,8 +313,12 @@ export const VideoDetailPage: React.FC<VideoDetailPageProps> = ({ projectId, onB
     }
   };
 
-  const hasVideo = assets.some(a => (a.assetType === 'FinalVideo' || a.assetType === 'Video') && !a.isCleanedUp);
-  const hasAudio = assets.some(a => a.assetType === 'Audio' && !a.isCleanedUp);
+  const latestVideoAsset = assets.find(a => (a.assetType === 'FinalVideo' || a.assetType === 'Video') && !a.isCleanedUp);
+  const latestAudioAsset = assets.find(a => a.assetType === 'Audio' && !a.isCleanedUp);
+  const hasVideo = !!latestVideoAsset;
+  const hasAudio = !!latestAudioAsset;
+  const videoUrl = latestVideoAsset ? `/api/video-projects/${projectId}/video?v=${latestVideoAsset.id}` : `/api/video-projects/${projectId}/video`;
+  const audioUrl = latestAudioAsset ? `/api/video-projects/${projectId}/audio?v=${latestAudioAsset.id}` : `/api/video-projects/${projectId}/audio`;
   const isApproved = review?.decision === 'Approved';
   const hasFatalViolations = review?.seriousViolationsFound || (review?.assessment?.hasFatalViolations ?? false);
   const publishedPost = fbPosts.find(p => p.uploadStatus === 'Published');
@@ -475,12 +479,13 @@ export const VideoDetailPage: React.FC<VideoDetailPageProps> = ({ projectId, onB
           <div className="w-[320px] h-[568px] rounded-3xl bg-black border-4 border-gray-800 shadow-2xl relative overflow-hidden flex flex-col justify-between group">
             {hasVideo ? (
               <video
+                key={latestVideoAsset?.id || projectId}
+                src={videoUrl}
                 controls
                 playsInline
                 className="w-full h-full object-cover"
                 poster={scenes.length > 0 && scenes[0].imageUrl ? scenes[0].imageUrl : undefined}
               >
-                <source src={`/api/video-projects/${projectId}/video`} type="video/mp4" />
                 <track kind="subtitles" src={`/api/video-projects/${projectId}/subtitles`} srcLang="vi" label="Tiếng Việt" default />
                 Trình duyệt không hỗ trợ xem video HTML5.
               </video>
@@ -541,7 +546,7 @@ export const VideoDetailPage: React.FC<VideoDetailPageProps> = ({ projectId, onB
           <div className="flex items-center gap-3 mt-3">
             {hasVideo && (
               <a
-                href={`/api/video-projects/${projectId}/video`}
+                href={videoUrl}
                 download={`video_reel_${projectId.slice(0, 8)}.mp4`}
                 className="px-3 py-1.5 rounded-xl bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs font-medium flex items-center gap-1.5 transition"
               >
@@ -638,14 +643,13 @@ export const VideoDetailPage: React.FC<VideoDetailPageProps> = ({ projectId, onB
 
                 {hasAudio ? (
                   <div className="space-y-3">
-                    <audio controls className="w-full h-10">
-                      <source src={`/api/video-projects/${projectId}/audio`} type="audio/wav" />
+                    <audio key={latestAudioAsset?.id || projectId} src={audioUrl} controls className="w-full h-10">
                       Trình duyệt không hỗ trợ phát audio HTML5.
                     </audio>
                     <div className="flex items-center justify-between text-xs text-gray-400">
                       <span>Định dạng: WAV PCM 24kHz 16-bit Mono</span>
                       <a
-                        href={`/api/video-projects/${projectId}/audio`}
+                        href={audioUrl}
                         download="voiceover.wav"
                         className="text-indigo-400 hover:underline flex items-center gap-1"
                       >

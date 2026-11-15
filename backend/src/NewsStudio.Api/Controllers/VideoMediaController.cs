@@ -76,6 +76,7 @@ public class VideoMediaController : ControllerBase
     /// Streams temporary synthesized voice-over audio for review.
     /// </summary>
     [HttpGet("audio")]
+    [HttpHead("audio")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> StreamAudio(Guid id, CancellationToken cancellationToken)
@@ -127,6 +128,7 @@ public class VideoMediaController : ControllerBase
     /// Streams rendered vertical MP4 video with range request support for preview.
     /// </summary>
     [HttpGet("video")]
+    [HttpHead("video")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> StreamVideo(Guid id, CancellationToken cancellationToken)

@@ -38,8 +38,49 @@ public class FFmpegRendererService : IVideoRendererService
 
         progress?.Report(10);
 
+        // Download any remote scene images locally for reliable FFmpeg consumption
+        string? localPrimaryImage = null;
+        using var httpClient = new HttpClient();
+        httpClient.Timeout = TimeSpan.FromSeconds(10);
+
+        for (int i = 0; i < request.Scenes.Count; i++)
+        {
+            var scene = request.Scenes[i];
+            if (!string.IsNullOrWhiteSpace(scene.ImageUrl))
+            {
+                if (File.Exists(scene.ImageUrl))
+                {
+                    if (localPrimaryImage == null) localPrimaryImage = scene.ImageUrl;
+                }
+                else if (scene.ImageUrl.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+                         scene.ImageUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+                {
+                    var targetFile = Path.Combine(outputDir, $"scene_{i}.jpg");
+                    if (!File.Exists(targetFile))
+                    {
+                        try
+                        {
+                            var bytes = await httpClient.GetByteArrayAsync(scene.ImageUrl, cancellationToken);
+                            await File.WriteAllBytesAsync(targetFile, bytes, cancellationToken);
+                            scene.ImageUrl = targetFile;
+                            if (localPrimaryImage == null) localPrimaryImage = targetFile;
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning(ex, "Could not pre-download scene image {Url}", scene.ImageUrl);
+                        }
+                    }
+                    else
+                    {
+                        scene.ImageUrl = targetFile;
+                        if (localPrimaryImage == null) localPrimaryImage = targetFile;
+                    }
+                }
+            }
+        }
+
         // 1. Build FFmpeg command and filter graph
-        var ffmpegArgs = BuildFfmpegArguments(request, outputVideoPath, filterScriptPath, out var totalDuration);
+        var ffmpegArgs = BuildFfmpegArguments(request, outputVideoPath, localPrimaryImage, out var totalDuration);
         await File.WriteAllTextAsync(filterScriptPath, ffmpegArgs, Encoding.UTF8, cancellationToken);
 
         progress?.Report(30);
@@ -101,7 +142,11 @@ public class FFmpegRendererService : IVideoRendererService
         var localLinuxBin = Path.Combine(AppContext.BaseDirectory, "ffmpeg");
         if (File.Exists(localLinuxBin)) return localLinuxBin;
 
-        // 3. Search system PATH
+        // 3. Check known tools directory
+        var toolBin = @"D:\tools\ffmpeg-master-latest-win64-gpl\bin\ffmpeg.exe";
+        if (File.Exists(toolBin)) return toolBin;
+
+        // 4. Search system PATH
         var pathEnv = Environment.GetEnvironmentVariable("PATH") ?? "";
         var paths = pathEnv.Split(Path.PathSeparator);
         var exeName = OperatingSystem.IsWindows() ? "ffmpeg.exe" : "ffmpeg";
@@ -122,7 +167,7 @@ public class FFmpegRendererService : IVideoRendererService
     private static string BuildFfmpegArguments(
         VideoRenderRequest request,
         string outputPath,
-        string filterScriptPath,
+        string? localImagePath,
         out double totalDuration)
     {
         totalDuration = request.Scenes.Count > 0
@@ -131,28 +176,44 @@ public class FFmpegRendererService : IVideoRendererService
 
         totalDuration = Math.Clamp(totalDuration, 55.0, 65.0);
 
-        var sb = new StringBuilder();
+        var args = new StringBuilder();
 
-        // 9:16 Vertical Video Filters (1080x1920)
-        // Background blur for horizontal photos + Ken Burns zoompan + Typography overlays
-        sb.AppendLine("# FFmpeg Filter Complex Script for 9:16 Vertical News Reel (ArticleImageOnly Mode)");
-        sb.AppendLine($"# Resolution: {request.Resolution} (30 FPS) | Target Duration: {totalDuration}s (55-65s) | Scenes: {request.Scenes.Count}");
-        sb.AppendLine();
+        bool hasImage = !string.IsNullOrWhiteSpace(localImagePath) && File.Exists(localImagePath);
 
-        // Audio inputs: voice-over + background music with ducking
-        if (!string.IsNullOrWhiteSpace(request.AudioFilePath) && File.Exists(request.AudioFilePath))
+        if (hasImage)
         {
-            sb.AppendLine($"-i \"{request.AudioFilePath}\"");
+            args.Append($"-loop 1 -i \"{localImagePath}\" ");
+        }
+        else
+        {
+            args.Append("-f lavfi -i color=c=0x0B0F19:s=1080x1920:r=30 ");
         }
 
-        // Subtitle Burn-in configuration (safe margin avoiding subject in lower-third)
-        var subtitleFilter = !string.IsNullOrWhiteSpace(request.SubtitleFilePath) && File.Exists(request.SubtitleFilePath)
-            ? $"-vf \"subtitles='{request.SubtitleFilePath.Replace("\\", "/").Replace(":", "\\:")}':force_style='FontSize=22,FontName=DejaVu Sans,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=3,Outline=2,Shadow=0,MarginV=220,Alignment=2'\""
-            : "";
+        bool hasAudio = !string.IsNullOrWhiteSpace(request.AudioFilePath) && File.Exists(request.AudioFilePath);
+        if (hasAudio)
+        {
+            args.Append($"-i \"{request.AudioFilePath}\" ");
+        }
+        else
+        {
+            args.Append("-f lavfi -i anullsrc=r=44100:cl=stereo ");
+        }
 
-        sb.AppendLine($"-y -t {totalDuration} {subtitleFilter} -c:v libx264 -preset fast -crf 23 -pix_fmt yuv420p -c:a aac -b:a 192k \"{outputPath}\"");
+        if (hasImage)
+        {
+            args.Append("-filter_complex \"[0:v]split[bg][fg];[bg]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=20:5[bgout];[fg]scale=1080:1920:force_original_aspect_ratio=decrease[fgout];[bgout][fgout]overlay=(W-w)/2:(H-h)/2[v]\" -map \"[v]\" ");
+        }
+        else
+        {
+            args.Append("-map 0:v ");
+        }
 
-        return sb.ToString();
+        args.Append("-map 1:a ");
+        args.Append($"-t {totalDuration:F1} ");
+        args.Append("-c:v libx264 -preset veryfast -pix_fmt yuv420p -c:a aac -b:a 192k -movflags +faststart ");
+        args.Append($"-y \"{outputPath}\"");
+
+        return args.ToString().Trim();
     }
 
     private async Task ExecuteFfmpegProcessAsync(
