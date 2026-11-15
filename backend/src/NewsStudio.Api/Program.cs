@@ -40,7 +40,7 @@ try
     {
         c.SwaggerDoc("v1", new OpenApiInfo
         {
-            Title = "AI News Studio API",
+            Title = "Trạm Tin 24/7 API",
             Version = "v1",
             Description = "Backend API for AI News Studio - Turn News Articles into Short-form Reels for Facebook",
             Contact = new OpenApiContact
@@ -242,7 +242,7 @@ try
     // Fallback info root endpoint
     app.MapGet("/", () => Results.Ok(new
     {
-        service = "AI News Studio API",
+        service = "Trạm Tin 24/7 API",
         version = "1.0.0",
         status = "Online",
         timestamp = DateTime.UtcNow,
