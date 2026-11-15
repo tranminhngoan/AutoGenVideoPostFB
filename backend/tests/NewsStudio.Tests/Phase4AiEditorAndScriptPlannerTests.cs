@@ -26,7 +26,7 @@ public class Phase4AiEditorAndScriptPlannerTests : IClassFixture<WebApplicationF
     }
 
     [Fact]
-    public void AIEditor_Generates_Script_With_Target_Duration_45_To_60_Seconds()
+    public void AIEditor_Generates_Script_With_Target_Duration_55_To_65_Seconds()
     {
         // Arrange
         var input = new EditorialScriptPromptInput
@@ -38,15 +38,15 @@ public class Phase4AiEditorAndScriptPlannerTests : IClassFixture<WebApplicationF
             PublishedDate = DateTime.UtcNow,
             CanonicalUrl = "https://vnexpress.net/khanh-thanh-benh-vien-1000-giuong.html",
             ContentBody = "Sáng 15/11, Bệnh viện Đa khoa mới quy mô 1.000 giường bệnh chính thức khánh thành tại cửa ngõ phía Tây thành phố. Dự án có tổng vốn đầu tư hơn 2.000 tỷ đồng, được trang bị hệ thống máy móc y tế tối tân nhập khẩu từ Đức và Nhật Bản. Công trình kỳ vọng sẽ giảm tải đáng kể cho các bệnh viện tuyến cuối nội đô.",
-            TargetDurationSeconds = 55
+            TargetDurationSeconds = 60
         };
 
         // Act: Use the deterministic editorial engine
         var script = GeminiAiEditorService.GenerateDeterministicEditorialScript(input, "Gemini", "gemini-1.5-flash");
 
         // Assert
-        script.EstimatedReadingSeconds.Should().BeInRange(45, 60);
-        script.WordCount.Should().BeGreaterThan(50);
+        script.EstimatedReadingSeconds.Should().BeInRange(55, 65);
+        script.WordCount.Should().BeGreaterThan(80);
         script.VideoTitle.Should().StartWith("TIÊU ĐIỂM:");
         script.Hook.Should().NotBeNullOrWhiteSpace();
         script.VoiceOverScript.Should().NotBeNullOrWhiteSpace();
@@ -80,7 +80,7 @@ public class Phase4AiEditorAndScriptPlannerTests : IClassFixture<WebApplicationF
     }
 
     [Fact]
-    public async Task ScriptPlanner_Creates_6_To_10_Scenes_Matching_Duration()
+    public async Task ScriptPlanner_Creates_8_To_10_Scenes_Matching_Duration()
     {
         // Arrange
         var planner = new ScriptPlannerService();
@@ -93,14 +93,14 @@ public class Phase4AiEditorAndScriptPlannerTests : IClassFixture<WebApplicationF
             Analysis = "Đây là bước tiến chiến lược nâng cao năng lực y tế chuyên sâu cho toàn vùng kinh tế trọng điểm.",
             Conclusion = "Bạn nghĩ sao về công trình y tế hiện đại này? Hãy bình luận bên dưới!",
             SourceAttribution = "Theo VnExpress",
-            EstimatedReadingSeconds = 55
+            EstimatedReadingSeconds = 60
         };
 
         var input = new ScriptPlanningInput
         {
             ProjectId = Guid.NewGuid(),
             Script = script,
-            TargetDurationSeconds = 55,
+            TargetDurationSeconds = 60,
             AvailableImages = new List<ArticleImageInputDto>
             {
                 new() { Id = Guid.NewGuid(), OriginalImageUrl = "https://img.vnexpress.net/bv1.jpg", Order = 1, Category = "Panorama", RightsStatus = "Unknown", SelectedForVideo = true },
@@ -112,10 +112,10 @@ public class Phase4AiEditorAndScriptPlannerTests : IClassFixture<WebApplicationF
         var scenes = await planner.PlanScenesAsync(input);
 
         // Assert
-        scenes.Count.Should().BeInRange(6, 10);
+        scenes.Count.Should().BeInRange(8, 10);
         
-        // Total duration should end in 45-60s
-        scenes[^1].EndTimeSeconds.Should().BeInRange(45.0, 60.0);
+        // Total duration should end in 55-65s (target 60s)
+        scenes[^1].EndTimeSeconds.Should().BeInRange(55.0, 65.0);
 
         // Consecutive time alignment
         for (int i = 0; i < scenes.Count - 1; i++)
@@ -129,7 +129,7 @@ public class Phase4AiEditorAndScriptPlannerTests : IClassFixture<WebApplicationF
     }
 
     [Fact]
-    public async Task ScriptPlanner_Strictly_Uses_Article_Images_Or_Falls_Back_To_Typography()
+    public async Task ScriptPlanner_Strictly_Uses_Article_Images_And_Reuses_With_Varying_Crop_And_Motion()
     {
         // Arrange
         var planner = new ScriptPlannerService();
@@ -145,7 +145,7 @@ public class Phase4AiEditorAndScriptPlannerTests : IClassFixture<WebApplicationF
             Analysis = "Bước ngoặt cho hạ tầng năng lượng sạch.",
             Conclusion = "Chia sẻ ý kiến của bạn về năng lượng tái tạo!",
             SourceAttribution = "Theo Dân Trí",
-            EstimatedReadingSeconds = 50
+            EstimatedReadingSeconds = 60
         };
 
         var availableImages = new List<ArticleImageInputDto>
@@ -159,28 +159,32 @@ public class Phase4AiEditorAndScriptPlannerTests : IClassFixture<WebApplicationF
             ProjectId = Guid.NewGuid(),
             Script = script,
             AvailableImages = availableImages,
-            TargetDurationSeconds = 50
+            TargetDurationSeconds = 60
         };
 
         // Act
         var scenes = await planner.PlanScenesAsync(input);
 
         // Assert
-        scenes.Count.Should().BeInRange(6, 10);
+        scenes.Count.Should().BeInRange(8, 10);
 
         // First 2 scenes get the only 2 available article images
         scenes[0].SelectedArticleImageId.Should().Be(image1Id);
+        scenes[0].IsImageReused.Should().BeFalse();
         scenes[0].VisualType.Should().Be("Image");
 
         scenes[1].SelectedArticleImageId.Should().Be(image2Id);
+        scenes[1].IsImageReused.Should().BeFalse();
         scenes[1].VisualType.Should().Be("Image");
 
-        // Remaining scenes (3 to N) MUST fallback to Typography / MetricChart (No fake images!)
+        // Remaining scenes (2 to N) MUST reuse article images with varying motion & crop (never external images)
         for (int i = 2; i < scenes.Count; i++)
         {
-            scenes[i].SelectedArticleImageId.Should().BeNull();
-            scenes[i].VisualType.Should().BeOneOf("Typography", "MetricChart", "Timeline");
-            scenes[i].OnScreenText.Should().NotBeNullOrWhiteSpace();
+            new[] { image1Id, image2Id }.Should().Contain(scenes[i].SelectedArticleImageId!.Value);
+            scenes[i].IsImageReused.Should().BeTrue();
+            scenes[i].CropType.Should().BeOneOf("CloseUp", "Top", "Bottom", "Center");
+            scenes[i].MotionType.Should().NotBeNullOrWhiteSpace();
+            scenes[i].VisualType.Should().Be("Image");
         }
     }
 
@@ -292,7 +296,7 @@ public class Phase4AiEditorAndScriptPlannerTests : IClassFixture<WebApplicationF
         genScript.VoiceOverScript.Should().NotBeNullOrWhiteSpace();
         genScript.KeyFacts.Should().NotBeNullOrWhiteSpace();
         genScript.Analysis.Should().NotBeNullOrWhiteSpace();
-        genScript.EstimatedReadingSeconds.Should().BeInRange(45, 60);
+        genScript.EstimatedReadingSeconds.Should().BeInRange(55, 65);
 
         // 3. Act: Query script via GET /api/video-projects/{id}/script
         var getScriptResponse = await _client.GetAsync($"/api/video-projects/{project.Id}/script");
@@ -323,7 +327,7 @@ public class Phase4AiEditorAndScriptPlannerTests : IClassFixture<WebApplicationF
         getScenesResponse.StatusCode.Should().Be(HttpStatusCode.OK);
         var scenes = await getScenesResponse.Content.ReadFromJsonAsync<List<VideoScenePlanDto>>();
         scenes.Should().NotBeNull();
-        scenes!.Count.Should().BeInRange(6, 10);
+        scenes!.Count.Should().BeInRange(8, 10);
         scenes![0].SelectedArticleImageId.Should().Be(img.Id); // Uses the article image
     }
 }

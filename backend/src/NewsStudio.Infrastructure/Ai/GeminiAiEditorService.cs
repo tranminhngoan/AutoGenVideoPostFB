@@ -163,12 +163,12 @@ public class GeminiAiEditorService : IAIEditorService
 
         var conclusion = $"Bạn đánh giá thế nào về diễn biến này? Hãy để lại ý kiến thảo luận ở phần bình luận bên dưới!";
 
-        // Voice-over script designed for 45-60s reading speed (~125-140 words)
-        var voiceOverScript = $"{hook} {firstPoint}. {secondPoint}. {analysis} {conclusion} {sourceAttribution}.";
+        // Voice-over script designed for 55-65s reading speed (~125-145 words)
+        var voiceOverScript = $"{hook} {firstPoint}. {secondPoint}. {thirdPoint}. {context} {analysis} {conclusion} {sourceAttribution}.";
 
         var words = voiceOverScript.Split(new[] { ' ', '\n', '\r', '\t' }, StringSplitOptions.RemoveEmptyEntries).Length;
-        // Standard Vietnamese reading speed: ~2.3 words/second
-        var estimatedSeconds = Math.Clamp((int)Math.Round(words / 2.3), 45, 60);
+        // Standard Vietnamese reading speed: ~2.3 words/second -> ~55-65 seconds (target 60s)
+        var estimatedSeconds = Math.Clamp((int)Math.Round(words / 2.3), 55, 65);
 
         return new EditorialScriptResult
         {
@@ -219,7 +219,7 @@ public class GeminiAiEditorService : IAIEditorService
             }
 
             var words = voiceOver.Split(new[] { ' ', '\n', '\r', '\t' }, StringSplitOptions.RemoveEmptyEntries).Length;
-            var estimatedSeconds = Math.Clamp((int)Math.Round(words / 2.3), 45, 60);
+            var estimatedSeconds = Math.Clamp((int)Math.Round(words / 2.3), 55, 65);
 
             return new EditorialScriptResult
             {

@@ -9,7 +9,8 @@ import {
   ArrowRight,
   CheckCircle,
   Loader2,
-  AlertCircle
+  AlertCircle,
+  Image as ImageIcon
 } from 'lucide-react';
 import { api } from '../services/api';
 
@@ -21,7 +22,7 @@ export const CreateVideoPage: React.FC<CreateVideoPageProps> = ({ onCreated }) =
   const [url, setUrl] = useState('');
   const [title, setTitle] = useState('');
   const [aiProvider, setAiProvider] = useState<'Gemini' | 'Claude'>('Gemini');
-  const [targetDuration, setTargetDuration] = useState(50);
+  const [targetDuration, setTargetDuration] = useState(60); // 55-65s, target 60s
   const [voice, setVoice] = useState('vi-VN-HoaiMyNeural');
   const [subtitleStyle, setSubtitleStyle] = useState('breaking-yellow');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -61,11 +62,18 @@ export const CreateVideoPage: React.FC<CreateVideoPageProps> = ({ onCreated }) =
 
   return (
     <div className="max-w-4xl mx-auto space-y-8">
-      <div>
-        <h1 className="text-2xl font-bold text-white tracking-tight">Tạo video tin tức mới từ URL bài báo</h1>
-        <p className="text-sm text-gray-400 mt-1">
-          Dán URL bài báo để hệ thống tự động đọc nội dung, trích xuất hình ảnh gốc và khởi chạy tiến trình xử lý bất đồng bộ qua Hangfire.
-        </p>
+      {/* Page Title & Mode Badge */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 text-xs font-semibold mb-2">
+            <ImageIcon className="w-3.5 h-3.5" />
+            <span>Chế độ A: ArticleImageOnly (Chỉ dùng ảnh bài báo • 60s Reels)</span>
+          </div>
+          <h1 className="text-2xl font-bold text-white tracking-tight">Tạo video tin tức 60 giây từ URL bài báo</h1>
+          <p className="text-sm text-gray-400 mt-1">
+            Hệ thống bóc tách nội dung, trích xuất hình ảnh thực tế trong bài, chia 8–10 phân cảnh và render video dọc 9:16 bằng FFmpeg.
+          </p>
+        </div>
       </div>
 
       {createdProjectId ? (
@@ -77,6 +85,7 @@ export const CreateVideoPage: React.FC<CreateVideoPageProps> = ({ onCreated }) =
           <p className="text-sm text-gray-300 max-w-lg mx-auto">
             Mã dự án: <span className="font-mono text-indigo-400 font-semibold">{createdProjectId}</span><br />
             Mã tác vụ: <span className="font-mono text-emerald-400">{jobId}</span><br />
+            Chế độ: <span className="text-emerald-300 font-semibold">ArticleImageOnly (55–65s, 8–10 cảnh)</span>.<br />
             Worker đang xử lý các bước trong pipeline. Bạn có thể xem trực tiếp tiến độ tại màn hình chi tiết.
           </p>
           <div className="pt-2 flex justify-center space-x-3">
@@ -128,13 +137,13 @@ export const CreateVideoPage: React.FC<CreateVideoPageProps> = ({ onCreated }) =
 
             <div>
               <label className="block text-xs text-gray-400 mb-1">
-                Tiêu đề video mong muốn (Tùy chọn, để trống AI sẽ tự đặt)
+                Tiêu đề video mong muốn (Tùy chọn, để trống AI sẽ tự đặt chuẩn báo chí)
               </label>
               <input
                 type="text"
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
-                placeholder="Ví dụ: Tuyến metro số 1 Bến Thành - Suối Tiên chính thức vận hành..."
+                placeholder="Ví dụ: Khánh thành cầu Mỹ Thuận 2 kết nối đôi bờ Tiền Giang - Vĩnh Long..."
                 className="w-full px-3 py-2.5 rounded-xl bg-[#0B0F19] border border-[#1F2937] text-white text-xs focus:outline-none focus:border-indigo-500"
               />
             </div>
@@ -146,11 +155,11 @@ export const CreateVideoPage: React.FC<CreateVideoPageProps> = ({ onCreated }) =
             <div className="glass-panel p-6 rounded-2xl border border-[#1F2937] space-y-4">
               <div className="flex items-center space-x-2 text-white font-semibold text-sm">
                 <Bot className="w-4 h-4 text-purple-400" />
-                <span>AI Biên tập kịch bản</span>
+                <span>AI Biên tập & Phân cảnh (8–10 cảnh)</span>
               </div>
               <div className="space-y-3">
                 <div>
-                  <label className="text-xs text-gray-400 block mb-1.5">Mô hình AI</label>
+                  <label className="text-xs text-gray-400 block mb-1.5">Mô hình AI tóm tắt</label>
                   <div className="grid grid-cols-2 gap-2">
                     <button
                       type="button"
@@ -179,21 +188,21 @@ export const CreateVideoPage: React.FC<CreateVideoPageProps> = ({ onCreated }) =
 
                 <div>
                   <div className="flex justify-between text-xs text-gray-400 mb-1">
-                    <span>Thời lượng video mục tiêu</span>
-                    <span className="font-mono text-indigo-400">{targetDuration} giây</span>
+                    <span>Thời lượng video mục tiêu (55–65s)</span>
+                    <span className="font-mono text-indigo-400 font-bold">{targetDuration} giây</span>
                   </div>
                   <input
                     type="range"
-                    min={45}
-                    max={60}
+                    min={55}
+                    max={65}
                     value={targetDuration}
                     onChange={(e) => setTargetDuration(Number(e.target.value))}
                     className="w-full accent-indigo-600 bg-gray-700 h-1.5 rounded-lg appearance-none cursor-pointer"
                   />
                   <div className="flex justify-between text-[10px] text-gray-500 mt-0.5">
-                    <span>45s</span>
-                    <span>50s</span>
-                    <span>60s</span>
+                    <span>55s (Ngắn gọn)</span>
+                    <span className="text-indigo-400 font-semibold">60s (Chuẩn Reels)</span>
+                    <span>65s (Chi tiết)</span>
                   </div>
                 </div>
               </div>
@@ -203,7 +212,7 @@ export const CreateVideoPage: React.FC<CreateVideoPageProps> = ({ onCreated }) =
             <div className="glass-panel p-6 rounded-2xl border border-[#1F2937] space-y-4">
               <div className="flex items-center space-x-2 text-white font-semibold text-sm">
                 <Volume2 className="w-4 h-4 text-pink-400" />
-                <span>Giọng đọc & Phụ đề</span>
+                <span>Giọng đọc bản tin & Phụ đề</span>
               </div>
               <div className="space-y-3">
                 <div>
@@ -225,9 +234,9 @@ export const CreateVideoPage: React.FC<CreateVideoPageProps> = ({ onCreated }) =
                     onChange={(e) => setSubtitleStyle(e.target.value)}
                     className="w-full px-3 py-2 rounded-lg bg-[#0B0F19] border border-[#1F2937] text-white text-xs focus:outline-none focus:border-indigo-500"
                   >
-                    <option value="breaking-yellow">Breaking News Vàng / Đen (Nổi bật, dễ đọc)</option>
+                    <option value="breaking-yellow">Breaking News Vàng / Đen (An toàn, dễ đọc trên điện thoại)</option>
                     <option value="modern-white">Modern Clean Trắng / Viền tối</option>
-                    <option value="high-contrast">Tương phản cao (Đặc biệt cho điện thoại)</option>
+                    <option value="high-contrast">Tương phản cao (Đặc biệt cho màn hình dọc)</option>
                   </select>
                 </div>
               </div>
@@ -235,11 +244,17 @@ export const CreateVideoPage: React.FC<CreateVideoPageProps> = ({ onCreated }) =
           </div>
 
           {/* Strict Policy Reminder */}
-          <div className="p-4 rounded-xl bg-[#111827] border border-gray-800 flex items-start space-x-3 text-xs text-gray-300">
-            <ShieldAlert className="w-4 h-4 text-indigo-400 shrink-0 mt-0.5" />
-            <p>
-              Quy tắc trích xuất: Hệ thống chỉ quét ảnh có trong bài báo tại URL này. Không tìm kiếm thêm ảnh ngoài Internet, không tạo ảnh nhân vật giả bằng AI.
-            </p>
+          <div className="p-4 rounded-xl bg-amber-950/20 border border-amber-500/30 flex items-start space-x-3 text-xs text-amber-200">
+            <ShieldAlert className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+            <div className="space-y-1">
+              <p className="font-semibold text-amber-300">Cam kết Chế độ ArticleImageOnly:</p>
+              <p className="text-amber-200/80 leading-relaxed">
+                • Không sử dụng Veo hoặc API tạo video AI. Không tạo ảnh nhân vật/khuôn mặt giả.<br />
+                • Chỉ sử dụng hình ảnh thực tế được trích xuất từ chính bài báo gốc. Không tìm ảnh bên ngoài.<br />
+                • Nếu bài báo không có đủ hình ảnh phù hợp, hệ thống sẽ cảnh báo để bạn quyết định.<br />
+                • Dựng video 9:16 (1080×1920) chuẩn Reels khoảng 60 giây bằng FFmpeg, có kiểm duyệt trước khi đăng.
+              </p>
+            </div>
           </div>
 
           {/* Submit Button */}
@@ -247,17 +262,17 @@ export const CreateVideoPage: React.FC<CreateVideoPageProps> = ({ onCreated }) =
             <button
               type="submit"
               disabled={isSubmitting || !url}
-              className="px-6 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-semibold text-sm flex items-center space-x-2 shadow-lg shadow-indigo-600/30 transition-all"
+              className="px-6 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-semibold text-sm flex items-center space-x-2 shadow-lg shadow-indigo-600/30 transition-all hover:scale-[1.02]"
             >
               {isSubmitting ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>Đang ghi PostgreSQL & tạo Hangfire Job...</span>
+                  <span>Đang bóc tách & tạo Hangfire Job...</span>
                 </>
               ) : (
                 <>
                   <Sparkles className="w-4 h-4" />
-                  <span>Bắt đầu xử lý (Đẩy vào Worker)</span>
+                  <span>Bắt đầu sản xuất video 60s</span>
                   <ArrowRight className="w-4 h-4" />
                 </>
               )}

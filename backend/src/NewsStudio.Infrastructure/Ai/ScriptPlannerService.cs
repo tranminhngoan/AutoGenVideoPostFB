@@ -1,3 +1,8 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using NewsStudio.Application.DTOs;
 using NewsStudio.Application.Interfaces;
 
@@ -10,63 +15,83 @@ public class ScriptPlannerService : IScriptPlannerService
         CancellationToken cancellationToken = default)
     {
         var script = input.Script;
-        var targetDuration = Math.Clamp(input.TargetDurationSeconds > 0 ? input.TargetDurationSeconds : 55, 45, 60);
+        // Mode A: ArticleImageOnly - Target duration 55–65s (target 60s)
+        var targetDuration = Math.Clamp(input.TargetDurationSeconds > 0 ? input.TargetDurationSeconds : 60, 55, 65);
 
-        // Filter valid article images (current article only, not rejected, not unsuitable)
+        // Filter valid article images: strictly from current article only, not rejected, not unsuitable
         var validImages = input.AvailableImages
             .Where(img => img.RightsStatus != "Rejected" && img.Category != "Unsuitable" && img.SelectedForVideo)
             .OrderBy(img => img.Order)
             .ToList();
 
-        // Break voiceover into 6-10 narrative segments
+        // Break script into 8-10 narrative segments (Rule 4: 8–10 scenes)
         var segments = BuildNarrativeSegments(script);
-        var sceneCount = Math.Clamp(segments.Count, 6, 10);
+        var sceneCount = Math.Clamp(segments.Count, 8, 10);
 
         // Allocate duration across scenes proportional to speech length
-        var totalWords = segments.Sum(s => s.VoiceText.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length);
+        var totalWords = segments.Take(sceneCount).Sum(s => s.VoiceText.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length);
         if (totalWords <= 0) totalWords = 1;
 
         var scenes = new List<VideoScenePlanDto>();
         double currentStart = 0;
-        int imageIndex = 0;
 
         for (int i = 0; i < sceneCount; i++)
         {
             var segment = segments[i];
             var segmentWords = segment.VoiceText.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length;
-            
-            // Calculate scene duration (minimum 4s, maximum 9s)
+
+            // Calculate scene duration (minimum 4.5s, maximum 8.5s)
             double duration;
             if (i == sceneCount - 1)
             {
                 duration = Math.Round(targetDuration - currentStart, 2);
-                if (duration < 4.0) duration = 4.0;
+                if (duration < 4.5) duration = 4.5;
             }
             else
             {
                 duration = Math.Round(((double)segmentWords / totalWords) * targetDuration, 2);
-                duration = Math.Clamp(duration, 4.0, 9.0);
+                duration = Math.Clamp(duration, 4.5, 8.5);
             }
 
             var end = Math.Round(currentStart + duration, 2);
 
-            // Assign image or fallback to typography/charts
+            // Image Assignment under ArticleImageOnly Mode
             ArticleImageInputDto? assignedImage = null;
             string visualType;
+            string motion;
+            string cropType = "Center";
+            bool isReused = false;
 
-            if (imageIndex < validImages.Count)
+            if (validImages.Count > 0)
             {
-                assignedImage = validImages[imageIndex++];
-                visualType = "Image";
+                if (i < validImages.Count)
+                {
+                    assignedImage = validImages[i];
+                    visualType = "Image";
+                    motion = ChooseMotion(i, segment.Purpose);
+                    cropType = "Center";
+                    isReused = false;
+                }
+                else
+                {
+                    // Lacking enough images for 8-10 scenes: Reuse suitable article image with differing motion/crop
+                    assignedImage = validImages[i % validImages.Count];
+                    visualType = "Image";
+                    isReused = true;
+                    cropType = (i % 3 == 0) ? "CloseUp" : (i % 3 == 1) ? "Top" : "Bottom";
+                    motion = ChooseAlternativeMotion(i, segment.Purpose);
+                }
             }
             else
             {
-                // Strict Master Plan rule: No image? Use Typography or MetricChart/Timeline. Never fake AI/external image!
+                // Article has zero suitable images: Fallback to Typography, notify user
                 assignedImage = null;
-                visualType = segment.Purpose == "Analysis" ? "MetricChart" : "Typography";
+                visualType = "Typography";
+                motion = "ZoomIn";
+                cropType = "Center";
+                isReused = false;
             }
 
-            var motion = ChooseMotion(i, segment.Purpose);
             var transition = ChooseTransition(i);
 
             scenes.Add(new VideoScenePlanDto
@@ -82,23 +107,25 @@ public class ScriptPlannerService : IScriptPlannerService
                 VisualType = visualType,
                 MotionType = motion,
                 TransitionType = transition,
+                CropType = cropType,
+                IsImageReused = isReused,
                 ScenePurpose = segment.Purpose
             });
 
             currentStart = end;
         }
 
-        // Final normalization to ensure total duration matches 45-60s
+        // Final normalization to ensure total duration sits in 55–65s (target 60s)
         if (scenes.Count > 0)
         {
             var lastScene = scenes[^1];
-            if (lastScene.EndTimeSeconds < 45.0)
-            {
-                lastScene.EndTimeSeconds = 48.0;
-            }
-            else if (lastScene.EndTimeSeconds > 60.0)
+            if (lastScene.EndTimeSeconds < 55.0)
             {
                 lastScene.EndTimeSeconds = 58.0;
+            }
+            else if (lastScene.EndTimeSeconds > 65.0)
+            {
+                lastScene.EndTimeSeconds = 62.0;
             }
         }
 
@@ -109,15 +136,15 @@ public class ScriptPlannerService : IScriptPlannerService
     {
         var list = new List<NarrativeSegment>();
 
-        // Scene 1: The Hook
+        // Scene 1: The Hook (3-4 seconds opening)
         list.Add(new NarrativeSegment
         {
             Purpose = "Hook",
             VoiceText = script.Hook,
-            OnScreenText = TruncateHighlight(script.VideoTitle.Replace("TIÊU ĐIỂM:", "").Trim(), 30)
+            OnScreenText = TruncateHighlight(script.VideoTitle.Replace("TIÊU ĐIỂM:", "").Trim(), 28)
         });
 
-        // Scene 2 & 3: Key Facts (Breakdown)
+        // Scene 2, 3, 4: Key Facts Breakdown
         var facts = script.KeyFacts
             .Split(new[] { '\n', '-', '•' }, StringSplitOptions.RemoveEmptyEntries)
             .Select(f => f.Trim())
@@ -138,7 +165,7 @@ public class ScriptPlannerService : IScriptPlannerService
             list.Add(new NarrativeSegment
             {
                 Purpose = "Fact",
-                VoiceText = "Diễn biến sự kiện ghi nhận nhiều dữ kiện đáng chú ý được công bố.",
+                VoiceText = "Diễn biến sự kiện ghi nhận nhiều dữ kiện đáng chú ý vừa được cơ quan chức năng công bố.",
                 OnScreenText = "DỮ KIỆN QUAN TRỌNG"
             });
         }
@@ -153,18 +180,37 @@ public class ScriptPlannerService : IScriptPlannerService
             });
         }
 
-        // Scene 4: Context
+        if (facts.Count > 2)
+        {
+            list.Add(new NarrativeSegment
+            {
+                Purpose = "Fact",
+                VoiceText = facts[2],
+                OnScreenText = TruncateHighlight(facts[2], 25)
+            });
+        }
+
+        // Scene 5: Context & Background
         if (!string.IsNullOrWhiteSpace(script.Context))
         {
             list.Add(new NarrativeSegment
             {
                 Purpose = "Context",
                 VoiceText = script.Context,
-                OnScreenText = "BỐI CẢNH SỰ KIỆN"
+                OnScreenText = "BỐI CẢNH ĐÁNG CHÚ Ý"
+            });
+        }
+        else
+        {
+            list.Add(new NarrativeSegment
+            {
+                Purpose = "Context",
+                VoiceText = "Vấn đề này diễn ra trong bối cảnh các quy định mới đang được triển khai đồng bộ.",
+                OnScreenText = "BỐI CẢNH THỰC TẾ"
             });
         }
 
-        // Scene 5 & 6: Editorial Analysis
+        // Scene 6 & 7: Editorial Analysis
         if (!string.IsNullOrWhiteSpace(script.Analysis))
         {
             var analysisSentences = script.Analysis.Split(new[] { '.', '!' }, StringSplitOptions.RemoveEmptyEntries);
@@ -189,31 +235,59 @@ public class ScriptPlannerService : IScriptPlannerService
                 {
                     Purpose = "Analysis",
                     VoiceText = script.Analysis,
-                    OnScreenText = "GÓC NHÌN BIÊN TẬP"
+                    OnScreenText = "PHÂN TÍCH CHUYÊN MÔN"
                 });
             }
         }
-
-        // Scene 7+: Conclusion & Source Attribution
-        list.Add(new NarrativeSegment
+        else
         {
-            Purpose = "Conclusion",
-            VoiceText = $"{script.Conclusion} {script.SourceAttribution}.",
-            OnScreenText = "THEO DÕI THÊM BÌNH LUẬN"
-        });
-
-        // Ensure at least 6 scenes
-        while (list.Count < 6)
-        {
-            list.Insert(list.Count - 1, new NarrativeSegment
+            list.Add(new NarrativeSegment
             {
-                Purpose = "Fact",
-                VoiceText = "Thông tin chi tiết đang tiếp tục được cập nhật theo nguồn tin chính thống.",
-                OnScreenText = "CẬP NHẬT MỚI NHẤT"
+                Purpose = "Analysis",
+                VoiceText = "Giới chuyên gia nhận định đây là bước ngoặt quan trọng mang lại nhiều thay đổi lớn.",
+                OnScreenText = "ĐÁNH GIÁ TÁC ĐỘNG"
             });
         }
 
-        // Cap at 10 scenes
+        // Scene 8: Outlook & Implication
+        list.Add(new NarrativeSegment
+        {
+            Purpose = "Analysis",
+            VoiceText = "Các bên liên quan đang tiếp tục theo dõi sát sao tiến độ nhằm đảm bảo hiệu quả tối đa.",
+            OnScreenText = "XU HƯỚNG TIẾP THEO"
+        });
+
+        // Scene 9: Conclusion & Summary
+        list.Add(new NarrativeSegment
+        {
+            Purpose = "Conclusion",
+            VoiceText = script.Conclusion,
+            OnScreenText = "TỔNG KẾT VẤN ĐỀ"
+        });
+
+        // Scene 10: Source Attribution & Call-to-action
+        var attributionText = !string.IsNullOrWhiteSpace(script.SourceAttribution)
+            ? $"{script.SourceAttribution}. Hãy để lại bình luận và theo dõi kênh để cập nhật tin tức mới nhất."
+            : "Thông tin được cập nhật từ báo chí chính thống. Nhấn theo dõi để xem thêm tin nóng.";
+
+        list.Add(new NarrativeSegment
+        {
+            Purpose = "Conclusion",
+            VoiceText = attributionText,
+            OnScreenText = "THEO DÕI TIN MỚI"
+        });
+
+        // Enforce strictly 8 to 10 scenes
+        while (list.Count < 8)
+        {
+            list.Insert(list.Count - 2, new NarrativeSegment
+            {
+                Purpose = "Fact",
+                VoiceText = "Toàn bộ diễn biến tiếp theo sẽ được chuyển tải nhanh chóng trong các bản tin tiếp theo.",
+                OnScreenText = "CẬP NHẬT LIÊN TỤC"
+            });
+        }
+
         if (list.Count > 10)
         {
             list = list.Take(10).ToList();
@@ -233,10 +307,22 @@ public class ScriptPlannerService : IScriptPlannerService
         };
     }
 
+    private static string ChooseAlternativeMotion(int index, string purpose)
+    {
+        // When reusing image, choose alternate subtle motion to prevent visual monotony
+        return (index % 4) switch
+        {
+            0 => "PanRight",
+            1 => "ZoomOut",
+            2 => "PanLeft",
+            _ => "ZoomIn"
+        };
+    }
+
     private static string ChooseTransition(int index)
     {
         if (index == 0) return "Cut";
-        return (index % 2 == 0) ? "Slide" : "Fade";
+        return (index % 2 == 0) ? "Fade" : "Slide";
     }
 
     private static string TruncateHighlight(string text, int maxLength)

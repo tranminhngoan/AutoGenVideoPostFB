@@ -51,9 +51,9 @@ public class EdgeTtsService : ITtsService
         var text = request.Text.Trim();
         var sentences = SplitSentences(text);
 
-        // Word count and timing calculation (~2.3 words/sec in natural Vietnamese)
+        // Word count and timing calculation (~2.3 words/sec in natural Vietnamese, 55-65s target 60s)
         var totalWords = text.Split(new[] { ' ', '\n', '\r', '\t' }, StringSplitOptions.RemoveEmptyEntries).Length;
-        var totalDuration = Math.Clamp(Math.Round(totalWords / 2.3, 2), 45.0, 60.0);
+        var totalDuration = Math.Clamp(Math.Round(totalWords / 2.3, 2), 55.0, 65.0);
 
         var cues = new List<SubtitleCueDto>();
         double currentStart = 0;

@@ -46,7 +46,7 @@ public class Phase5TtsAndVideoRendererTests : IClassFixture<WebApplicationFactor
         result.Should().NotBeNull();
         File.Exists(result.AudioFilePath).Should().BeTrue();
         result.FileSizeBytes.Should().BeGreaterThan(1000);
-        result.AudioDurationSeconds.Should().BeInRange(45.0, 60.0);
+        result.AudioDurationSeconds.Should().BeInRange(55.0, 65.0);
         result.Sha256Hash.Should().NotBeNullOrWhiteSpace();
 
         // Subtitles verification
@@ -117,7 +117,7 @@ public class Phase5TtsAndVideoRendererTests : IClassFixture<WebApplicationFactor
         // Assert
         result.Should().NotBeNull();
         result.Resolution.Should().Be("1080x1920");
-        result.DurationSeconds.Should().BeInRange(45.0, 60.0);
+        result.DurationSeconds.Should().BeInRange(55.0, 65.0);
         result.FileSizeBytes.Should().BeGreaterThan(1000);
         result.MimeType.Should().Be("video/mp4");
         File.Exists(result.OutputVideoPath).Should().BeTrue();

@@ -265,6 +265,29 @@ public class QualityControllerService : IQualityControllerService
             .Where(s => s.SelectedArticleImageId != null && s.SelectedArticleImage != null)
             .ToList();
 
+        // 1. ArticleImageOnly Rule: Strictly only images from current article
+        var externalImages = scenesWithImages
+            .Where(s => s.SelectedArticleImage!.ArticleId != Guid.Empty && 
+                        project.ArticleId.HasValue && 
+                        s.SelectedArticleImage!.ArticleId != project.ArticleId.Value)
+            .ToList();
+
+        if (externalImages.Count > 0)
+        {
+            fatalViolations.Add($"Lỗi nghiêm trọng: Phát hiện {externalImages.Count} hình ảnh không thuộc bài báo hiện tại (vi phạm nguyên tắc ArticleImageOnly)!");
+            return new QualityCheckItemDto
+            {
+                CheckCode = "QC_05_IMAGE_RIGHTS",
+                Title = "Bản quyền & nguồn gốc hình ảnh",
+                Category = "Legal & Compliance",
+                Passed = false,
+                Score = 0,
+                IsFatal = true,
+                Details = $"Chế độ ArticleImageOnly nghiêm cấm sử dụng ảnh ngoài bài báo. Phát hiện ảnh ngoài ở các cảnh: {string.Join(", ", externalImages.Select(r => $"Cảnh #{r.SceneNumber}"))}.",
+                Recommendation = "Chỉ sử dụng hình ảnh thực tế được trích xuất từ bài báo gốc."
+            };
+        }
+
         if (scenesWithImages.Count == 0)
         {
             // All scenes use typography cards
@@ -274,9 +297,10 @@ public class QualityControllerService : IQualityControllerService
                 Title = "Bản quyền & nguồn gốc hình ảnh",
                 Category = "Legal & Compliance",
                 Passed = true,
-                Score = 10,
+                Score = 8,
                 IsFatal = false,
-                Details = "Dự án sử dụng 100% Typography/Đồ họa thông tin nền tối, không vướng mắc bản quyền hình ảnh bên ngoài."
+                Details = "Bài báo không có đủ hình ảnh phù hợp. Dự án sử dụng Typography nền tối (không lấy ảnh bên ngoài theo nguyên tắc ArticleImageOnly).",
+                Recommendation = "Nếu muốn có ảnh thực tế trong video, vui lòng chọn bài viết có ảnh hoặc bổ sung ảnh gốc từ bài báo."
             };
         }
 
@@ -475,7 +499,7 @@ public class QualityControllerService : IQualityControllerService
             return new QualityCheckItemDto
             {
                 CheckCode = "QC_09_SPECS_COMPLIANCE",
-                Title = "Chuẩn tỉ lệ 9:16 và thời lượng 45-60s",
+                Title = "Chuẩn tỉ lệ 9:16 và thời lượng 55-65s",
                 Category = "Technical",
                 Passed = false,
                 Score = 0,
@@ -485,34 +509,37 @@ public class QualityControllerService : IQualityControllerService
             };
         }
 
-        // Target duration: 45 to 60 seconds (tolerance: 40 to 65s)
-        var durationOk = duration >= 40 && duration <= 65;
-        var score = durationOk ? 10 : (duration >= 30 && duration <= 75 ? 7 : 4);
+        // Target duration: 55 to 65 seconds (tolerance: 45 to 68s for high score)
+        var durationOk = duration >= 45 && duration <= 68;
+        var sceneCount = project.Scenes.Count;
+        var sceneCountOk = sceneCount == 0 || (sceneCount >= 6 && sceneCount <= 10);
+
+        var score = (durationOk && sceneCountOk) ? 10 : (duration >= 40 && duration <= 75 ? 8 : 4);
 
         if (!durationOk)
         {
             return new QualityCheckItemDto
             {
                 CheckCode = "QC_09_SPECS_COMPLIANCE",
-                Title = "Chuẩn tỉ lệ 9:16 và thời lượng 45-60s",
+                Title = "Chuẩn tỉ lệ 9:16 và thời lượng 55-65s",
                 Category = "Technical",
-                Passed = false,
+                Passed = score >= 7,
                 Score = score,
                 IsFatal = false,
-                Details = $"Thời lượng video hiện tại là {duration:F1}s (chuẩn Facebook Reels: 45–60 giây). Tỉ lệ khung hình: {project.AspectRatio} ({project.Resolution}).",
-                Recommendation = "Điều chỉnh độ dài lời thoại kịch bản để thời lượng nằm trọn vẹn trong khoảng 45-60 giây."
+                Details = $"Thời lượng video hiện tại là {duration:F1}s (chuẩn Facebook Reels: 55–65 giây, target 60s). Tỉ lệ khung hình: {project.AspectRatio} ({project.Resolution}). Phân cảnh: {sceneCount}.",
+                Recommendation = "Điều chỉnh độ dài lời thoại kịch bản để thời lượng nằm trọn vẹn trong khoảng 55-65 giây và số phân cảnh đạt 8–10 cảnh."
             };
         }
 
         return new QualityCheckItemDto
         {
             CheckCode = "QC_09_SPECS_COMPLIANCE",
-            Title = "Chuẩn tỉ lệ 9:16 và thời lượng 45-60s",
+            Title = "Chuẩn tỉ lệ 9:16 và thời lượng 55-65s",
             Category = "Technical",
             Passed = true,
             Score = 10,
             IsFatal = false,
-            Details = $"Đạt chuẩn kỹ thuật Facebook Reels: Tỉ lệ 9:16 ({project.Resolution}), 30 fps, thời lượng {duration:F1}s (nằm trong mục tiêu 45–60 giây)."
+            Details = $"Đạt chuẩn kỹ thuật Facebook Reels: Tỉ lệ 9:16 ({project.Resolution}), 30 fps, thời lượng {duration:F1}s (mục tiêu 55–65s, {sceneCount} cảnh)."
         };
     }
 

@@ -1,5 +1,46 @@
 # AI NEWS STUDIO - NHẬT KÝ TRIỂN KHAI (IMPLEMENTATION LOG)
 
+## Update: Chế độ A – ArticleImageOnly / 60-Giây News Video
+
+**Thời gian thực hiện:** 15/11/2026
+
+### 1. Công việc đã thực hiện
+1. **Cập nhật DTOs & Mô hình Dữ liệu (`ScriptDtos.cs` & `api.ts`)**:
+   - `EditorialScriptPromptInput` & `ScriptPlanningInput`: Mặc định thời lượng 60 giây (khoảng 55–65s), chế độ `ArticleImageOnly`.
+   - `VideoScenePlanDto`: Bổ sung `SceneIndex` (0-based), alias `VoiceOver` & `Subtitle` cho `VoiceText`, alias `Headline` cho `OnScreenText`, alias `ArticleImageId` cho `SelectedArticleImageId`.
+   - Thêm `CropType` (`Center`, `CloseUp`, `Top`, `Bottom`) và `IsImageReused` (boolean) để ghi nhận các cảnh tái sử dụng ảnh thực tế của bài báo.
+   - Thêm `ScriptPlanningResultDto` ghi nhận cờ `HasInsufficientImages` và thông điệp cảnh báo.
+2. **Cập nhật AI Editorial Prompt (`PromptTemplates.cs`, `GeminiAiEditorService.cs`, `ClaudeAiEditorService.cs`)**:
+   - Nâng cấp prompt lên `v2.0-article-image-only`:
+     - Giới hạn từ kịch bản: 120–150 từ tiếng Việt phù hợp tốc độ đọc ~2.3 từ/giây để đạt thời lượng chuẩn 60s (55–65s).
+     - Hook mở đầu lôi cuốn trong 3–4 giây đầu.
+     - Bảo toàn tuyệt đối danh từ riêng, con số, thời gian, địa điểm, sự kiện.
+     - Phân định rõ Sự thật (Key Facts) vs Nhận định (Commentary).
+     - Câu tổng kết ngắn gọn.
+3. **Nâng cấp Script Planner Service (`ScriptPlannerService.cs`)**:
+   - Phân chia kịch bản thành chính xác **8–10 phân cảnh**.
+   - Thời lượng phân bổ đều đặn, tổng thời lượng nằm trọn vẹn trong 55–65 giây (target 60s).
+   - Chiến lược gán ảnh ArticleImageOnly:
+     - Lọc nghiêm ngặt các ảnh thuộc bài báo hiện tại.
+     - Nếu số cảnh > số ảnh: Tái sử dụng ảnh bài báo kèm luân phiên hiệu ứng chuyển động FFmpeg (`PanRight`, `ZoomOut`, `PanLeft`, `ZoomIn`) và khung crop (`CloseUp`, `Top`, `Bottom`), đánh dấu `IsImageReused = true`.
+     - Nếu bài báo hoàn toàn không có ảnh: Gán `VisualType = "Typography"` hoặc `"MetricChart"`, `SelectedArticleImageId = null` và gắn cờ cảnh báo thiếu ảnh.
+4. **Nâng cấp Động cơ TTS & FFmpeg Renderer (`EdgeTtsService.cs`, `FFmpegRendererService.cs`)**:
+   - Điều chỉnh clamp thời lượng TTS và video render thành `[55.0, 65.0]` (chuẩn 60 giây).
+   - Căn chỉnh safe-margins cho subtitle FFmpeg (`MarginV=220`, `Alignment=2`, `DejaVu Sans`, `FontSize=22`) để phụ đề luôn nằm trong 1/3 dưới khung hình 9:16, không che khuôn mặt hoặc chi tiết quan trọng trong ảnh.
+5. **Củng cố Quality Control Service (`QualityControllerService.cs`)**:
+   - `QC_05_IMAGE_RIGHTS`: Thêm quy tắc kiểm tra ảnh ngoài bài báo. Nếu phát hiện bất kỳ ảnh nào không thuộc `project.ArticleId`, lập tức kích hoạt lỗi nghiêm trọng (Fatal Violation) chặn xuất bản.
+   - `QC_09_SPECS_COMPLIANCE`: Cập nhật kiểm tra thời lượng video đạt chuẩn 55–65 giây và phân cảnh đạt 8–10 cảnh.
+6. **Nâng cấp Giao diện Frontend (`CreateVideoPage.tsx`, `VideoDetailPage.tsx`, `api.ts`)**:
+   - Hiển thị badge: `Chế độ A: ArticleImageOnly • 60s Reels`.
+   - Cập nhật slider thời lượng: 55s – 65s (mặc định 60s).
+   - Tab Phân cảnh: Hiển thị banner cảnh báo khi bài báo thiếu ảnh, thông báo khi ảnh được tái sử dụng, thẻ phân cảnh với đầy đủ `Headline`, `VoiceOver & Subtitle`, `CropType`, `MotionType`, `TransitionType` và nhãn "Ảnh dùng lại".
+7. **Kiểm thử Tự động Toàn diện (`Phase4AiEditorAndScriptPlannerTests.cs`, `Phase5TtsAndVideoRendererTests.cs`, `Phase6VideoReviewAndQualityControlTests.cs`)**:
+   - Bổ sung test phát hiện ảnh ngoài bài báo là Fatal Violation (`QualityController_ArticleImageOnly_Detects_External_Images_As_Fatal_Violation`).
+   - Cập nhật các test kiểm tra thời lượng 55–65s và phân cảnh 8–10 cảnh.
+   - Toàn bộ 60/60 tests xUnit đạt 100% PASS; Frontend build Vite 0 errors.
+
+---
+
 ## Phase 8: Railway Deployment và Production Hardening
 
 **Thời gian thực hiện:** 15/11/2026

@@ -141,7 +141,7 @@ public class ScriptService : IScriptService
         if (script == null) return null;
 
         var words = script.VoiceOverScript.Split(new[] { ' ', '\n', '\r', '\t' }, StringSplitOptions.RemoveEmptyEntries).Length;
-        var estSeconds = Math.Clamp((int)Math.Round(words / 2.3), 45, 60);
+        var estSeconds = Math.Clamp((int)Math.Round(words / 2.3), 55, 65);
 
         return MapScriptToDto(script, words, estSeconds);
     }
@@ -171,7 +171,7 @@ public class ScriptService : IScriptService
         await _context.SaveChangesAsync(cancellationToken);
 
         var words = script.VoiceOverScript.Split(new[] { ' ', '\n', '\r', '\t' }, StringSplitOptions.RemoveEmptyEntries).Length;
-        var estSeconds = Math.Clamp((int)Math.Round(words / 2.3), 45, 60);
+        var estSeconds = Math.Clamp((int)Math.Round(words / 2.3), 55, 65);
 
         return MapScriptToDto(script, words, estSeconds);
     }

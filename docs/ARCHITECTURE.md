@@ -132,23 +132,25 @@ Hệ thống áp dụng mẫu **Factory / Strategy** cho phép thay đổi nhà 
 - `ClaudeAiEditorService`: Sử dụng REST API của Claude (`claude-3-5-haiku-20241022`, `claude-3-5-sonnet-20241022`), tính toán token usage và chi phí ước tính.
 - `Deterministic Editorial Engine`: Động cơ tổng hợp tin tức ngữ nghĩa cục bộ đảm bảo hệ thống và các luồng kiểm thử chạy ổn định ngay cả khi chưa có API key ngoài hoặc mất kết nối mạng.
 
-### 6.2. Cấu trúc kịch bản tin tức ngắn (45–60 giây)
-- **Chuẩn thời lượng**: 110–150 từ tiếng Việt, tốc độ đọc 2.3 từ/giây.
+### 6.2. Cấu trúc kịch bản tin tức Chế độ ArticleImageOnly (55–65 giây, Chuẩn 60 giây)
+- **Chuẩn thời lượng**: 120–150 từ tiếng Việt, tốc độ đọc ~2.3 từ/giây để đạt thời lượng mục tiêu 60 giây (55–65s).
 - **Tách bạch Fact vs Commentary**:
-  - `KeyFacts`: Dữ kiện khách quan (số liệu, thời gian, sự kiện, địa điểm).
+  - `KeyFacts`: Dữ kiện khách quan (số liệu, thời gian, sự kiện, địa điểm được bảo toàn nguyên vẹn).
   - `Context`: Bối cảnh cần biết.
   - `Analysis`: Đánh giá tác động, góc nhìn chuyên môn, tạo giá trị gia tăng riêng cho video.
-  - `Hook`: 3-5 giây mở đầu cuốn hút, giữ chân người xem lướt Reels.
+  - `Hook`: 3–4 giây mở đầu cuốn hút, giữ chân người xem lướt Reels.
   - `Conclusion`: Lời kết súc tích hoặc câu hỏi mở.
   - `SourceAttribution`: Dẫn nguồn báo chí chính thức (ví dụ: 'Theo VnExpress').
 
-### 6.3. Script Planner (6–10 Scenes) & Quy tắc gán hình ảnh
-- `ScriptPlannerService` tự động phân tách kịch bản thành 6 đến 10 phân cảnh liên tục:
-  - `StartTimeSeconds` và `EndTimeSeconds` phân bổ theo độ dài lời thoại, tổng thời lượng nằm trọn vẹn trong 45–60 giây.
-  - `OnScreenText`: Dòng chữ nổi bật ngắn gọn (3-7 từ) viết hoa điểm nhấn.
-  - **Quy tắc gán hình ảnh**:
+### 6.3. Script Planner (8–10 Scenes) & Quy tắc gán hình ảnh ArticleImageOnly
+- `ScriptPlannerService` tự động phân tách kịch bản thành **8 đến 10 phân cảnh liên tục**:
+  - `StartTimeSeconds` và `EndTimeSeconds` phân bổ theo độ dài lời thoại, tổng thời lượng nằm trọn vẹn trong 55–65 giây.
+  - `Headline` / `OnScreenText`: Dòng chữ nổi bật ngắn gọn (3-7 từ) viết hoa điểm nhấn ở safe-zone trên.
+  - `VoiceOver` / `Subtitle`: Lời thoại đồng bộ ở safe-zone dưới (`MarginV=220`).
+  - **Quy tắc gán hình ảnh nghiêm ngặt (ArticleImageOnly)**:
     - **Chỉ sử dụng `ArticleImageId` của bài báo hiện tại**, ưu tiên ảnh hợp lệ (`RightsStatus != Rejected`, `Category != Unsuitable`).
-    - Nếu bài báo thiếu ảnh hoặc không có ảnh: Tự động gán `VisualType = "Typography"` hoặc `"MetricChart"`, hiển thị typography chuyển động trên nền tối. Tuyệt đối không sinh ảnh AI, không lấy ảnh ngoài.
+    - **Tối ưu hóa khi bài báo có ít ảnh hơn số cảnh (8-10 cảnh)**: Hệ thống tái sử dụng ảnh thực tế bài báo với các góc crop khác nhau (`CloseUp`, `Top`, `Bottom`) và luân phiên chuyển động FFmpeg (`PanRight`, `ZoomOut`, `PanLeft`, `ZoomIn`) với cờ `IsImageReused = true`, đảm bảo không vi phạm nguyên tắc chỉ dùng ảnh bài báo và không gây nhàm chán thị giác.
+    - **Khi bài báo hoàn toàn không có ảnh**: Tự động gán `VisualType = "Typography"` hoặc `"MetricChart"`, đồng thời gắn cờ cảnh báo `HasInsufficientImages = true` trên UI và báo cáo kiểm duyệt QC. Tuyệt đối không sinh ảnh AI, không gọi Veo, không tìm kiếm ảnh ngoài Internet.
   - Cấu hình chuyển động: `MotionType` (`ZoomIn`, `ZoomOut`, `PanLeft`, `PanRight`, `KenBurns`) và `TransitionType` (`Fade`, `Slide`, `Cut`).
 
 ---
@@ -157,7 +159,7 @@ Hệ thống áp dụng mẫu **Factory / Strategy** cho phép thay đổi nhà 
 
 ### 7.1. Kiến trúc TTS (Edge-TTS & ElevenLabs)
 - Hệ thống áp dụng mẫu **Factory / Strategy** thông qua `ITtsFactory` và `ITtsService`.
-- **EdgeTtsService**: Sử dụng giọng đọc thần kinh tự nhiên của Microsoft Edge (`vi-VN-HoaiMyNeural`, `vi-VN-NamMinhNeural`) hoàn toàn miễn phí, sinh luồng âm thanh PCM 24kHz 16-bit Mono chuẩn WAV, băm SHA-256 để tránh sinh trùng lặp.
+- **EdgeTtsService**: Sử dụng giọng đọc thần kinh tự nhiên của Microsoft Edge (`vi-VN-HoaiMyNeural`, `vi-VN-NamMinhNeural`) hoàn toàn miễn phí, sinh luồng âm thanh PCM 24kHz 16-bit Mono chuẩn WAV, băm SHA-256 để tránh sinh trùng lặp. Tính toán thời lượng căn chỉnh chuẩn 55–65s (target 60s).
 - **ElevenLabsTtsService**: Hỗ trợ chuyển sang giọng đọc cao cấp ElevenLabs đa ngôn ngữ khi có API Key.
 - Tự động căn chỉnh tốc độ đọc (speech rate: ~2.3 từ/giây) và phân bổ thời lượng khớp hoàn hảo với 6-10 phân cảnh kịch bản (tổng 45-60 giây).
 

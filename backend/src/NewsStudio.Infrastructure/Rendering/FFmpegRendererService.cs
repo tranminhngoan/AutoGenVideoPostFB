@@ -127,16 +127,16 @@ public class FFmpegRendererService : IVideoRendererService
     {
         totalDuration = request.Scenes.Count > 0
             ? request.Scenes.Max(s => s.EndTimeSeconds)
-            : 55.0;
+            : 60.0;
 
-        totalDuration = Math.Clamp(totalDuration, 45.0, 60.0);
+        totalDuration = Math.Clamp(totalDuration, 55.0, 65.0);
 
         var sb = new StringBuilder();
 
         // 9:16 Vertical Video Filters (1080x1920)
         // Background blur for horizontal photos + Ken Burns zoompan + Typography overlays
-        sb.AppendLine("# FFmpeg Filter Complex Script for 9:16 Vertical News Reel");
-        sb.AppendLine($"# Resolution: {request.Resolution} (30 FPS) | Duration: {totalDuration}s");
+        sb.AppendLine("# FFmpeg Filter Complex Script for 9:16 Vertical News Reel (ArticleImageOnly Mode)");
+        sb.AppendLine($"# Resolution: {request.Resolution} (30 FPS) | Target Duration: {totalDuration}s (55-65s) | Scenes: {request.Scenes.Count}");
         sb.AppendLine();
 
         // Audio inputs: voice-over + background music with ducking
@@ -145,7 +145,12 @@ public class FFmpegRendererService : IVideoRendererService
             sb.AppendLine($"-i \"{request.AudioFilePath}\"");
         }
 
-        sb.AppendLine($"-y -t {totalDuration} -c:v libx264 -preset fast -crf 23 -pix_fmt yuv420p -c:a aac -b:a 192k \"{outputPath}\"");
+        // Subtitle Burn-in configuration (safe margin avoiding subject in lower-third)
+        var subtitleFilter = !string.IsNullOrWhiteSpace(request.SubtitleFilePath) && File.Exists(request.SubtitleFilePath)
+            ? $"-vf \"subtitles='{request.SubtitleFilePath.Replace("\\", "/").Replace(":", "\\:")}':force_style='FontSize=22,FontName=DejaVu Sans,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=3,Outline=2,Shadow=0,MarginV=220,Alignment=2'\""
+            : "";
+
+        sb.AppendLine($"-y -t {totalDuration} {subtitleFilter} -c:v libx264 -preset fast -crf 23 -pix_fmt yuv420p -c:a aac -b:a 192k \"{outputPath}\"");
 
         return sb.ToString();
     }

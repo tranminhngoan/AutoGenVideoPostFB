@@ -2,7 +2,7 @@
 
 **Thời gian kiểm thử:** 15/11/2026  
 **Môi trường:** Local Windows (PostgreSQL 16, Node v24.14.1, .NET 8 runtime)  
-**Tình trạng:** **59/59 PASS (100%)**
+**Tình trạng:** **60/60 PASS (100%)**
 
 ---
 
@@ -13,7 +13,7 @@ Lệnh thực thi:
 dotnet test backend/NewsStudio.sln
 ```
 
-### Chi tiết các ca kiểm thử (59/59 Passed):
+### Chi tiết các ca kiểm thử (60/60 Passed):
 
 | Mã kiểm thử | Nhóm | Tên Test Case | Mô tả & Kỳ vọng | Kết quả |
 |---|---|---|---|:---:|
@@ -40,16 +40,16 @@ dotnet test backend/NewsStudio.sln
 | **TC-21** | Phase 3 | `ArticlesController_GetArticles_Returns_200OK` | Kiểm tra endpoint GET `/api/articles` trả về 200 OK và danh sách bài báo | **PASSED** |
 | **TC-22** | Phase 3 | `ArticlesController_ExtractArticle_Validates_Url_Format` | Kiểm tra validation endpoint POST `/api/articles/extract` chặn URL không phải HTTP/HTTPS | **PASSED** |
 | **TC-23** | Phase 3 | `ArticlesController_UpdateArticleImage_Updates_RightsStatus_And_SelectedForVideo` | Kiểm tra PUT `/api/articles/{id}/images/{imageId}` cập nhật caption, RightsStatus sau kiểm duyệt và trạng thái chọn cho video | **PASSED** |
-| **TC-24** | Phase 4 | `AIEditor_Generates_Script_With_Target_Duration_45_To_60_Seconds` | Kịch bản biên tập đạt chuẩn thời lượng đọc 45–60 giây, dung lượng từ chuẩn, có đầy đủ Hook, Title, VoiceOver, SourceAttribution | **PASSED** |
+| **TC-24** | Phase 4 | `AIEditor_Generates_Script_With_Target_Duration_55_To_65_Seconds` | Kịch bản ArticleImageOnly đạt chuẩn thời lượng đọc 55–65 giây (target 60s), 120-150 từ, Hook, VoiceOver, SourceAttribution | **PASSED** |
 | **TC-25** | Phase 4 | `AIEditor_Separates_KeyFacts_And_Commentary` | Tách bạch tuyệt đối giữa Sự thật khách quan (Key Facts) và Bình luận biên tập (Analysis) | **PASSED** |
-| **TC-26** | Phase 4 | `ScriptPlanner_Creates_6_To_10_Scenes_Matching_Duration` | Lập 6–10 phân cảnh liên tiếp, tổng thời lượng chuẩn 45–60 giây, thời gian các cảnh nối tiếp chính xác | **PASSED** |
-| **TC-27** | Phase 4 | `ScriptPlanner_Strictly_Uses_Article_Images_Or_Falls_Back_To_Typography` | Chỉ gán ảnh thuộc bài báo hiện tại; các cảnh thiếu ảnh tự động chuyển sang Typography / MetricChart (không sinh ảnh AI / ảnh ngoài) | **PASSED** |
+| **TC-26** | Phase 4 | `ScriptPlanner_Creates_8_To_10_Scenes_Matching_Duration` | Lập chính xác 8–10 phân cảnh liên tiếp, tổng thời lượng chuẩn 55–65 giây, thời gian các cảnh nối tiếp chính xác | **PASSED** |
+| **TC-27** | Phase 4 | `ScriptPlanner_Strictly_Uses_Article_Images_And_Reuses_With_Varying_Crop_And_Motion` | Chỉ dùng ảnh bài báo hiện tại; tái sử dụng ảnh với motion (`PanRight`, `ZoomOut`, `PanLeft`, `ZoomIn`) và crop (`CloseUp`, `Top`, `Bottom`) khi cần | **PASSED** |
 | **TC-28** | Phase 4 | `ScriptPlanner_When_Article_Has_Zero_Images_All_Scenes_Use_Typography` | Xử lý an toàn khi bài báo không có ảnh: 100% scenes chuyển sang Typography và MetricChart nền tối | **PASSED** |
 | **TC-29** | Phase 4 | `AiEditorFactory_Switches_Between_Gemini_And_Claude` | Factory chuyển đổi chính xác nhà cung cấp AI theo tham số cấu hình: Gemini và Claude | **PASSED** |
-| **TC-30** | Phase 4 | `VideoProjectScriptsController_Full_Workflow` | Luồng REST API trọn vẹn: tạo kịch bản AI, truy vấn kịch bản, sửa kịch bản, và đồng bộ 6-10 phân cảnh | **PASSED** |
-| **TC-31** | Phase 5 | `EdgeTts_Synthesizes_Vietnamese_Speech_Within_Target_Duration` | Sinh giọng đọc tiếng Việt chuẩn, thời lượng 45-60s, định dạng WAV PCM 24kHz, tạo mã băm SHA-256 | **PASSED** |
+| **TC-30** | Phase 4 | `VideoProjectScriptsController_Full_Workflow` | Luồng REST API trọn vẹn: tạo kịch bản AI (55-65s), truy vấn, sửa kịch bản, và đồng bộ 8-10 phân cảnh | **PASSED** |
+| **TC-31** | Phase 5 | `EdgeTts_Synthesizes_Vietnamese_Speech_Within_Target_Duration` | Sinh giọng đọc tiếng Việt chuẩn, thời lượng 55-65s, định dạng WAV PCM 24kHz, tạo mã băm SHA-256 | **PASSED** |
 | **TC-32** | Phase 5 | `SubtitleGenerator_Produces_Synchronized_Srt_And_Vtt_Cues` | Sinh phụ đề chuẩn đồng bộ `.srt` và WebVTT `.vtt` từ kịch bản phân cảnh | **PASSED** |
-| **TC-33** | Phase 5 | `FFmpegRenderer_Builds_Vertical_9x16_Filtergraph_And_Renders` | Xây dựng filtergraph 1080×1920 (9:16), 30 fps, làm mờ ảnh ngang, hiệu ứng Ken Burns, xuất video MP4 | **PASSED** |
+| **TC-33** | Phase 5 | `FFmpegRenderer_Builds_Vertical_9x16_Filtergraph_And_Renders` | Xây dựng filtergraph 1080×1920 (9:16), 30 fps, làm mờ ảnh ngang, hiệu ứng Ken Burns, xuất video MP4 55-65s | **PASSED** |
 | **TC-34** | Phase 5 | `VideoAssetService_Registers_And_Enforces_Ephemeral_Storage` | Lưu trữ tạm thời `./tmp/newsstudio/{id}/`, kiểm tra metadata TTL 2h, kiểm định không lưu binary vào PostgreSQL | **PASSED** |
 | **TC-35** | Phase 5 | `VideoAssetService_Cleans_Up_Expired_Assets` | Tự động dọn dẹp các asset hết hạn: xóa file vật lý trên đĩa và cập nhật trạng thái trong database | **PASSED** |
 | **TC-36** | Phase 5 | `TtsFactory_Switches_Between_EdgeTts_And_ElevenLabs` | Factory chuyển đổi nhà cung cấp TTS linh hoạt giữa EdgeTTS và ElevenLabs | **PASSED** |
@@ -76,8 +76,33 @@ dotnet test backend/NewsStudio.sln
 | **TC-57** | Phase 8 | `SystemMetricsService_Computes_Cpu_Memory_Storage_And_Cost_Aggregations` | Thu thập và tính toán chính xác chỉ số CPU, RAM, Disk, DB latency, và chi phí AI | **PASSED** |
 | **TC-58** | Phase 8 | `SystemController_Endpoints_Full_Workflow` | Luồng REST API: telemetry `/metrics`, chi phí `/costs`, kích hoạt cleanup & recovery | **PASSED** |
 | **TC-59** | Phase 8 | `ProductionHardening_Simulates_Multi_Video_And_Concurrent_Jobs_Safely` | Mô phỏng tải đa video liên tiếp và đồng thời, không xảy ra xung đột hay deadlock | **PASSED** |
+| **TC-60** | Mode A | `QualityController_ArticleImageOnly_Detects_External_Images_As_Fatal_Violation` | Phát hiện ảnh ngoài bài báo (ArticleImageOnly violation), gắn cờ Fatal và chặn xuất bản | **PASSED** |
 
-**Tổng kết kiểm thử:** `Failed: 0, Passed: 59, Skipped: 0, Total: 59. Duration: 36s`
+**Tổng kết kiểm thử:** `Failed: 0, Passed: 60, Skipped: 0, Total: 60. Duration: 35s`
+
+---
+
+## 2. Kết quả kiểm tra PostgreSQL Migration & Storage
+
+- **Database:** `newsstudio_db` (PostgreSQL 16)
+- **Bảng `VideoScripts`**: Đã lưu trữ kịch bản biên tập (Title, Hook, VoiceOverScript, KeyFacts, Context, Analysis, Conclusion, SourceAttribution, TokenUsage, EstimatedCostUsd).
+- **Bảng `VideoScenes`**: Đã lưu trữ 8–10 phân cảnh (SceneNumber, StartTimeSeconds, EndTimeSeconds, VoiceText, OnScreenText, SelectedArticleImageId, MotionType, TransitionType, ScenePurpose).
+- **Ràng buộc:** Chỉ liên kết `ArticleImageId` của bài báo hiện tại. Tuyệt đối không lưu binary media vào PostgreSQL.
+
+---
+
+## 3. Kết quả biên dịch Frontend (`npm run build`)
+
+Lệnh thực thi:
+```bash
+cd frontend && npm run build
+```
+- **Kết quả:** `✓ built in 5.12s`
+- **TypeScript:** Không có lỗi (`tsc` hoàn tất sạch sẽ).
+- Bundle production:
+  - `dist/index.html` (1.13 kB)
+  - `dist/assets/index-Br1e_tiQ.css` (35.85 kB)
+  - `dist/assets/index-B0b-UmP9.js` (295.14 kB)
 
 ---
 

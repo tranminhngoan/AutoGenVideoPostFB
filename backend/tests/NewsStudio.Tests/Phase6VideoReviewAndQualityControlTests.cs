@@ -528,4 +528,95 @@ public class Phase6VideoReviewAndQualityControlTests : IClassFixture<WebApplicat
         var deletedProject = await verifyDb.VideoProjects.FindAsync(project.Id);
         deletedProject.Should().BeNull();
     }
+
+    [Fact]
+    public async Task QualityController_ArticleImageOnly_Detects_External_Images_As_Fatal_Violation()
+    {
+        // Arrange
+        using var scope = _factory.Services.CreateScope();
+        var qualityController = scope.ServiceProvider.GetRequiredService<IQualityControllerService>();
+        var db = scope.ServiceProvider.GetRequiredService<IApplicationDbContext>();
+
+        // Article A (The project's actual source article)
+        var articleA = new Article
+        {
+            Title = "Bài báo gốc chính thức",
+            NormalizedTitle = "bai bao goc chinh thuc",
+            Url = $"https://test-news.vn/article-a-{Guid.NewGuid()}",
+            Publisher = "Báo Tuổi Trẻ",
+            ContentBody = "Nội dung bài báo gốc.",
+            Status = "Extracted"
+        };
+        db.Articles.Add(articleA);
+
+        // Article B (An external article / search engine source)
+        var articleB = new Article
+        {
+            Title = "Bài báo bên ngoài Internet",
+            NormalizedTitle = "bai bao ben ngoai internet",
+            Url = $"https://external-news.vn/article-b-{Guid.NewGuid()}",
+            Publisher = "Nguồn ngoài",
+            ContentBody = "Ảnh lấy từ bên ngoài không được phép.",
+            Status = "Extracted"
+        };
+        db.Articles.Add(articleB);
+        await db.SaveChangesAsync();
+
+        var externalImage = new ArticleImage
+        {
+            ArticleId = articleB.Id, // Belonging to external article!
+            OriginalImageUrl = "https://external-news.vn/forbidden-external.jpg",
+            Caption = "Ảnh ngoài bài báo",
+            RightsStatus = RightsStatus.Authorized,
+            Category = ImageCategory.Panorama
+        };
+        db.ArticleImages.Add(externalImage);
+
+        var project = new VideoProject
+        {
+            Title = "Video ArticleImageOnly Vi Phạm Ảnh Ngoài",
+            SourceUrl = articleA.Url,
+            Publisher = "Báo Tuổi Trẻ",
+            ArticleId = articleA.Id,
+            Status = VideoProjectStatus.Rendering,
+            TargetDurationSeconds = 60,
+            ActualDurationSeconds = 58.0
+        };
+        db.VideoProjects.Add(project);
+        await db.SaveChangesAsync();
+
+        // Add 8 scenes, but scene 2 points to external image
+        for (int i = 1; i <= 8; i++)
+        {
+            db.VideoScenes.Add(new VideoScene
+            {
+                VideoProjectId = project.Id,
+                SceneNumber = i,
+                StartTimeSeconds = (i - 1) * 7.25,
+                EndTimeSeconds = i * 7.25,
+                VoiceText = $"Thuyết minh cảnh #{i}",
+                OnScreenText = $"TIÊU ĐIỂM #{i}",
+                SelectedArticleImageId = i == 2 ? externalImage.Id : null,
+                MotionType = "ZoomIn",
+                TransitionType = "Fade",
+                ScenePurpose = "Fact"
+            });
+        }
+        await db.SaveChangesAsync();
+
+        // Act
+        var result = await qualityController.EvaluateProjectQualityAsync(project.Id);
+
+        // Assert: ArticleImageOnly rule blocks external image
+        result.Should().NotBeNull();
+        result.HasFatalViolations.Should().BeTrue();
+        result.CanPublish.Should().BeFalse();
+        result.FatalViolations.Should().Contain(v => v.Contains("ArticleImageOnly"));
+
+        var qc5 = result.CheckItems.FirstOrDefault(c => c.CheckCode == "QC_05_IMAGE_RIGHTS");
+        qc5.Should().NotBeNull();
+        qc5!.Passed.Should().BeFalse();
+        qc5.IsFatal.Should().BeTrue();
+        qc5.Details.Should().Contain("ArticleImageOnly");
+    }
 }

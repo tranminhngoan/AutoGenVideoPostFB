@@ -576,18 +576,25 @@ export interface VideoScriptDto {
 export interface VideoScenePlanDto {
   id?: string;
   sceneNumber: number;
+  sceneIndex?: number;
   startTimeSeconds: number;
   endTimeSeconds: number;
   durationSeconds: number;
   voiceText: string;
+  voiceOver?: string;
+  subtitle?: string;
   onScreenText: string;
+  headline?: string;
   selectedArticleImageId?: string;
+  articleImageId?: string;
   imageUrl?: string;
   imageCaption?: string;
   visualType: string;
   motionType: string;
   transitionType: string;
   scenePurpose: string;
+  cropType?: string;
+  isImageReused?: boolean;
 }
 
 export interface ArticleImageDto {

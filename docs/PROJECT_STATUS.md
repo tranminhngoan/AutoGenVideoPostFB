@@ -1,11 +1,37 @@
 # AI NEWS STUDIO - TRẠNG THÁI DỰ ÁN (PROJECT STATUS)
 
 **Cập nhật lần cuối:** 15/11/2026  
-**Giai đoạn hiện tại:** **Phase 8 – Railway Deployment và Production Hardening** (HOÀN THÀNH - TOÀN BỘ 8 PHASE ĐẠT CHUẨN PRODUCTION)
+**Giai đoạn hiện tại:** **Chế độ A: ArticleImageOnly / 60-Second News Video (HOÀN TẤT & ĐẠT CHUẨN KIỂM DUYỆT)**
 
 ---
 
-## 1. Tổng quan tiến độ các Phase
+## 1. Cập nhật Yêu cầu mới: Chế độ A – ArticleImageOnly (60-Giây News Video)
+
+- [x] **Nguyên tắc cốt lõi ArticleImageOnly**:
+  - Tắt hoàn toàn Veo API, AI Video Generation API, và AI Image Generation.
+  - Tuyệt đối không tìm kiếm hoặc tải ảnh từ Internet bên ngoài URL bài báo.
+  - Giữ nguyên vẹn nội dung hình ảnh thực tế (không biến đổi khuôn mặt, trang phục, nhân vật, chi tiết).
+  - Chỉ dùng hiệu ứng chuyển động FFmpeg: `zoompan` (ZoomIn, ZoomOut, PanLeft, PanRight), `crop`, `scale` và `xfade`.
+  - Nếu thiếu ảnh, tự động tái sử dụng ảnh bài báo với các góc crop (`CloseUp`, `Top`, `Bottom`) và hướng chuyển động khác nhau (`IsImageReused = true`). Nếu hoàn toàn không có ảnh, cảnh báo thiếu ảnh rõ ràng trên UI và QC, yêu cầu người dùng quyết định.
+- [x] **Thông số kỹ thuật Video chuẩn Facebook Reels**:
+  - Thời lượng: **55–65 giây (Target: 60 giây)**.
+  - Tỷ lệ khung hình: **9:16 dọc (1080×1920)**.
+  - Frame rate: 30 FPS, Codec video H.264, Codec âm thanh AAC/PCM.
+- [x] **AI Editorial & Scene Planner (8–10 Phân cảnh)**:
+  - Tóm tắt kịch bản tin tức 120–150 từ tiếng Việt (~2.3 từ/giây).
+  - Hook nổi bật trong 3–4 giây đầu.
+  - Bảo toàn tuyệt đối danh từ riêng, số liệu, thời gian, địa điểm; phân tách rõ Sự thật vs Bình luận.
+  - Lập chính xác **8–10 phân cảnh** có đầy đủ: `SceneIndex`, `StartTime`, `Duration`, `VoiceOver`, `Subtitle`, `Headline`, `ArticleImageId`, `MotionType`, `TransitionType`, `CropType`, `IsImageReused`.
+- [x] **Quality Control & Giao diện biên tập**:
+  - Bổ sung kiểm soát bản quyền `QC_05_IMAGE_RIGHTS`: Chặn đứng xuất bản nếu phát hiện ảnh không thuộc bài báo gốc.
+  - Bổ sung `QC_09_SPECS_COMPLIANCE`: Kiểm soát nghiêm ngặt thời lượng 55–65s và số phân cảnh 8–10 cảnh.
+  - Giao diện Admin hiển thị badge ArticleImageOnly, banner cảnh báo bài báo thiếu ảnh, thẻ từng phân cảnh hiển thị Headline, VoiceOver, Subtitle, Crop Type, Motion effect và nhãn "Ảnh dùng lại".
+- [x] **Kiểm thử tự động**:
+  - 60/60 tests xUnit đạt 100% PASS, bao gồm test phát hiện ảnh ngoài bài báo là fatal violation và test lập 8–10 cảnh với kỹ thuật tái sử dụng ảnh an toàn.
+
+---
+
+## 2. Tổng quan tiến độ các Phase
 
 | Phase | Nội dung | Trạng thái | Ghi chú |
 |---|---|:---:|---|
