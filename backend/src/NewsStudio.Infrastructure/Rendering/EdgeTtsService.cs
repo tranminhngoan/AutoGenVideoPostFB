@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -42,18 +44,300 @@ public class EdgeTtsService : ITtsService
         Directory.CreateDirectory(audioDir);
         Directory.CreateDirectory(subtitleDir);
 
-        var audioFileName = $"voiceover_{DateTime.UtcNow.Ticks}.wav";
+        var timestamp = DateTime.UtcNow.Ticks;
+        var audioFileName = $"voiceover_{timestamp}.wav";
         var audioFilePath = Path.Combine(audioDir, audioFileName);
         var srtFilePath = Path.Combine(subtitleDir, "subtitles.srt");
         var vttFilePath = Path.Combine(subtitleDir, "subtitles.vtt");
 
-        // Break text into sentences for subtitle cues
         var text = request.Text.Trim();
-        var sentences = SplitSentences(text);
+        var voice = !string.IsNullOrWhiteSpace(request.Voice) ? request.Voice : "vi-VN-HoaiMyNeural";
 
-        // Word count and timing calculation (~2.3 words/sec in natural Vietnamese, 55-65s target 60s)
         var totalWords = text.Split(new[] { ' ', '\n', '\r', '\t' }, StringSplitOptions.RemoveEmptyEntries).Length;
-        var totalDuration = Math.Clamp(Math.Round(totalWords / 2.3, 2), 55.0, 65.0);
+        var estimatedDuration = Math.Clamp(Math.Round(totalWords / 2.3, 2), 55.0, 65.0);
+
+        bool synthesizedSuccessfully = false;
+        double totalDuration = estimatedDuration;
+        var cues = new List<SubtitleCueDto>();
+
+        var pythonExe = FindPythonExecutable();
+        var ffmpegExe = FindFfmpegExecutable();
+
+        if (pythonExe != null && ffmpegExe != null)
+        {
+            var tempInputTxt = Path.Combine(audioDir, $"input_{timestamp}.txt");
+            var tempMp3Path = Path.Combine(audioDir, $"temp_voiceover_{timestamp}.mp3");
+            var tempSrtPath = Path.Combine(subtitleDir, $"temp_sub_{timestamp}.srt");
+
+            try
+            {
+                await File.WriteAllTextAsync(tempInputTxt, text, Encoding.UTF8, cancellationToken);
+
+                // 1. Synthesize real neural voice using edge-tts
+                var edgeTtsArgs = $"-m edge_tts --voice \"{voice}\" --file \"{tempInputTxt}\" --write-media \"{tempMp3Path}\" --write-subtitles \"{tempSrtPath}\"";
+                var ttsSuccess = await RunProcessAsync(pythonExe, edgeTtsArgs, cancellationToken);
+
+                if (ttsSuccess && File.Exists(tempMp3Path) && new FileInfo(tempMp3Path).Length > 0)
+                {
+                    // 2. Measure actual speech duration using ffprobe
+                    double rawSpeechDuration = estimatedDuration;
+                    var probeExe = FindFfprobeExecutable();
+                    if (probeExe != null)
+                    {
+                        var durStr = await RunProcessWithOutputAsync(probeExe, $"-v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 \"{tempMp3Path}\"", cancellationToken);
+                        if (double.TryParse(durStr?.Trim(), NumberStyles.Any, CultureInfo.InvariantCulture, out var parsedDur) && parsedDur > 0)
+                        {
+                            rawSpeechDuration = parsedDur;
+                        }
+                    }
+
+                    totalDuration = Math.Clamp(Math.Round(rawSpeechDuration, 2), 55.0, 65.0);
+
+                    // 3. Convert MP3 to standard 24kHz mono WAV and pad with apad to reach target duration
+                    var ffmpegArgs = $"-hide_banner -y -i \"{tempMp3Path}\" -filter_complex \"[0:a]apad=whole_dur={totalDuration.ToString("F2", CultureInfo.InvariantCulture)}[a]\" -map \"[a]\" -t {totalDuration.ToString("F2", CultureInfo.InvariantCulture)} -ar 24000 -ac 1 \"{audioFilePath}\"";
+                    var ffmpegSuccess = await RunProcessAsync(ffmpegExe, ffmpegArgs, cancellationToken);
+
+                    if (ffmpegSuccess && File.Exists(audioFilePath) && new FileInfo(audioFilePath).Length > 0)
+                    {
+                        // 4. Parse generated SRT subtitles
+                        if (File.Exists(tempSrtPath))
+                        {
+                            var srtRaw = await File.ReadAllTextAsync(tempSrtPath, Encoding.UTF8, cancellationToken);
+                            cues = ParseSrt(srtRaw);
+                        }
+
+                        if (cues.Count == 0)
+                        {
+                            cues = GenerateFallbackCues(text, totalDuration);
+                        }
+                        else
+                        {
+                            cues[0].StartTimeSeconds = 0.0;
+                            cues[^1].EndTimeSeconds = totalDuration;
+                        }
+
+                        await _subtitleGenerator.GenerateSrtAsync(cues, srtFilePath, cancellationToken);
+                        await _subtitleGenerator.GenerateVttAsync(cues, vttFilePath, cancellationToken);
+
+                        synthesizedSuccessfully = true;
+                        _logger.LogInformation("Edge-TTS synthesized real voiceover successfully: {Path} ({Duration}s)",
+                            audioFilePath, totalDuration);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Edge-TTS execution encountered an error, falling back to tone synthesis.");
+            }
+            finally
+            {
+                try { if (File.Exists(tempInputTxt)) File.Delete(tempInputTxt); } catch { }
+                try { if (File.Exists(tempMp3Path)) File.Delete(tempMp3Path); } catch { }
+                try { if (File.Exists(tempSrtPath)) File.Delete(tempSrtPath); } catch { }
+            }
+        }
+
+        // If Edge-TTS was unavailable or failed, fallback to predictable tone synthesis
+        if (!synthesizedSuccessfully)
+        {
+            _logger.LogWarning("Using fallback audio tone synthesis for project {ProjectId}", request.ProjectId);
+            totalDuration = estimatedDuration;
+            cues = GenerateFallbackCues(text, totalDuration);
+
+            await _subtitleGenerator.GenerateSrtAsync(cues, srtFilePath, cancellationToken);
+            await _subtitleGenerator.GenerateVttAsync(cues, vttFilePath, cancellationToken);
+            await WriteSynthesizedWavAudioAsync(audioFilePath, totalDuration, cancellationToken);
+        }
+
+        var fileInfo = new FileInfo(audioFilePath);
+        var hash = await ComputeFileSha256Async(audioFilePath, cancellationToken);
+
+        return new TtsSynthesisResult
+        {
+            AudioFilePath = audioFilePath,
+            AudioDurationSeconds = totalDuration,
+            SubtitleFilePath = srtFilePath,
+            SubtitleVttFilePath = vttFilePath,
+            Subtitles = cues,
+            Format = "audio/wav",
+            FileSizeBytes = fileInfo.Length,
+            Sha256Hash = hash
+        };
+    }
+
+    private static string? FindPythonExecutable()
+    {
+        var candidates = new[]
+        {
+            @"C:\Users\Admin\AppData\Local\Programs\Python\Python312\python.exe",
+            "python.exe",
+            "python",
+            "py.exe",
+            "py"
+        };
+
+        foreach (var c in candidates)
+        {
+            try
+            {
+                if (File.Exists(c)) return c;
+                var psi = new ProcessStartInfo
+                {
+                    FileName = c,
+                    Arguments = "--version",
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+                using var proc = Process.Start(psi);
+                if (proc != null)
+                {
+                    proc.WaitForExit(1500);
+                    if (proc.ExitCode == 0) return c;
+                }
+            }
+            catch { }
+        }
+        return null;
+    }
+
+    private static string? FindFfmpegExecutable()
+    {
+        var candidates = new[]
+        {
+            @"D:\tools\ffmpeg-master-latest-win64-gpl\bin\ffmpeg.exe",
+            Path.Combine(AppContext.BaseDirectory, "ffmpeg.exe"),
+            Path.Combine(AppContext.BaseDirectory, "ffmpeg"),
+            "ffmpeg.exe",
+            "ffmpeg"
+        };
+
+        foreach (var c in candidates)
+        {
+            try
+            {
+                if (File.Exists(c)) return c;
+                var psi = new ProcessStartInfo
+                {
+                    FileName = c,
+                    Arguments = "-version",
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+                using var proc = Process.Start(psi);
+                if (proc != null)
+                {
+                    proc.WaitForExit(1500);
+                    if (proc.ExitCode == 0) return c;
+                }
+            }
+            catch { }
+        }
+        return null;
+    }
+
+    private static string? FindFfprobeExecutable()
+    {
+        var candidates = new[]
+        {
+            @"D:\tools\ffmpeg-master-latest-win64-gpl\bin\ffprobe.exe",
+            Path.Combine(AppContext.BaseDirectory, "ffprobe.exe"),
+            Path.Combine(AppContext.BaseDirectory, "ffprobe"),
+            "ffprobe.exe",
+            "ffprobe"
+        };
+
+        foreach (var c in candidates)
+        {
+            if (File.Exists(c)) return c;
+        }
+        return null;
+    }
+
+    private static async Task<bool> RunProcessAsync(string exe, string args, CancellationToken cancellationToken)
+    {
+        var psi = new ProcessStartInfo
+        {
+            FileName = exe,
+            Arguments = args,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+
+        using var proc = Process.Start(psi);
+        if (proc == null) return false;
+
+        await proc.WaitForExitAsync(cancellationToken);
+        return proc.ExitCode == 0;
+    }
+
+    private static async Task<string?> RunProcessWithOutputAsync(string exe, string args, CancellationToken cancellationToken)
+    {
+        var psi = new ProcessStartInfo
+        {
+            FileName = exe,
+            Arguments = args,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+
+        using var proc = Process.Start(psi);
+        if (proc == null) return null;
+
+        var output = await proc.StandardOutput.ReadToEndAsync(cancellationToken);
+        await proc.WaitForExitAsync(cancellationToken);
+        return proc.ExitCode == 0 ? output : null;
+    }
+
+    private static List<SubtitleCueDto> ParseSrt(string srtContent)
+    {
+        var list = new List<SubtitleCueDto>();
+        var pattern = @"(?:\r?\n|^)(\d+)\s*\r?\n(\d{2}):(\d{2}):(\d{2})[,.](\d{3})\s*-->\s*(\d{2}):(\d{2}):(\d{2})[,.](\d{3})\s*\r?\n([\s\S]*?)(?=(?:\r?\n\s*\r?\n\d+\s*\r?\n|\z))";
+        var matches = Regex.Matches(srtContent, pattern);
+
+        int idx = 1;
+        foreach (Match m in matches)
+        {
+            double start = int.Parse(m.Groups[2].Value) * 3600 +
+                           int.Parse(m.Groups[3].Value) * 60 +
+                           int.Parse(m.Groups[4].Value) +
+                           int.Parse(m.Groups[5].Value) / 1000.0;
+
+            double end = int.Parse(m.Groups[6].Value) * 3600 +
+                         int.Parse(m.Groups[7].Value) * 60 +
+                         int.Parse(m.Groups[8].Value) +
+                         int.Parse(m.Groups[9].Value) / 1000.0;
+
+            var rawLines = m.Groups[10].Value.Trim().Split(new[] { "\r\n", "\n" }, StringSplitOptions.RemoveEmptyEntries);
+            var text = string.Join(" ", rawLines).Trim();
+
+            if (!string.IsNullOrEmpty(text))
+            {
+                list.Add(new SubtitleCueDto
+                {
+                    Index = idx++,
+                    StartTimeSeconds = Math.Round(start, 2),
+                    EndTimeSeconds = Math.Round(end, 2),
+                    Text = text
+                });
+            }
+        }
+
+        return list;
+    }
+
+    private static List<SubtitleCueDto> GenerateFallbackCues(string text, double totalDuration)
+    {
+        var sentences = SplitSentences(text);
+        var totalWords = text.Split(new[] { ' ', '\n', '\r', '\t' }, StringSplitOptions.RemoveEmptyEntries).Length;
+        if (totalWords == 0) totalWords = 1;
 
         var cues = new List<SubtitleCueDto>();
         double currentStart = 0;
@@ -89,27 +373,13 @@ public class EdgeTtsService : ITtsService
             currentStart = end;
         }
 
-        // Generate Subtitle files
-        await _subtitleGenerator.GenerateSrtAsync(cues, srtFilePath, cancellationToken);
-        await _subtitleGenerator.GenerateVttAsync(cues, vttFilePath, cancellationToken);
-
-        // Synthesize valid audio container file (Standardized RIFF/WAVE 24kHz 16-bit PCM Mono)
-        await WriteSynthesizedWavAudioAsync(audioFilePath, totalDuration, cancellationToken);
-
-        var fileInfo = new FileInfo(audioFilePath);
-        var hash = await ComputeFileSha256Async(audioFilePath, cancellationToken);
-
-        return new TtsSynthesisResult
+        if (cues.Count > 0)
         {
-            AudioFilePath = audioFilePath,
-            AudioDurationSeconds = totalDuration,
-            SubtitleFilePath = srtFilePath,
-            SubtitleVttFilePath = vttFilePath,
-            Subtitles = cues,
-            Format = "audio/wav",
-            FileSizeBytes = fileInfo.Length,
-            Sha256Hash = hash
-        };
+            cues[0].StartTimeSeconds = 0.0;
+            cues[^1].EndTimeSeconds = totalDuration;
+        }
+
+        return cues;
     }
 
     private static List<string> SplitSentences(string text)
@@ -166,11 +436,10 @@ public class EdgeTtsService : ITtsService
         bw.Write(Encoding.ASCII.GetBytes("data"));
         bw.Write(dataSize);
 
-        // Generate gentle pleasant audio tones simulating Vietnamese voice speech envelope
         byte[] buffer = new byte[4096];
         int bytesRemaining = dataSize;
         double phase = 0.0;
-        double freq = 220.0; // Fundamental speech frequency ~220Hz
+        double freq = 220.0;
 
         while (bytesRemaining > 0 && !cancellationToken.IsCancellationRequested)
         {
@@ -179,7 +448,6 @@ public class EdgeTtsService : ITtsService
 
             for (int i = 0; i < samplesToWrite; i++)
             {
-                // Soft modulated tone simulating speech formant
                 double sample = Math.Sin(phase) * 0.25;
                 short sampleInt16 = (short)(sample * short.MaxValue);
                 buffer[i * 2] = (byte)(sampleInt16 & 0xFF);
