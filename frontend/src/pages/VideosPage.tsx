@@ -1,204 +1,207 @@
-import React, { useState, useEffect } from 'react';
-import { Film, Play, Eye, CheckCircle2, Clock, Share2, AlertTriangle, RefreshCw } from 'lucide-react';
-import { VideoProject, VideoProjectStatus } from '../types';
-import { api } from '../services/api';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Plus, RefreshCw, Search, Film, ChevronRight } from 'lucide-react';
+import { VideoProject } from '../types';
+import { Button, ButtonLink, Card, EmptyState, IconButton, Input, PageHeader, Skeleton, Tabs } from '../components/ui';
+import { StatusBadge, ReelThumb, projectThumb } from '../components/VideoBits';
+import { href, navigate, useRoute } from '../lib/router';
+import { domainOf, formatClock, statusMeta, timeAgo } from '../lib/format';
+
+const PAGE = 25;
+
+type Filter = 'all' | 'processing' | 'review' | 'published' | 'failed';
 
 interface VideosPageProps {
-  onSelectProject: (projectId: string) => void;
+  projects: VideoProject[] | null;
+  onRefresh: () => Promise<unknown>;
 }
 
-export const VideosPage: React.FC<VideosPageProps> = ({ onSelectProject }) => {
-  const [projects, setProjects] = useState<VideoProject[]>([]);
-  const [loading, setLoading] = useState<boolean>(true);
-  const [filter, setFilter] = useState<string>('All');
+const FILTERS: { id: Filter; label: string }[] = [
+  { id: 'all', label: 'Tất cả' },
+  { id: 'processing', label: 'Đang xử lý' },
+  { id: 'review', label: 'Chờ duyệt' },
+  { id: 'published', label: 'Đã đăng' },
+  { id: 'failed', label: 'Lỗi' },
+];
 
-  const fetchProjects = async () => {
-    setLoading(true);
-    const data = await api.getVideoProjects();
-    if (data && data.length > 0) {
-      setProjects(data);
-    } else {
-      // Seed default items for initial demonstration
-      setProjects([
-        {
-          id: 'proj-001',
-          title: 'Metro số 1 chính thức đón khách: Dấu mốc giao thông TP.HCM',
-          sourceUrl: 'https://vnexpress.net/tuyen-metro-so-1-ben-thanh-suoi-tien-van-hanh-4829102.html',
-          publisher: 'VnExpress',
-          status: 'AwaitingApproval',
-          durationSeconds: 54,
-          sceneCount: 7,
-          createdAt: '15/11/2026 09:20',
-          updatedAt: '15/11/2026 09:25',
-          scenes: []
-        },
-        {
-          id: 'proj-002',
-          title: 'Việt Nam bứt phá trong chuỗi cung ứng bán dẫn toàn cầu',
-          sourceUrl: 'https://tuoitre.vn/viet-nam-phat-trien-cong-nghe-ban-dan-20261114.htm',
-          publisher: 'Tuổi Trẻ Online',
-          status: 'Published',
-          durationSeconds: 48,
-          sceneCount: 6,
-          createdAt: '14/11/2026 16:10',
-          updatedAt: '14/11/2026 16:30',
-          facebookPostId: 'fb_post_9812471',
-          scenes: []
-        }
-      ]);
-    }
-    setLoading(false);
+function matches(p: VideoProject, f: Filter) {
+  if (f === 'all') return true;
+  const g = statusMeta(p.status).group;
+  if (f === 'processing') return g === 'processing' || g === 'queued';
+  return g === f;
+}
+
+export const VideosPage: React.FC<VideosPageProps> = ({ projects, onRefresh }) => {
+  const route = useRoute();
+  const initial = (route.query.get('filter') as Filter) || 'all';
+  const [filter, setFilter] = useState<Filter>(FILTERS.some((f) => f.id === initial) ? initial : 'all');
+  const [query, setQuery] = useState('');
+  const [refreshing, setRefreshing] = useState(false);
+  const [limit, setLimit] = useState(PAGE);
+
+  useEffect(() => setLimit(PAGE), [filter, query]);
+
+  const list = projects ?? [];
+  const counts = useMemo(() => {
+    const c: Record<Filter, number> = { all: 0, processing: 0, review: 0, published: 0, failed: 0 };
+    list.forEach((p) => FILTERS.forEach((f) => matches(p, f.id) && c[f.id]++));
+    return c;
+  }, [list]);
+
+  const q = query.trim().toLowerCase();
+  const visible = list.filter(
+    (p) =>
+      matches(p, filter) &&
+      (!q || p.title.toLowerCase().includes(q) || (p.publisher || '').toLowerCase().includes(q) || p.sourceUrl.toLowerCase().includes(q))
+  );
+
+  const refresh = async () => {
+    setRefreshing(true);
+    await onRefresh();
+    setRefreshing(false);
   };
-
-  useEffect(() => {
-    fetchProjects();
-    const interval = setInterval(fetchProjects, 15000);
-    return () => clearInterval(interval);
-  }, []);
-
-  const getStatusBadge = (status: VideoProjectStatus | string) => {
-    switch (status) {
-      case 'AwaitingApproval':
-        return (
-          <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/30 flex items-center gap-1">
-            <Clock className="w-3 h-3" /> Chờ duyệt
-          </span>
-        );
-      case 'Published':
-        return (
-          <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
-            <CheckCircle2 className="w-3 h-3" /> Đã đăng Reels
-          </span>
-        );
-      case 'Rendering':
-      case 'Extracting':
-      case 'Analyzing':
-      case 'Scripting':
-      case 'PlanningScenes':
-      case 'GeneratingAudio':
-        return (
-          <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 flex items-center gap-1 animate-pulse">
-            <Play className="w-3 h-3" /> Đang xử lý ({status})
-          </span>
-        );
-      case 'Failed':
-        return (
-          <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-rose-500/20 text-rose-300 border border-rose-500/30 flex items-center gap-1">
-            <AlertTriangle className="w-3 h-3" /> Lỗi
-          </span>
-        );
-      default:
-        return (
-          <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-gray-700 text-gray-300">
-            {status}
-          </span>
-        );
-    }
-  };
-
-  const filteredProjects = projects.filter((p) => {
-    if (filter === 'All') return true;
-    return p.status === filter;
-  });
 
   return (
-    <div className="space-y-6 max-w-7xl mx-auto">
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-white tracking-tight">Danh sách dự án Video Reels</h1>
-          <p className="text-sm text-gray-400 mt-1">
-            Dữ liệu trực tiếp từ PostgreSQL và trạng thái thời gian thực từ Hangfire Worker.
-          </p>
+    <div>
+      <PageHeader
+        title="Video"
+        description="Tất cả video đã tạo, mới nhất ở trên."
+        actions={
+          <>
+            <IconButton label="Làm mới" onClick={refresh} className="border border-line-strong bg-surface shadow-card">
+              <RefreshCw className={refreshing ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />
+            </IconButton>
+            <ButtonLink href={href('/create')} variant="primary" icon={<Plus className="h-4 w-4" />}>
+              Tạo video
+            </ButtonLink>
+          </>
+        }
+      />
+
+      <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+        <Tabs
+          items={FILTERS.map((f) => ({ id: f.id, label: f.label, count: projects ? counts[f.id] : undefined }))}
+          value={filter}
+          onChange={setFilter}
+          className="md:flex-1"
+        />
+        <div className="md:w-64 md:pb-1.5">
+          <Input leading={<Search />} value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Tìm theo tiêu đề, nguồn…" />
         </div>
+      </div>
 
-        {/* Filter Tabs & Refresh */}
-        <div className="flex items-center space-x-3">
-          <button
-            onClick={fetchProjects}
-            className="p-2 rounded-xl bg-[#111827] border border-[#1F2937] text-gray-400 hover:text-white transition"
-            title="Làm mới"
-          >
-            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-          </button>
-
-          <div className="flex items-center space-x-1.5 p-1 rounded-xl bg-[#111827] border border-[#1F2937] text-xs">
-            {['All', 'AwaitingApproval', 'Extracting', 'Published'].map((tab) => (
-              <button
-                key={tab}
-                onClick={() => setFilter(tab)}
-                className={`px-3 py-1.5 rounded-lg font-medium transition ${
-                  filter === tab
-                    ? 'bg-indigo-600 text-white shadow'
-                    : 'text-gray-400 hover:text-white'
-                }`}
-              >
-                {tab === 'All' ? 'Tất cả' : tab === 'AwaitingApproval' ? 'Chờ duyệt' : tab === 'Extracting' ? 'Đang chạy' : 'Đã đăng'}
-              </button>
+      <Card className="overflow-hidden">
+        {!projects ? (
+          <div className="divide-y divide-line">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <div key={i} className="flex items-center gap-4 px-4 py-3">
+                <Skeleton className="h-14 w-8" />
+                <div className="flex-1 space-y-2">
+                  <Skeleton className="h-4 w-2/3" />
+                  <Skeleton className="h-3 w-1/4" />
+                </div>
+              </div>
             ))}
           </div>
-        </div>
-      </div>
-
-      {/* Grid of Video Projects */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        {filteredProjects.map((proj) => (
-          <div
-            key={proj.id}
-            className="glass-panel rounded-2xl border border-[#1F2937] hover:border-indigo-500/40 transition-all flex flex-col overflow-hidden group"
-          >
-            {/* 9:16 Mock Thumbnail Preview */}
-            <div className="h-56 bg-gradient-to-b from-gray-900 to-[#0B0F19] relative flex items-center justify-center border-b border-[#1F2937] overflow-hidden">
-              <div className="w-24 h-44 rounded-lg bg-black border border-gray-700 shadow-2xl relative overflow-hidden flex flex-col justify-between p-2">
-                <span className="text-[7px] font-bold text-amber-300 uppercase tracking-wider bg-red-600 px-1 py-0.5 rounded self-start">
-                  TIN NÓNG 9:16
-                </span>
-                <div className="text-center">
-                  <Play className="w-6 h-6 text-white/80 mx-auto drop-shadow" />
-                </div>
-                <div className="text-[7px] text-white/90 bg-black/60 p-1 rounded backdrop-blur font-mono">
-                  1080 × 1920
-                </div>
-              </div>
-
-              {/* Status overlay badge */}
-              <div className="absolute top-3 left-3">
-                {getStatusBadge(proj.status)}
-              </div>
-
-              {/* Duration badge */}
-              <div className="absolute bottom-3 right-3 px-2 py-0.5 rounded bg-black/80 text-white font-mono text-xs border border-gray-700">
-                {proj.durationSeconds || 50}s
-              </div>
-            </div>
-
-            {/* Content Details */}
-            <div className="p-5 flex-1 flex flex-col justify-between space-y-4">
-              <div className="space-y-2">
-                <div className="flex items-center space-x-2 text-[11px] text-gray-400">
-                  <span className="font-semibold text-indigo-400">{proj.publisher}</span>
-                  <span>•</span>
-                  <span>{proj.scenes?.length || proj.sceneCount || 0} cảnh</span>
-                  <span>•</span>
-                  <span className="font-mono text-[10px] text-gray-500">ID: {proj.id.substring(0, 8)}...</span>
-                </div>
-                <h3 className="font-bold text-sm text-white line-clamp-2 leading-snug">
-                  {proj.title}
-                </h3>
-              </div>
-
-              <div className="pt-2 border-t border-gray-800 flex items-center justify-between">
-                <button
-                  onClick={() => onSelectProject(proj.id)}
-                  className="w-full py-2 rounded-xl bg-[#1F2937] hover:bg-indigo-600 hover:text-white text-gray-200 text-xs font-semibold flex items-center justify-center space-x-1.5 transition"
+        ) : visible.length === 0 ? (
+          list.length === 0 ? (
+            <EmptyState
+              icon={<Film />}
+              title="Chưa có video nào"
+              description="Dán link một bài báo để hệ thống tạo video đầu tiên cho bạn."
+              action={
+                <ButtonLink href={href('/create')} variant="primary" icon={<Plus className="h-4 w-4" />}>
+                  Tạo video
+                </ButtonLink>
+              }
+            />
+          ) : (
+            <EmptyState
+              icon={<Search />}
+              title="Không có video phù hợp"
+              description="Thử đổi bộ lọc hoặc từ khoá tìm kiếm."
+              action={
+                <Button
+                  onClick={() => {
+                    setFilter('all');
+                    setQuery('');
+                  }}
                 >
-                  <Eye className="w-3.5 h-3.5" />
-                  <span>Xem chi tiết & Kiểm duyệt</span>
-                </button>
-              </div>
-            </div>
+                  Xoá bộ lọc
+                </Button>
+              }
+            />
+          )
+        ) : (
+          <table className="w-full text-sm">
+            <thead className="hidden border-b border-line bg-subtle text-left text-xs text-fg-muted md:table-header-group">
+              <tr>
+                <th className="py-2.5 pl-4 pr-3 font-medium">Video</th>
+                <th className="px-3 py-2.5 font-medium">Trạng thái</th>
+                <th className="px-3 py-2.5 text-right font-medium">Thời lượng</th>
+                <th className="px-3 py-2.5 text-right font-medium">Cảnh</th>
+                <th className="px-3 py-2.5 font-medium">Cập nhật</th>
+                <th className="w-10" />
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-line">
+              {visible.slice(0, limit).map((p) => (
+                <tr
+                  key={p.id}
+                  onClick={() => navigate(`/videos/${p.id}`)}
+                  className="group cursor-pointer transition-colors hover:bg-subtle"
+                >
+                  <td className="py-3 pl-4 pr-3">
+                    <div className="flex items-center gap-3">
+                      <ReelThumb src={projectThumb(p)} className="w-8" />
+                      <div className="min-w-0">
+                        <a
+                          href={href(`/videos/${p.id}`)}
+                          onClick={(e) => e.stopPropagation()}
+                          className="line-clamp-2 font-medium text-fg"
+                        >
+                          {p.title}
+                        </a>
+                        <div className="mt-0.5 truncate text-xs text-fg-muted">
+                          {p.publisher || domainOf(p.sourceUrl)}
+                          <span className="md:hidden"> · {timeAgo(p.updatedAtUtc ?? p.createdAtUtc)}</span>
+                        </div>
+                        <div className="mt-1.5 md:hidden">
+                          <StatusBadge status={p.status} />
+                        </div>
+                      </div>
+                    </div>
+                  </td>
+                  <td className="hidden px-3 py-3 md:table-cell">
+                    <StatusBadge status={p.status} />
+                  </td>
+                  <td className="hidden px-3 py-3 text-right tabular text-fg-muted md:table-cell">
+                    {formatClock(p.actualDurationSeconds ?? p.targetDurationSeconds)}
+                  </td>
+                  <td className="hidden px-3 py-3 text-right tabular text-fg-muted md:table-cell">
+                    {p.sceneCount || p.scenes?.length || '—'}
+                  </td>
+                  <td className="hidden whitespace-nowrap px-3 py-3 text-fg-muted md:table-cell">
+                    {timeAgo(p.updatedAtUtc ?? p.createdAtUtc)}
+                  </td>
+                  <td className="pr-3">
+                    <ChevronRight className="h-4 w-4 text-fg-subtle transition-transform group-hover:translate-x-0.5" />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+        {visible.length > limit && (
+          <div className="flex items-center justify-between border-t border-line px-4 py-3 text-[13px] text-fg-muted">
+            <span>
+              Đang hiện {limit}/{visible.length} video
+            </span>
+            <Button size="sm" onClick={() => setLimit((l) => l + PAGE)}>
+              Xem thêm
+            </Button>
           </div>
-        ))}
-      </div>
+        )}
+      </Card>
     </div>
   );
 };

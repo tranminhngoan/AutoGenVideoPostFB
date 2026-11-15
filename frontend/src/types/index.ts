@@ -16,67 +16,66 @@ export type VideoProjectStatus =
 
 export type RightsStatus = 'Unknown' | 'PermissionRequired' | 'Licensed' | 'Authorized' | 'Rejected';
 
-export interface ArticleImage {
-  id: string;
-  originalImageUrl: string;
-  caption: string;
-  altText?: string;
-  order: number;
-  width?: number;
-  height?: number;
-  rightsStatus: RightsStatus;
-  category?: 'Panorama' | 'Character' | 'Event' | 'Document' | 'Chart' | 'Unsuitable';
-  selectedForVideo: boolean;
-}
-
-export interface Article {
-  id: string;
-  title: string;
-  url: string;
-  publisher: string;
-  author?: string;
-  publishedDate?: string;
-  bodySnippet: string;
-  imageCount: number;
-  images: ArticleImage[];
-  extractedAt: string;
-}
-
 export interface VideoScene {
+  id?: string;
   sceneNumber: number;
-  durationSeconds: number;
+  startTimeSeconds?: number;
+  endTimeSeconds?: number;
+  durationSeconds?: number;
   voiceText: string;
   onScreenText: string;
-  selectedArticleImageId?: string;
-  imageUrl?: string;
-  motionType: 'ZoomIn' | 'ZoomOut' | 'PanLeft' | 'PanRight' | 'KenBurns';
-  transitionType: 'Fade' | 'Slide' | 'Cut';
-  scenePurpose: 'Hook' | 'Fact' | 'Context' | 'Analysis' | 'Conclusion';
+  imageUrl?: string | null;
+  motionType: string;
+  transitionType: string;
+  scenePurpose: string;
 }
 
+export interface ProjectJob {
+  id: string;
+  videoProjectId: string;
+  hangfireJobId?: string | null;
+  step: string;
+  status: string;
+  retryCount: number;
+  progressPercentage: number;
+  startedAtUtc?: string | null;
+  finishedAtUtc?: string | null;
+  errorMessage?: string | null;
+}
+
+/** Mirrors VideoProjectResponseDto on the API. */
 export interface VideoProject {
   id: string;
   title: string;
   sourceUrl: string;
   publisher: string;
-  status: VideoProjectStatus;
-  durationSeconds: number;
+  status: VideoProjectStatus | string;
+  targetDurationSeconds?: number;
+  actualDurationSeconds?: number | null;
+  resolution?: string;
+  aspectRatio?: string;
+  createdAtUtc?: string;
+  updatedAtUtc?: string | null;
+  errorMessage?: string | null;
+  /** Choices saved when the project was created (null for older projects). */
+  aiProvider?: string | null;
+  voice?: string | null;
+  voiceSpeed?: string | null;
   sceneCount: number;
   scenes: VideoScene[];
-  script?: string;
-  audioDurationSeconds?: number;
-  facebookPostId?: string;
-  facebookVideoId?: string;
-  createdAt: string;
-  updatedAt: string;
+  jobs?: ProjectJob[];
 }
 
 export interface SystemConfig {
   environment: string;
+  /** True when the server may return simulated AI/TTS/render/Facebook output (test setups only). */
+  simulation?: boolean;
   ai: {
-    provider: 'Gemini' | 'Claude';
+    provider: 'Gemini' | 'Claude' | string;
     isConfigured: boolean;
     model: string;
+    gemini?: { isConfigured: boolean; model: string };
+    claude?: { isConfigured: boolean; model: string };
   };
   tts: {
     provider: string;
@@ -93,16 +92,4 @@ export interface SystemConfig {
     maxStorageMb: number;
     ttlMinutes: number;
   };
-}
-
-export interface JobHistoryItem {
-  id: string;
-  projectId: string;
-  projectTitle: string;
-  status: VideoProjectStatus;
-  startedAt: string;
-  completedAt?: string;
-  durationMs: number;
-  retryCount: number;
-  lastMessage: string;
 }

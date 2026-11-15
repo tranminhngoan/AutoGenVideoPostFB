@@ -6,6 +6,7 @@ using Microsoft.Extensions.Logging;
 using NewsStudio.Application.DTOs;
 using NewsStudio.Application.Interfaces;
 using NewsStudio.Domain.Enums;
+using NewsStudio.Infrastructure.Common;
 
 namespace NewsStudio.Infrastructure.Ai;
 
@@ -34,7 +35,7 @@ public class GeminiAiEditorService : IAIEditorService
     {
         var model = !string.IsNullOrWhiteSpace(modelName)
             ? modelName
-            : _configuration["Ai:Gemini:Model"] ?? "gemini-1.5-flash";
+            : _configuration["Ai:Gemini:Model"] ?? "gemini-flash-latest";
 
         var apiKey = _configuration["Ai:Gemini:ApiKey"]
             ?? Environment.GetEnvironmentVariable("GEMINI_API_KEY");
@@ -42,24 +43,28 @@ public class GeminiAiEditorService : IAIEditorService
         _logger.LogInformation("GeminiAiEditorService generating script for project {ProjectId} with model {Model}",
             input.ProjectId, model);
 
-        if (!string.IsNullOrWhiteSpace(apiKey))
+        var simulate = SimulationMode.IsEnabled(_configuration);
+
+        if (string.IsNullOrWhiteSpace(apiKey))
         {
-            try
-            {
-                return await CallGeminiApiAsync(input, model, apiKey, cancellationToken);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Gemini API call failed or timed out. Falling back to local editorial synthesis engine.");
-            }
-        }
-        else
-        {
-            _logger.LogInformation("No Gemini API key configured. Using built-in editorial synthesis engine.");
+            _logger.LogInformation("No Gemini API key configured. Using local editorial template script engine.");
+            return GenerateDeterministicEditorialScript(input, "Gemini", model);
         }
 
-        // Deterministic high-quality fallback editorial synthesis
-        return GenerateDeterministicEditorialScript(input, "Gemini", model);
+        try
+        {
+            return await CallGeminiApiAsync(input, model, apiKey, cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            if (simulate)
+            {
+                _logger.LogWarning(ex, "Gemini API call failed. Simulation mode: using local template script.");
+                return GenerateDeterministicEditorialScript(input, "Gemini", model);
+            }
+            _logger.LogError(ex, "Gemini API call failed for project {ProjectId}", input.ProjectId);
+            throw new InvalidOperationException($"Gọi Gemini thất bại: {ex.Message}", ex);
+        }
     }
 
     private async Task<EditorialScriptResult> CallGeminiApiAsync(
@@ -92,13 +97,22 @@ public class GeminiAiEditorService : IAIEditorService
             generationConfig = new
             {
                 temperature = 0.4,
-                maxOutputTokens = 2048,
+                // Gemini 2.5+ "thinking" tokens count against this limit; 2048 can cut the JSON short.
+                maxOutputTokens = 8192,
                 responseMimeType = "application/json"
             }
         };
 
         using var response = await _httpClient.PostAsJsonAsync(url, requestBody, cancellationToken);
-        response.EnsureSuccessStatusCode();
+        if (!response.IsSuccessStatusCode)
+        {
+            // Keep Google's own explanation — a bare "404" hides that the model name is wrong/retired.
+            var reason = await ReadGoogleErrorAsync(response, cancellationToken);
+            var hint = response.StatusCode == System.Net.HttpStatusCode.NotFound
+                ? $" Model \"{model}\" không dùng được với API key này — xem danh sách model khả dụng trong Cài đặt rồi đặt lại Ai:Gemini:Model."
+                : string.Empty;
+            throw new HttpRequestException($"HTTP {(int)response.StatusCode}: {reason}.{hint}", null, response.StatusCode);
+        }
 
         var jsonDoc = await response.Content.ReadFromJsonAsync<JsonDocument>(cancellationToken: cancellationToken);
         if (jsonDoc == null) throw new InvalidOperationException("Empty response from Gemini API");
@@ -168,7 +182,7 @@ public class GeminiAiEditorService : IAIEditorService
 
         var words = voiceOverScript.Split(new[] { ' ', '\n', '\r', '\t' }, StringSplitOptions.RemoveEmptyEntries).Length;
         // Standard Vietnamese reading speed: ~2.3 words/second -> ~55-65 seconds (target 60s)
-        var estimatedSeconds = Math.Clamp((int)Math.Round(words / 2.3), 55, 65);
+        var estimatedSeconds = Math.Max(1, (int)Math.Round(words / PromptTemplates.WordsPerSecond));
 
         return new EditorialScriptResult
         {
@@ -205,21 +219,22 @@ public class GeminiAiEditorService : IAIEditorService
             var root = doc.RootElement;
 
             var title = GetStringProperty(root, "videoTitle", input.ArticleTitle);
-            var hook = GetStringProperty(root, "hook", "Điểm nóng tin tức hôm nay bạn không thể bỏ lỡ!");
+            var hook = GetStringProperty(root, "hook", "");
             var voiceOver = GetStringProperty(root, "voiceOverScript", "");
             var keyFacts = GetStringProperty(root, "keyFacts", "");
             var context = GetStringProperty(root, "context", "");
             var analysis = GetStringProperty(root, "analysis", "");
-            var conclusion = GetStringProperty(root, "conclusion", "Bạn nghĩ sao về thông tin này?");
+            var conclusion = GetStringProperty(root, "conclusion", "");
             var attribution = GetStringProperty(root, "sourceAttribution", $"Theo {input.Publisher}");
 
             if (string.IsNullOrWhiteSpace(voiceOver))
             {
-                voiceOver = $"{hook} {keyFacts} {analysis} {conclusion} {attribution}.";
+                throw new InvalidOperationException("AI trả về kịch bản rỗng. Hãy thử viết lại.");
             }
 
             var words = voiceOver.Split(new[] { ' ', '\n', '\r', '\t' }, StringSplitOptions.RemoveEmptyEntries).Length;
-            var estimatedSeconds = Math.Clamp((int)Math.Round(words / 2.3), 55, 65);
+            // Vietnamese reading speed ≈ 2.3 words/second — report the real estimate, not a clamped one
+            var estimatedSeconds = Math.Max(1, (int)Math.Round(words / 2.3));
 
             return new EditorialScriptResult
             {
@@ -235,9 +250,9 @@ public class GeminiAiEditorService : IAIEditorService
                 EstimatedReadingSeconds = estimatedSeconds
             };
         }
-        catch
+        catch (JsonException ex)
         {
-            return GenerateDeterministicEditorialScript(input, "Gemini", "gemini-1.5-flash");
+            throw new InvalidOperationException("AI trả về kịch bản không đúng định dạng JSON. Hãy thử viết lại.", ex);
         }
     }
 
@@ -249,6 +264,69 @@ public class GeminiAiEditorService : IAIEditorService
             if (!string.IsNullOrWhiteSpace(str)) return str.Trim();
         }
         return defaultValue;
+    }
+
+    private static async Task<string> ReadGoogleErrorAsync(HttpResponseMessage response, CancellationToken cancellationToken)
+    {
+        var body = await response.Content.ReadAsStringAsync(cancellationToken);
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            if (doc.RootElement.TryGetProperty("error", out var err) && err.TryGetProperty("message", out var msg))
+            {
+                return msg.GetString() ?? response.ReasonPhrase ?? "Lỗi không rõ";
+            }
+        }
+        catch (JsonException)
+        {
+            // fall through
+        }
+        return string.IsNullOrWhiteSpace(body) ? response.ReasonPhrase ?? "Lỗi không rõ" : body[..Math.Min(body.Length, 300)];
+    }
+
+    /// <summary>
+    /// Lists the Gemini models this API key can use for generateContent (live from Google, not hard-coded).
+    /// Returns null when no key is configured.
+    /// </summary>
+    public async Task<List<AiModelInfoDto>?> ListAvailableModelsAsync(CancellationToken cancellationToken = default)
+    {
+        var apiKey = _configuration["Ai:Gemini:ApiKey"] ?? Environment.GetEnvironmentVariable("GEMINI_API_KEY");
+        if (string.IsNullOrWhiteSpace(apiKey)) return null;
+
+        var result = new List<AiModelInfoDto>();
+        string? pageToken = null;
+        do
+        {
+            var url = $"https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000&key={apiKey}"
+                      + (pageToken != null ? $"&pageToken={Uri.EscapeDataString(pageToken)}" : string.Empty);
+            using var response = await _httpClient.GetAsync(url, cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                var reason = await ReadGoogleErrorAsync(response, cancellationToken);
+                throw new InvalidOperationException($"Không lấy được danh sách model Gemini: {reason}");
+            }
+
+            using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+            if (doc.RootElement.TryGetProperty("models", out var models))
+            {
+                foreach (var m in models.EnumerateArray())
+                {
+                    var supportsGenerate = m.TryGetProperty("supportedGenerationMethods", out var methods)
+                        && methods.EnumerateArray().Any(x => x.GetString() == "generateContent");
+                    if (!supportsGenerate) continue;
+
+                    var name = m.GetProperty("name").GetString() ?? string.Empty;
+                    result.Add(new AiModelInfoDto
+                    {
+                        Id = name.StartsWith("models/") ? name["models/".Length..] : name,
+                        DisplayName = m.TryGetProperty("displayName", out var dn) ? dn.GetString() ?? name : name
+                    });
+                }
+            }
+            pageToken = doc.RootElement.TryGetProperty("nextPageToken", out var nt) ? nt.GetString() : null;
+        } while (!string.IsNullOrEmpty(pageToken));
+
+        return result;
     }
 
     private static int CountTokensApprox(string text)

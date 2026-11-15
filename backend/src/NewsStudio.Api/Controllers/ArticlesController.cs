@@ -47,7 +47,13 @@ public class ArticlesController : ControllerBase
         catch (HttpRequestException ex)
         {
             _logger.LogError(ex, "Failed to download article from URL {Url}", request.Url);
-            return BadRequest(new { error = $"Could not download article: {ex.Message}" });
+            return BadRequest(new { error = $"Không tải được bài báo: {ex.Message}" });
+        }
+        catch (InvalidOperationException ex)
+        {
+            // Readable reasons from the extractor (site blocked in VN, anti-bot 403, paywall…)
+            _logger.LogWarning(ex, "Article extraction refused for {Url}", request.Url);
+            return BadRequest(new { error = ex.Message });
         }
         catch (Exception ex)
         {

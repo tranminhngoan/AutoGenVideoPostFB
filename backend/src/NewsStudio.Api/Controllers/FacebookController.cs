@@ -115,7 +115,15 @@ public class FacebookController : ControllerBase
     [HttpGet("posts/{postId:guid}/metrics")]
     public async Task<ActionResult<VideoMetricDto>> FetchMetrics(Guid postId, CancellationToken cancellationToken)
     {
-        var metric = await _facebookService.FetchMetricsAsync(postId, cancellationToken);
+        VideoMetricDto? metric;
+        try
+        {
+            metric = await _facebookService.FetchMetricsAsync(postId, cancellationToken);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return StatusCode(StatusCodes.Status502BadGateway, new { message = ex.Message });
+        }
         if (metric == null)
         {
             return NotFound(new { message = "Không tìm thấy bản ghi bài đăng Facebook." });

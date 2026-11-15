@@ -16,6 +16,7 @@ using NewsStudio.Application.DTOs;
 using NewsStudio.Application.Interfaces;
 using NewsStudio.Domain.Entities;
 using NewsStudio.Domain.Enums;
+using NewsStudio.Infrastructure.Common;
 
 namespace NewsStudio.Infrastructure.Facebook;
 
@@ -27,6 +28,7 @@ public class FacebookPublishingService : IFacebookPublishingService
     private readonly HttpClient _httpClient;
     private readonly ILogger<FacebookPublishingService> _logger;
     private readonly string _graphApiVersion;
+    private readonly bool _simulate;
 
     public FacebookPublishingService(
         IApplicationDbContext context,
@@ -42,6 +44,7 @@ public class FacebookPublishingService : IFacebookPublishingService
         _httpClient = httpClient;
         _logger = logger;
         _graphApiVersion = configuration["Facebook:GraphApiVersion"] ?? "v21.0";
+        _simulate = SimulationMode.IsEnabled(configuration);
     }
 
     public async Task<VerifyTokenResultDto> VerifyTokenAsync(string pageAccessToken, CancellationToken cancellationToken = default)
@@ -55,6 +58,7 @@ public class FacebookPublishingService : IFacebookPublishingService
             };
         }
 
+        string? graphError = null;
         try
         {
             var url = $"https://graph.facebook.com/{_graphApiVersion}/me?fields=id,name&access_token={pageAccessToken}";
@@ -74,14 +78,17 @@ public class FacebookPublishingService : IFacebookPublishingService
                     Scopes = new List<string> { "pages_manage_posts", "pages_read_engagement", "publish_video" }
                 };
             }
+
+            graphError = await ReadGraphErrorAsync(response, cancellationToken);
         }
         catch (Exception ex)
         {
             _logger.LogWarning("Network call to Meta Graph API failed during token verification: {Message}", ex.Message);
+            graphError = "Không kết nối được tới Meta Graph API: " + ex.Message;
         }
 
-        // Test environment fallback verification
-        if (pageAccessToken.StartsWith("EAAB") || pageAccessToken.StartsWith("test_token") || pageAccessToken.Length > 20)
+        // Offline verification is only allowed in simulation mode (automated tests)
+        if (_simulate && (pageAccessToken.StartsWith("EAAB") || pageAccessToken.StartsWith("test_token") || pageAccessToken.Length > 20))
         {
             return new VerifyTokenResultDto
             {
@@ -95,8 +102,26 @@ public class FacebookPublishingService : IFacebookPublishingService
         return new VerifyTokenResultDto
         {
             IsValid = false,
-            ErrorMessage = "Không thể xác thực Page Access Token với Meta Graph API. Vui lòng kiểm tra lại token và quyền truy cập."
+            ErrorMessage = graphError ?? "Không thể xác thực Page Access Token với Meta Graph API. Vui lòng kiểm tra lại token và quyền truy cập."
         };
+    }
+
+    /// <summary>Extracts Meta's human-readable error message from a failed Graph API response.</summary>
+    private static async Task<string?> ReadGraphErrorAsync(HttpResponseMessage response, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var body = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: cancellationToken);
+            if (body.TryGetProperty("error", out var err) && err.TryGetProperty("message", out var msg))
+            {
+                return $"Meta báo lỗi: {msg.GetString()}";
+            }
+        }
+        catch
+        {
+            // body was not JSON — fall through to the status code
+        }
+        return $"Meta Graph API trả về lỗi {(int)response.StatusCode} ({response.ReasonPhrase}).";
     }
 
     public async Task<List<FacebookAccountDto>> GetConnectedPagesAsync(CancellationToken cancellationToken = default)
@@ -258,9 +283,15 @@ public class FacebookPublishingService : IFacebookPublishingService
             account = await _context.FacebookAccounts.FirstOrDefaultAsync(a => a.IsActive, cancellationToken);
         }
 
+        if (account == null && !_simulate)
+        {
+            throw new InvalidOperationException(
+                "Chưa kết nối trang Facebook nào. Vào Cài đặt → Facebook để kết nối trang trước khi đăng.");
+        }
+
         if (account == null)
         {
-            // Auto create demo page if none exists in test
+            // Simulation mode only: auto-create a demo page so offline tests can exercise the flow
             account = new FacebookAccount
             {
                 PageId = "100200300400500",
@@ -279,9 +310,15 @@ public class FacebookPublishingService : IFacebookPublishingService
         var videoAsset = project.Assets.FirstOrDefault(a => (a.AssetType == "FinalVideo" || a.AssetType == "Video") && !a.IsCleanedUp);
         var videoFilePath = videoAsset?.LocalTempPath ?? project.OutputVideoPath;
 
+        if ((string.IsNullOrWhiteSpace(videoFilePath) || !File.Exists(videoFilePath)) && !_simulate)
+        {
+            throw new InvalidOperationException(
+                "Không tìm thấy file video trên máy chủ (có thể đã bị xoá do hết hạn). Hãy dựng lại video rồi đăng.");
+        }
+
         if (string.IsNullOrWhiteSpace(videoFilePath) || !File.Exists(videoFilePath))
         {
-            // If file missing on disk, create a temporary MP4 stream container for test pipeline
+            // Simulation mode only: create a tiny placeholder MP4 container for the offline test pipeline
             var tempDir = Path.Combine(Path.GetTempPath(), "newsstudio_reels");
             Directory.CreateDirectory(tempDir);
             videoFilePath = Path.Combine(tempDir, $"reel_upload_{videoProjectId}.mp4");
@@ -298,7 +335,7 @@ public class FacebookPublishingService : IFacebookPublishingService
             var title = project.Title;
             var hook = project.Script?.Hook ?? string.Empty;
             var source = project.Script?.SourceAttribution ?? string.Empty;
-            caption = $"{title}\n\n{hook}\n\n{source}\n#News #Reels #TinTuc #AINewsStudio";
+            caption = $"{title}\n\n{hook}\n\n{source}\n#TinTuc #Reels";
         }
 
         // Update Project Status to Publishing
@@ -331,10 +368,23 @@ public class FacebookPublishingService : IFacebookPublishingService
             fbVideoId = realVideoId;
             fbPostId = realPostId;
         }
+        catch (Exception ex) when (!_simulate)
+        {
+            // Real failure: record it honestly and send the project back to the approval queue.
+            _logger.LogError(ex, "Meta Reels upload failed for project {ProjectId}", videoProjectId);
+            postRecord.UploadStatus = "Failed";
+            postRecord.Status = "Failed";
+            postRecord.ErrorMessage = ex.Message.Length > 1000 ? ex.Message[..1000] : ex.Message;
+            postRecord.UpdatedAtUtc = DateTime.UtcNow;
+            project.Status = VideoProjectStatus.AwaitingApproval;
+            project.UpdatedAtUtc = DateTime.UtcNow;
+            await _context.SaveChangesAsync(CancellationToken.None);
+            throw new InvalidOperationException($"Đăng lên Facebook thất bại: {ex.Message}", ex);
+        }
         catch (Exception ex)
         {
-            _logger.LogWarning("Graph API direct upload call not reachable or returned error ({Message}). Utilizing authenticated deterministic publication engine.", ex.Message);
-            // Simulated deterministic IDs for test/staging (kept short to fit within DB column length)
+            _logger.LogWarning("Graph API upload failed ({Message}). Simulation mode: recording simulated publication IDs.", ex.Message);
+            // Simulation mode only: deterministic IDs for offline tests (kept short to fit within DB column length)
             var shortPage = account.PageId.Length > 20 ? account.PageId.Substring(0, 20) : account.PageId;
             var numSuffix = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString();
             fbVideoId = $"vid_{numSuffix}";
@@ -412,22 +462,34 @@ public class FacebookPublishingService : IFacebookPublishingService
             access_token = pageToken
         };
         var startRes = await _httpClient.PostAsJsonAsync(startUrl, startPayload, cancellationToken);
-        startRes.EnsureSuccessStatusCode();
+        if (!startRes.IsSuccessStatusCode)
+        {
+            var errBody = await startRes.Content.ReadAsStringAsync(cancellationToken);
+            _logger.LogError("Meta Graph API error on video_reels start: {StatusCode} - {Body}", startRes.StatusCode, errBody);
+            throw new InvalidOperationException($"Lỗi Meta Graph API (Khởi tạo upload): {errBody}");
+        }
 
         var startData = await startRes.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: cancellationToken);
         var videoId = startData.GetProperty("video_id").GetString()!;
         var uploadUrl = startData.GetProperty("upload_url").GetString()!;
 
-        // Step 2: Transfer binary video
+        // Step 2: Transfer binary video (rupload.facebook.com requires Offset and file_size headers)
+        var fileInfo = new FileInfo(videoFilePath);
         using var fileStream = File.OpenRead(videoFilePath);
         using var request = new HttpRequestMessage(HttpMethod.Post, uploadUrl);
         request.Headers.Authorization = new AuthenticationHeaderValue("OAuth", pageToken);
-        request.Headers.Add("file_offset", "0");
+        request.Headers.TryAddWithoutValidation("Offset", "0");
+        request.Headers.TryAddWithoutValidation("file_size", fileInfo.Length.ToString());
         request.Content = new StreamContent(fileStream);
         request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
 
         var transferRes = await _httpClient.SendAsync(request, cancellationToken);
-        transferRes.EnsureSuccessStatusCode();
+        if (!transferRes.IsSuccessStatusCode)
+        {
+            var errBody = await transferRes.Content.ReadAsStringAsync(cancellationToken);
+            _logger.LogError("Meta Graph API error on video transfer: {StatusCode} - {Body}", transferRes.StatusCode, errBody);
+            throw new InvalidOperationException($"Lỗi Meta Graph API (Tải file video lên): {errBody}");
+        }
 
         // Step 3: Finish and Publish
         var finishPayload = new
@@ -439,7 +501,12 @@ public class FacebookPublishingService : IFacebookPublishingService
             description = caption
         };
         var finishRes = await _httpClient.PostAsJsonAsync(startUrl, finishPayload, cancellationToken);
-        finishRes.EnsureSuccessStatusCode();
+        if (!finishRes.IsSuccessStatusCode)
+        {
+            var errBody = await finishRes.Content.ReadAsStringAsync(cancellationToken);
+            _logger.LogError("Meta Graph API error on video_reels finish: {StatusCode} - {Body}", finishRes.StatusCode, errBody);
+            throw new InvalidOperationException($"Lỗi Meta Graph API (Xuất bản Reels): {errBody}");
+        }
 
         var postId = $"{pageId}_{videoId}";
         return (videoId, postId);
@@ -463,16 +530,60 @@ public class FacebookPublishingService : IFacebookPublishingService
         var shares = 0L;
         var comments = 0L;
         var watchTime = 0.0;
+        string? insightsError = null;
 
-        if (post.FacebookAccount != null && !string.IsNullOrWhiteSpace(post.FacebookVideoId))
+        if (post.FacebookAccount == null || string.IsNullOrWhiteSpace(post.FacebookVideoId))
+        {
+            insightsError = "Bài đăng chưa có mã video Facebook hoặc trang đã bị ngắt kết nối.";
+        }
+        else
         {
             var rawToken = _tokenProtection.DecryptToken(post.FacebookAccount.EncryptedAccessToken);
+            var apiSucceeded = false;
             try
             {
-                var insightsUrl = $"https://graph.facebook.com/{_graphApiVersion}/{post.FacebookVideoId}/video_insights?metric=total_video_views,post_impressions_unique,post_engaged_users,total_video_avg_time_watched&access_token={rawToken}";
+                // 1. Lấy số liệu trực tiếp từ đối tượng Video (views, likes, comments)
+                var videoFieldsUrl = $"https://graph.facebook.com/{_graphApiVersion}/{post.FacebookVideoId}?fields=views,likes.summary(true),comments.summary(true)&access_token={rawToken}";
+                var videoRes = await _httpClient.GetAsync(videoFieldsUrl, cancellationToken);
+                if (videoRes.IsSuccessStatusCode)
+                {
+                    apiSucceeded = true;
+                    var vDoc = await videoRes.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: cancellationToken);
+                    if (vDoc.TryGetProperty("views", out var viewsProp) && viewsProp.TryGetInt64(out var vw))
+                    {
+                        views = vw;
+                    }
+                    if (vDoc.TryGetProperty("likes", out var likesProp) && likesProp.TryGetProperty("summary", out var lSummary) && lSummary.TryGetProperty("total_count", out var lCount) && lCount.TryGetInt64(out var lc))
+                    {
+                        engagement = lc;
+                    }
+                    if (vDoc.TryGetProperty("comments", out var commProp) && commProp.TryGetProperty("summary", out var cSummary) && cSummary.TryGetProperty("total_count", out var cCount) && cCount.TryGetInt64(out var cc))
+                    {
+                        comments = cc;
+                    }
+                }
+
+                // 2. Lấy số lượt chia sẻ nếu có FacebookPostId
+                if (!string.IsNullOrWhiteSpace(post.FacebookPostId))
+                {
+                    var postFieldsUrl = $"https://graph.facebook.com/{_graphApiVersion}/{post.FacebookPostId}?fields=shares&access_token={rawToken}";
+                    var postRes = await _httpClient.GetAsync(postFieldsUrl, cancellationToken);
+                    if (postRes.IsSuccessStatusCode)
+                    {
+                        var pDoc = await postRes.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: cancellationToken);
+                        if (pDoc.TryGetProperty("shares", out var sharesProp) && sharesProp.TryGetProperty("count", out var sCount) && sCount.TryGetInt64(out var sc))
+                        {
+                            shares = sc;
+                        }
+                    }
+                }
+
+                // 3. Lấy thêm chỉ số video_insights nếu khả dụng (chỉ dùng các metric hợp lệ cho video)
+                var insightsUrl = $"https://graph.facebook.com/{_graphApiVersion}/{post.FacebookVideoId}/video_insights?metric=total_video_views,total_video_avg_time_watched&access_token={rawToken}";
                 var response = await _httpClient.GetAsync(insightsUrl, cancellationToken);
                 if (response.IsSuccessStatusCode)
                 {
+                    apiSucceeded = true;
                     var doc = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: cancellationToken);
                     if (doc.TryGetProperty("data", out var dataArray) && dataArray.ValueKind == JsonValueKind.Array)
                     {
@@ -484,20 +595,40 @@ public class FacebookPublishingService : IFacebookPublishingService
                                 var valObj = vals[0];
                                 if (valObj.TryGetProperty("value", out var v))
                                 {
-                                    if (name == "total_video_views" && v.TryGetInt64(out var vw)) views = vw;
-                                    if (name == "post_impressions_unique" && v.TryGetInt64(out var rch)) reach = rch;
-                                    if (name == "post_engaged_users" && v.TryGetInt64(out var eng)) engagement = eng;
+                                    if (name == "total_video_views" && v.TryGetInt64(out var vw) && vw > views) views = vw;
                                     if (name == "total_video_avg_time_watched" && v.TryGetDouble(out var wt)) watchTime = wt;
                                 }
                             }
                         }
                     }
                 }
+                else
+                {
+                    _logger.LogInformation("video_insights endpoint returned non-success ({StatusCode}). Continuing with object-level metrics.", response.StatusCode);
+                }
+
+                // Reach ước tính từ Views
+                reach = Math.Max(reach, views);
+
+                if (!apiSucceeded)
+                {
+                    insightsError = await ReadGraphErrorAsync(response, cancellationToken);
+                }
             }
             catch (Exception ex)
             {
                 _logger.LogWarning("Insights API call could not be completed: {Message}", ex.Message);
+                if (!apiSucceeded)
+                {
+                    insightsError = "Không kết nối được tới Meta Graph API: " + ex.Message;
+                }
             }
+        }
+
+        // Never store zeros as if they were real numbers when Meta could not be reached
+        if (insightsError != null && !_simulate)
+        {
+            throw new InvalidOperationException($"Không lấy được số liệu từ Facebook. {insightsError}");
         }
 
         var metric = new VideoMetric

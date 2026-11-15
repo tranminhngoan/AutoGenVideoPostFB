@@ -180,23 +180,15 @@ public class VideoReviewService : IVideoReviewService
         review.ViolationDetails = assessment.HasFatalViolations ? JsonSerializer.Serialize(assessment.FatalViolations) : null;
         review.UpdatedAtUtc = DateTime.UtcNow;
 
-        // Update project status according to decision
+        // Update project status according to decision.
+        // "Needs…" decisions only record the reviewer's request. They must NOT move the project into a
+        // processing state (Analyzing / GeneratingAudio …): nothing is actually running at that point,
+        // and the real status is set by the script/production services when the work is performed.
         switch (request.Decision.ToLowerInvariant())
         {
             case "approved":
-                project.Status = VideoProjectStatus.AwaitingApproval;
-                break;
             case "rejected":
                 project.Status = VideoProjectStatus.AwaitingApproval;
-                break;
-            case "needsscriptregen":
-                project.Status = VideoProjectStatus.Analyzing;
-                break;
-            case "needsaudioregen":
-                project.Status = VideoProjectStatus.PlanningScenes;
-                break;
-            case "needsrerender":
-                project.Status = VideoProjectStatus.GeneratingAudio;
                 break;
         }
         project.UpdatedAtUtc = DateTime.UtcNow;

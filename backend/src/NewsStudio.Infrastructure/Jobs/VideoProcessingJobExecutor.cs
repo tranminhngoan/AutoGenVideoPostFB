@@ -1,10 +1,13 @@
 using Hangfire;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using NewsStudio.Application.Common.Interfaces;
 using NewsStudio.Application.Interfaces;
 using NewsStudio.Domain.Entities;
 using NewsStudio.Domain.Enums;
+using NewsStudio.Infrastructure.Common;
+using NewsStudio.Infrastructure.Services;
 
 namespace NewsStudio.Infrastructure.Jobs;
 
@@ -15,12 +18,14 @@ public class VideoProcessingJobExecutor : IVideoProcessingJobExecutor
     private readonly IScriptService _scriptService;
     private readonly IVideoProductionService _productionService;
     private readonly ILogger<VideoProcessingJobExecutor> _logger;
+    private readonly bool _simulate;
 
     public VideoProcessingJobExecutor(
         IApplicationDbContext context,
         IArticleService articleService,
         IScriptService scriptService,
         IVideoProductionService productionService,
+        IConfiguration configuration,
         ILogger<VideoProcessingJobExecutor> logger)
     {
         _context = context;
@@ -28,9 +33,34 @@ public class VideoProcessingJobExecutor : IVideoProcessingJobExecutor
         _scriptService = scriptService;
         _productionService = productionService;
         _logger = logger;
+        _simulate = SimulationMode.IsEnabled(configuration);
     }
 
-    [AutomaticRetry(Attempts = 3, LogEvents = true, OnAttemptsExceeded = AttemptsExceededAction.Fail)]
+    /// <summary>
+    /// Runs one pipeline step. A failure stops the pipeline and marks the project as Failed with the
+    /// real reason — except in simulation mode (offline tests), where the step is skipped.
+    /// </summary>
+    private async Task RunStepAsync(string stepLabel, Func<Task> action)
+    {
+        try
+        {
+            await action();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            if (_simulate)
+            {
+                _logger.LogWarning(ex, "Simulation mode: step '{Step}' failed, continuing: {Msg}", stepLabel, ex.Message);
+                return;
+            }
+            throw new InvalidOperationException($"{stepLabel}: {ex.Message}", ex);
+        }
+    }
+
+    // No automatic retries: failures are usually configuration problems (missing API key, FFmpeg not
+    // installed, unreadable article). Retrying would just flip the status back and forth; the user can
+    // re-run the pipeline from the UI once the cause is fixed.
+    [AutomaticRetry(Attempts = 0, LogEvents = true, OnAttemptsExceeded = AttemptsExceededAction.Fail)]
     public async Task ExecuteVideoProcessingPipelineAsync(Guid projectId, string idempotencyKey, CancellationToken cancellationToken)
     {
         using var logScope = _logger.BeginScope(new Dictionary<string, object>
@@ -82,21 +112,22 @@ public class VideoProcessingJobExecutor : IVideoProcessingJobExecutor
             await AdvanceStepAsync(project, jobRecord, VideoProjectStatus.Extracting, "Extracting article content and original images", 15, cancellationToken);
             if (project.ArticleId == null && !string.IsNullOrWhiteSpace(project.SourceUrl))
             {
-                try
+                await RunStepAsync("Không đọc được bài báo", async () =>
                 {
                     var articleDto = await _articleService.ExtractAndSaveArticleAsync(project.SourceUrl, cancellationToken);
                     project.ArticleId = articleDto.Id;
-                    if (string.IsNullOrWhiteSpace(project.Title) || project.Title == "New Video Project")
+                    if (string.IsNullOrWhiteSpace(project.Title)
+                        || project.Title == "New Video Project"
+                        || project.Title == VideoProjectService.PlaceholderTitle)
                     {
                         project.Title = articleDto.Title;
+                    }
+                    if (!string.IsNullOrWhiteSpace(articleDto.Publisher))
+                    {
                         project.Publisher = articleDto.Publisher;
                     }
                     await _context.SaveChangesAsync(cancellationToken);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "Could not extract article automatically from {Url} during pipeline (may be offline/mock URL). Continuing pipeline.", project.SourceUrl);
-                }
+                });
             }
             await Task.Delay(500, cancellationToken);
 
@@ -111,14 +142,8 @@ public class VideoProcessingJobExecutor : IVideoProcessingJobExecutor
             await AdvanceStepAsync(project, jobRecord, VideoProjectStatus.Scripting, "AI generating editorial script (45-60s)", 60, cancellationToken);
             if (project.ArticleId != null)
             {
-                try
-                {
-                    await _scriptService.GenerateScriptForProjectAsync(project.Id, null, cancellationToken);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "Could not generate AI script automatically for Project {ProjectId}: {Msg}", project.Id, ex.Message);
-                }
+                await RunStepAsync("Không viết được kịch bản", () =>
+                    _scriptService.GenerateScriptForProjectAsync(project.Id, null, cancellationToken));
             }
             await Task.Delay(300, cancellationToken);
 
@@ -126,14 +151,8 @@ public class VideoProcessingJobExecutor : IVideoProcessingJobExecutor
             await AdvanceStepAsync(project, jobRecord, VideoProjectStatus.PlanningScenes, "Storyboarding 6-10 scenes with article images", 75, cancellationToken);
             if (project.ArticleId != null)
             {
-                try
-                {
-                    await _scriptService.PlanScenesForProjectAsync(project.Id, cancellationToken);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "Could not plan scenes automatically for Project {ProjectId}: {Msg}", project.Id, ex.Message);
-                }
+                await RunStepAsync("Không chia được cảnh", () =>
+                    _scriptService.PlanScenesForProjectAsync(project.Id, cancellationToken));
             }
             await Task.Delay(300, cancellationToken);
 
@@ -141,14 +160,8 @@ public class VideoProcessingJobExecutor : IVideoProcessingJobExecutor
             await AdvanceStepAsync(project, jobRecord, VideoProjectStatus.GeneratingAudio, "Synthesizing Vietnamese voice-over audio", 85, cancellationToken);
             if (project.ArticleId != null)
             {
-                try
-                {
-                    await _productionService.ProduceVideoAsync(project.Id, null, cancellationToken);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "Production rendering encountered issue for Project {ProjectId}: {Msg}", project.Id, ex.Message);
-                }
+                await RunStepAsync("Không dựng được video", () =>
+                    _productionService.ProduceVideoAsync(project.Id, null, null, null, cancellationToken));
             }
             await Task.Delay(300, cancellationToken);
 

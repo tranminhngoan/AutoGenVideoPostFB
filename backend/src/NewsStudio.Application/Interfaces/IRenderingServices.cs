@@ -68,6 +68,8 @@ public interface IVideoProductionService
     Task<RenderStatusResponseDto> ProduceVideoAsync(
         Guid projectId,
         string? ttsProvider = null,
+        string? voice = null,
+        string? speed = null,
         CancellationToken cancellationToken = default);
 
     Task<RenderStatusResponseDto> GetProductionStatusAsync(

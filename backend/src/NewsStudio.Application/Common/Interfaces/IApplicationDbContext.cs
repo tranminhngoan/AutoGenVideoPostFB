@@ -18,6 +18,7 @@ public interface IApplicationDbContext
     DbSet<VideoMetric> VideoMetrics { get; }
     DbSet<SystemSetting> SystemSettings { get; }
     DbSet<AuditLog> AuditLogs { get; }
+    DbSet<TrendingArticle> TrendingArticles { get; }
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

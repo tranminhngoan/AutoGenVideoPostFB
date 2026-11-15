@@ -1,132 +1,113 @@
-import React, { useState, useEffect } from 'react';
-import { Sidebar } from './components/Sidebar';
-import { Header } from './components/Header';
+import { useEffect, useState, type ReactNode } from 'react';
+import { Layout } from './components/Layout';
+import { FeedbackProvider } from './components/feedback';
 import { DashboardPage } from './pages/DashboardPage';
 import { CreateVideoPage } from './pages/CreateVideoPage';
 import { ArticlesPage } from './pages/ArticlesPage';
+import { TrendingPage } from './pages/TrendingPage';
 import { VideosPage } from './pages/VideosPage';
 import { VideoDetailPage } from './pages/VideoDetailPage';
-import { AiConfigPage } from './pages/AiConfigPage';
-import { TtsConfigPage } from './pages/TtsConfigPage';
-import { FacebookConfigPage } from './pages/FacebookConfigPage';
-import { JobHistoryPage } from './pages/JobHistoryPage';
-import { SystemConfig } from './types';
+import { ActivityPage } from './pages/ActivityPage';
+import { SettingsPage } from './pages/SettingsPage';
+import { SystemConfig, VideoProject } from './types';
 import { api } from './services/api';
+import { useRoute } from './lib/router';
+
+const TITLES: Record<string, string> = {
+  dashboard: 'Tổng quan',
+  trending: 'Tin đang hot',
+  create: 'Tạo video',
+  videos: 'Video',
+  articles: 'Bài báo',
+  activity: 'Hoạt động',
+  settings: 'Cài đặt',
+};
 
 export function App() {
-  const [activeTab, setActiveTab] = useState('dashboard');
-  const [selectedProjectId, setSelectedProjectId] = useState<string>('proj-001');
-  const [apiHealthy, setApiHealthy] = useState(false);
+  const route = useRoute();
+  const [apiHealthy, setApiHealthy] = useState<boolean | null>(null);
   const [config, setConfig] = useState<SystemConfig | null>(null);
+  const [projects, setProjects] = useState<VideoProject[] | null>(null);
 
+  // Health + config
   useEffect(() => {
-    // Initial health check & configuration loading
-    const checkStatus = async () => {
+    let alive = true;
+    const check = async () => {
       const healthy = await api.getHealth();
+      if (!alive) return;
       setApiHealthy(healthy);
-      if (healthy) {
+      if (healthy && !config) {
         const conf = await api.getConfigSummary();
-        setConfig(conf);
+        if (alive) setConfig(conf);
       }
     };
-
-    checkStatus();
-    const interval = setInterval(checkStatus, 10000);
-    return () => clearInterval(interval);
+    check();
+    const t = setInterval(check, 15000);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const getPageTitle = () => {
-    switch (activeTab) {
-      case 'dashboard':
-        return { title: 'Bảng điều khiển Studio', subtitle: 'Tổng quan hệ thống sản xuất video tin tức ngắn' };
-      case 'create':
-        return { title: 'Tạo video tin tức mới', subtitle: 'Chuyển đổi bài báo thành video 9:16' };
-      case 'articles':
-        return { title: 'Bài báo đã trích xuất', subtitle: 'Kho nội dung và hình ảnh bài báo' };
-      case 'videos':
-        return { title: 'Danh sách dự án Video', subtitle: 'Quản lý các bản dựng video Reels' };
-      case 'detail':
-        return { title: 'Chi tiết video & Phê duyệt', subtitle: 'Kiểm tra chất lượng và duyệt xuất bản' };
-      case 'ai-config':
-        return { title: 'Cấu hình AI Editor', subtitle: 'Mô hình ngôn ngữ Gemini & Claude' };
-      case 'tts-config':
-        return { title: 'Cấu hình giọng đọc (TTS)', subtitle: 'Giọng lồng tiếng tiếng Việt và ngắt nghỉ' };
-      case 'facebook-config':
-        return { title: 'Cấu hình Facebook Page', subtitle: 'Kết nối Meta Graph API & Reels' };
-      case 'history':
-        return { title: 'Lịch sử xử lý & Hàng đợi', subtitle: 'Nhật ký các tác vụ Worker' };
-      default:
-        return { title: 'AI News Studio', subtitle: '' };
-    }
+  // Shared project list (sidebar badge, dashboard, videos, activity)
+  const refreshProjects = async () => {
+    const data = await api.getVideoProjects(1, 100);
+    setProjects(data);
+    return data;
   };
 
-  const { title, subtitle } = getPageTitle();
+  useEffect(() => {
+    refreshProjects();
+    const t = setInterval(refreshProjects, 15000);
+    return () => clearInterval(t);
+  }, []);
+
+  const [first = '', second] = route.segments;
+  const active =
+    first === '' ? 'dashboard' : first === 'videos' ? 'videos' : TITLES[first] ? first : 'dashboard';
+
+  useEffect(() => {
+    const base = second && first === 'videos' ? 'Chi tiết video' : TITLES[active];
+    document.title = base ? `${base} · Trạm Tin 24/7` : 'Trạm Tin 24/7';
+  }, [active, first, second]);
+
+  const awaitingCount = (projects ?? []).filter((p) => p.status === 'AwaitingApproval').length;
+
+  let page: ReactNode;
+  if (first === 'videos' && second) {
+    page = <VideoDetailPage key={second} projectId={second} onChanged={refreshProjects} />;
+  } else {
+    switch (active) {
+      case 'create':
+        page = <CreateVideoPage initialUrl={route.query.get('url') ?? ''} onCreated={refreshProjects} />;
+        break;
+      case 'videos':
+        page = <VideosPage projects={projects} onRefresh={refreshProjects} />;
+        break;
+      case 'trending':
+        page = <TrendingPage onCreated={refreshProjects} />;
+        break;
+      case 'articles':
+        page = <ArticlesPage />;
+        break;
+      case 'activity':
+        page = <ActivityPage projects={projects} onRefresh={refreshProjects} />;
+        break;
+      case 'settings':
+        page = <SettingsPage section={second} config={config} apiHealthy={apiHealthy} />;
+        break;
+      default:
+        page = <DashboardPage projects={projects} onCreated={refreshProjects} apiHealthy={apiHealthy} />;
+    }
+  }
 
   return (
-    <div className="flex bg-[#0B0F19] text-[#F9FAFB] min-h-screen">
-      {/* Fixed Sidebar */}
-      <Sidebar
-        activeTab={activeTab === 'detail' ? 'videos' : activeTab}
-        setActiveTab={setActiveTab}
-        apiHealthy={apiHealthy}
-      />
-
-      {/* Main Content Area */}
-      <div className="flex-1 ml-64 flex flex-col min-h-screen">
-        <Header title={title} subtitle={subtitle} apiHealthy={apiHealthy} />
-
-        <main className="p-8 flex-1">
-          {activeTab === 'dashboard' && (
-            <DashboardPage
-              onNavigate={setActiveTab}
-              config={config}
-              apiHealthy={apiHealthy}
-            />
-          )}
-
-          {activeTab === 'create' && (
-            <CreateVideoPage
-              onCreated={(id) => {
-                setSelectedProjectId(id);
-                setActiveTab('detail');
-              }}
-            />
-          )}
-
-          {activeTab === 'articles' && (
-            <ArticlesPage
-              onSelectArticle={() => {
-                setActiveTab('create');
-              }}
-            />
-          )}
-
-          {activeTab === 'videos' && (
-            <VideosPage
-              onSelectProject={(id) => {
-                setSelectedProjectId(id);
-                setActiveTab('detail');
-              }}
-            />
-          )}
-
-          {activeTab === 'detail' && (
-            <VideoDetailPage
-              projectId={selectedProjectId}
-              onBack={() => setActiveTab('videos')}
-            />
-          )}
-
-          {activeTab === 'ai-config' && <AiConfigPage config={config} />}
-
-          {activeTab === 'tts-config' && <TtsConfigPage config={config} />}
-
-          {activeTab === 'facebook-config' && <FacebookConfigPage config={config} />}
-
-          {activeTab === 'history' && <JobHistoryPage />}
-        </main>
-      </div>
-    </div>
+    <FeedbackProvider>
+      <Layout active={first === 'create' ? 'create' : active} apiHealthy={apiHealthy} awaitingCount={awaitingCount} simulation={config?.simulation}>
+        {page}
+      </Layout>
+    </FeedbackProvider>
   );
 }
 

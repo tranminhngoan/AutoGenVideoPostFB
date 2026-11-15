@@ -27,7 +27,7 @@ public class VideoAssetService : IVideoAssetService
 
     public string GetProjectStorageDirectory(Guid projectId, string subfolder = "")
     {
-        var tempBase = _configuration["Storage:TempPath"] ?? "./tmp/newsstudio";
+        var tempBase = NewsStudio.Infrastructure.Common.TempStorage.GetRoot(_configuration);
         var dir = Path.Combine(tempBase, projectId.ToString());
 
         if (!string.IsNullOrWhiteSpace(subfolder))
@@ -47,6 +47,9 @@ public class VideoAssetService : IVideoAssetService
         TimeSpan? ttl = null,
         CancellationToken cancellationToken = default)
     {
+        // Always persist an absolute path: the file may be written by the Worker and served by the
+        // API, which run from different working directories.
+        localPath = Path.GetFullPath(localPath);
         var fileInfo = new FileInfo(localPath);
         var sizeBytes = fileInfo.Exists ? fileInfo.Length : 0;
         var hash = fileInfo.Exists ? await ComputeFileSha256Async(localPath, cancellationToken) : null;
@@ -163,7 +166,7 @@ public class VideoAssetService : IVideoAssetService
         // Also clean project temp directory if exists
         try
         {
-            var tempBase = _configuration["Storage:TempPath"] ?? "./tmp/newsstudio";
+            var tempBase = NewsStudio.Infrastructure.Common.TempStorage.GetRoot(_configuration);
             var projectDir = Path.Combine(tempBase, projectId.ToString());
             if (Directory.Exists(projectDir))
             {

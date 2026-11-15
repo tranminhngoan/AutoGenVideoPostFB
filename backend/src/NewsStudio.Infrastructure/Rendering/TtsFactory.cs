@@ -35,6 +35,12 @@ public class TtsFactory : ITtsFactory
             return GetTtsService(TtsProviderType.ElevenLabs);
         }
 
+        if (providerName.Equals("Gemini", StringComparison.OrdinalIgnoreCase)
+            || providerName.Equals("GoogleTts", StringComparison.OrdinalIgnoreCase))
+        {
+            return GetTtsService(TtsProviderType.GoogleTts);
+        }
+
         return GetTtsService(TtsProviderType.EdgeTts);
     }
 }

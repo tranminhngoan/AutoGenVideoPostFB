@@ -72,7 +72,7 @@ public class QualityControllerService : IQualityControllerService
         // 8. QC_08: No Blank Scenes (Có cảnh trống không?)
         checkItems.Add(EvaluateNoBlankScenes(project, fatalViolations));
 
-        // 9. QC_09: Resolution & Duration Compliance (Video có đúng tỷ lệ 9:16 và thời lượng 45-60s không?)
+        // 9. QC_09: Resolution & Duration Compliance (9:16, length within the chosen maximum)
         checkItems.Add(EvaluateSpecsCompliance(project, fatalViolations));
 
         // 10. QC_10: Editorial Contribution (Nội dung có đóng góp biên tập riêng không?)
@@ -367,7 +367,7 @@ public class QualityControllerService : IQualityControllerService
             return new QualityCheckItemDto
             {
                 CheckCode = "QC_06_SUBTITLE_QUALITY",
-                Title = "Chất lượng và đồng bộ phụ đề",
+                Title = "Mốc thời gian lời đọc (nội bộ)",
                 Category = "Subtitles",
                 Passed = false,
                 Score = 4,
@@ -382,7 +382,7 @@ public class QualityControllerService : IQualityControllerService
         return new QualityCheckItemDto
         {
             CheckCode = "QC_06_SUBTITLE_QUALITY",
-            Title = "Chất lượng và đồng bộ phụ đề",
+            Title = "Mốc thời gian lời đọc (nội bộ)",
             Category = "Subtitles",
             Passed = score >= 7,
             Score = score,
@@ -499,7 +499,7 @@ public class QualityControllerService : IQualityControllerService
             return new QualityCheckItemDto
             {
                 CheckCode = "QC_09_SPECS_COMPLIANCE",
-                Title = "Chuẩn tỉ lệ 9:16 và thời lượng 55-65s",
+                Title = SpecsTitle,
                 Category = "Technical",
                 Passed = false,
                 Score = 0,
@@ -509,39 +509,42 @@ public class QualityControllerService : IQualityControllerService
             };
         }
 
-        // Target duration: 55 to 65 seconds (tolerance: 45 to 68s for high score)
-        var durationOk = duration >= 45 && duration <= 68;
+        // Length follows the article: the target is an upper bound, not a quota. Only flag videos that
+        // are suspiciously short (narration missing/cut) or clearly over the chosen maximum.
+        var maxAllowed = Math.Max(30, project.TargetDurationSeconds) + 15;
+        var durationOk = duration >= 15 && duration <= maxAllowed;
         var sceneCount = project.Scenes.Count;
-        var sceneCountOk = sceneCount == 0 || (sceneCount >= 6 && sceneCount <= 10);
-
-        var score = (durationOk && sceneCountOk) ? 10 : (duration >= 40 && duration <= 75 ? 8 : 4);
 
         if (!durationOk)
         {
             return new QualityCheckItemDto
             {
                 CheckCode = "QC_09_SPECS_COMPLIANCE",
-                Title = "Chuẩn tỉ lệ 9:16 và thời lượng 55-65s",
+                Title = SpecsTitle,
                 Category = "Technical",
-                Passed = score >= 7,
-                Score = score,
+                Passed = false,
+                Score = duration < 15 ? 3 : 6,
                 IsFatal = false,
-                Details = $"Thời lượng video hiện tại là {duration:F1}s (chuẩn Facebook Reels: 55–65 giây, target 60s). Tỉ lệ khung hình: {project.AspectRatio} ({project.Resolution}). Phân cảnh: {sceneCount}.",
-                Recommendation = "Điều chỉnh độ dài lời thoại kịch bản để thời lượng nằm trọn vẹn trong khoảng 55-65 giây và số phân cảnh đạt 8–10 cảnh."
+                Details = $"Thời lượng video {duration:F1}s, giới hạn đã chọn {project.TargetDurationSeconds}s. Tỉ lệ khung hình: {project.AspectRatio} ({project.Resolution}). Phân cảnh: {sceneCount}.",
+                Recommendation = duration < 15
+                    ? "Video quá ngắn — kiểm tra lời đọc có bị thiếu, rồi viết lại kịch bản hoặc dựng lại."
+                    : "Video dài hơn giới hạn đã chọn — viết lại kịch bản ngắn gọn hơn."
             };
         }
 
         return new QualityCheckItemDto
         {
             CheckCode = "QC_09_SPECS_COMPLIANCE",
-            Title = "Chuẩn tỉ lệ 9:16 và thời lượng 55-65s",
+            Title = SpecsTitle,
             Category = "Technical",
             Passed = true,
             Score = 10,
             IsFatal = false,
-            Details = $"Đạt chuẩn kỹ thuật Facebook Reels: Tỉ lệ 9:16 ({project.Resolution}), 30 fps, thời lượng {duration:F1}s (mục tiêu 55–65s, {sceneCount} cảnh)."
+            Details = $"Tỉ lệ 9:16 ({project.Resolution}), 30 fps, thời lượng {duration:F1}s theo độ dài nội dung (giới hạn {project.TargetDurationSeconds}s), {sceneCount} cảnh."
         };
     }
+
+    private const string SpecsTitle = "Chuẩn tỉ lệ 9:16 và thời lượng theo nội dung";
 
     private static QualityCheckItemDto EvaluateEditorialContribution(VideoProject project)
     {

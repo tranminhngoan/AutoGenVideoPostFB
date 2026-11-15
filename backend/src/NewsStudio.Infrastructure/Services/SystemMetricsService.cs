@@ -37,7 +37,7 @@ public class SystemMetricsService : ISystemMetricsService
         var memoryWorkingSetMb = process.WorkingSet64 / (1024.0 * 1024.0);
 
         // Temp storage calculation
-        var tempStoragePath = _configuration["Storage:TempStoragePath"] ?? "./tmp/newsstudio";
+        var tempStoragePath = NewsStudio.Infrastructure.Common.TempStorage.GetRoot(_configuration);
         var tempStorageLimitMb = _configuration.GetValue<double>("Storage:MaxTempStorageMb", 5120);
         double tempStorageUsedMb = 0;
 

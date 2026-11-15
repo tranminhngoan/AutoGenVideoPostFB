@@ -30,7 +30,7 @@ public class StorageCleanupService : IStorageCleanupService
 
     public async Task<StorageCleanupReportDto> RunStorageCleanupAsync(CancellationToken cancellationToken = default)
     {
-        var tempStoragePath = _configuration["Storage:TempStoragePath"] ?? "./tmp/newsstudio";
+        var tempStoragePath = NewsStudio.Infrastructure.Common.TempStorage.GetRoot(_configuration);
         var maxStorageMb = _configuration.GetValue<double>("Storage:MaxTempStorageMb", 5120);
         long maxStorageBytes = (long)(maxStorageMb * 1024 * 1024);
 

@@ -14,11 +14,18 @@ public class VideoProject : BaseEntity
 
     public VideoProjectStatus Status { get; set; } = VideoProjectStatus.Pending;
 
-    public int TargetDurationSeconds { get; set; } = 50;
+    public int TargetDurationSeconds { get; set; } = 105; // upper bound; the AI shortens it for short articles
     public double? ActualDurationSeconds { get; set; }
     public string Resolution { get; set; } = "1080x1920";
     public string AspectRatio { get; set; } = "9:16";
     public int Fps { get; set; } = 30;
+
+    /// <summary>AI editor chosen when the project was created ("Gemini" | "Claude").</summary>
+    public string? AiProvider { get; set; }
+    /// <summary>TTS voice chosen when the project was created, e.g. "vi-VN-HoaiMyNeural".</summary>
+    public string? Voice { get; set; }
+    /// <summary>TTS speaking-rate offset chosen when the project was created, e.g. "+12%".</summary>
+    public string? VoiceSpeed { get; set; }
 
     public string? OutputVideoPath { get; set; }
     public string? ErrorMessage { get; set; }

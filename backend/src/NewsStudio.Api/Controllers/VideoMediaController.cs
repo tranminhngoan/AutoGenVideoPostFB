@@ -31,11 +31,13 @@ public class VideoMediaController : ControllerBase
     public async Task<IActionResult> TriggerRender(
         Guid id,
         [FromQuery] string? ttsProvider = null,
+        [FromQuery] string? voice = null,
+        [FromQuery] string? speed = null,
         CancellationToken cancellationToken = default)
     {
         try
         {
-            var result = await _productionService.ProduceVideoAsync(id, ttsProvider, cancellationToken);
+            var result = await _productionService.ProduceVideoAsync(id, ttsProvider, voice, speed, cancellationToken);
             return Ok(result);
         }
         catch (KeyNotFoundException ex)

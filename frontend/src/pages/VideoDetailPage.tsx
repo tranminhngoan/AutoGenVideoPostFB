@@ -1,31 +1,29 @@
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ArrowLeft,
-  Play,
-  CheckCircle,
+  Check,
+  CheckCircle2,
   XCircle,
+  AlertTriangle,
   RefreshCw,
-  Share2,
-  ShieldCheck,
-  Film,
-  FileText,
-  Sparkles,
-  Type,
-  AlertCircle,
-  Volume2,
   Download,
   Trash2,
-  HardDrive,
-  Edit3,
-  AlertTriangle,
-  RotateCcw,
+  Pencil,
   ExternalLink,
-  Eye,
-  Users,
-  MessageSquare,
-  ThumbsUp,
-  BarChart3,
-  Check
+  MoreHorizontal,
+  FileText,
+  Film,
+  Image as ImageIcon,
+  Type,
+  Send,
+  Loader2,
+  Sparkles,
+  RotateCcw,
+  Volume2,
+  HardDrive,
+  Facebook,
+  AlertCircle,
+  Circle,
 } from 'lucide-react';
 import {
   api,
@@ -34,17 +32,65 @@ import {
   VideoAssetDto,
   VideoReviewDto,
   FacebookPostDto,
-  FacebookAccountDto
+  FacebookAccountDto,
 } from '../services/api';
 import { VideoProject } from '../types';
+import {
+  Alert,
+  Badge,
+  Button,
+  ButtonLink,
+  Card,
+  CardBody,
+  CardHeader,
+  Checkbox,
+  EmptyState,
+  Field,
+  IconButton,
+  Input,
+  Menu,
+  Modal,
+  Segmented,
+  Select,
+  Skeleton,
+  Tabs,
+  Textarea,
+  Thumb,
+  cn,
+} from '../components/ui';
+import { StatusBadge } from '../components/VideoBits';
+import { useConfirm, useToast } from '../components/feedback';
+import { href, navigate } from '../lib/router';
+import {
+  MOTION,
+  SCENE_PURPOSE,
+  TRANSITION,
+  domainOf,
+  errorText,
+  formatBytes,
+  formatClock,
+  formatDateTime,
+  formatNumber,
+  formatTime,
+  isJobActive,
+  isProcessing,
+  statusMeta,
+} from '../lib/format';
+import { AI_PROVIDERS, AiProvider, SPEEDS, VOICES, durationLabel, getPrefs } from '../lib/prefs';
+
+type TabId = 'script' | 'scenes' | 'qc' | 'audio' | 'publish' | 'files';
 
 interface VideoDetailPageProps {
   projectId: string;
-  onBack: () => void;
+  onChanged?: () => void;
 }
 
-export const VideoDetailPage: React.FC<VideoDetailPageProps> = ({ projectId, onBack }) => {
-  const [activeTab, setActiveTab] = useState<'preview' | 'script' | 'scenes' | 'assets' | 'qc' | 'reels'>('preview');
+export const VideoDetailPage: React.FC<VideoDetailPageProps> = ({ projectId, onChanged }) => {
+  const toast = useToast();
+  const confirm = useConfirm();
+  const prefs = useRef(getPrefs()).current;
+
+  const [tab, setTab] = useState<TabId>('script');
   const [project, setProject] = useState<VideoProject | null>(null);
   const [script, setScript] = useState<VideoScriptDto | null>(null);
   const [scenes, setScenes] = useState<VideoScenePlanDto[]>([]);
@@ -53,1398 +99,1368 @@ export const VideoDetailPage: React.FC<VideoDetailPageProps> = ({ projectId, onB
   const [fbPosts, setFbPosts] = useState<FacebookPostDto[]>([]);
   const [pages, setPages] = useState<FacebookAccountDto[]>([]);
 
-  const [loading, setLoading] = useState<boolean>(true);
-  const [generating, setGenerating] = useState<boolean>(false);
-  const [rendering, setRendering] = useState<boolean>(false);
-  const [evaluating, setEvaluating] = useState<boolean>(false);
-  const [publishing, setPublishing] = useState<boolean>(false);
+  const [loading, setLoading] = useState(true);
+  const [generating, setGenerating] = useState(false);
+  const [rendering, setRendering] = useState(false);
+  const [evaluating, setEvaluating] = useState(false);
+  const [approving, setApproving] = useState(false);
+  const [retrying, setRetrying] = useState(false);
+  const [publishing, setPublishing] = useState(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [metricsLoading, setMetricsLoading] = useState<string | null>(null);
 
-  const [selectedProvider, setSelectedProvider] = useState<'Gemini' | 'Claude'>('Gemini');
+  const [provider, setProvider] = useState<AiProvider>(prefs.aiProvider);
+  const [voice, setVoice] = useState(prefs.voice);
+  const [speed, setSpeed] = useState(prefs.speed);
+  const choicesApplied = useRef(false);
 
-  // Modals / forms
-  const [showRejectModal, setShowRejectModal] = useState<boolean>(false);
-  const [rejectNotes, setRejectNotes] = useState<string>('');
-  const [showEditModal, setShowEditModal] = useState<boolean>(false);
-  const [editTitle, setEditTitle] = useState<string>('');
-  const [editCaption, setEditCaption] = useState<string>('');
+  const [showReject, setShowReject] = useState(false);
+  const [rejectNotes, setRejectNotes] = useState('');
+  const [showEdit, setShowEdit] = useState(false);
+  const [editTitle, setEditTitle] = useState('');
+  const [editCaption, setEditCaption] = useState('');
+  const [showPublish, setShowPublish] = useState(false);
+  const [selectedPageId, setSelectedPageId] = useState('');
+  const [publishCaption, setPublishCaption] = useState('');
+  const [autoCleanup, setAutoCleanup] = useState(true);
 
-  // Publish Modal
-  const [showPublishModal, setShowPublishModal] = useState<boolean>(false);
-  const [selectedPageId, setSelectedPageId] = useState<string>('');
-  const [publishCaption, setPublishCaption] = useState<string>('');
-  const [autoCleanup, setAutoCleanup] = useState<boolean>(true);
-
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  const loadData = useCallback(
+    async (silent = false) => {
+      if (!silent) setLoading(true);
+      try {
+        const [projData, scriptData, scenesData, assetsData, reviewData, postsData, pagesData] = await Promise.all([
+          api.getVideoProjectById(projectId),
+          api.getScript(projectId),
+          api.getScenes(projectId),
+          api.getAssets(projectId),
+          api.getReview(projectId),
+          api.getProjectFacebookPosts(projectId),
+          api.getFacebookPages(),
+        ]);
+        setProject(projData);
+        // Start from the AI/voice/speed chosen when this video was created
+        if (projData && !choicesApplied.current) {
+          choicesApplied.current = true;
+          if (projData.aiProvider === 'Gemini' || projData.aiProvider === 'Claude') setProvider(projData.aiProvider);
+          if (projData.voice) setVoice(projData.voice);
+          if (projData.voiceSpeed) setSpeed(projData.voiceSpeed);
+        }
+        setScript(scriptData);
+        setScenes(scenesData);
+        setAssets(assetsData);
+        setReview(reviewData);
+        setFbPosts(postsData);
+        setPages(pagesData);
+        setSelectedPageId((cur) => cur || pagesData[0]?.pageId || '');
+      } catch (err) {
+        if (!silent) toast.error('Không tải được dữ liệu video', errorText(err, ''));
+      } finally {
+        if (!silent) setLoading(false);
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [projectId]
+  );
 
   useEffect(() => {
     loadData();
-  }, [projectId]);
+  }, [loadData]);
 
-  const loadData = async () => {
-    setLoading(true);
-    setErrorMsg(null);
-    try {
-      const [projData, scriptData, scenesData, assetsData, reviewData, postsData, pagesData] = await Promise.all([
-        api.getVideoProjectById(projectId),
-        api.getScript(projectId),
-        api.getScenes(projectId),
-        api.getAssets(projectId),
-        api.getReview(projectId),
-        api.getProjectFacebookPosts(projectId),
-        api.getFacebookPages()
-      ]);
-      setProject(projData);
-      setScript(scriptData);
-      setScenes(scenesData);
-      setAssets(assetsData);
-      setReview(reviewData);
-      setFbPosts(postsData);
-      setPages(pagesData);
+  // A processing status only counts if something is really running (a worker job, or a request this
+  // page started). Otherwise the status is stale and we must not spin forever.
+  const jobs = [...(project?.jobs ?? [])].sort((a, b) => (b.startedAtUtc ?? '').localeCompare(a.startedAtUtc ?? ''));
+  const latestJob = jobs[0];
+  const hasActiveJob = jobs.some((j) => isJobActive(j.status) && j.hangfireJobId);
+  const processing = project
+    ? isProcessing(project.status) && (hasActiveJob || generating || rendering)
+    : false;
+  const failureMessage =
+    project?.status === 'Failed'
+      ? project.errorMessage || latestJob?.errorMessage || 'Không rõ nguyên nhân.'
+      : !processing && latestJob?.status === 'Failed'
+      ? latestJob.errorMessage || project?.errorMessage || 'Không rõ nguyên nhân.'
+      : null;
 
-      if (pagesData.length > 0 && !selectedPageId) {
-        setSelectedPageId(pagesData[0].pageId);
-      }
+  // Keep polling while the worker pipeline is running.
+  useEffect(() => {
+    if (!processing) return;
+    const t = setInterval(() => loadData(true), 5000);
+    return () => clearInterval(t);
+  }, [processing, loadData]);
 
-      if (projData) {
-        setEditTitle(projData.title);
-        var initialCaption = `${projData.title}\n\n${scriptData?.hook || ''}\n\n${scriptData?.sourceAttribution || ''}\n#News #Reels #TinTuc #AINewsStudio`;
-        setPublishCaption(initialCaption);
-      }
-      if (scenesData.length > 0 && scenesData[0].onScreenText) {
-        setEditCaption(scenesData[0].onScreenText);
-      }
-    } catch (err: any) {
-      setErrorMsg(err.message || 'Lỗi tải thông tin dự án');
-    } finally {
-      setLoading(false);
-    }
-  };
+  /* ─────────────── Derived state ─────────────── */
 
-  const handleGenerateScript = async () => {
-    setGenerating(true);
-    setErrorMsg(null);
-    setSuccessMsg(null);
-    try {
-      const generatedScript = await api.generateScript(projectId, {
-        aiProvider: selectedProvider
-      });
-      setScript(generatedScript);
+  const latestVideoAsset = assets.find((a) => (a.assetType === 'FinalVideo' || a.assetType === 'Video') && !a.isCleanedUp);
+  const latestAudioAsset = assets.find((a) => a.assetType === 'Audio' && !a.isCleanedUp);
+  const hasVideo = !!latestVideoAsset;
+  const hasAudio = !!latestAudioAsset;
+  const videoUrl = latestVideoAsset
+    ? `/api/video-projects/${projectId}/video?v=${latestVideoAsset.id}`
+    : `/api/video-projects/${projectId}/video`;
+  const audioUrl = latestAudioAsset
+    ? `/api/video-projects/${projectId}/audio?v=${latestAudioAsset.id}`
+    : `/api/video-projects/${projectId}/audio`;
+  const isApproved = review?.decision === 'Approved';
+  const isRejected = review?.decision === 'Rejected';
+  const hasFatal = review?.seriousViolationsFound || (review?.assessment?.hasFatalViolations ?? false);
+  const publishedPost = fbPosts.find((p) => p.uploadStatus === 'Published');
+  const totalSeconds = scenes.length > 0 ? scenes[scenes.length - 1].endTimeSeconds : 0;
+  const poster = scenes.find((s) => s.imageUrl)?.imageUrl ?? undefined;
+  const score = review?.internalQualityScore;
 
-      const updatedScenes = await api.getScenes(projectId);
-      setScenes(updatedScenes);
-      setActiveTab('script');
-      setSuccessMsg('Đã tạo kịch bản AI (55-65s, target 60s) và phân chia 8-10 phân cảnh thành công!');
-      await handleRunEvaluation();
-    } catch (err: any) {
-      setErrorMsg(err.message || 'Lỗi tạo kịch bản AI');
-    } finally {
-      setGenerating(false);
-    }
-  };
+  /* ─────────────── Actions ─────────────── */
 
-  const handlePlanScenes = async () => {
-    setGenerating(true);
-    setErrorMsg(null);
-    try {
-      const planned = await api.planScenes(projectId);
-      setScenes(planned);
-      setActiveTab('scenes');
-      setSuccessMsg('Đã lập lại 8-10 phân cảnh (55-65s, target 60s) khớp với hình ảnh bài viết!');
-      await handleRunEvaluation();
-    } catch (err: any) {
-      setErrorMsg(err.message || 'Lỗi lập phân cảnh');
-    } finally {
-      setGenerating(false);
-    }
-  };
-
-  const handleRenderVideo = async () => {
-    setRendering(true);
-    setErrorMsg(null);
-    setSuccessMsg(null);
-    try {
-      await api.renderVideo(projectId, 'EdgeTts');
-      setSuccessMsg('Render video 9:16 (1080×1920) hoàn tất! Video sẵn sàng để xem trước.');
-      await loadData();
-      setActiveTab('preview');
-      await handleRunEvaluation();
-    } catch (err: any) {
-      setErrorMsg(err.message || 'Lỗi render video');
-    } finally {
-      setRendering(false);
-    }
-  };
-
-  const handleRunEvaluation = async () => {
+  const runEvaluation = async () => {
     setEvaluating(true);
     try {
-      const updatedReview = await api.evaluateQuality(projectId);
-      setReview(updatedReview);
-    } catch (err: any) {
+      setReview(await api.evaluateQuality(projectId));
+    } catch (err) {
       console.warn('Evaluation failed:', err);
     } finally {
       setEvaluating(false);
     }
   };
 
-  const handleApprove = async () => {
-    setErrorMsg(null);
-    setSuccessMsg(null);
+  const generateScript = async () => {
+    setGenerating(true);
     try {
-      const updated = await api.approveReview(projectId, 'Editor', 'Đạt chuẩn kiểm duyệt biên tập nội bộ.');
-      setReview(updated);
-      setSuccessMsg('✓ Video đã được phê duyệt! Sẵn sàng xuất bản lên Facebook Reels.');
-    } catch (err: any) {
-      setErrorMsg(err.message || 'Không thể phê duyệt video do vi phạm lỗi nghiêm trọng');
+      const s = await api.generateScript(projectId, { aiProvider: provider });
+      setScript(s);
+      setScenes(await api.getScenes(projectId));
+      setTab('script');
+      toast.success('Đã viết xong kịch bản', 'Kịch bản đã được chia thành các cảnh.');
+      await runEvaluation();
+      onChanged?.();
+    } catch (err) {
+      toast.error('Không tạo được kịch bản', errorText(err, ''));
+    } finally {
+      setGenerating(false);
     }
   };
 
-  const handleReject = async () => {
-    if (!rejectNotes.trim()) {
-      alert('Vui lòng nhập lý do từ chối để biên tập viên khắc phục.');
-      return;
-    }
-    setErrorMsg(null);
-    setSuccessMsg(null);
+  const planScenes = async () => {
+    setGenerating(true);
     try {
-      const updated = await api.rejectReview(projectId, 'Editor', rejectNotes);
-      setReview(updated);
-      setShowRejectModal(false);
+      setScenes(await api.planScenes(projectId));
+      setTab('scenes');
+      toast.success('Đã chia lại cảnh');
+      await runEvaluation();
+    } catch (err) {
+      toast.error('Không chia được cảnh', errorText(err, ''));
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const renderVideo = async () => {
+    setRendering(true);
+    try {
+      await api.renderVideo(projectId, 'EdgeTts', voice, speed);
+      toast.success('Đã dựng xong video', 'Bạn có thể xem lại ngay ở khung bên trái.');
+      await loadData(true);
+      await runEvaluation();
+      onChanged?.();
+    } catch (err) {
+      toast.error('Dựng video thất bại', errorText(err, ''));
+    } finally {
+      setRendering(false);
+    }
+  };
+
+  const approve = async () => {
+    setApproving(true);
+    try {
+      setReview(await api.approveReview(projectId, 'Editor', 'Đạt chuẩn kiểm duyệt biên tập nội bộ.'));
+      toast.success('Đã duyệt video', 'Video sẵn sàng để đăng lên Facebook.');
+      onChanged?.();
+    } catch (err) {
+      toast.error('Chưa duyệt được video', errorText(err, 'Video còn lỗi nghiêm trọng.'));
+    } finally {
+      setApproving(false);
+    }
+  };
+
+  const reject = async () => {
+    if (!rejectNotes.trim()) return;
+    try {
+      setReview(await api.rejectReview(projectId, 'Editor', rejectNotes.trim()));
+      setShowReject(false);
       setRejectNotes('');
-      setSuccessMsg('Đã ghi nhận từ chối video kèm lý do phản hồi.');
-    } catch (err: any) {
-      setErrorMsg(err.message || 'Lỗi khi từ chối video');
+      toast.success('Đã ghi nhận từ chối');
+      onChanged?.();
+    } catch (err) {
+      toast.error('Không gửi được từ chối', errorText(err, ''));
     }
   };
 
-  const handleRequestAction = async (action: 'RegenerateScript' | 'RegenerateAudio' | 'ReRender') => {
+  const requestAction = async (action: 'RegenerateScript' | 'RegenerateAudio' | 'ReRender') => {
     setActionLoading(action);
-    setErrorMsg(null);
     try {
       await api.requestReviewAction(projectId, action);
-      if (action === 'RegenerateScript') {
-        await handleGenerateScript();
-      } else if (action === 'RegenerateAudio' || action === 'ReRender') {
-        await handleRenderVideo();
-      }
-      setSuccessMsg(`Đã yêu cầu thực hiện lại: ${action}`);
-    } catch (err: any) {
-      setErrorMsg(err.message || `Lỗi yêu cầu thực hiện ${action}`);
+      if (action === 'RegenerateScript') await generateScript();
+      else await renderVideo();
+    } catch (err) {
+      toast.error('Không thực hiện được yêu cầu', errorText(err, ''));
     } finally {
       setActionLoading(null);
     }
   };
 
-  const handleUpdateMetadata = async () => {
-    if (!editTitle.trim()) {
-      alert('Tiêu đề video không được để trống');
-      return;
-    }
+  const openEdit = () => {
+    setEditTitle(project?.title ?? '');
+    setEditCaption(scenes[0]?.onScreenText ?? '');
+    setShowEdit(true);
+  };
+
+  const saveMetadata = async () => {
+    if (!editTitle.trim()) return;
     try {
-      await api.updateVideoMetadata(projectId, { title: editTitle, caption: editCaption });
-      setShowEditModal(false);
-      setSuccessMsg('Cập nhật tiêu đề & caption thành công.');
-      await loadData();
-    } catch (err: any) {
-      setErrorMsg(err.message || 'Lỗi cập nhật metadata');
+      await api.updateVideoMetadata(projectId, { title: editTitle.trim(), caption: editCaption });
+      setShowEdit(false);
+      toast.success('Đã lưu tiêu đề');
+      await loadData(true);
+      onChanged?.();
+    } catch (err) {
+      toast.error('Không lưu được', errorText(err, ''));
     }
   };
 
-  const handlePublishReel = async () => {
+  const openPublish = () => {
+    const parts = [project?.title, script?.hook, script?.sourceAttribution, prefs.hashtags].filter(Boolean);
+    setPublishCaption(parts.join('\n\n'));
+    setShowPublish(true);
+  };
+
+  const publish = async () => {
     setPublishing(true);
-    setErrorMsg(null);
-    setSuccessMsg(null);
     try {
       const result = await api.publishReel(projectId, {
         pageId: selectedPageId || undefined,
         customCaption: publishCaption,
-        autoCleanupAssets: autoCleanup
+        autoCleanupAssets: autoCleanup,
       });
-      setShowPublishModal(false);
-      setSuccessMsg(`🎉 Xuất bản Facebook Reels thành công! Mã video: ${result.facebookVideoId}`);
-      await loadData();
-      setActiveTab('reels');
-    } catch (err: any) {
-      setErrorMsg(err.message || 'Lỗi khi xuất bản Reels lên Meta Graph API');
+      setShowPublish(false);
+      toast.success('Đã đăng lên Facebook', `Mã video: ${result.facebookVideoId}`);
+      await loadData(true);
+      setTab('publish');
+      onChanged?.();
+    } catch (err) {
+      toast.error('Đăng Facebook thất bại', errorText(err, ''));
     } finally {
       setPublishing(false);
     }
   };
 
-  const handleFetchMetrics = async (postId: string) => {
+  const refreshMetrics = async (postId: string) => {
     setMetricsLoading(postId);
     try {
       await api.fetchPostMetrics(postId);
-      setSuccessMsg('Đã cập nhật số liệu tương tác mới nhất từ Meta Insights API.');
-      await loadData();
-    } catch (err: any) {
-      setErrorMsg(err.message || 'Lỗi cập nhật số liệu Insights');
+      toast.success('Đã cập nhật số liệu');
+      await loadData(true);
+    } catch (err) {
+      toast.error('Không cập nhật được số liệu', errorText(err, ''));
     } finally {
       setMetricsLoading(null);
     }
   };
 
-  const handleDeleteProject = async () => {
-    if (!confirm('Bạn có chắc chắn muốn xóa vĩnh viễn dự án video này cùng tất cả file tạm thời không?')) return;
+  const retryPipeline = async () => {
+    setRetrying(true);
     try {
-      const ok = await api.deleteVideoProject(projectId);
-      if (ok) {
-        alert('Đã xóa dự án thành công.');
-        onBack();
-      } else {
-        setErrorMsg('Không thể xóa dự án');
-      }
-    } catch (err: any) {
-      setErrorMsg(err.message || 'Lỗi xóa dự án');
+      await api.processVideoProject(projectId);
+      toast.success('Đã chạy lại', 'Hệ thống đang xử lý video từ đầu.');
+      await loadData(true);
+      onChanged?.();
+    } catch (err) {
+      toast.error('Không chạy lại được', errorText(err, ''));
+    } finally {
+      setRetrying(false);
     }
   };
 
-  const handleCleanupAssets = async () => {
-    if (!confirm('Bạn có chắc muốn xóa toàn bộ file media tạm (MP4, audio, phụ đề) của dự án này khỏi ổ đĩa?')) return;
-    try {
-      await api.cleanupAssets(projectId);
-      setSuccessMsg('Đã dọn dẹp sạch sẽ toàn bộ file tạm của dự án.');
-      await loadData();
-    } catch (err: any) {
-      setErrorMsg(err.message || 'Lỗi dọn dẹp file tạm');
+  const deleteProject = async () => {
+    const ok = await confirm({
+      title: 'Xoá video này?',
+      description: 'Video, kịch bản và toàn bộ file tạm sẽ bị xoá vĩnh viễn. Không thể hoàn tác.',
+      confirmLabel: 'Xoá video',
+      danger: true,
+    });
+    if (!ok) return;
+    const done = await api.deleteVideoProject(projectId);
+    if (done) {
+      toast.success('Đã xoá video');
+      onChanged?.();
+      navigate('/videos');
+    } else {
+      toast.error('Không xoá được video');
     }
   };
 
-  const latestVideoAsset = assets.find(a => (a.assetType === 'FinalVideo' || a.assetType === 'Video') && !a.isCleanedUp);
-  const latestAudioAsset = assets.find(a => a.assetType === 'Audio' && !a.isCleanedUp);
-  const hasVideo = !!latestVideoAsset;
-  const hasAudio = !!latestAudioAsset;
-  const videoUrl = latestVideoAsset ? `/api/video-projects/${projectId}/video?v=${latestVideoAsset.id}` : `/api/video-projects/${projectId}/video`;
-  const audioUrl = latestAudioAsset ? `/api/video-projects/${projectId}/audio?v=${latestAudioAsset.id}` : `/api/video-projects/${projectId}/audio`;
-  const isApproved = review?.decision === 'Approved';
-  const hasFatalViolations = review?.seriousViolationsFound || (review?.assessment?.hasFatalViolations ?? false);
-  const publishedPost = fbPosts.find(p => p.uploadStatus === 'Published');
+  const cleanupAssets = async () => {
+    const ok = await confirm({
+      title: 'Xoá file tạm?',
+      description: 'File MP4, âm thanh và phụ đề của video này sẽ bị xoá khỏi máy chủ. Bạn có thể dựng lại sau.',
+      confirmLabel: 'Xoá file tạm',
+      danger: true,
+    });
+    if (!ok) return;
+    const done = await api.cleanupAssets(projectId);
+    if (done) {
+      toast.success('Đã xoá file tạm');
+      await loadData(true);
+    } else {
+      toast.error('Không xoá được file tạm');
+    }
+  };
+
+  /* ─────────────── Render ─────────────── */
+
+  if (loading && !project) return <DetailSkeleton />;
+
+  if (!project) {
+    return (
+      <Card>
+        <EmptyState
+          icon={<Film />}
+          title="Không tìm thấy video"
+          description="Video có thể đã bị xoá hoặc đường dẫn không đúng."
+          action={
+            <ButtonLink href={href('/videos')} icon={<ArrowLeft className="h-4 w-4" />}>
+              Về danh sách video
+            </ButtonLink>
+          }
+        />
+      </Card>
+    );
+  }
+
+  const steps = [
+    { label: 'Kịch bản', done: !!script },
+    { label: 'Phân cảnh', done: scenes.length > 0 },
+    { label: 'Dựng video', done: hasVideo },
+    { label: 'Duyệt', done: isApproved || !!publishedPost },
+    { label: 'Đăng', done: !!publishedPost },
+  ];
+  const currentStep = steps.findIndex((s) => !s.done);
+
+  const primaryAction = (() => {
+    if (processing) return null;
+    if (!script)
+      return (
+        <Button variant="primary" icon={<Sparkles className="h-4 w-4" />} loading={generating} onClick={generateScript}>
+          Viết kịch bản
+        </Button>
+      );
+    if (!hasVideo && !publishedPost)
+      return (
+        <Button variant="primary" icon={<Film className="h-4 w-4" />} loading={rendering} onClick={renderVideo}>
+          Dựng video
+        </Button>
+      );
+    if (publishedPost)
+      return publishedPost.postUrl ? (
+        <ButtonLink
+          variant="primary"
+          href={publishedPost.postUrl}
+          target="_blank"
+          rel="noreferrer"
+          icon={<ExternalLink className="h-4 w-4" />}
+        >
+          Xem trên Facebook
+        </ButtonLink>
+      ) : null;
+    if (isApproved)
+      return (
+        <Button variant="primary" icon={<Send className="h-4 w-4" />} onClick={openPublish} disabled={hasFatal}>
+          Đăng lên Facebook
+        </Button>
+      );
+    return (
+      <>
+        <Button onClick={() => setShowReject(true)}>Từ chối</Button>
+        <Button
+          variant="primary"
+          icon={<Check className="h-4 w-4" />}
+          loading={approving}
+          onClick={approve}
+          disabled={hasFatal}
+          title={hasFatal ? 'Video còn lỗi nghiêm trọng, cần sửa trước khi duyệt' : undefined}
+        >
+          Duyệt video
+        </Button>
+      </>
+    );
+  })();
+
+  const otherPosts = fbPosts.filter((p) => p !== publishedPost);
 
   return (
-    <div className="space-y-6 max-w-7xl mx-auto">
-      {/* Top Bar Navigation & Actions */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <button
-          onClick={onBack}
-          className="inline-flex items-center space-x-2 text-xs font-semibold text-gray-400 hover:text-white transition self-start"
-        >
-          <ArrowLeft className="w-4 h-4" />
-          <span>Quay lại danh sách video</span>
-        </button>
+    <div>
+      {/* Header */}
+      <a href={href('/videos')} className="mb-3 inline-flex items-center gap-1.5 text-[13px] text-fg-muted hover:text-fg">
+        <ArrowLeft className="h-3.5 w-3.5" />
+        Video
+      </a>
 
-        <div className="flex flex-wrap items-center gap-3">
-          {/* ArticleImageOnly Mode Badge */}
-          <div className="flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-bold border border-cyan-500/30 bg-cyan-950/20 text-cyan-300">
-            <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse"></span>
-            <span>Chế độ A: ArticleImageOnly • 60s Reels</span>
-          </div>
-
-          {/* Status Decision Badge */}
-          {review && (
-            <div className="flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-bold border border-gray-800 bg-[#0B0F19]">
-              <span className="text-gray-400 font-normal">Trạng thái:</span>
-              <span className={
-                publishedPost ? 'text-indigo-400' :
-                review.decision === 'Approved' ? 'text-emerald-400' :
-                review.decision === 'Rejected' ? 'text-rose-400' : 'text-amber-400'
-              }>
-                {publishedPost ? 'Đã đăng Reels ✓' :
-                 review.decision === 'Approved' ? 'Đã duyệt (Approved)' :
-                 review.decision === 'Rejected' ? 'Từ chối (Rejected)' :
-                 'Chờ duyệt (Pending Review)'}
-              </span>
-            </div>
-          )}
-
-          {/* AI Provider Switcher */}
-          <div className="flex items-center bg-[#0B0F19] rounded-xl border border-gray-800 p-1 text-xs">
-            <button
-              onClick={() => setSelectedProvider('Gemini')}
-              className={`px-3 py-1 rounded-lg transition font-medium ${
-                selectedProvider === 'Gemini' ? 'bg-indigo-600 text-white' : 'text-gray-400 hover:text-white'
-              }`}
+      <div className="mb-5 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0">
+          <h1 className="text-xl font-semibold leading-snug text-fg sm:text-[22px]">{project.title}</h1>
+          <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px] text-fg-muted">
+            <StatusBadge status={publishedPost ? 'Published' : project.status} />
+            {isRejected && !publishedPost && <Badge tone="danger">Đã từ chối</Badge>}
+            <span className="text-fg-subtle">·</span>
+            <a
+              href={project.sourceUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1 hover:text-fg"
             >
-              Gemini
-            </button>
-            <button
-              onClick={() => setSelectedProvider('Claude')}
-              className={`px-3 py-1 rounded-lg transition font-medium ${
-                selectedProvider === 'Claude' ? 'bg-indigo-600 text-white' : 'text-gray-400 hover:text-white'
-              }`}
-            >
-              Claude
-            </button>
+              {project.publisher || domainOf(project.sourceUrl)}
+              <ExternalLink className="h-3 w-3" />
+            </a>
+            <span className="text-fg-subtle">·</span>
+            <span>Tạo lúc {formatDateTime(project.createdAtUtc)}</span>
           </div>
+        </div>
 
-          <button
-            onClick={handleGenerateScript}
-            disabled={generating}
-            className="px-3.5 py-2 rounded-xl bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs font-semibold flex items-center gap-1.5 transition disabled:opacity-50"
-          >
-            <Sparkles className={`w-3.5 h-3.5 ${generating ? 'animate-spin text-indigo-400' : ''}`} />
-            <span>{generating ? 'AI đang viết...' : 'Tạo kịch bản AI'}</span>
-          </button>
-
-          {/* Render Video Button */}
-          <button
-            onClick={handleRenderVideo}
-            disabled={rendering}
-            className="px-4 py-2 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white text-xs font-semibold flex items-center gap-1.5 transition disabled:opacity-50 shadow-lg shadow-indigo-600/20"
-          >
-            <Film className={`w-3.5 h-3.5 ${rendering ? 'animate-spin' : ''}`} />
-            <span>{rendering ? 'FFmpeg đang dựng...' : 'Dựng video 9:16'}</span>
-          </button>
-
-          {/* Approve Button */}
-          <button
-            onClick={handleApprove}
-            disabled={hasFatalViolations || !hasVideo}
-            title={hasFatalViolations ? 'Chặn duyệt: Còn lỗi nghiêm trọng vi phạm kiểm định' : (!hasVideo ? 'Cần render video trước khi duyệt' : 'Phê duyệt video')}
-            className={`px-4 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition disabled:opacity-40 disabled:cursor-not-allowed ${
-              isApproved
-                ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
-                : 'bg-emerald-700 hover:bg-emerald-600 text-white shadow-lg shadow-emerald-700/20'
-            }`}
-          >
-            <CheckCircle className="w-4 h-4" />
-            <span>{isApproved ? 'Đã duyệt video ✓' : 'Phê duyệt video'}</span>
-          </button>
-
-          {/* Reject Button */}
-          <button
-            onClick={() => setShowRejectModal(true)}
-            className="px-3 py-2 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 text-xs font-semibold flex items-center gap-1.5 transition border border-rose-500/30"
-          >
-            <XCircle className="w-3.5 h-3.5" />
-            <span>Từ chối</span>
-          </button>
-
-          {/* Edit Metadata */}
-          <button
-            onClick={() => setShowEditModal(true)}
-            className="px-3 py-2 rounded-xl bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs font-semibold flex items-center gap-1.5 transition"
-          >
-            <Edit3 className="w-3.5 h-3.5" />
-            <span>Sửa tiêu đề</span>
-          </button>
-
-          {/* Delete Project */}
-          <button
-            onClick={handleDeleteProject}
-            className="px-3 py-2 rounded-xl bg-rose-950/40 hover:bg-rose-900/60 text-rose-400 text-xs font-semibold flex items-center gap-1.5 transition border border-rose-900/40"
-            title="Xóa dự án và dọn sạch file tạm"
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-          </button>
+        <div className="flex shrink-0 items-center gap-2">
+          <Menu
+            trigger={
+              <IconButton label="Thao tác khác" className="border border-line-strong bg-surface shadow-card">
+                <MoreHorizontal className="h-4 w-4" />
+              </IconButton>
+            }
+            items={[
+              { label: 'Sửa tiêu đề', icon: <Pencil />, onSelect: openEdit },
+              ...(hasVideo
+                ? [{ label: 'Tải MP4', icon: <Download />, href: videoUrl, download: `reel_${projectId.slice(0, 8)}.mp4` }]
+                : []),
+              { label: 'Mở bài báo gốc', icon: <ExternalLink />, href: project.sourceUrl, external: true },
+              { label: 'Làm mới dữ liệu', icon: <RefreshCw />, onSelect: () => loadData() },
+              { label: '', divider: true },
+              { label: 'Xoá file tạm', icon: <HardDrive />, onSelect: cleanupAssets },
+              { label: 'Xoá video', icon: <Trash2 />, onSelect: deleteProject, danger: true },
+            ]}
+          />
+          {primaryAction}
         </div>
       </div>
 
-      {/* Error & Warning Banners */}
-      {errorMsg && (
-        <div className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-center gap-2">
-          <AlertCircle className="w-4 h-4 shrink-0" />
-          <span>{errorMsg}</span>
-        </div>
-      )}
-
-      {successMsg && (
-        <div className="p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs flex items-center gap-2">
-          <CheckCircle className="w-4 h-4 shrink-0" />
-          <span>{successMsg}</span>
-        </div>
-      )}
-
-      {/* Fatal Violations Warning Banner */}
-      {hasFatalViolations && review?.assessment?.fatalViolations && (
-        <div className="p-4 rounded-2xl bg-rose-950/40 border border-rose-500/40 space-y-2">
-          <div className="flex items-center gap-2 text-rose-300 text-xs font-bold">
-            <AlertTriangle className="w-4 h-4 text-rose-400 animate-pulse" />
-            <span>CẢNH BÁO KIỂM DUYỆT: PHÁT HIỆN LỖI NGHIÊM TRỌNG (CHẶN XUẤT BẢN)</span>
-          </div>
-          <ul className="list-disc list-inside text-xs text-rose-200/90 space-y-1">
-            {review.assessment.fatalViolations.map((v, i) => (
-              <li key={i}>{v}</li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {/* Main Review Workspace */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-        {/* Left Column: 9:16 Video Player Preview */}
-        <div className="lg:col-span-5 flex flex-col items-center">
-          <div className="w-[320px] h-[568px] rounded-3xl bg-black border-4 border-gray-800 shadow-2xl relative overflow-hidden flex flex-col justify-between group">
-            {hasVideo ? (
-              <video
-                key={latestVideoAsset?.id || projectId}
-                src={videoUrl}
-                controls
-                playsInline
-                className="w-full h-full object-cover"
-                poster={scenes.length > 0 && scenes[0].imageUrl ? scenes[0].imageUrl : undefined}
-              >
-                <track kind="subtitles" src={`/api/video-projects/${projectId}/subtitles`} srcLang="vi" label="Tiếng Việt" default />
-                Trình duyệt không hỗ trợ xem video HTML5.
-              </video>
-            ) : (
-              <div className="w-full h-full flex flex-col justify-between p-4 relative">
-                {/* Reel Header */}
-                <div className="relative z-10 flex items-center justify-between">
-                  <span className="px-2 py-0.5 rounded bg-red-600 text-white font-extrabold text-[10px] uppercase tracking-wider">
-                    TIN NÓNG 24H
-                  </span>
-                  <span className="text-[10px] font-mono text-gray-400 bg-black/60 px-2 py-0.5 rounded">
-                    00:{script ? script.estimatedReadingSeconds : '50'} / 00:60
-                  </span>
-                </div>
-
-                {/* Video center action */}
-                <div className="relative z-10 text-center space-y-2">
-                  <button
-                    onClick={handleRenderVideo}
-                    disabled={rendering}
-                    className="w-14 h-14 mx-auto rounded-full bg-indigo-600/90 backdrop-blur text-white flex items-center justify-center hover:scale-110 transition shadow-lg"
-                  >
-                    <Play className="w-6 h-6 fill-white ml-0.5" />
-                  </button>
-                  <p className="text-[11px] text-gray-300 font-medium">
-                    {rendering ? 'Đang dựng video 9:16...' : 'Bấm để render video 9:16'}
-                  </p>
-                </div>
-
-                {/* Simulated Animated Subtitle & Attribution */}
-                <div className="relative z-10 space-y-3">
-                  <div className="p-2.5 rounded-xl bg-black/80 backdrop-blur border border-amber-500/40 text-center">
-                    <span className="text-amber-300 font-extrabold text-xs tracking-wide uppercase line-clamp-2">
-                      {script ? script.title : (project ? project.title : 'METRO SỐ 1 CHÍNH THỨC VẬN HÀNH')}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between text-[10px] text-gray-400 px-1">
-                    <span>{project ? project.publisher : 'Báo điện tử'}</span>
-                    <span>FFmpeg 1080×1920</span>
-                  </div>
-                </div>
-
-                {/* Background Image / Gradient */}
-                {scenes.length > 0 && scenes[0].imageUrl ? (
-                  <img
-                    src={scenes[0].imageUrl}
-                    alt="Scene visual"
-                    className="absolute inset-0 w-full h-full object-cover opacity-60"
-                  />
-                ) : (
-                  <div className="absolute inset-0 bg-gradient-to-t from-black via-gray-900 to-black opacity-90" />
+      {/* Stepper */}
+      <ol className="mb-6 grid grid-cols-5 gap-2">
+        {steps.map((s, i) => {
+          const current = i === currentStep;
+          return (
+            <li key={s.label}>
+              <div className={cn('h-1 rounded-full', s.done ? 'bg-success' : current ? 'bg-fg' : 'bg-line')} />
+              <div
+                className={cn(
+                  'mt-2 hidden items-center gap-1.5 text-xs sm:flex',
+                  s.done ? 'text-fg-muted' : current ? 'font-medium text-fg' : 'text-fg-subtle'
                 )}
-              </div>
-            )}
-          </div>
-
-          {/* Action buttons below reel */}
-          <div className="flex items-center gap-3 mt-3">
-            {hasVideo && (
-              <a
-                href={videoUrl}
-                download={`video_reel_${projectId.slice(0, 8)}.mp4`}
-                className="px-3 py-1.5 rounded-xl bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs font-medium flex items-center gap-1.5 transition"
               >
-                <Download className="w-3.5 h-3.5" />
-                <span>Tải MP4 kiểm tra</span>
-              </a>
-            )}
-            <button
-              onClick={handleCleanupAssets}
-              className="px-3 py-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 text-xs font-medium flex items-center gap-1.5 transition"
-              title="Xóa toàn bộ file tạm của dự án"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-              <span>Dọn dẹp file tạm</span>
-            </button>
-          </div>
-
-          <p className="text-[11px] text-gray-500 mt-2 text-center max-w-xs">
-            * Nguyên tắc lưu trữ: Không lưu binary video/ảnh/audio lâu dài trong database. Tự động dọn dẹp sau TTL 2 giờ.
-          </p>
-        </div>
-
-        {/* Right Column: Editorial, Storyboard, Audio & QC Tabs */}
-        <div className="lg:col-span-7 space-y-6">
-          {/* Sub Navigation */}
-          <div className="flex flex-wrap space-x-2 border-b border-[#1F2937] pb-3 text-xs font-semibold">
-            <button
-              onClick={() => setActiveTab('preview')}
-              className={`px-3 py-2 rounded-lg flex items-center gap-1.5 transition ${
-                activeTab === 'preview' ? 'bg-indigo-600 text-white' : 'text-gray-400 hover:text-white'
-              }`}
-            >
-              <Volume2 className="w-3.5 h-3.5" />
-              <span>Âm thanh & Phụ đề</span>
-            </button>
-            <button
-              onClick={() => setActiveTab('script')}
-              className={`px-3 py-2 rounded-lg flex items-center gap-1.5 transition ${
-                activeTab === 'script' ? 'bg-indigo-600 text-white' : 'text-gray-400 hover:text-white'
-              }`}
-            >
-              <FileText className="w-3.5 h-3.5" />
-              <span>Kịch bản</span>
-            </button>
-            <button
-              onClick={() => setActiveTab('scenes')}
-              className={`px-3 py-2 rounded-lg flex items-center gap-1.5 transition ${
-                activeTab === 'scenes' ? 'bg-indigo-600 text-white' : 'text-gray-400 hover:text-white'
-              }`}
-            >
-              <Film className="w-3.5 h-3.5" />
-              <span>Phân cảnh ({scenes.length})</span>
-            </button>
-            <button
-              onClick={() => setActiveTab('assets')}
-              className={`px-3 py-2 rounded-lg flex items-center gap-1.5 transition ${
-                activeTab === 'assets' ? 'bg-indigo-600 text-white' : 'text-gray-400 hover:text-white'
-              }`}
-            >
-              <HardDrive className="w-3.5 h-3.5" />
-              <span>File tạm ({assets.length})</span>
-            </button>
-            <button
-              onClick={() => setActiveTab('qc')}
-              className={`px-3 py-2 rounded-lg flex items-center gap-1.5 transition ${
-                activeTab === 'qc' ? 'bg-emerald-600 text-white' : 'text-emerald-400 hover:text-emerald-300'
-              }`}
-            >
-              <ShieldCheck className="w-3.5 h-3.5" />
-              <span>Kiểm định QC ({review?.internalQualityScore ?? 100}/100)</span>
-            </button>
-            <button
-              onClick={() => setActiveTab('reels')}
-              className={`px-3 py-2 rounded-lg flex items-center gap-1.5 transition ${
-                activeTab === 'reels' ? 'bg-indigo-600 text-white' : 'text-indigo-400 hover:text-indigo-300'
-              }`}
-            >
-              <Share2 className="w-3.5 h-3.5" />
-              <span>Facebook Reels {publishedPost ? '✓' : ''}</span>
-            </button>
-          </div>
-
-          {/* PREVIEW / AUDIO & SUBTITLES TAB */}
-          {activeTab === 'preview' && (
-            <div className="space-y-4">
-              <div className="glass-panel p-5 rounded-2xl border border-gray-800 space-y-4">
-                <div className="flex items-center justify-between">
-                  <h4 className="text-sm font-bold text-white flex items-center gap-2">
-                    <Volume2 className="w-4 h-4 text-indigo-400" />
-                    Thuyết minh giọng đọc tiếng Việt (TTS)
-                  </h4>
-                  <span className="text-xs text-gray-400 font-mono">Edge-TTS (vi-VN-HoaiMyNeural)</span>
-                </div>
-
-                {hasAudio ? (
-                  <div className="space-y-3">
-                    <audio key={latestAudioAsset?.id || projectId} src={audioUrl} controls className="w-full h-10">
-                      Trình duyệt không hỗ trợ phát audio HTML5.
-                    </audio>
-                    <div className="flex items-center justify-between text-xs text-gray-400">
-                      <span>Định dạng: WAV PCM 24kHz 16-bit Mono</span>
-                      <a
-                        href={audioUrl}
-                        download="voiceover.wav"
-                        className="text-indigo-400 hover:underline flex items-center gap-1"
-                      >
-                        <Download className="w-3 h-3" /> Tải file WAV
-                      </a>
-                    </div>
-                  </div>
+                {s.done ? (
+                  <Check className="h-3.5 w-3.5 shrink-0 text-success" />
                 ) : (
-                  <div className="p-6 text-center text-xs text-gray-500 bg-gray-900/40 rounded-xl">
-                    Chưa tạo âm thanh thuyết minh. Bấm "Dựng video 9:16" để hệ thống tổng hợp giọng đọc và dựng phim.
-                  </div>
+                  <span className="hidden tabular sm:inline">{i + 1}.</span>
                 )}
+                <span className="truncate">{s.label}</span>
               </div>
+            </li>
+          );
+        })}
+      </ol>
+      {/* Phones: one readable line instead of five squeezed labels */}
+      <p className="-mt-4 mb-5 text-xs text-fg-muted sm:hidden">
+        {currentStep === -1 ? (
+          <span className="font-medium text-success">Đã hoàn tất cả 5 bước</span>
+        ) : (
+          <>
+            Bước {currentStep + 1}/5 · <span className="font-medium text-fg">{steps[currentStep].label}</span>
+          </>
+        )}
+      </p>
 
-              {/* Subtitles Download Card */}
-              <div className="glass-panel p-5 rounded-2xl border border-gray-800 space-y-3">
-                <div className="flex items-center justify-between">
-                  <h4 className="text-sm font-bold text-white flex items-center gap-2">
-                    <FileText className="w-4 h-4 text-purple-400" />
-                    Phụ đề tự động (Synchronized Subtitles)
-                  </h4>
-                  <div className="flex items-center gap-2">
-                    <a
-                      href={`/api/video-projects/${projectId}/subtitles?format=srt`}
-                      download="subtitles.srt"
-                      className="px-2.5 py-1 rounded bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs font-semibold flex items-center gap-1"
-                    >
-                      <Download className="w-3 h-3" /> .SRT
-                    </a>
-                    <a
-                      href={`/api/video-projects/${projectId}/subtitles?format=vtt`}
-                      download="subtitles.vtt"
-                      className="px-2.5 py-1 rounded bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs font-semibold flex items-center gap-1"
-                    >
-                      <Download className="w-3 h-3" /> .VTT
-                    </a>
-                  </div>
-                </div>
-                <p className="text-xs text-gray-400">
-                  Phụ đề được tự động căn chỉnh timestamp theo từng mili-giây, hỗ trợ hiệu ứng karaoke highlight trên khung hình 9:16.
-                </p>
+      {/* Banners */}
+      <div className="mb-6 space-y-3 empty:hidden">
+        {processing && (
+          <Alert tone="info" icon={<Loader2 className="animate-spin" />} title={`${statusMeta(project.status).label}…`}>
+            Hệ thống đang xử lý video. Trang sẽ tự cập nhật khi có kết quả.
+          </Alert>
+        )}
+        {failureMessage && (
+          <Alert
+            tone="danger"
+            icon={<AlertCircle />}
+            title="Xử lý thất bại"
+            action={
+              <div className="flex gap-2">
+                {/API key/i.test(failureMessage) && (
+                  <ButtonLink size="sm" variant="ghost" href={href('/settings')}>
+                    Mở Cài đặt
+                  </ButtonLink>
+                )}
+                <Button size="sm" icon={<RotateCcw className="h-3.5 w-3.5" />} loading={retrying} onClick={retryPipeline}>
+                  Chạy lại
+                </Button>
               </div>
-            </div>
-          )}
+            }
+          >
+            {failureMessage}
+          </Alert>
+        )}
+        {/* Quality-check verdicts only make sense once a video exists; before that the real
+            blocker is shown above (or the video simply isn't finished yet). */}
+        {hasVideo && hasFatal && !!review?.assessment?.fatalViolations?.length && (
+          <Alert
+            tone="danger"
+            icon={<AlertTriangle />}
+            title="Video còn lỗi nghiêm trọng, chưa thể duyệt"
+            action={
+              tab !== 'qc' && (
+                <Button size="sm" variant="ghost" onClick={() => setTab('qc')}>
+                  Xem kiểm định
+                </Button>
+              )
+            }
+          >
+            <ul className="mt-1 list-disc space-y-0.5 pl-4">
+              {review.assessment.fatalViolations.map((v, i) => (
+                <li key={i}>{v}</li>
+              ))}
+            </ul>
+          </Alert>
+        )}
+        {isRejected && review?.feedbackNotes && !publishedPost && (
+          <Alert tone="warning" icon={<XCircle />} title="Lý do từ chối">
+            {review.feedbackNotes}
+          </Alert>
+        )}
+      </div>
 
-          {/* SCRIPT TAB: FACT VS COMMENTARY */}
-          {activeTab === 'script' && (
-            <div className="space-y-4">
-              {script ? (
-                <div className="space-y-4">
-                  <div className="glass-panel p-5 rounded-2xl border border-gray-800 space-y-3">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-indigo-400 uppercase tracking-wider">Tiêu đề video (45-60s)</span>
-                      <span className="text-[11px] text-gray-400 font-mono">
-                        ~{script.wordCount} từ • {script.estimatedReadingSeconds}s đọc
-                      </span>
-                    </div>
-                    <h3 className="text-base font-bold text-white">{script.title}</h3>
-                    <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-xs text-amber-200">
-                      <span className="font-bold text-amber-400">HOOK (3-5s đầu): </span>
-                      {script.hook}
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="glass-panel p-5 rounded-2xl border border-blue-500/30 bg-blue-950/10 space-y-2">
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-bold text-blue-400 flex items-center gap-1.5">
-                          <CheckCircle className="w-3.5 h-3.5" />
-                          SỰ THẬT KHÁCH QUAN (KEY FACTS)
-                        </span>
-                        <span className="text-[10px] text-blue-300 bg-blue-500/20 px-2 py-0.5 rounded font-medium">Báo chí</span>
-                      </div>
-                      <div className="text-xs text-gray-300 whitespace-pre-wrap leading-relaxed">
-                        {script.keyFacts}
-                      </div>
-                      <div className="pt-2 border-t border-blue-900/40 text-[11px] text-gray-400">
-                        <span className="font-semibold text-blue-300">Bối cảnh: </span>
-                        {script.context}
-                      </div>
-                    </div>
-
-                    <div className="glass-panel p-5 rounded-2xl border border-purple-500/30 bg-purple-950/10 space-y-2">
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-bold text-purple-400 flex items-center gap-1.5">
-                          <Sparkles className="w-3.5 h-3.5" />
-                          BÌNH LUẬN BIÊN TẬP (ANALYSIS)
-                        </span>
-                        <span className="text-[10px] text-purple-300 bg-purple-500/20 px-2 py-0.5 rounded font-medium">Giá trị gia tăng</span>
-                      </div>
-                      <p className="text-xs text-gray-300 leading-relaxed">
-                        {script.analysis}
-                      </p>
-                      <div className="pt-2 border-t border-purple-900/40 text-[11px] text-gray-400">
-                        <span className="font-semibold text-purple-300">Kết luận: </span>
-                        {script.conclusion}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="glass-panel p-5 rounded-2xl border border-gray-800 space-y-2">
-                    <span className="text-xs font-bold text-gray-300 flex items-center gap-1.5">
-                      <FileText className="w-3.5 h-3.5 text-indigo-400" />
-                      TOÀN VĂN LỜI THOẠI LỒNG TIẾNG (VOICE-OVER SCRIPT)
-                    </span>
-                    <div className="p-4 rounded-xl bg-[#0B0F19] border border-gray-800 text-xs text-gray-200 leading-relaxed whitespace-pre-wrap font-sans">
-                      {script.voiceOverScript}
-                    </div>
-                    <p className="text-[11px] text-gray-500 italic text-right">
-                      {script.sourceAttribution}
-                    </p>
-                  </div>
-                </div>
+      <div className="grid gap-8 lg:grid-cols-[300px_minmax(0,1fr)]">
+        {/* Left: preview + render settings */}
+        <div className="space-y-4 lg:sticky lg:top-8 lg:self-start">
+          <div className="mx-auto w-full max-w-[300px]">
+            <div className="relative aspect-[9/16] overflow-hidden rounded-2xl bg-black ring-1 ring-line">
+              {hasVideo ? (
+                <video
+                  key={latestVideoAsset?.id || projectId}
+                  src={videoUrl}
+                  controls
+                  playsInline
+                  className="h-full w-full object-cover"
+                  poster={poster}
+                />
+                /* Rule: videos never show running subtitles (no <track>), only the voice-over. */
               ) : (
-                <div className="glass-panel p-8 text-center space-y-3 border border-gray-800">
-                  <FileText className="w-10 h-10 mx-auto text-gray-600" />
-                  <p className="text-sm text-gray-300 font-medium">Chưa có kịch bản AI cho dự án này</p>
-                  <button
-                    onClick={handleGenerateScript}
-                    className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold"
-                  >
-                    Tạo kịch bản AI ngay
-                  </button>
+                <>
+                  {poster && (
+                    <img
+                      src={poster}
+                      alt=""
+                      referrerPolicy="no-referrer"
+                      className="absolute inset-0 h-full w-full object-cover opacity-30 blur-[1px]"
+                    />
+                  )}
+                  <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/40 p-6 text-center">
+                    {rendering ? (
+                      <>
+                        <Loader2 className="h-6 w-6 animate-spin text-white/80" />
+                        <p className="text-sm text-white/90">Đang dựng video…</p>
+                      </>
+                    ) : (
+                      <>
+                        <Film className="h-6 w-6 text-white/60" />
+                        <p className="text-sm text-white/90">{publishedPost ? 'File video đã được dọn' : 'Chưa có video'}</p>
+                        <p className="text-xs text-white/60">
+                          {publishedPost
+                            ? 'Video đã đăng, file tạm đã xoá khỏi máy chủ.'
+                            : script
+                            ? 'Bấm “Dựng video” để tạo bản xem trước.'
+                            : 'Cần có kịch bản trước khi dựng.'}
+                        </p>
+                      </>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+
+          <Card>
+            <CardBody className="space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-[13px] font-medium text-fg">Giọng đọc</span>
+                {hasVideo && project.actualDurationSeconds ? (
+                  <span className="text-xs tabular text-fg-subtle">{formatClock(project.actualDurationSeconds)}</span>
+                ) : null}
+              </div>
+              <Select value={voice} onChange={(e) => setVoice(e.target.value)} size="sm" aria-label="Giọng đọc">
+                <optgroup label="Giọng tự nhiên (Gemini)">
+                  {VOICES.filter((v) => v.group === 'natural').map((v) => (
+                    <option key={v.id} value={v.id}>
+                      {v.name} — {v.desc.split(',')[0]}
+                    </option>
+                  ))}
+                </optgroup>
+                <optgroup label="Giọng cơ bản (Edge)">
+                  {VOICES.filter((v) => v.group === 'basic').map((v) => (
+                    <option key={v.id} value={v.id}>
+                      {v.name}
+                    </option>
+                  ))}
+                </optgroup>
+                {!VOICES.some((v) => v.id === voice) && <option value={voice}>{voice}</option>}
+              </Select>
+              <Segmented
+                size="sm"
+                className="flex w-full [&>button]:flex-1"
+                value={speed}
+                onChange={setSpeed}
+                options={SPEEDS.map((s) => ({ value: s.id, label: s.label }))}
+              />
+              <Button
+                className="w-full"
+                variant={hasVideo || !script ? 'secondary' : 'primary'}
+                icon={<Film className="h-4 w-4" />}
+                loading={rendering}
+                disabled={!script || processing}
+                onClick={renderVideo}
+              >
+                {rendering ? 'Đang dựng…' : hasVideo ? 'Dựng lại video' : 'Dựng video'}
+              </Button>
+              {hasVideo && (
+                <ButtonLink
+                  href={videoUrl}
+                  download={`reel_${projectId.slice(0, 8)}.mp4`}
+                  variant="ghost"
+                  size="sm"
+                  className="w-full"
+                  icon={<Download className="h-4 w-4" />}
+                >
+                  Tải MP4
+                </ButtonLink>
+              )}
+            </CardBody>
+          </Card>
+        </div>
+
+        {/* Right: tabs */}
+        <div className="min-w-0">
+          <Tabs
+            className="mb-5"
+            value={tab}
+            onChange={setTab}
+            items={[
+              { id: 'script', label: 'Kịch bản' },
+              { id: 'scenes', label: 'Phân cảnh', count: scenes.length || undefined },
+              { id: 'qc', label: 'Kiểm định', count: score },
+              { id: 'audio', label: 'Giọng đọc' },
+              { id: 'publish', label: 'Đăng Facebook' },
+              { id: 'files', label: 'File tạm', count: assets.length || undefined },
+            ]}
+          />
+
+          {/* SCRIPT */}
+          {tab === 'script' && (
+            <div className="space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-2 text-[13px] text-fg-muted">
+                  <span>Viết bằng</span>
+                  <Segmented
+                    size="sm"
+                    value={provider}
+                    onChange={setProvider}
+                    options={AI_PROVIDERS.map((p) => ({ value: p.id, label: p.name }))}
+                  />
                 </div>
+                <Button
+                  size="sm"
+                  icon={<Sparkles className="h-3.5 w-3.5" />}
+                  loading={generating}
+                  disabled={processing}
+                  onClick={generateScript}
+                >
+                  {script ? 'Viết lại' : 'Viết kịch bản'}
+                </Button>
+              </div>
+
+              {script ? (
+                <>
+                  <Card>
+                    <CardBody className="space-y-4">
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-fg-subtle">
+                        <span>{script.wordCount} từ</span>
+                        <span>·</span>
+                        <span>khoảng {script.estimatedReadingSeconds} giây đọc</span>
+                        <span>·</span>
+                        <span>
+                          {script.aiProvider}
+                          {script.modelName && ` (${script.modelName})`}
+                        </span>
+                      </div>
+                      <h3 className="text-lg font-semibold leading-snug text-fg">{script.title}</h3>
+                      {script.hook && (
+                        <div className="border-l-2 border-fg pl-4">
+                          <div className="mb-0.5 text-xs font-medium text-fg-muted">Câu mở đầu</div>
+                          <p className="text-[15px] leading-relaxed text-fg">{script.hook}</p>
+                        </div>
+                      )}
+                    </CardBody>
+                  </Card>
+
+                  <Card>
+                    <CardHeader title="Lời đọc" description="Toàn bộ nội dung sẽ được đọc trong video." />
+                    <CardBody>
+                      <p className="max-w-prose whitespace-pre-wrap text-[15px] leading-7 text-fg">{script.voiceOverScript}</p>
+                      {script.sourceAttribution && (
+                        <p className="mt-4 border-t border-line pt-3 text-xs text-fg-subtle">{script.sourceAttribution}</p>
+                      )}
+                    </CardBody>
+                  </Card>
+
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <ScriptBlock title="Dữ kiện chính" body={script.keyFacts} />
+                    <ScriptBlock title="Bối cảnh" body={script.context} />
+                    <ScriptBlock title="Phân tích" body={script.analysis} note="Phần bình luận của biên tập, không phải dữ kiện." />
+                    <ScriptBlock title="Kết luận" body={script.conclusion} />
+                  </div>
+                </>
+              ) : (
+                <Card>
+                  <EmptyState
+                    icon={<FileText />}
+                    title={processing ? 'Kịch bản đang được viết' : 'Chưa có kịch bản'}
+                    description={
+                      processing
+                        ? 'Hệ thống sẽ hiển thị kịch bản ngay khi xong.'
+                        : 'AI sẽ đọc bài báo và viết lời dẫn khoảng 60 giây, tách rõ dữ kiện và bình luận.'
+                    }
+                    action={
+                      !processing && (
+                        <Button variant="primary" icon={<Sparkles className="h-4 w-4" />} loading={generating} onClick={generateScript}>
+                          Viết kịch bản
+                        </Button>
+                      )
+                    }
+                  />
+                </Card>
               )}
             </div>
           )}
 
-          {/* SCENES TAB: 8-10 PHÂN CẢNH VỚI ẢNH GỐC / ARTICLE IMAGE ONLY */}
-          {activeTab === 'scenes' && (
+          {/* SCENES */}
+          {tab === 'scenes' && (
             <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <span className="text-xs text-gray-400">
-                  Phân cảnh chi tiết ({scenes.length} Scenes / Mục tiêu 8-10 cảnh • Tổng thời lượng: {scenes.length > 0 ? scenes[scenes.length - 1].endTimeSeconds : 0}s / Chuẩn 55-65s)
-                </span>
-                <button
-                  onClick={handlePlanScenes}
-                  disabled={generating}
-                  className="px-3 py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs font-semibold flex items-center gap-1 transition"
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <p className="text-[13px] text-fg-muted">
+                  {scenes.length > 0 ? (
+                    <>
+                      {scenes.length} cảnh · tổng {formatClock(totalSeconds)}
+                      {project.targetDurationSeconds ? (
+                        <span className="text-fg-subtle"> (tối đa {durationLabel(project.targetDurationSeconds)})</span>
+                      ) : null}
+                    </>
+                  ) : (
+                    'Chưa có phân cảnh'
+                  )}
+                </p>
+                <Button
+                  size="sm"
+                  icon={<RefreshCw className="h-3.5 w-3.5" />}
+                  loading={generating}
+                  disabled={!script || processing}
+                  onClick={planScenes}
                 >
-                  <RefreshCw className={`w-3 h-3 ${generating ? 'animate-spin' : ''}`} />
-                  <span>Phân cảnh lại</span>
-                </button>
+                  Chia cảnh lại
+                </Button>
               </div>
 
-              {/* Insufficient images warning in ArticleImageOnly mode */}
-              {scenes.length > 0 && scenes.every(s => !s.imageUrl) && (
-                <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs flex items-start gap-2.5">
-                  <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
-                  <div>
-                    <p className="font-bold">CẢNH BÁO: BÀI BÁO KHÔNG CÓ ĐỦ HÌNH ẢNH PHÙ HỢP</p>
-                    <p className="mt-0.5 text-amber-200/80">
-                      Chế độ <strong>ArticleImageOnly</strong> nghiêm cấm sử dụng ảnh tìm kiếm ngoài Internet hoặc ảnh AI sinh ra. Toàn bộ các cảnh hiện tại đang dùng Typography làm nền. Vui lòng kiểm tra lại URL bài viết hoặc bổ sung ảnh gốc nếu cần.
-                    </p>
-                  </div>
-                </div>
+              {scenes.length > 0 && scenes.every((s) => !s.imageUrl) && (
+                <Alert tone="warning" icon={<AlertTriangle />} title="Bài báo không đủ ảnh phù hợp">
+                  Tất cả cảnh đang dùng nền chữ. Hệ thống không lấy ảnh ngoài bài báo hay ảnh do AI tạo, nên hãy kiểm tra
+                  lại link bài viết nếu cần thêm hình.
+                </Alert>
               )}
-
-              {/* Notice when images are reused with varying motion/crop */}
-              {scenes.length > 0 && scenes.some(s => s.isImageReused) && (
-                <div className="p-3 rounded-xl bg-indigo-500/10 border border-indigo-500/30 text-indigo-300 text-xs flex items-center gap-2">
-                  <Sparkles className="w-3.5 h-3.5 shrink-0" />
-                  <span>Chế độ ArticleImageOnly: Hệ thống đã tối ưu các cảnh bằng cách tái sử dụng ảnh thực tế với các góc crop và chuyển động FFmpeg khác nhau để đạt chuẩn 60s Reels.</span>
-                </div>
+              {scenes.some((s) => s.isImageReused) && (
+                <p className="text-xs text-fg-subtle">
+                  Một số ảnh được dùng lại ở nhiều cảnh với góc cắt và chuyển động khác nhau để đủ thời lượng.
+                </p>
               )}
 
               {scenes.length === 0 ? (
-                <div className="glass-panel p-8 text-center space-y-3 border border-gray-800">
-                  <Film className="w-10 h-10 mx-auto text-gray-600" />
-                  <p className="text-sm text-gray-300 font-medium">Chưa có phân cảnh nào được lập</p>
-                  <button
-                    onClick={handlePlanScenes}
-                    className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold"
-                  >
-                    Lập 8-10 phân cảnh từ kịch bản
-                  </button>
-                </div>
+                <Card>
+                  <EmptyState
+                    icon={<Film />}
+                    title="Chưa có phân cảnh"
+                    description={script ? 'Chia kịch bản thành các cảnh, ghép với ảnh trong bài.' : 'Cần viết kịch bản trước.'}
+                    action={
+                      script && (
+                        <Button variant="primary" loading={generating} onClick={planScenes}>
+                          Chia cảnh
+                        </Button>
+                      )
+                    }
+                  />
+                </Card>
               ) : (
-                scenes.map((s) => (
-                  <div key={s.sceneNumber} className="glass-panel p-4 rounded-xl border border-[#1F2937] space-y-3">
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="font-mono font-bold text-indigo-400">
-                        CẢNH #{s.sceneNumber} (StartTime: {s.startTimeSeconds}s - EndTime: {s.endTimeSeconds}s • Duration: {s.durationSeconds}s)
-                      </span>
-                      <div className="flex items-center gap-1.5">
-                        <span className="px-2 py-0.5 rounded bg-gray-800 text-gray-300 font-semibold text-[10px]">
-                          {s.scenePurpose}
-                        </span>
-                        {s.visualType === 'Image' ? (
-                          <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-semibold text-[10px]">
-                            Ảnh bài viết
+                <Card className="divide-y divide-line">
+                  {scenes.map((s) => (
+                    <div key={s.sceneNumber} className="flex gap-4 p-4">
+                      <Thumb
+                        src={s.imageUrl}
+                        className="aspect-[9/16] w-16 shrink-0 rounded-md border border-line"
+                        fallback={
+                          <span className="px-1 text-center text-[9px] font-semibold uppercase leading-tight text-fg-subtle">
+                            {(s.headline || s.onScreenText || '').slice(0, 40)}
                           </span>
-                        ) : (
-                          <span className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 font-semibold text-[10px] flex items-center gap-1">
-                            <Type className="w-2.5 h-2.5" /> Nền Typography
+                        }
+                      />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-fg-muted">
+                          <span className="font-medium text-fg">Cảnh {s.sceneNumber}</span>
+                          <span className="tabular">
+                            {formatClock(s.startTimeSeconds)}–{formatClock(s.endTimeSeconds)}
                           </span>
-                        )}
-                        {s.isImageReused && (
-                          <span className="px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 font-semibold text-[10px]">
-                            Ảnh dùng lại • Crop: {s.cropType || 'Center'}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-center">
-                      <div className="h-24 rounded-lg overflow-hidden bg-gray-900 border border-gray-800 relative flex items-center justify-center">
-                        {s.imageUrl ? (
-                          <img src={s.imageUrl} alt={`Scene ${s.sceneNumber}`} className="w-full h-full object-cover" />
-                        ) : (
-                          <div className="text-center p-2 text-[10px] text-gray-400 font-bold uppercase">
-                            {s.headline || s.onScreenText}
-                          </div>
-                        )}
-                        {s.cropType && (
-                          <span className="absolute top-1 left-1 px-1 py-0.5 rounded text-[9px] bg-black/75 font-mono text-purple-300 border border-purple-500/30">
-                            {s.cropType}
-                          </span>
-                        )}
-                        <span className="absolute bottom-1 right-1 px-1 py-0.5 rounded text-[9px] bg-black/80 font-mono text-gray-300">
-                          {s.motionType}
-                        </span>
-                      </div>
-
-                      <div className="md:col-span-3 space-y-1.5 text-xs">
-                        <p className="text-gray-200 font-medium">🗣️ Giọng đọc & Subtitle: {s.voiceOver || s.voiceText}</p>
-                        <p className="text-amber-300 font-mono text-[11px]">📺 Headline (Chữ nổi bật): {s.headline || s.onScreenText}</p>
-                        <div className="flex items-center gap-3 text-[10px] text-gray-500 pt-1">
-                          <span>Chuyển cảnh: {s.transitionType}</span>
-                          <span>•</span>
-                          <span>Hiệu ứng: {s.motionType}</span>
-                          <span>•</span>
-                          <span>Khung cắt: {s.cropType || 'Center'}</span>
-                          {s.imageCaption && (
-                            <>
-                              <span>•</span>
-                              <span className="truncate max-w-xs" title={s.imageCaption}>Caption: {s.imageCaption}</span>
-                            </>
+                          <span className="text-fg-subtle">·</span>
+                          <span>{SCENE_PURPOSE[s.scenePurpose] ?? s.scenePurpose}</span>
+                          {s.visualType === 'Image' ? (
+                            <Badge tone="success" className="ml-1">
+                              <ImageIcon className="h-3 w-3" /> Ảnh bài viết
+                            </Badge>
+                          ) : (
+                            <Badge tone="warning" className="ml-1">
+                              <Type className="h-3 w-3" /> Nền chữ
+                            </Badge>
                           )}
+                          {s.isImageReused && <Badge>Dùng lại ảnh</Badge>}
                         </div>
+                        {(s.headline || s.onScreenText) && (
+                          <p className="mt-1.5 text-sm font-medium text-fg">{s.headline || s.onScreenText}</p>
+                        )}
+                        <p className="mt-1 text-[13px] leading-relaxed text-fg-muted">{s.voiceOver || s.voiceText}</p>
+                        <p className="mt-2 text-xs text-fg-subtle">
+                          {MOTION[s.motionType] ?? s.motionType} · {TRANSITION[s.transitionType] ?? s.transitionType}
+                          {s.cropType && ` · Cắt ${s.cropType}`}
+                          {s.imageCaption && <span title={s.imageCaption}> · {s.imageCaption}</span>}
+                        </p>
                       </div>
                     </div>
-                  </div>
-                ))
+                  ))}
+                </Card>
               )}
             </div>
           )}
 
-          {/* ASSETS TAB: EPHEMERAL STORAGE INSPECTOR */}
-          {activeTab === 'assets' && (
+          {/* QC */}
+          {tab === 'qc' && (
             <div className="space-y-4">
-              <div className="glass-panel p-5 rounded-2xl border border-gray-800 space-y-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h4 className="text-sm font-bold text-white flex items-center gap-2">
-                      <HardDrive className="w-4 h-4 text-emerald-400" />
-                      Quản lý file tạm (Ephemeral Media Storage)
-                    </h4>
-                    <p className="text-xs text-gray-400 mt-0.5">
-                      Toàn bộ file MP4, audio và phụ đề chỉ lưu tạm trong quá trình dựng và hết hạn sau 2 giờ.
-                    </p>
-                  </div>
-                  <button
-                    onClick={handleCleanupAssets}
-                    className="px-3 py-1.5 rounded-lg bg-rose-500/20 hover:bg-rose-500 text-rose-300 hover:text-white text-xs font-semibold flex items-center gap-1 transition"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                    <span>Dọn dẹp ngay</span>
-                  </button>
-                </div>
-
-                <div className="space-y-2">
-                  {assets.length === 0 ? (
-                    <div className="p-6 text-center text-xs text-gray-500 bg-gray-900/40 rounded-xl">
-                      Chưa có file media tạm nào được ghi nhận. Bấm "Dựng video 9:16" để tạo file.
-                    </div>
-                  ) : (
-                    assets.map((asset) => (
-                      <div
-                        key={asset.id}
-                        className="p-3 rounded-xl bg-[#0B0F19] border border-gray-800 flex flex-wrap items-center justify-between gap-3 text-xs"
-                      >
-                        <div className="space-y-0.5">
-                          <div className="flex items-center gap-2">
-                            <span className="px-2 py-0.5 rounded font-mono text-[10px] bg-indigo-500/20 text-indigo-300 font-bold">
-                              {asset.assetType}
-                            </span>
-                            <span className="text-gray-300 font-mono truncate max-w-xs" title={asset.localTempPath}>
-                              {asset.localTempPath.split(/[\/\\]/).pop()}
-                            </span>
-                          </div>
-                          <p className="text-[10px] text-gray-500 font-mono truncate" title={asset.sha256Hash || ''}>
-                            Hash: {asset.sha256Hash?.slice(0, 16)}... | Size: {(asset.fileSizeBytes / 1024).toFixed(1)} KB
-                          </p>
-                        </div>
-
-                        <div className="text-right">
-                          <span className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
-                            asset.isCleanedUp ? 'bg-gray-800 text-gray-500' : 'bg-emerald-500/20 text-emerald-300'
-                          }`}>
-                            {asset.isCleanedUp ? 'Đã dọn dẹp' : 'Đang hoạt động (Active)'}
-                          </span>
-                          <p className="text-[10px] text-gray-500 mt-1">
-                            Hết hạn: {asset.expiresAtUtc ? new Date(asset.expiresAtUtc).toLocaleTimeString('vi-VN') : 'TTL 2h'}
-                          </p>
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* QC & VIDEO REVIEW TAB */}
-          {activeTab === 'qc' && (
-            <div className="space-y-4">
-              <div className="glass-panel p-5 rounded-2xl border border-gray-800 space-y-4">
-                <div className="flex flex-wrap items-center justify-between gap-4">
-                  <div>
-                    <h3 className="font-bold text-sm text-white flex items-center gap-2">
-                      <ShieldCheck className="w-5 h-5 text-emerald-400" />
-                      Báo cáo kiểm định chất lượng video (10 tiêu chí)
-                    </h3>
-                    <p className="text-xs text-gray-400 mt-1">
-                      {review?.assessment?.summary || 'Hệ thống tự động rà soát nội dung, dữ kiện, bản quyền ảnh và kỹ thuật video.'}
-                    </p>
-                  </div>
-
-                  <div className="flex items-center gap-3">
-                    <button
-                      onClick={handleRunEvaluation}
-                      disabled={evaluating}
-                      className="px-3 py-1.5 rounded-xl bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs font-semibold flex items-center gap-1.5 transition"
+              <Card>
+                <CardBody className="flex flex-col gap-4 sm:flex-row sm:items-center">
+                  <div className="flex items-baseline gap-1">
+                    <span
+                      className={cn(
+                        'text-4xl font-semibold tabular',
+                        score === undefined
+                          ? 'text-fg-subtle'
+                          : score >= 85
+                          ? 'text-success'
+                          : score >= 70
+                          ? 'text-warning'
+                          : 'text-danger'
+                      )}
                     >
-                      <RefreshCw className={`w-3.5 h-3.5 ${evaluating ? 'animate-spin' : ''}`} />
-                      <span>Kiểm định lại</span>
-                    </button>
-
-                    <div className="flex items-center gap-2 px-4 py-2 rounded-2xl bg-[#0B0F19] border border-gray-800">
-                      <span className="text-xs text-gray-400">Điểm nội bộ:</span>
-                      <span className={`font-mono text-lg font-extrabold ${
-                        (review?.internalQualityScore ?? 0) >= 85 ? 'text-emerald-400' :
-                        (review?.internalQualityScore ?? 0) >= 70 ? 'text-amber-400' : 'text-rose-400'
-                      }`}>
-                        {review?.internalQualityScore ?? 100}/100
-                      </span>
-                    </div>
+                      {score ?? '—'}
+                    </span>
+                    <span className="text-sm text-fg-subtle">/100</span>
                   </div>
-                </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm text-fg">
+                      {review?.assessment?.summary || 'Rà soát nội dung, dữ kiện, quyền sử dụng ảnh và kỹ thuật video.'}
+                    </p>
+                    {!!review?.assessment?.checkItems?.length && (
+                      <p className="mt-0.5 text-xs text-fg-muted">
+                        {review.assessment.checkItems.filter((c) => c.passed).length}/{review.assessment.checkItems.length} tiêu chí đạt
+                      </p>
+                    )}
+                  </div>
+                  <Button size="sm" icon={<RefreshCw className="h-3.5 w-3.5" />} loading={evaluating} onClick={runEvaluation}>
+                    Kiểm định lại
+                  </Button>
+                </CardBody>
+              </Card>
 
-                <div className="p-3 rounded-xl bg-indigo-950/20 border border-indigo-500/20 text-[11px] text-indigo-300">
-                  ℹ️ <strong>Lưu ý:</strong> {review?.assessment?.notice || 'Điểm kiểm định nội bộ là tiêu chuẩn biên tập của AI News Studio, không phản ánh thuật toán của Facebook.'}
-                </div>
-
-                <div className="space-y-2 text-xs">
-                  {review?.assessment?.checkItems ? (
-                    review.assessment.checkItems.map((item, idx) => (
-                      <div
-                        key={idx}
-                        className={`p-3 rounded-xl border flex flex-col md:flex-row md:items-center justify-between gap-2 ${
-                          item.isFatal && !item.passed
-                            ? 'bg-rose-950/20 border-rose-500/40'
-                            : item.passed
-                            ? 'bg-[#0B0F19] border-gray-800/80'
-                            : 'bg-amber-950/10 border-amber-500/30'
-                        }`}
-                      >
-                        <div className="space-y-1">
-                          <div className="flex items-center gap-2">
-                            <span className="font-bold text-gray-200">
-                              #{idx + 1}. {item.title}
-                            </span>
-                            <span className="px-1.5 py-0.5 rounded text-[9px] font-mono bg-gray-800 text-gray-400">
-                              {item.category}
-                            </span>
-                            {item.isFatal && (
-                              <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-rose-500/20 text-rose-300">
-                                Tiêu chí bắt buộc
-                              </span>
-                            )}
+              <Card className="divide-y divide-line">
+                {review?.assessment?.checkItems?.length ? (
+                  review.assessment.checkItems.map((item, idx) => {
+                    const failFatal = item.isFatal && !item.passed;
+                    return (
+                      <div key={idx} className="flex gap-3 px-4 py-3.5">
+                        <span className="mt-0.5 shrink-0">
+                          {item.passed ? (
+                            <CheckCircle2 className="h-4 w-4 text-success" />
+                          ) : failFatal ? (
+                            <XCircle className="h-4 w-4 text-danger" />
+                          ) : (
+                            <AlertTriangle className="h-4 w-4 text-warning" />
+                          )}
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-sm font-medium text-fg">{item.title}</span>
+                            {item.isFatal && <Badge tone={failFatal ? 'danger' : 'neutral'}>Bắt buộc</Badge>}
                           </div>
-                          <p className="text-[11px] text-gray-400">{item.details}</p>
-                          {item.recommendation && (
-                            <p className="text-[10px] text-amber-300/90 font-medium">💡 Gợi ý: {item.recommendation}</p>
+                          <p className="mt-0.5 text-[13px] text-fg-muted">{item.details}</p>
+                          {item.recommendation && !item.passed && (
+                            <p className="mt-1 text-xs text-fg-muted">
+                              <span className="font-medium text-fg">Gợi ý:</span> {item.recommendation}
+                            </p>
                           )}
                         </div>
-
-                        <div className="flex items-center gap-2 shrink-0 self-end md:self-center">
-                          <span className="font-mono text-[11px] text-gray-400">
-                            {item.score}/10 đ
-                          </span>
-                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold flex items-center gap-1 ${
-                            item.passed
-                              ? 'bg-emerald-500/20 text-emerald-300'
-                              : item.isFatal
-                              ? 'bg-rose-500/20 text-rose-300'
-                              : 'bg-amber-500/20 text-amber-300'
-                          }`}>
-                            {item.passed ? <CheckCircle className="w-3 h-3" /> : <XCircle className="w-3 h-3" />}
-                            {item.passed ? 'Đạt' : (item.isFatal ? 'Vi phạm' : 'Cần lưu ý')}
-                          </span>
-                        </div>
+                        <span className="shrink-0 text-xs tabular text-fg-subtle">{item.score}/10</span>
                       </div>
-                    ))
-                  ) : (
-                    <div className="p-4 text-center text-gray-500 text-xs">
-                      Bấm "Kiểm định lại" để chạy rà soát 10 tiêu chí chất lượng.
-                    </div>
+                    );
+                  })
+                ) : (
+                  <EmptyState
+                    title="Chưa có kết quả kiểm định"
+                    description="Bấm “Kiểm định lại” để rà soát nội dung, dữ kiện, quyền ảnh và kỹ thuật video."
+                    className="py-10"
+                  />
+                )}
+              </Card>
+
+              {review?.assessment?.notice && <p className="px-1 text-xs text-fg-subtle">{review.assessment.notice}</p>}
+
+              <Card>
+                <CardHeader title="Quyết định duyệt" description={decisionText(review?.decision, !!publishedPost)} />
+                <CardBody className="flex flex-wrap items-center gap-2">
+                  {!publishedPost && (
+                    <>
+                      <Button
+                        variant="primary"
+                        size="sm"
+                        icon={<Check className="h-3.5 w-3.5" />}
+                        loading={approving}
+                        disabled={hasFatal || !hasVideo || isApproved}
+                        title={!hasVideo ? 'Cần dựng video trước khi duyệt' : hasFatal ? 'Còn lỗi nghiêm trọng' : undefined}
+                        onClick={approve}
+                      >
+                        {isApproved ? 'Đã duyệt' : 'Duyệt video'}
+                      </Button>
+                      <Button size="sm" onClick={() => setShowReject(true)}>
+                        Từ chối
+                      </Button>
+                      <span className="mx-1 hidden h-5 w-px bg-line sm:block" />
+                    </>
                   )}
-                </div>
-              </div>
-
-              {/* Review Actions Toolbar */}
-              <div className="glass-panel p-5 rounded-2xl border border-gray-800 space-y-3">
-                <h4 className="text-xs font-bold text-gray-300 uppercase tracking-wider">
-                  Thao tác kiểm duyệt & điều hướng quy trình
-                </h4>
-                <div className="flex flex-wrap items-center gap-3">
-                  <button
-                    onClick={() => handleRequestAction('RegenerateScript')}
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    icon={<RotateCcw className="h-3.5 w-3.5" />}
+                    loading={actionLoading === 'RegenerateScript'}
                     disabled={actionLoading !== null}
-                    className="px-3 py-2 rounded-xl bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs font-semibold flex items-center gap-1.5 transition disabled:opacity-50"
+                    onClick={() => requestAction('RegenerateScript')}
                   >
-                    <RotateCcw className={`w-3.5 h-3.5 ${actionLoading === 'RegenerateScript' ? 'animate-spin' : ''}`} />
-                    <span>Yêu cầu tạo lại kịch bản</span>
-                  </button>
-
-                  <button
-                    onClick={() => handleRequestAction('RegenerateAudio')}
-                    disabled={actionLoading !== null}
-                    className="px-3 py-2 rounded-xl bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs font-semibold flex items-center gap-1.5 transition disabled:opacity-50"
+                    Viết lại kịch bản
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    icon={<Volume2 className="h-3.5 w-3.5" />}
+                    loading={actionLoading === 'RegenerateAudio'}
+                    disabled={actionLoading !== null || !script}
+                    title={!script ? 'Cần có kịch bản trước' : undefined}
+                    onClick={() => requestAction('RegenerateAudio')}
                   >
-                    <Volume2 className="w-3.5 h-3.5" />
-                    <span>Yêu cầu tạo lại audio</span>
-                  </button>
-
-                  <button
-                    onClick={() => handleRequestAction('ReRender')}
-                    disabled={actionLoading !== null}
-                    className="px-3 py-2 rounded-xl bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs font-semibold flex items-center gap-1.5 transition disabled:opacity-50"
+                    Tạo lại giọng đọc
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    icon={<Film className="h-3.5 w-3.5" />}
+                    loading={actionLoading === 'ReRender'}
+                    disabled={actionLoading !== null || !script}
+                    title={!script ? 'Cần có kịch bản trước' : undefined}
+                    onClick={() => requestAction('ReRender')}
                   >
-                    <Film className="w-3.5 h-3.5" />
-                    <span>Render lại video</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* Quick Publish Entry Box */}
-              <div className="p-5 rounded-2xl bg-indigo-950/30 border border-indigo-500/30 flex flex-col md:flex-row md:items-center justify-between gap-4">
-                <div>
-                  <p className="font-bold text-sm text-white flex items-center gap-2">
-                    <Share2 className="w-4 h-4 text-indigo-400" />
-                    Xuất bản lên Facebook Reels (Meta Graph API)
-                  </p>
-                  <p className="text-xs text-indigo-300 mt-0.5">
-                    {publishedPost
-                      ? '✓ Video đã được xuất bản lên Reels. Xem phân tích số liệu tại tab Facebook Reels.'
-                      : isApproved
-                      ? '✓ Video đã được bạn phê duyệt, sẵn sàng đăng tải lên Meta Graph API.'
-                      : hasFatalViolations
-                      ? '⚠️ Không thể xuất bản: Video vi phạm tiêu chí kiểm định nghiêm trọng.'
-                      : 'Cần bấm "Phê duyệt video" phía trên trước khi xuất bản.'}
-                  </p>
-                </div>
-                <button
-                  disabled={!isApproved || hasFatalViolations}
-                  onClick={() => setShowPublishModal(true)}
-                  className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-semibold text-xs flex items-center gap-2 transition shadow-lg shadow-indigo-600/30"
-                >
-                  <Share2 className="w-4 h-4" />
-                  <span>{publishedPost ? 'Xem chi tiết bài đăng' : 'Đăng ngay lên Fanpage'}</span>
-                </button>
-              </div>
+                    Dựng lại video
+                  </Button>
+                </CardBody>
+              </Card>
             </div>
           )}
 
-          {/* REELS & INSIGHTS TAB (PHASE 7) */}
-          {activeTab === 'reels' && (
+          {/* AUDIO */}
+          {tab === 'audio' && (
+            <div className="space-y-4">
+              <Card>
+                <CardHeader
+                  title="Giọng đọc"
+                  description={hasAudio ? 'Bản thu đã dùng trong video hiện tại.' : undefined}
+                  actions={
+                    hasAudio && (
+                      <ButtonLink href={audioUrl} download="voiceover.wav" size="sm" variant="ghost" icon={<Download className="h-3.5 w-3.5" />}>
+                        WAV
+                      </ButtonLink>
+                    )
+                  }
+                />
+                <CardBody>
+                  {hasAudio ? (
+                    <audio key={latestAudioAsset?.id || projectId} src={audioUrl} controls className="h-10 w-full" />
+                  ) : (
+                    <p className="text-[13px] text-fg-muted">Chưa có giọng đọc. Giọng đọc được tạo cùng lúc khi dựng video.</p>
+                  )}
+                </CardBody>
+              </Card>
+            </div>
+          )}
+
+          {/* PUBLISH */}
+          {tab === 'publish' && (
             <div className="space-y-4">
               {publishedPost ? (
-                <div className="space-y-4">
-                  {/* Published Reel Status Card */}
-                  <div className="glass-panel p-6 rounded-2xl border border-indigo-500/30 bg-gradient-to-br from-indigo-950/40 to-[#0B0F19] space-y-4">
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div className="flex items-center gap-2.5">
-                        <div className="w-10 h-10 rounded-2xl bg-indigo-600/20 text-indigo-400 flex items-center justify-center font-bold">
-                          <Share2 className="w-5 h-5" />
+                <>
+                  <Card>
+                    <CardBody>
+                      <div className="flex flex-wrap items-start justify-between gap-4">
+                        <div className="flex items-start gap-3">
+                          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-success/10 text-success">
+                            <Check className="h-4 w-4" />
+                          </span>
+                          <div>
+                            <p className="text-sm font-medium text-fg">Đã đăng lên {publishedPost.pageName || 'Facebook'}</p>
+                            <p className="mt-0.5 text-xs text-fg-muted">
+                              {formatDateTime(publishedPost.publishedAtUtc)} · Mã bài{' '}
+                              <span className="font-mono">{publishedPost.facebookPostId}</span>
+                            </p>
+                          </div>
                         </div>
-                        <div>
-                          <h4 className="text-sm font-bold text-white flex items-center gap-2">
-                            <span>Facebook Reels đã xuất bản</span>
-                            <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 text-[10px] font-bold">
-                              Live on Meta ✓
-                            </span>
-                          </h4>
-                          <p className="text-xs text-gray-400 mt-0.5 font-mono">
-                            Post ID: {publishedPost.facebookPostId}
-                          </p>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-2">
-                        {publishedPost.postUrl && (
-                          <a
-                            href={publishedPost.postUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold flex items-center gap-1.5 transition shadow-lg shadow-indigo-600/20"
+                        <div className="flex gap-2">
+                          <Button
+                            size="sm"
+                            icon={<RefreshCw className="h-3.5 w-3.5" />}
+                            loading={metricsLoading === publishedPost.id}
+                            onClick={() => refreshMetrics(publishedPost.id)}
                           >
-                            <ExternalLink className="w-3.5 h-3.5" />
-                            <span>Mở trên Facebook</span>
-                          </a>
-                        )}
-
-                        <button
-                          onClick={() => handleFetchMetrics(publishedPost.id)}
-                          disabled={metricsLoading === publishedPost.id}
-                          className="px-3 py-2 rounded-xl bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs font-semibold flex items-center gap-1.5 transition"
-                          title="Cập nhật số liệu từ Meta Page Insights API"
-                        >
-                          <RefreshCw className={`w-3.5 h-3.5 ${metricsLoading === publishedPost.id ? 'animate-spin text-indigo-400' : ''}`} />
-                          <span>Cập nhật Insights</span>
-                        </button>
+                            Cập nhật số liệu
+                          </Button>
+                          {publishedPost.postUrl && (
+                            <ButtonLink
+                              size="sm"
+                              variant="primary"
+                              href={publishedPost.postUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              icon={<ExternalLink className="h-3.5 w-3.5" />}
+                            >
+                              Mở bài đăng
+                            </ButtonLink>
+                          )}
+                        </div>
                       </div>
-                    </div>
+                    </CardBody>
+                  </Card>
 
-                    <div className="p-3.5 rounded-xl bg-black/40 border border-gray-800 text-xs text-gray-300 space-y-1">
-                      <p className="font-semibold text-white">Nội dung caption đã đăng:</p>
-                      <p className="text-gray-400 whitespace-pre-wrap text-[11px] font-sans">
-                        {project?.title} - {script?.sourceAttribution}
-                      </p>
-                    </div>
-
-                    {/* Insights Metrics Grid */}
-                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 pt-2">
-                      <div className="p-3.5 rounded-xl bg-[#0B0F19] border border-gray-800 space-y-1">
-                        <span className="text-[11px] text-gray-400 flex items-center gap-1.5">
-                          <Eye className="w-3.5 h-3.5 text-blue-400" />
-                          Tổng lượt xem (Views)
-                        </span>
-                        <p className="text-lg font-bold font-mono text-white">
-                          {publishedPost.latestMetric?.views.toLocaleString() ?? '0'}
-                        </p>
-                      </div>
-
-                      <div className="p-3.5 rounded-xl bg-[#0B0F19] border border-gray-800 space-y-1">
-                        <span className="text-[11px] text-gray-400 flex items-center gap-1.5">
-                          <Users className="w-3.5 h-3.5 text-emerald-400" />
-                          Tiếp cận (Reach)
-                        </span>
-                        <p className="text-lg font-bold font-mono text-white">
-                          {publishedPost.latestMetric?.reach.toLocaleString() ?? '0'}
-                        </p>
-                      </div>
-
-                      <div className="p-3.5 rounded-xl bg-[#0B0F19] border border-gray-800 space-y-1">
-                        <span className="text-[11px] text-gray-400 flex items-center gap-1.5">
-                          <ThumbsUp className="w-3.5 h-3.5 text-amber-400" />
-                          Tương tác (Engagement)
-                        </span>
-                        <p className="text-lg font-bold font-mono text-white">
-                          {publishedPost.latestMetric?.engagement.toLocaleString() ?? '0'}
-                        </p>
-                      </div>
-
-                      <div className="p-3.5 rounded-xl bg-[#0B0F19] border border-gray-800 space-y-1">
-                        <span className="text-[11px] text-gray-400 flex items-center gap-1.5">
-                          <Share2 className="w-3.5 h-3.5 text-purple-400" />
-                          Lượt chia sẻ (Shares)
-                        </span>
-                        <p className="text-lg font-bold font-mono text-white">
-                          {publishedPost.latestMetric?.shares.toLocaleString() ?? '0'}
-                        </p>
-                      </div>
-
-                      <div className="p-3.5 rounded-xl bg-[#0B0F19] border border-gray-800 space-y-1">
-                        <span className="text-[11px] text-gray-400 flex items-center gap-1.5">
-                          <MessageSquare className="w-3.5 h-3.5 text-cyan-400" />
-                          Bình luận (Comments)
-                        </span>
-                        <p className="text-lg font-bold font-mono text-white">
-                          {publishedPost.latestMetric?.comments.toLocaleString() ?? '0'}
-                        </p>
-                      </div>
-
-                      <div className="p-3.5 rounded-xl bg-[#0B0F19] border border-gray-800 space-y-1">
-                        <span className="text-[11px] text-gray-400 flex items-center gap-1.5">
-                          <BarChart3 className="w-3.5 h-3.5 text-rose-400" />
-                          Thời lượng xem TB
-                        </span>
-                        <p className="text-lg font-bold font-mono text-white">
-                          {publishedPost.latestMetric?.watchTimeSeconds.toFixed(1) ?? '0.0'}s
-                        </p>
-                      </div>
-                    </div>
+                  <div className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-line bg-line sm:grid-cols-3">
+                    <Metric label="Lượt xem" value={formatNumber(publishedPost.latestMetric?.views)} />
+                    <Metric label="Tiếp cận" value={formatNumber(publishedPost.latestMetric?.reach)} />
+                    <Metric label="Tương tác" value={formatNumber(publishedPost.latestMetric?.engagement)} />
+                    <Metric label="Chia sẻ" value={formatNumber(publishedPost.latestMetric?.shares)} />
+                    <Metric label="Bình luận" value={formatNumber(publishedPost.latestMetric?.comments)} />
+                    <Metric label="Thời gian xem TB" value={`${(publishedPost.latestMetric?.watchTimeSeconds ?? 0).toFixed(1)}s`} />
                   </div>
-                </div>
-              ) : (
-                <div className="glass-panel p-8 text-center space-y-4 border border-gray-800">
-                  <div className="w-12 h-12 mx-auto rounded-2xl bg-indigo-600/10 text-indigo-400 flex items-center justify-center">
-                    <Share2 className="w-6 h-6" />
-                  </div>
-                  <div>
-                    <h4 className="text-sm font-bold text-white">Video chưa được xuất bản lên Facebook Reels</h4>
-                    <p className="text-xs text-gray-400 mt-1 max-w-md mx-auto">
-                      Để xuất bản, video bắt buộc phải được render hoàn chỉnh và vượt qua kiểm định chất lượng (được biên tập viên duyệt).
+                  {publishedPost.latestMetric?.collectedAtUtc && (
+                    <p className="px-1 text-xs text-fg-subtle">
+                      Số liệu cập nhật lúc {formatTime(publishedPost.latestMetric.collectedAtUtc)}
                     </p>
-                  </div>
-                  <button
-                    disabled={!isApproved || hasFatalViolations}
-                    onClick={() => setShowPublishModal(true)}
-                    className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-semibold inline-flex items-center gap-2 transition"
-                  >
-                    <Share2 className="w-4 h-4" />
-                    <span>Mở hộp thoại xuất bản Reels</span>
-                  </button>
-                </div>
+                  )}
+                </>
+              ) : (
+                <Card>
+                  <CardHeader title="Đăng lên Facebook" description="Video cần hoàn tất các bước sau trước khi đăng." />
+                  <CardBody>
+                    <ul className="space-y-2.5 text-sm">
+                      <ChecklistItem done={hasVideo} label="Đã dựng video" />
+                      <ChecklistItem done={!!review && !hasFatal} label="Không có lỗi nghiêm trọng" />
+                      <ChecklistItem done={isApproved} label="Đã được duyệt" />
+                      <ChecklistItem
+                        done={pages.length > 0}
+                        optional
+                        label={pages.length > 0 ? `Đã kết nối ${pages.length} trang Facebook` : 'Chưa kết nối trang Facebook'}
+                        extra={
+                          pages.length === 0 && (
+                            <a href={href('/settings/facebook')} className="text-xs text-accent hover:underline">
+                              Kết nối
+                            </a>
+                          )
+                        }
+                      />
+                    </ul>
+                    <Button
+                      className="mt-5"
+                      variant="primary"
+                      icon={<Send className="h-4 w-4" />}
+                      disabled={!isApproved || hasFatal}
+                      onClick={openPublish}
+                    >
+                      Đăng lên Facebook
+                    </Button>
+                  </CardBody>
+                </Card>
+              )}
+
+              {otherPosts.length > 0 && (
+                <Card>
+                  <CardHeader title="Lịch sử đăng" />
+                  <CardBody className="space-y-2 text-[13px]">
+                    {otherPosts.map((p) => (
+                      <div key={p.id} className="flex items-center justify-between gap-3">
+                        <span className="text-fg-muted">
+                          {formatDateTime(p.publishedAtUtc)} · {p.pageName || 'Facebook'}
+                          {p.errorMessage && <span className="text-danger"> · {p.errorMessage}</span>}
+                        </span>
+                        <Badge tone={p.uploadStatus === 'Failed' ? 'danger' : 'neutral'}>{p.uploadStatus}</Badge>
+                      </div>
+                    ))}
+                  </CardBody>
+                </Card>
               )}
             </div>
+          )}
+
+          {/* FILES */}
+          {tab === 'files' && (
+            <Card>
+              <CardHeader
+                title="File tạm"
+                description="Video, âm thanh và phụ đề chỉ được lưu tạm và tự xoá khi hết hạn."
+                actions={
+                  assets.some((a) => !a.isCleanedUp) && (
+                    <Button size="sm" variant="danger-soft" icon={<Trash2 className="h-3.5 w-3.5" />} onClick={cleanupAssets}>
+                      Xoá tất cả
+                    </Button>
+                  )
+                }
+              />
+              <CardBody className="pt-3">
+                {assets.length === 0 ? (
+                  <p className="py-6 text-center text-[13px] text-fg-muted">Chưa có file nào. File được tạo khi dựng video.</p>
+                ) : (
+                  <div className="-mx-5 overflow-x-auto">
+                    <table className="w-full text-[13px]">
+                      <thead className="border-y border-line bg-subtle text-left text-xs text-fg-muted">
+                        <tr>
+                          <th className="py-2 pl-5 pr-3 font-medium">Loại</th>
+                          <th className="px-3 py-2 font-medium">Tên file</th>
+                          <th className="px-3 py-2 text-right font-medium">Dung lượng</th>
+                          <th className="px-3 py-2 font-medium">Hết hạn</th>
+                          <th className="py-2 pl-3 pr-5 font-medium">Trạng thái</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-line">
+                        {assets.map((a) => (
+                          <tr key={a.id}>
+                            <td className="py-2.5 pl-5 pr-3 text-fg">{a.assetType}</td>
+                            <td className="max-w-[220px] truncate px-3 py-2.5 font-mono text-xs text-fg-muted" title={a.localTempPath}>
+                              {a.localTempPath.split(/[/\\]/).pop()}
+                            </td>
+                            <td className="whitespace-nowrap px-3 py-2.5 text-right tabular text-fg-muted">{formatBytes(a.fileSizeBytes)}</td>
+                            <td className="whitespace-nowrap px-3 py-2.5 text-fg-muted">{formatTime(a.expiresAtUtc)}</td>
+                            <td className="py-2.5 pl-3 pr-5">
+                              <Badge tone={a.isCleanedUp ? 'neutral' : 'success'}>{a.isCleanedUp ? 'Đã xoá' : 'Còn lưu'}</Badge>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </CardBody>
+            </Card>
           )}
         </div>
       </div>
 
-      {/* PUBLISH REELS MODAL (PHASE 7) */}
-      {showPublishModal && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="glass-panel p-6 rounded-2xl max-w-lg w-full border border-gray-800 space-y-5">
-            <div className="flex items-center justify-between border-b border-gray-800 pb-3">
-              <h3 className="text-base font-bold text-white flex items-center gap-2">
-                <Share2 className="w-5 h-5 text-indigo-400" />
-                Xuất bản video lên Facebook Reels (Meta Graph API)
-              </h3>
-              <button
-                onClick={() => setShowPublishModal(false)}
-                className="text-gray-400 hover:text-white text-xs"
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="space-y-4 text-xs">
-              {/* Select Fanpage */}
-              <div>
-                <label className="block text-gray-400 font-semibold mb-1">Chọn Facebook Page xuất bản *</label>
-                {pages.length > 0 ? (
-                  <select
-                    value={selectedPageId}
-                    onChange={(e) => setSelectedPageId(e.target.value)}
-                    className="w-full p-2.5 rounded-xl bg-[#0B0F19] border border-gray-800 text-gray-200 focus:outline-none focus:border-indigo-500"
-                  >
-                    {pages.map((p) => (
-                      <option key={p.id} value={p.pageId}>
-                        {p.pageName} (ID: {p.pageId})
-                      </option>
-                    ))}
-                  </select>
-                ) : (
-                  <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300">
-                    Chưa có Fanpage nào được kết nối trong hệ thống. Hệ thống sẽ sử dụng Fanpage thử nghiệm mặc định của AI News Studio.
-                  </div>
-                )}
-              </div>
-
-              {/* Caption */}
-              <div>
-                <label className="block text-gray-400 font-semibold mb-1">Mô tả & Hashtags bài đăng</label>
-                <textarea
-                  value={publishCaption}
-                  onChange={(e) => setPublishCaption(e.target.value)}
-                  rows={4}
-                  className="w-full p-3 rounded-xl bg-[#0B0F19] border border-gray-800 text-gray-200 focus:outline-none focus:border-indigo-500"
-                />
-              </div>
-
-              {/* Ephemeral Auto-Cleanup Checkbox (Master Plan Requirement) */}
-              <label className="flex items-start gap-2.5 p-3 rounded-xl bg-[#0B0F19] border border-gray-800 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={autoCleanup}
-                  onChange={(e) => setAutoCleanup(e.target.checked)}
-                  className="rounded border-gray-700 text-indigo-600 focus:ring-0 mt-0.5"
-                />
-                <div className="space-y-0.5">
-                  <span className="font-semibold text-white">Tự động dọn dẹp file tạm sau khi đăng (Khuyến nghị)</span>
-                  <p className="text-[11px] text-gray-400">
-                    Tuân thủ Master Plan: Không lưu MP4/ảnh/audio lâu dài. File tạm trên ổ cứng sẽ được giải phóng ngay sau khi upload thành công lên Meta.
-                  </p>
-                </div>
-              </label>
-            </div>
-
-            <div className="flex items-center justify-end gap-3 pt-2 border-t border-gray-800">
-              <button
-                type="button"
-                onClick={() => setShowPublishModal(false)}
-                className="px-4 py-2 rounded-xl text-xs text-gray-400 hover:text-white"
-              >
-                Hủy bỏ
-              </button>
-              <button
-                type="button"
-                onClick={handlePublishReel}
-                disabled={publishing}
-                className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-semibold flex items-center gap-2 shadow-lg shadow-indigo-600/30"
-              >
-                <Share2 className={`w-3.5 h-3.5 ${publishing ? 'animate-spin' : ''}`} />
-                <span>{publishing ? 'Đang upload lên Meta Reels...' : 'Xác nhận đăng Reels'}</span>
-              </button>
-            </div>
-          </div>
+      {/* Publish modal */}
+      <Modal
+        open={showPublish}
+        onClose={() => setShowPublish(false)}
+        title="Đăng lên Facebook"
+        description="Video sẽ được đăng dưới dạng Reels lên trang bạn chọn."
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setShowPublish(false)}>
+              Huỷ
+            </Button>
+            <Button variant="primary" icon={<Send className="h-4 w-4" />} loading={publishing} onClick={publish}>
+              {publishing ? 'Đang tải lên…' : 'Đăng ngay'}
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <Field label="Trang Facebook">
+            {pages.length > 0 ? (
+              <Select value={selectedPageId} onChange={(e) => setSelectedPageId(e.target.value)}>
+                {pages.map((p) => (
+                  <option key={p.id} value={p.pageId}>
+                    {p.pageName}
+                  </option>
+                ))}
+              </Select>
+            ) : (
+              <Alert tone="warning" icon={<Facebook />}>
+                Chưa kết nối trang nào. Video sẽ được đăng lên trang mặc định cấu hình trên máy chủ.{' '}
+                <a href={href('/settings/facebook')} className="font-medium text-fg underline">
+                  Kết nối trang
+                </a>
+              </Alert>
+            )}
+          </Field>
+          <Field label="Nội dung bài đăng" hint={`${publishCaption.length} ký tự`}>
+            <Textarea rows={6} value={publishCaption} onChange={(e) => setPublishCaption(e.target.value)} />
+          </Field>
+          <Checkbox
+            checked={autoCleanup}
+            onChange={setAutoCleanup}
+            label="Xoá file tạm sau khi đăng"
+            description="Khuyến nghị. Giải phóng dung lượng máy chủ ngay khi tải lên thành công."
+          />
         </div>
-      )}
+      </Modal>
 
-      {/* REJECT MODAL */}
-      {showRejectModal && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="glass-panel p-6 rounded-2xl max-w-md w-full border border-gray-800 space-y-4">
-            <h3 className="text-base font-bold text-white flex items-center gap-2">
-              <XCircle className="w-5 h-5 text-rose-400" />
-              Từ chối duyệt video
-            </h3>
-            <p className="text-xs text-gray-400">
-              Vui lòng nhập lý do từ chối để ghi lại lịch sử kiểm duyệt và hướng dẫn người biên tập chỉnh sửa.
-            </p>
-            <textarea
-              value={rejectNotes}
-              onChange={(e) => setRejectNotes(e.target.value)}
-              placeholder="Ví dụ: Kịch bản chưa làm rõ số liệu, cần kiểm tra lại bản quyền ảnh phân cảnh số 3..."
-              className="w-full h-24 p-3 rounded-xl bg-[#0B0F19] border border-gray-800 text-xs text-gray-200 focus:outline-none focus:border-rose-500"
-            />
-            <div className="flex items-center justify-end gap-3 pt-2">
-              <button
-                onClick={() => setShowRejectModal(false)}
-                className="px-4 py-2 rounded-xl text-xs text-gray-400 hover:text-white"
-              >
-                Hủy bỏ
-              </button>
-              <button
-                onClick={handleReject}
-                className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold"
-              >
-                Xác nhận từ chối
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Reject modal */}
+      <Modal
+        open={showReject}
+        onClose={() => setShowReject(false)}
+        title="Từ chối video"
+        description="Ghi lại lý do để biết cần sửa gì ở lần sau."
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setShowReject(false)}>
+              Huỷ
+            </Button>
+            <Button variant="danger" disabled={!rejectNotes.trim()} onClick={reject}>
+              Từ chối
+            </Button>
+          </>
+        }
+      >
+        <Textarea
+          rows={4}
+          autoFocus
+          value={rejectNotes}
+          onChange={(e) => setRejectNotes(e.target.value)}
+          placeholder="Ví dụ: Số liệu ở cảnh 3 chưa khớp với bài báo, cần kiểm tra lại."
+        />
+      </Modal>
 
-      {/* EDIT METADATA MODAL */}
-      {showEditModal && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="glass-panel p-6 rounded-2xl max-w-lg w-full border border-gray-800 space-y-4">
-            <h3 className="text-base font-bold text-white flex items-center gap-2">
-              <Edit3 className="w-5 h-5 text-indigo-400" />
-              Chỉnh sửa tiêu đề & Caption video
-            </h3>
-            <div className="space-y-3 text-xs">
-              <div>
-                <label className="block text-gray-400 font-semibold mb-1">Tiêu đề video</label>
-                <input
-                  type="text"
-                  value={editTitle}
-                  onChange={(e) => setEditTitle(e.target.value)}
-                  className="w-full p-2.5 rounded-xl bg-[#0B0F19] border border-gray-800 text-gray-200 focus:outline-none focus:border-indigo-500"
-                />
-              </div>
-              <div>
-                <label className="block text-gray-400 font-semibold mb-1">Caption / Chữ nổi bật phân cảnh</label>
-                <input
-                  type="text"
-                  value={editCaption}
-                  onChange={(e) => setEditCaption(e.target.value)}
-                  placeholder="TIÊU ĐIỂM: ..."
-                  className="w-full p-2.5 rounded-xl bg-[#0B0F19] border border-gray-800 text-gray-200 focus:outline-none focus:border-indigo-500"
-                />
-              </div>
-            </div>
-            <div className="flex items-center justify-end gap-3 pt-2">
-              <button
-                onClick={() => setShowEditModal(false)}
-                className="px-4 py-2 rounded-xl text-xs text-gray-400 hover:text-white"
-              >
-                Hủy
-              </button>
-              <button
-                onClick={handleUpdateMetadata}
-                className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold"
-              >
-                Lưu thay đổi
-              </button>
-            </div>
-          </div>
+      {/* Edit modal */}
+      <Modal
+        open={showEdit}
+        onClose={() => setShowEdit(false)}
+        title="Sửa tiêu đề"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setShowEdit(false)}>
+              Huỷ
+            </Button>
+            <Button variant="primary" disabled={!editTitle.trim()} onClick={saveMetadata}>
+              Lưu
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <Field label="Tiêu đề video">
+            <Input value={editTitle} onChange={(e) => setEditTitle(e.target.value)} autoFocus />
+          </Field>
+          <Field label="Chữ trên màn hình (cảnh đầu)" optional>
+            <Input value={editCaption} onChange={(e) => setEditCaption(e.target.value)} />
+          </Field>
         </div>
-      )}
+      </Modal>
     </div>
   );
 };
+
+/* ─────────────── Small pieces ─────────────── */
+
+function decisionText(decision: string | undefined, published: boolean) {
+  if (published) return 'Video đã được duyệt và đăng.';
+  switch (decision) {
+    case 'Approved':
+      return 'Video đã được duyệt, có thể đăng lên Facebook.';
+    case 'Rejected':
+      return 'Video đã bị từ chối. Sửa lại rồi duyệt lại khi sẵn sàng.';
+    default:
+      return 'Xem lại video và kết quả kiểm định trước khi duyệt.';
+  }
+}
+
+function ScriptBlock({ title, body, note }: { title: string; body?: string; note?: string }) {
+  if (!body) return null;
+  return (
+    <Card>
+      <CardBody>
+        <div className="mb-1.5 text-[13px] font-medium text-fg">{title}</div>
+        <p className="whitespace-pre-wrap text-[13px] leading-relaxed text-fg-muted">{body}</p>
+        {note && <p className="mt-2 text-xs text-fg-subtle">{note}</p>}
+      </CardBody>
+    </Card>
+  );
+}
+
+function Metric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="bg-surface px-4 py-3.5">
+      <div className="text-xs text-fg-muted">{label}</div>
+      <div className="mt-1 text-xl font-semibold tabular text-fg">{value}</div>
+    </div>
+  );
+}
+
+function ChecklistItem({
+  done,
+  label,
+  optional,
+  extra,
+}: {
+  done: boolean;
+  label: string;
+  optional?: boolean;
+  extra?: React.ReactNode;
+}) {
+  return (
+    <li className="flex items-center gap-2.5">
+      {done ? (
+        <CheckCircle2 className="h-4 w-4 shrink-0 text-success" />
+      ) : (
+        <Circle className={cn('h-4 w-4 shrink-0', optional ? 'text-fg-subtle' : 'text-line-strong')} />
+      )}
+      <span className={done ? 'text-fg' : 'text-fg-muted'}>{label}</span>
+      {extra}
+    </li>
+  );
+}
+
+function DetailSkeleton() {
+  return (
+    <div>
+      <Skeleton className="mb-4 h-4 w-16" />
+      <Skeleton className="mb-2 h-7 w-2/3" />
+      <Skeleton className="mb-8 h-4 w-1/3" />
+      <div className="grid gap-8 lg:grid-cols-[300px_1fr]">
+        <Skeleton className="mx-auto aspect-[9/16] w-full max-w-[300px] rounded-2xl" />
+        <div className="space-y-4">
+          <Skeleton className="h-10 w-full" />
+          <Skeleton className="h-40 w-full" />
+          <Skeleton className="h-64 w-full" />
+        </div>
+      </div>
+    </div>
+  );
+}

@@ -13,6 +13,9 @@ namespace NewsStudio.Infrastructure.Rendering;
 
 public class EdgeTtsService : ITtsService
 {
+    /// <summary>Short pause kept after the last word so the video doesn't cut mid-breath.</summary>
+    internal const double TailSeconds = 0.6;
+
     private readonly ISubtitleGeneratorService _subtitleGenerator;
     private readonly IConfiguration _configuration;
     private readonly ILogger<EdgeTtsService> _logger;
@@ -36,7 +39,7 @@ public class EdgeTtsService : ITtsService
         _logger.LogInformation("EdgeTtsService synthesizing speech for project {ProjectId} (Voice: {Voice})",
             request.ProjectId, request.Voice);
 
-        var tempBase = _configuration["Storage:TempPath"] ?? "./tmp/newsstudio";
+        var tempBase = NewsStudio.Infrastructure.Common.TempStorage.GetRoot(_configuration);
         var projectDir = Path.Combine(tempBase, request.ProjectId.ToString());
         var audioDir = Path.Combine(projectDir, "audio");
         var subtitleDir = Path.Combine(projectDir, "subtitles");
@@ -54,7 +57,8 @@ public class EdgeTtsService : ITtsService
         var voice = !string.IsNullOrWhiteSpace(request.Voice) ? request.Voice : "vi-VN-HoaiMyNeural";
 
         var totalWords = text.Split(new[] { ' ', '\n', '\r', '\t' }, StringSplitOptions.RemoveEmptyEntries).Length;
-        var estimatedDuration = Math.Clamp(Math.Round(totalWords / 2.3, 2), 55.0, 65.0);
+        // Rough estimate only (used before the real audio length is measured) — never clamped.
+        var estimatedDuration = Math.Max(3.0, Math.Round(totalWords / 2.3, 2));
 
         bool synthesizedSuccessfully = false;
         double totalDuration = estimatedDuration;
@@ -77,6 +81,13 @@ public class EdgeTtsService : ITtsService
                 var edgeTtsArgs = $"-m edge_tts --voice \"{voice}\" --file \"{tempInputTxt}\" --write-media \"{tempMp3Path}\" --write-subtitles \"{tempSrtPath}\"";
                 var ttsSuccess = await RunProcessAsync(pythonExe, edgeTtsArgs, cancellationToken);
 
+                if ((!ttsSuccess || !File.Exists(tempMp3Path) || new FileInfo(tempMp3Path).Length == 0) && voice != "vi-VN-HoaiMyNeural")
+                {
+                    _logger.LogWarning("Voice '{Voice}' synthesis failed or was rejected. Falling back to default 'vi-VN-HoaiMyNeural'.", voice);
+                    edgeTtsArgs = $"-m edge_tts --voice \"vi-VN-HoaiMyNeural\" --file \"{tempInputTxt}\" --write-media \"{tempMp3Path}\" --write-subtitles \"{tempSrtPath}\"";
+                    ttsSuccess = await RunProcessAsync(pythonExe, edgeTtsArgs, cancellationToken);
+                }
+
                 if (ttsSuccess && File.Exists(tempMp3Path) && new FileInfo(tempMp3Path).Length > 0)
                 {
                     // 2. Measure actual speech duration using ffprobe
@@ -91,10 +102,26 @@ public class EdgeTtsService : ITtsService
                         }
                     }
 
-                    totalDuration = Math.Clamp(Math.Round(rawSpeechDuration, 2), 55.0, 65.0);
+                    double tempo = 1.12; // Default breaking news cadence (+12%)
+                    if (!string.IsNullOrWhiteSpace(request.Speed))
+                    {
+                        var cleanSpeed = request.Speed.Replace("%", "").Replace("+", "").Trim();
+                        if (double.TryParse(cleanSpeed, NumberStyles.Any, CultureInfo.InvariantCulture, out var percent))
+                        {
+                            tempo = Math.Clamp(1.0 + (percent / 100.0), 0.8, 1.5);
+                        }
+                    }
 
-                    // 3. Convert MP3 to standard 24kHz mono WAV and pad with apad to reach target duration
-                    var ffmpegArgs = $"-hide_banner -y -i \"{tempMp3Path}\" -filter_complex \"[0:a]apad=whole_dur={totalDuration.ToString("F2", CultureInfo.InvariantCulture)}[a]\" -map \"[a]\" -t {totalDuration.ToString("F2", CultureInfo.InvariantCulture)} -ar 24000 -ac 1 \"{audioFilePath}\"";
+                    // Adjust speech duration for tempo
+                    rawSpeechDuration = rawSpeechDuration / tempo;
+                    // The video lasts exactly as long as the narration (+ a short tail) — no padding to a
+                    // fixed 55–65s window, which used to leave long silent endings.
+                    totalDuration = Math.Round(rawSpeechDuration + TailSeconds, 2);
+
+                    // 3. Convert MP3 to 24kHz mono WAV with a short silent tail
+                    var tempoStr = tempo.ToString("F2", CultureInfo.InvariantCulture);
+                    var tailStr = TailSeconds.ToString("F2", CultureInfo.InvariantCulture);
+                    var ffmpegArgs = $"-hide_banner -y -i \"{tempMp3Path}\" -filter_complex \"[0:a]atempo={tempoStr},equalizer=f=3000:t=q:w=1.5:g=2,highpass=f=80,apad=pad_dur={tailStr}[a]\" -map \"[a]\" -ar 24000 -ac 1 \"{audioFilePath}\"";
                     var ffmpegSuccess = await RunProcessAsync(ffmpegExe, ffmpegArgs, cancellationToken);
 
                     if (ffmpegSuccess && File.Exists(audioFilePath) && new FileInfo(audioFilePath).Length > 0)
@@ -104,6 +131,11 @@ public class EdgeTtsService : ITtsService
                         {
                             var srtRaw = await File.ReadAllTextAsync(tempSrtPath, Encoding.UTF8, cancellationToken);
                             cues = ParseSrt(srtRaw);
+                            foreach (var c in cues)
+                            {
+                                c.StartTimeSeconds = Math.Round(c.StartTimeSeconds / tempo, 2);
+                                c.EndTimeSeconds = Math.Round(c.EndTimeSeconds / tempo, 2);
+                            }
                         }
 
                         if (cues.Count == 0)
@@ -137,10 +169,21 @@ public class EdgeTtsService : ITtsService
             }
         }
 
-        // If Edge-TTS was unavailable or failed, fallback to predictable tone synthesis
+        // Outside simulation mode a failed synthesis is a real error — never ship a placeholder tone as "voice-over"
+        if (!synthesizedSuccessfully && !NewsStudio.Infrastructure.Common.SimulationMode.IsEnabled(_configuration))
+        {
+            var reason = pythonExe == null
+                ? "không tìm thấy Python (cần cài Python và gói edge-tts)"
+                : ffmpegExe == null
+                    ? "không tìm thấy FFmpeg trên máy chủ"
+                    : "Edge-TTS không tạo được âm thanh (kiểm tra kết nối mạng và gói edge-tts)";
+            throw new InvalidOperationException($"Tạo giọng đọc thất bại: {reason}.");
+        }
+
+        // Simulation mode only: predictable tone synthesis so offline tests can run
         if (!synthesizedSuccessfully)
         {
-            _logger.LogWarning("Using fallback audio tone synthesis for project {ProjectId}", request.ProjectId);
+            _logger.LogWarning("Simulation mode: using fallback audio tone synthesis for project {ProjectId}", request.ProjectId);
             totalDuration = estimatedDuration;
             cues = GenerateFallbackCues(text, totalDuration);
 
@@ -170,6 +213,7 @@ public class EdgeTtsService : ITtsService
         var candidates = new[]
         {
             @"C:\Users\Admin\AppData\Local\Programs\Python\Python312\python.exe",
+            "python3",          // Linux / Docker (Railway)
             "python.exe",
             "python",
             "py.exe",
@@ -202,7 +246,7 @@ public class EdgeTtsService : ITtsService
         return null;
     }
 
-    private static string? FindFfmpegExecutable()
+    internal static string? FindFfmpegExecutable()
     {
         var candidates = new[]
         {
@@ -239,7 +283,7 @@ public class EdgeTtsService : ITtsService
         return null;
     }
 
-    private static string? FindFfprobeExecutable()
+    internal static string? FindFfprobeExecutable()
     {
         var candidates = new[]
         {
@@ -257,7 +301,7 @@ public class EdgeTtsService : ITtsService
         return null;
     }
 
-    private static async Task<bool> RunProcessAsync(string exe, string args, CancellationToken cancellationToken)
+    internal static async Task<bool> RunProcessAsync(string exe, string args, CancellationToken cancellationToken)
     {
         var psi = new ProcessStartInfo
         {
@@ -276,7 +320,7 @@ public class EdgeTtsService : ITtsService
         return proc.ExitCode == 0;
     }
 
-    private static async Task<string?> RunProcessWithOutputAsync(string exe, string args, CancellationToken cancellationToken)
+    internal static async Task<string?> RunProcessWithOutputAsync(string exe, string args, CancellationToken cancellationToken)
     {
         var psi = new ProcessStartInfo
         {
@@ -333,7 +377,7 @@ public class EdgeTtsService : ITtsService
         return list;
     }
 
-    private static List<SubtitleCueDto> GenerateFallbackCues(string text, double totalDuration)
+    internal static List<SubtitleCueDto> GenerateFallbackCues(string text, double totalDuration)
     {
         var sentences = SplitSentences(text);
         var totalWords = text.Split(new[] { ' ', '\n', '\r', '\t' }, StringSplitOptions.RemoveEmptyEntries).Length;
@@ -464,7 +508,7 @@ public class EdgeTtsService : ITtsService
         await fs.FlushAsync(cancellationToken);
     }
 
-    private static async Task<string> ComputeFileSha256Async(string filePath, CancellationToken cancellationToken)
+    internal static async Task<string> ComputeFileSha256Async(string filePath, CancellationToken cancellationToken)
     {
         using var sha = SHA256.Create();
         using var stream = File.OpenRead(filePath);

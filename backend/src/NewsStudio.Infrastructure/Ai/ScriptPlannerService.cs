@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using NewsStudio.Application.DTOs;
@@ -15,8 +16,12 @@ public class ScriptPlannerService : IScriptPlannerService
         CancellationToken cancellationToken = default)
     {
         var script = input.Script;
-        // Mode A: ArticleImageOnly - Target duration 55–65s (target 60s)
-        var targetDuration = Math.Clamp(input.TargetDurationSeconds > 0 ? input.TargetDurationSeconds : 60, 55, 65);
+        // Scenes cover the real narration. Its length follows the article (estimated from the word
+        // count here; re-fitted to the measured audio length when the video is rendered).
+        var spokenWords = CountWords(script.VoiceOverScript);
+        var targetDuration = spokenWords > 0
+            ? Math.Max(5.0, Math.Round(spokenWords / PromptTemplates.WordsPerSecond, 1))
+            : (input.TargetDurationSeconds > 0 ? input.TargetDurationSeconds : 60);
 
         // Filter valid article images: strictly from current article only, not rejected, not unsuitable
         var validImages = input.AvailableImages
@@ -24,12 +29,12 @@ public class ScriptPlannerService : IScriptPlannerService
             .OrderBy(img => img.Order)
             .ToList();
 
-        // Break script into 8-10 narrative segments (Rule 4: 8–10 scenes)
-        var segments = BuildNarrativeSegments(script);
-        var sceneCount = Math.Clamp(segments.Count, 8, 10);
+        // One scene per ~7 seconds of narration, built only from sentences that are actually spoken
+        var segments = BuildNarrativeSegments(script, targetDuration);
+        var sceneCount = segments.Count;
 
         // Allocate duration across scenes proportional to speech length
-        var totalWords = segments.Take(sceneCount).Sum(s => s.VoiceText.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length);
+        var totalWords = segments.Sum(s => CountWords(s.VoiceText));
         if (totalWords <= 0) totalWords = 1;
 
         var scenes = new List<VideoScenePlanDto>();
@@ -38,20 +43,12 @@ public class ScriptPlannerService : IScriptPlannerService
         for (int i = 0; i < sceneCount; i++)
         {
             var segment = segments[i];
-            var segmentWords = segment.VoiceText.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length;
+            var segmentWords = CountWords(segment.VoiceText);
 
-            // Calculate scene duration (minimum 4.5s, maximum 8.5s)
-            double duration;
-            if (i == sceneCount - 1)
-            {
-                duration = Math.Round(targetDuration - currentStart, 2);
-                if (duration < 4.5) duration = 4.5;
-            }
-            else
-            {
-                duration = Math.Round(((double)segmentWords / totalWords) * targetDuration, 2);
-                duration = Math.Clamp(duration, 4.5, 8.5);
-            }
+            // Scene duration proportional to the words it narrates; the last scene ends with the narration
+            double duration = i == sceneCount - 1
+                ? Math.Max(1.5, Math.Round(targetDuration - currentStart, 2))
+                : Math.Max(1.5, Math.Round(((double)segmentWords / totalWords) * targetDuration, 2));
 
             var end = Math.Round(currentStart + duration, 2);
 
@@ -115,184 +112,74 @@ public class ScriptPlannerService : IScriptPlannerService
             currentStart = end;
         }
 
-        // Final normalization to ensure total duration sits in 55–65s (target 60s)
-        if (scenes.Count > 0)
-        {
-            var lastScene = scenes[^1];
-            if (lastScene.EndTimeSeconds < 55.0)
-            {
-                lastScene.EndTimeSeconds = 58.0;
-            }
-            else if (lastScene.EndTimeSeconds > 65.0)
-            {
-                lastScene.EndTimeSeconds = 62.0;
-            }
-        }
-
         return Task.FromResult(scenes);
     }
 
-    private static List<NarrativeSegment> BuildNarrativeSegments(EditorialScriptResult script)
+    /// <summary>Seconds of narration per scene (one picture change every ~7 s).</summary>
+    private const double SecondsPerScene = 7.0;
+
+    private static int CountWords(string? text) =>
+        string.IsNullOrWhiteSpace(text)
+            ? 0
+            : text.Split(new[] { ' ', '\n', '\r', '\t' }, StringSplitOptions.RemoveEmptyEntries).Length;
+
+    /// <summary>
+    /// Splits the real voice-over into consecutive scenes. Every scene's text is exactly what the
+    /// narrator says during it — nothing is invented to reach a fixed scene count.
+    /// </summary>
+    private static List<NarrativeSegment> BuildNarrativeSegments(EditorialScriptResult script, double narrationSeconds)
     {
-        var list = new List<NarrativeSegment>();
+        var voiceOver = string.IsNullOrWhiteSpace(script.VoiceOverScript)
+            ? string.Join(" ", new[] { script.Hook, script.KeyFacts, script.Analysis, script.Conclusion }
+                .Where(x => !string.IsNullOrWhiteSpace(x)))
+            : script.VoiceOverScript;
 
-        // Scene 1: The Hook (3-4 seconds opening)
-        list.Add(new NarrativeSegment
-        {
-            Purpose = "Hook",
-            VoiceText = script.Hook,
-            OnScreenText = TruncateHighlight(script.VideoTitle.Replace("TIÊU ĐIỂM:", "").Trim(), 28)
-        });
-
-        // Scene 2, 3, 4: Key Facts Breakdown
-        var facts = script.KeyFacts
-            .Split(new[] { '\n', '-', '•' }, StringSplitOptions.RemoveEmptyEntries)
-            .Select(f => f.Trim())
-            .Where(f => f.Length > 10)
+        var sentences = Regex.Split(voiceOver.Trim(), @"(?<=[.!?…])\s+")
+            .Select(x => x.Trim())
+            .Where(x => x.Length > 0)
             .ToList();
+        if (sentences.Count == 0) sentences.Add(voiceOver.Trim());
 
-        if (facts.Count > 0)
-        {
-            list.Add(new NarrativeSegment
-            {
-                Purpose = "Fact",
-                VoiceText = facts[0],
-                OnScreenText = TruncateHighlight(facts[0], 25)
-            });
-        }
-        else
-        {
-            list.Add(new NarrativeSegment
-            {
-                Purpose = "Fact",
-                VoiceText = "Diễn biến sự kiện ghi nhận nhiều dữ kiện đáng chú ý vừa được cơ quan chức năng công bố.",
-                OnScreenText = "DỮ KIỆN QUAN TRỌNG"
-            });
-        }
+        var desired = (int)Math.Round(narrationSeconds / SecondsPerScene);
+        var sceneCount = Math.Clamp(desired, 1, sentences.Count);
 
-        if (facts.Count > 1)
+        // Greedy grouping of consecutive sentences into scenes with roughly equal word counts
+        var totalWords = Math.Max(1, sentences.Sum(CountWords));
+        var groups = new List<List<string>>();
+        var current = new List<string>();
+        var wordsSoFar = 0;
+        for (var i = 0; i < sentences.Count; i++)
         {
-            list.Add(new NarrativeSegment
+            current.Add(sentences[i]);
+            wordsSoFar += CountWords(sentences[i]);
+            var remainingSentences = sentences.Count - i - 1;
+            var remainingScenes = sceneCount - groups.Count - 1;
+            var boundary = (double)totalWords * (groups.Count + 1) / sceneCount;
+            if (remainingScenes > 0 && (wordsSoFar >= boundary || remainingSentences == remainingScenes))
             {
-                Purpose = "Fact",
-                VoiceText = facts[1],
-                OnScreenText = TruncateHighlight(facts[1], 25)
-            });
-        }
-
-        if (facts.Count > 2)
-        {
-            list.Add(new NarrativeSegment
-            {
-                Purpose = "Fact",
-                VoiceText = facts[2],
-                OnScreenText = TruncateHighlight(facts[2], 25)
-            });
-        }
-
-        // Scene 5: Context & Background
-        if (!string.IsNullOrWhiteSpace(script.Context))
-        {
-            list.Add(new NarrativeSegment
-            {
-                Purpose = "Context",
-                VoiceText = script.Context,
-                OnScreenText = "BỐI CẢNH ĐÁNG CHÚ Ý"
-            });
-        }
-        else
-        {
-            list.Add(new NarrativeSegment
-            {
-                Purpose = "Context",
-                VoiceText = "Vấn đề này diễn ra trong bối cảnh các quy định mới đang được triển khai đồng bộ.",
-                OnScreenText = "BỐI CẢNH THỰC TẾ"
-            });
-        }
-
-        // Scene 6 & 7: Editorial Analysis
-        if (!string.IsNullOrWhiteSpace(script.Analysis))
-        {
-            var analysisSentences = script.Analysis.Split(new[] { '.', '!' }, StringSplitOptions.RemoveEmptyEntries);
-            if (analysisSentences.Length > 1)
-            {
-                list.Add(new NarrativeSegment
-                {
-                    Purpose = "Analysis",
-                    VoiceText = analysisSentences[0].Trim() + ".",
-                    OnScreenText = "GÓC NHÌN BIÊN TẬP"
-                });
-                list.Add(new NarrativeSegment
-                {
-                    Purpose = "Analysis",
-                    VoiceText = string.Join(". ", analysisSentences.Skip(1)).Trim(),
-                    OnScreenText = "ĐÁNH GIÁ TÁC ĐỘNG"
-                });
-            }
-            else
-            {
-                list.Add(new NarrativeSegment
-                {
-                    Purpose = "Analysis",
-                    VoiceText = script.Analysis,
-                    OnScreenText = "PHÂN TÍCH CHUYÊN MÔN"
-                });
+                groups.Add(current);
+                current = new List<string>();
             }
         }
-        else
+        if (current.Count > 0) groups.Add(current);
+
+        var list = new List<NarrativeSegment>();
+        for (var i = 0; i < groups.Count; i++)
         {
+            var text = string.Join(" ", groups[i]);
+            var purpose = i == 0 ? "Hook"
+                : i == groups.Count - 1 && groups.Count > 2 ? "Conclusion"
+                : i <= groups.Count / 2 ? "Fact"
+                : "Analysis";
             list.Add(new NarrativeSegment
             {
-                Purpose = "Analysis",
-                VoiceText = "Giới chuyên gia nhận định đây là bước ngoặt quan trọng mang lại nhiều thay đổi lớn.",
-                OnScreenText = "ĐÁNH GIÁ TÁC ĐỘNG"
+                Purpose = purpose,
+                VoiceText = text,
+                OnScreenText = i == 0 && !string.IsNullOrWhiteSpace(script.VideoTitle)
+                    ? TruncateHighlight(script.VideoTitle, 40)
+                    : TruncateHighlight(groups[i][0], 40)
             });
         }
-
-        // Scene 8: Outlook & Implication
-        list.Add(new NarrativeSegment
-        {
-            Purpose = "Analysis",
-            VoiceText = "Các bên liên quan đang tiếp tục theo dõi sát sao tiến độ nhằm đảm bảo hiệu quả tối đa.",
-            OnScreenText = "XU HƯỚNG TIẾP THEO"
-        });
-
-        // Scene 9: Conclusion & Summary
-        list.Add(new NarrativeSegment
-        {
-            Purpose = "Conclusion",
-            VoiceText = script.Conclusion,
-            OnScreenText = "TỔNG KẾT VẤN ĐỀ"
-        });
-
-        // Scene 10: Source Attribution & Call-to-action
-        var attributionText = !string.IsNullOrWhiteSpace(script.SourceAttribution)
-            ? $"{script.SourceAttribution}. Hãy để lại bình luận và theo dõi kênh để cập nhật tin tức mới nhất."
-            : "Thông tin được cập nhật từ báo chí chính thống. Nhấn theo dõi để xem thêm tin nóng.";
-
-        list.Add(new NarrativeSegment
-        {
-            Purpose = "Conclusion",
-            VoiceText = attributionText,
-            OnScreenText = "THEO DÕI TIN MỚI"
-        });
-
-        // Enforce strictly 8 to 10 scenes
-        while (list.Count < 8)
-        {
-            list.Insert(list.Count - 2, new NarrativeSegment
-            {
-                Purpose = "Fact",
-                VoiceText = "Toàn bộ diễn biến tiếp theo sẽ được chuyển tải nhanh chóng trong các bản tin tiếp theo.",
-                OnScreenText = "CẬP NHẬT LIÊN TỤC"
-            });
-        }
-
-        if (list.Count > 10)
-        {
-            list = list.Take(10).ToList();
-        }
-
         return list;
     }
 

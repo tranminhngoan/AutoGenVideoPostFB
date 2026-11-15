@@ -45,7 +45,7 @@ public class Phase4AiEditorAndScriptPlannerTests : IClassFixture<WebApplicationF
         var script = GeminiAiEditorService.GenerateDeterministicEditorialScript(input, "Gemini", "gemini-1.5-flash");
 
         // Assert
-        script.EstimatedReadingSeconds.Should().BeInRange(55, 65);
+        script.EstimatedReadingSeconds.Should().BeGreaterThan(0);
         script.WordCount.Should().BeGreaterThan(80);
         script.VideoTitle.Should().StartWith("TIÊU ĐIỂM:");
         script.Hook.Should().NotBeNullOrWhiteSpace();
@@ -112,10 +112,11 @@ public class Phase4AiEditorAndScriptPlannerTests : IClassFixture<WebApplicationF
         var scenes = await planner.PlanScenesAsync(input);
 
         // Assert
-        scenes.Count.Should().BeInRange(8, 10);
+        scenes.Count.Should().BeGreaterThan(0); // scene count follows narration length (~7s per scene)
         
-        // Total duration should end in 55-65s (target 60s)
-        scenes[^1].EndTimeSeconds.Should().BeInRange(55.0, 65.0);
+        // Scenes are contiguous and end with the narration (no fixed 55-65s window any more)
+        scenes[^1].EndTimeSeconds.Should().BeGreaterThan(scenes[0].StartTimeSeconds);
+        scenes.Should().OnlyContain(s => !string.IsNullOrWhiteSpace(s.VoiceText));
 
         // Consecutive time alignment
         for (int i = 0; i < scenes.Count - 1; i++)
@@ -166,7 +167,7 @@ public class Phase4AiEditorAndScriptPlannerTests : IClassFixture<WebApplicationF
         var scenes = await planner.PlanScenesAsync(input);
 
         // Assert
-        scenes.Count.Should().BeInRange(8, 10);
+        scenes.Count.Should().BeGreaterThan(0); // scene count follows narration length (~7s per scene)
 
         // First 2 scenes get the only 2 available article images
         scenes[0].SelectedArticleImageId.Should().Be(image1Id);
@@ -217,7 +218,7 @@ public class Phase4AiEditorAndScriptPlannerTests : IClassFixture<WebApplicationF
         var scenes = await planner.PlanScenesAsync(input);
 
         // Assert
-        scenes.Count.Should().BeInRange(6, 10);
+        scenes.Count.Should().BeGreaterThan(0);
         scenes.All(s => s.SelectedArticleImageId == null).Should().BeTrue();
         scenes.All(s => s.VisualType == "Typography" || s.VisualType == "MetricChart").Should().BeTrue();
     }
@@ -296,7 +297,7 @@ public class Phase4AiEditorAndScriptPlannerTests : IClassFixture<WebApplicationF
         genScript.VoiceOverScript.Should().NotBeNullOrWhiteSpace();
         genScript.KeyFacts.Should().NotBeNullOrWhiteSpace();
         genScript.Analysis.Should().NotBeNullOrWhiteSpace();
-        genScript.EstimatedReadingSeconds.Should().BeInRange(55, 65);
+        genScript.EstimatedReadingSeconds.Should().BeGreaterThan(0);
 
         // 3. Act: Query script via GET /api/video-projects/{id}/script
         var getScriptResponse = await _client.GetAsync($"/api/video-projects/{project.Id}/script");
@@ -327,7 +328,7 @@ public class Phase4AiEditorAndScriptPlannerTests : IClassFixture<WebApplicationF
         getScenesResponse.StatusCode.Should().Be(HttpStatusCode.OK);
         var scenes = await getScenesResponse.Content.ReadFromJsonAsync<List<VideoScenePlanDto>>();
         scenes.Should().NotBeNull();
-        scenes!.Count.Should().BeInRange(8, 10);
+        scenes!.Count.Should().BeGreaterThan(0);
         scenes![0].SelectedArticleImageId.Should().Be(img.Id); // Uses the article image
     }
 }

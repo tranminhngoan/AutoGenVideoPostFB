@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Extensions.Configuration;
@@ -26,12 +27,13 @@ public class FFmpegRendererService : IVideoRendererService
         IProgress<int>? progress = null,
         CancellationToken cancellationToken = default)
     {
-        var tempBase = _configuration["Storage:TempPath"] ?? "./tmp/newsstudio";
+        var tempBase = NewsStudio.Infrastructure.Common.TempStorage.GetRoot(_configuration);
         var outputDir = Path.Combine(tempBase, request.ProjectId.ToString(), "output");
         Directory.CreateDirectory(outputDir);
 
         var outputVideoPath = Path.Combine(outputDir, $"reel_9x16_{DateTime.UtcNow.Ticks}.mp4");
         var filterScriptPath = Path.Combine(outputDir, "filter_complex.txt");
+        var overlayPath = Path.Combine(outputDir, "news_overlay.png");
 
         _logger.LogInformation("Starting FFmpeg vertical 9:16 render for project {ProjectId} (Target: {Res}, 30 FPS)",
             request.ProjectId, request.Resolution);
@@ -79,14 +81,52 @@ public class FFmpegRendererService : IVideoRendererService
             }
         }
 
-        // 1. Build FFmpeg command and filter graph
-        var ffmpegArgs = BuildFfmpegArguments(request, outputVideoPath, localPrimaryImage, out var totalDuration);
+        progress?.Report(20);
+
+        // 1. Generate Branded News Card Overlay (Top window + lower card + date + headline)
+        var pythonExe = FindPythonExecutable();
+        var overlayScript = FindOverlayScriptPath();
+
+        if (!string.IsNullOrWhiteSpace(pythonExe) && !string.IsNullOrWhiteSpace(overlayScript))
+        {
+            try
+            {
+                var cleanTitle = System.Text.RegularExpressions.Regex
+                    .Replace(request.Title ?? "BẢN TIN TIÊU ĐIỂM", @"^\s*TIÊU ĐIỂM:\s*", "", System.Text.RegularExpressions.RegexOptions.IgnoreCase)
+                    .Replace("\"", "\\\"");
+                // Lead sentence under the headline so the text fills the green card (overlay auto-sizes it)
+                var cleanSummary = (request.Summary ?? string.Empty).Replace("\r", " ").Replace("\n", " ").Replace("\"", "\\\"");
+                if (cleanSummary.Length > 400) cleanSummary = cleanSummary[..400];
+                var cleanPub = (!string.IsNullOrWhiteSpace(request.Publisher) ? request.Publisher : "TIN TỨC 24H").Replace("\"", "\\\"");
+                var dateStr = request.PublishedDate.ToString("dd/MM/yyyy");
+                // Channel brand shown in the logo pill — rule: every video carries "Trạm Tin 24/7"
+                var brand = (_configuration["Branding:Name"] is { Length: > 0 } b ? b : "Trạm Tin 24/7").Replace("\"", "\\\"");
+
+                var overlayArgs = $"\"{overlayScript}\" --output \"{overlayPath}\" --title \"{cleanTitle}\" --summary \"{cleanSummary}\" --publisher \"{cleanPub}\" --date \"{dateStr}\" --logo \"{brand}\"";
+                _logger.LogInformation("Generating news overlay at {Path} via Python script", overlayPath);
+                await RunProcessAsync(pythonExe, overlayArgs, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to run Python overlay script. Will attempt render without overlay.");
+            }
+        }
+
+        // 2. Build FFmpeg command and filter graph
+        var ffmpegArgs = BuildFfmpegArguments(request, outputVideoPath, overlayPath, localPrimaryImage, out var totalDuration);
         await File.WriteAllTextAsync(filterScriptPath, ffmpegArgs, Encoding.UTF8, cancellationToken);
 
-        progress?.Report(30);
+        progress?.Report(35);
 
-        // 2. Resolve FFmpeg executable
+        // 3. Resolve FFmpeg executable
         var ffmpegPath = FindFfmpegExecutable();
+
+        var simulate = NewsStudio.Infrastructure.Common.SimulationMode.IsEnabled(_configuration);
+
+        if (!simulate && (string.IsNullOrWhiteSpace(ffmpegPath) || !File.Exists(ffmpegPath)))
+        {
+            throw new InvalidOperationException("Dựng video thất bại: không tìm thấy FFmpeg trên máy chủ. Cài FFmpeg và thêm vào PATH.");
+        }
 
         if (!string.IsNullOrWhiteSpace(ffmpegPath) && File.Exists(ffmpegPath))
         {
@@ -95,15 +135,22 @@ public class FFmpegRendererService : IVideoRendererService
             {
                 await ExecuteFfmpegProcessAsync(ffmpegPath, ffmpegArgs, progress, cancellationToken);
             }
-            catch (Exception ex)
+            catch (Exception ex) when (!simulate && ex is not OperationCanceledException)
             {
-                _logger.LogWarning(ex, "FFmpeg process execution failed or timed out. Falling back to containerized MP4 generator.");
+                _logger.LogError(ex, "FFmpeg render failed for project {ProjectId}", request.ProjectId);
+                // FFmpeg stderr can be very long; keep the tail, which holds the actual error
+                var detail = ex.Message.Length > 600 ? "…" + ex.Message[^600..] : ex.Message;
+                throw new InvalidOperationException($"Dựng video thất bại: {detail}", ex);
+            }
+            catch (Exception ex) when (simulate && ex is not OperationCanceledException)
+            {
+                _logger.LogWarning(ex, "FFmpeg failed. Simulation mode: generating placeholder MP4.");
                 await GenerateFallbackMp4Async(outputVideoPath, totalDuration, cancellationToken);
             }
         }
         else
         {
-            _logger.LogInformation("FFmpeg executable not detected in host PATH. Generating containerized video reel output for local testing.");
+            _logger.LogInformation("FFmpeg not found. Simulation mode: generating placeholder MP4.");
             await GenerateFallbackMp4Async(outputVideoPath, totalDuration, cancellationToken);
         }
 
@@ -131,22 +178,18 @@ public class FFmpegRendererService : IVideoRendererService
 
     private string FindFfmpegExecutable()
     {
-        // 1. Check configuration
         var cfgPath = _configuration["Ffmpeg:BinaryPath"];
         if (!string.IsNullOrWhiteSpace(cfgPath) && File.Exists(cfgPath)) return cfgPath;
 
-        // 2. Check current directory or ./ffmpeg
         var localBin = Path.Combine(AppContext.BaseDirectory, "ffmpeg.exe");
         if (File.Exists(localBin)) return localBin;
 
         var localLinuxBin = Path.Combine(AppContext.BaseDirectory, "ffmpeg");
         if (File.Exists(localLinuxBin)) return localLinuxBin;
 
-        // 3. Check known tools directory
         var toolBin = @"D:\tools\ffmpeg-master-latest-win64-gpl\bin\ffmpeg.exe";
         if (File.Exists(toolBin)) return toolBin;
 
-        // 4. Search system PATH
         var pathEnv = Environment.GetEnvironmentVariable("PATH") ?? "";
         var paths = pathEnv.Split(Path.PathSeparator);
         var exeName = OperatingSystem.IsWindows() ? "ffmpeg.exe" : "ffmpeg";
@@ -164,52 +207,209 @@ public class FFmpegRendererService : IVideoRendererService
         return string.Empty;
     }
 
+    private static string? FindPythonExecutable()
+    {
+        var candidates = new[]
+        {
+            @"C:\Users\Admin\AppData\Local\Programs\Python\Python312\python.exe",
+            "python3",          // Linux / Docker (Railway)
+            "python.exe",
+            "python",
+            "py.exe",
+            "py"
+        };
+
+        foreach (var c in candidates)
+        {
+            try
+            {
+                if (File.Exists(c)) return c;
+                var psi = new ProcessStartInfo
+                {
+                    FileName = c,
+                    Arguments = "--version",
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+                using var proc = Process.Start(psi);
+                if (proc != null)
+                {
+                    proc.WaitForExit(1500);
+                    if (proc.ExitCode == 0) return c;
+                }
+            }
+            catch { }
+        }
+        return null;
+    }
+
+    private static string? FindOverlayScriptPath()
+    {
+        var candidates = new[]
+        {
+            Path.Combine(AppContext.BaseDirectory, "Scripts", "generate_news_overlay.py"),
+            Path.Combine(Directory.GetCurrentDirectory(), "Scripts", "generate_news_overlay.py"),
+            Path.Combine(Directory.GetCurrentDirectory(), "backend", "src", "NewsStudio.Infrastructure", "Scripts", "generate_news_overlay.py"),
+            @"d:\Project\AutoGenVideoPostFB\backend\src\NewsStudio.Infrastructure\Scripts\generate_news_overlay.py"
+        };
+
+        return candidates.FirstOrDefault(File.Exists);
+    }
+
+    private static async Task<bool> RunProcessAsync(string exe, string args, CancellationToken cancellationToken)
+    {
+        var psi = new ProcessStartInfo
+        {
+            FileName = exe,
+            Arguments = args,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+
+        using var proc = Process.Start(psi);
+        if (proc == null) return false;
+
+        await proc.WaitForExitAsync(cancellationToken);
+        return proc.ExitCode == 0;
+    }
+
     private static string BuildFfmpegArguments(
         VideoRenderRequest request,
         string outputPath,
+        string overlayPath,
         string? localImagePath,
         out double totalDuration)
     {
-        totalDuration = request.Scenes.Count > 0
-            ? request.Scenes.Max(s => s.EndTimeSeconds)
-            : 60.0;
+        // The video lasts exactly as long as the narration. No fixed 55–65s window: a short article
+        // gives a short video instead of a silent tail, a long one isn't cut off mid-sentence.
+        totalDuration = request.AudioDurationSeconds > 0
+            ? request.AudioDurationSeconds
+            : request.Scenes.Count > 0
+                ? request.Scenes.Max(s => s.EndTimeSeconds)
+                : 60.0;
 
-        totalDuration = Math.Clamp(totalDuration, 55.0, 65.0);
+        bool hasOverlay = !string.IsNullOrWhiteSpace(overlayPath) && File.Exists(overlayPath);
+        bool hasAudio = !string.IsNullOrWhiteSpace(request.AudioFilePath) && File.Exists(request.AudioFilePath);
+
+        var scenesWithImages = request.Scenes
+            .Where(s => !string.IsNullOrWhiteSpace(s.ImageUrl) && File.Exists(s.ImageUrl))
+            .ToList();
+
+        var uniqueImages = scenesWithImages
+            .Select(s => s.ImageUrl)
+            .Distinct()
+            .ToList();
 
         var args = new StringBuilder();
 
-        bool hasImage = !string.IsNullOrWhiteSpace(localImagePath) && File.Exists(localImagePath);
-
-        if (hasImage)
+        if (uniqueImages.Count > 1 && request.Scenes.Count > 1)
         {
-            args.Append($"-loop 1 -i \"{localImagePath}\" ");
+            // Multi-scene visual concatenation
+            int sceneCount = request.Scenes.Count;
+            for (int i = 0; i < sceneCount; i++)
+            {
+                var scene = request.Scenes[i];
+                var img = File.Exists(scene.ImageUrl) ? scene.ImageUrl : localImagePath;
+                var dur = Math.Max(scene.EndTimeSeconds - scene.StartTimeSeconds, 1.0);
+
+                if (!string.IsNullOrWhiteSpace(img) && File.Exists(img))
+                {
+                    args.Append($"-loop 1 -t {dur.ToString("F2", CultureInfo.InvariantCulture)} -i \"{img}\" ");
+                }
+                else
+                {
+                    args.Append($"-f lavfi -t {dur.ToString("F2", CultureInfo.InvariantCulture)} -i color=c=0x0B0F19:s=1080x1920:r=30 ");
+                }
+            }
+
+            // Input sceneCount: Overlay PNG
+            if (hasOverlay)
+            {
+                args.Append($"-i \"{overlayPath}\" ");
+            }
+            else
+            {
+                args.Append("-f lavfi -i color=c=0x00000000:s=1080x1920:r=30 ");
+            }
+
+            // Input sceneCount + 1: Audio WAV
+            if (hasAudio)
+            {
+                args.Append($"-i \"{request.AudioFilePath}\" ");
+            }
+            else
+            {
+                args.Append("-f lavfi -i anullsrc=r=44100:cl=stereo ");
+            }
+
+            var filter = new StringBuilder();
+            for (int i = 0; i < sceneCount; i++)
+            {
+                filter.Append($"[{i}:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setsar=1[v{i}];");
+            }
+            for (int i = 0; i < sceneCount; i++)
+            {
+                filter.Append($"[v{i}]");
+            }
+            filter.Append($"concat=n={sceneCount}:v=1:a=0[media];");
+            filter.Append("[media]split[bg][fg];");
+            filter.Append("[bg]boxblur=20:5[bgout];");
+            filter.Append("[fg]scale=1080:1050:force_original_aspect_ratio=decrease[fgout];");
+            filter.Append("[bgout][fgout]overlay=(W-w)/2:(1050-h)/2[base];");
+            filter.Append($"[base][{sceneCount}:v]overlay=0:0[v]");
+
+            args.Append($"-filter_complex \"{filter}\" ");
+            args.Append("-map \"[v]\" ");
+            args.Append($"-map {sceneCount + 1}:a ");
         }
         else
         {
-            args.Append("-f lavfi -i color=c=0x0B0F19:s=1080x1920:r=30 ");
+            // Single image or uniform visuals
+            bool hasImage = !string.IsNullOrWhiteSpace(localImagePath) && File.Exists(localImagePath);
+            if (hasImage)
+            {
+                args.Append($"-loop 1 -i \"{localImagePath}\" ");
+            }
+            else
+            {
+                args.Append("-f lavfi -i color=c=0x0B0F19:s=1080x1920:r=30 ");
+            }
+
+            if (hasOverlay)
+            {
+                args.Append($"-i \"{overlayPath}\" ");
+            }
+            else
+            {
+                args.Append("-f lavfi -i color=c=0x00000000:s=1080x1920:r=30 ");
+            }
+
+            if (hasAudio)
+            {
+                args.Append($"-i \"{request.AudioFilePath}\" ");
+            }
+            else
+            {
+                args.Append("-f lavfi -i anullsrc=r=44100:cl=stereo ");
+            }
+
+            if (hasImage)
+            {
+                args.Append("-filter_complex \"[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=20:5[bg];[0:v]scale=1080:1050:force_original_aspect_ratio=decrease[fg];[bg][fg]overlay=(W-w)/2:(1050-h)/2[base];[base][1:v]overlay=0:0[v]\" -map \"[v]\" ");
+            }
+            else
+            {
+                args.Append("-filter_complex \"[0:v][1:v]overlay=0:0[v]\" -map \"[v]\" ");
+            }
+
+            args.Append("-map 2:a ");
         }
 
-        bool hasAudio = !string.IsNullOrWhiteSpace(request.AudioFilePath) && File.Exists(request.AudioFilePath);
-        if (hasAudio)
-        {
-            args.Append($"-i \"{request.AudioFilePath}\" ");
-        }
-        else
-        {
-            args.Append("-f lavfi -i anullsrc=r=44100:cl=stereo ");
-        }
-
-        if (hasImage)
-        {
-            args.Append("-filter_complex \"[0:v]split[bg][fg];[bg]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=20:5[bgout];[fg]scale=1080:1920:force_original_aspect_ratio=decrease[fgout];[bgout][fgout]overlay=(W-w)/2:(H-h)/2[v]\" -map \"[v]\" ");
-        }
-        else
-        {
-            args.Append("-map 0:v ");
-        }
-
-        args.Append("-map 1:a ");
-        args.Append($"-t {totalDuration:F1} ");
+        args.Append($"-t {totalDuration.ToString("F1", CultureInfo.InvariantCulture)} ");
         args.Append("-c:v libx264 -preset veryfast -pix_fmt yuv420p -c:a aac -b:a 192k -movflags +faststart ");
         args.Append($"-y \"{outputPath}\"");
 
@@ -248,19 +448,16 @@ public class FFmpegRendererService : IVideoRendererService
 
     private static async Task GenerateFallbackMp4Async(string outputPath, double durationSeconds, CancellationToken cancellationToken)
     {
-        // Generates a valid MP4 ftyp/moov container format for ephemeral local verification
         using var fs = new FileStream(outputPath, FileMode.Create, FileAccess.Write, FileShare.None);
         using var bw = new BinaryWriter(fs);
 
-        // ftyp box (ISO Base Media File / MP4 v2)
-        bw.Write(new byte[] { 0x00, 0x00, 0x00, 0x20 }); // size 32
+        bw.Write(new byte[] { 0x00, 0x00, 0x00, 0x20 });
         bw.Write(Encoding.ASCII.GetBytes("ftyp"));
         bw.Write(Encoding.ASCII.GetBytes("isom"));
-        bw.Write(new byte[] { 0x00, 0x00, 0x02, 0x00 }); // minor version
+        bw.Write(new byte[] { 0x00, 0x00, 0x02, 0x00 });
         bw.Write(Encoding.ASCII.GetBytes("isomiso2avc1mp41"));
 
-        // mdat box (media data container)
-        var mdatSize = (int)(durationSeconds * 128000); // simulated bitstream
+        var mdatSize = (int)(durationSeconds * 128000);
         bw.Write(BitConverter.GetBytes(System.Net.IPAddress.HostToNetworkOrder(mdatSize + 8)));
         bw.Write(Encoding.ASCII.GetBytes("mdat"));
 
@@ -273,12 +470,11 @@ public class FFmpegRendererService : IVideoRendererService
             remaining -= toWrite;
         }
 
-        // moov box (header & track atoms)
-        bw.Write(new byte[] { 0x00, 0x00, 0x00, 0x6C }); // size 108
+        bw.Write(new byte[] { 0x00, 0x00, 0x00, 0x6C });
         bw.Write(Encoding.ASCII.GetBytes("moov"));
-        bw.Write(new byte[] { 0x00, 0x00, 0x00, 0x64 }); // mvhd size 100
+        bw.Write(new byte[] { 0x00, 0x00, 0x00, 0x64 });
         bw.Write(Encoding.ASCII.GetBytes("mvhd"));
-        bw.Write(new byte[92]); // empty mvhd header block
+        bw.Write(new byte[92]);
 
         await fs.FlushAsync(cancellationToken);
     }

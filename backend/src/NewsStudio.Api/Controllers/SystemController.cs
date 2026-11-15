@@ -41,20 +41,30 @@ public class SystemController : ControllerBase
     public IActionResult GetConfigSummary()
     {
         var aiProvider = _configuration["Ai:Provider"] ?? "Gemini";
-        var hasAiApiKey = !string.IsNullOrWhiteSpace(_configuration["Ai:ApiKey"]);
+        // Read the same keys the AI editor services actually use
+        var geminiKey = _configuration["Ai:Gemini:ApiKey"] ?? Environment.GetEnvironmentVariable("GEMINI_API_KEY");
+        var claudeKey = _configuration["Ai:Claude:ApiKey"] ?? Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY");
+        var hasGeminiKey = !string.IsNullOrWhiteSpace(geminiKey);
+        var hasClaudeKey = !string.IsNullOrWhiteSpace(claudeKey);
+        var isClaude = aiProvider.Equals("Claude", StringComparison.OrdinalIgnoreCase);
         var ttsProvider = _configuration["Tts:Provider"] ?? "EdgeTts";
         var ttsVoice = _configuration["Tts:Voice"] ?? "vi-VN-HoaiMyNeural";
         var hasFacebookConfig = !string.IsNullOrWhiteSpace(_configuration["Facebook:PageAccessToken"]);
-        var tempStorage = _configuration["Storage:TempStoragePath"] ?? "/tmp/newsstudio";
+        var tempStorage = NewsStudio.Infrastructure.Common.TempStorage.GetRoot(_configuration);
 
         return Ok(new
         {
             environment = _environment.EnvironmentName,
+            simulation = NewsStudio.Infrastructure.Common.SimulationMode.IsEnabled(_configuration),
             ai = new
             {
                 provider = aiProvider,
-                isConfigured = hasAiApiKey,
-                model = _configuration["Ai:Model"] ?? "gemini-1.5-flash"
+                isConfigured = isClaude ? hasClaudeKey : hasGeminiKey,
+                model = isClaude
+                    ? _configuration["Ai:Claude:Model"] ?? "claude-3-5-haiku-20241022"
+                    : _configuration["Ai:Gemini:Model"] ?? "gemini-flash-latest",
+                gemini = new { isConfigured = hasGeminiKey, model = _configuration["Ai:Gemini:Model"] ?? "gemini-flash-latest" },
+                claude = new { isConfigured = hasClaudeKey, model = _configuration["Ai:Claude:Model"] ?? "claude-3-5-haiku-20241022" }
             },
             tts = new
             {
@@ -77,6 +87,85 @@ public class SystemController : ControllerBase
         });
     }
 
+    private const string VoicePreviewSentence =
+        "Xin chào, đây là Trạm Tin 24/7. Hôm nay, thành phố ghi nhận nhiều chuyển biến tích cực, và chúng tôi sẽ cập nhật ngay cho bạn.";
+
+    /// <summary>
+    /// Short spoken sample of a voice ("gemini:Kore", "vi-VN-HoaiMyNeural"…). Synthesised once per voice
+    /// and cached on disk, so listening again costs nothing.
+    /// </summary>
+    [HttpGet("voice-preview")]
+    public async Task<IActionResult> GetVoicePreview(
+        [FromQuery] string voice,
+        [FromServices] ITtsFactory ttsFactory,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(voice) || voice.Length > 80
+            || !System.Text.RegularExpressions.Regex.IsMatch(voice, @"^[A-Za-z0-9:\-]+$"))
+        {
+            return BadRequest(new { message = "Tên giọng không hợp lệ." });
+        }
+
+        var dir = Path.Combine(NewsStudio.Infrastructure.Common.TempStorage.GetRoot(_configuration), "voice-previews");
+        Directory.CreateDirectory(dir);
+        var cached = Path.Combine(dir, voice.Replace(':', '_') + ".wav");
+
+        if (!System.IO.File.Exists(cached))
+        {
+            try
+            {
+                var tts = NewsStudio.Infrastructure.Rendering.GeminiTtsService.IsGeminiVoice(voice)
+                    ? ttsFactory.GetTtsService("Gemini")
+                    : ttsFactory.GetTtsService("EdgeTts");
+                var result = await tts.SynthesizeSpeechWithSubtitlesAsync(new TtsSynthesisRequest
+                {
+                    ProjectId = Guid.Empty,
+                    Text = VoicePreviewSentence,
+                    Voice = voice,
+                    Speed = "+0%"
+                }, cancellationToken);
+                System.IO.File.Copy(result.AudioFilePath, cached, overwrite: true);
+            }
+            catch (InvalidOperationException ex)
+            {
+                return StatusCode(StatusCodes.Status502BadGateway, new { message = ex.Message });
+            }
+        }
+
+        return PhysicalFile(Path.GetFullPath(cached), "audio/wav");
+    }
+
+    /// <summary>
+    /// Lists the Gemini models the configured API key can use, live from Google — so the right model
+    /// name can be picked instead of guessing (a wrong/retired name makes script generation fail with 404).
+    /// </summary>
+    [HttpGet("ai-models")]
+    public async Task<IActionResult> GetAiModels(
+        [FromServices] NewsStudio.Infrastructure.Ai.GeminiAiEditorService gemini,
+        CancellationToken cancellationToken)
+    {
+        var current = _configuration["Ai:Gemini:Model"] ?? "gemini-flash-latest";
+        try
+        {
+            var models = await gemini.ListAvailableModelsAsync(cancellationToken);
+            if (models == null)
+            {
+                return Ok(new { configured = false, current, currentAvailable = false, models = Array.Empty<AiModelInfoDto>() });
+            }
+            return Ok(new
+            {
+                configured = true,
+                current,
+                currentAvailable = models.Any(m => m.Id == current),
+                models = models.OrderByDescending(m => m.Id)
+            });
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or HttpRequestException)
+        {
+            return StatusCode(StatusCodes.Status502BadGateway, new { message = ex.Message, current });
+        }
+    }
+
     /// <summary>
     /// Returns basic system information.
     /// </summary>
@@ -85,7 +174,7 @@ public class SystemController : ControllerBase
     {
         return Ok(new
         {
-            appName = "AI News Studio",
+            appName = "Trạm Tin 24/7",
             version = "1.0.0",
             dotnetVersion = Environment.Version.ToString(),
             osPlatform = Environment.OSVersion.Platform.ToString(),

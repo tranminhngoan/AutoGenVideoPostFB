@@ -28,3 +28,18 @@ yarn-error.log*
 # OS Files
 .DS_Store
 Thumbs.db
+
+# Local database backups
+/backup/
+*.dump
+
+# IDE / tooling caches
+.vs/
+__pycache__/
+*.pyc
+
+# Local scratch files
+/*.mp3
+*.db
+*.db-shm
+*.db-wal

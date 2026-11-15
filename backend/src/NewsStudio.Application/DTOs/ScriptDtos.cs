@@ -14,7 +14,7 @@ public class EditorialScriptPromptInput
     public string CanonicalUrl { get; set; } = string.Empty;
     public string ContentBody { get; set; } = string.Empty;
     public List<ArticleImageInputDto> AvailableImages { get; set; } = new();
-    public int TargetDurationSeconds { get; set; } = 60; // 55–65s, target 60s
+    public int TargetDurationSeconds { get; set; } = 105; // upper bound; actual length follows the article
     public string Tone { get; set; } = "Chính luận sắc bén, súc tích, khách quan";
     public string Mode { get; set; } = "ArticleImageOnly";
 }
@@ -57,7 +57,7 @@ public class ScriptPlanningInput
     public Guid ProjectId { get; set; }
     public EditorialScriptResult Script { get; set; } = new();
     public List<ArticleImageInputDto> AvailableImages { get; set; } = new();
-    public int TargetDurationSeconds { get; set; } = 60; // 55–65s, target 60s
+    public int TargetDurationSeconds { get; set; } = 105; // upper bound; actual length follows the article
     public string Mode { get; set; } = "ArticleImageOnly";
 }
 
@@ -102,11 +102,18 @@ public class ScriptPlanningResultDto
     public string Mode { get; set; } = "ArticleImageOnly";
 }
 
+/// <summary>An AI model the configured API key can actually use (fetched live from the provider).</summary>
+public class AiModelInfoDto
+{
+    public string Id { get; set; } = string.Empty;
+    public string DisplayName { get; set; } = string.Empty;
+}
+
 public class GenerateScriptRequestDto
 {
     public string? AiProvider { get; set; } // "Gemini" | "Claude"
     public string? ModelName { get; set; }
-    public int? TargetDurationSeconds { get; set; } = 60; // 55–65s, target 60s
+    public int? TargetDurationSeconds { get; set; } // null = use the project's own target duration
     public string? Mode { get; set; } = "ArticleImageOnly";
 }
 

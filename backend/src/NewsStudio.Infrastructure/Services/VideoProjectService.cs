@@ -25,16 +25,24 @@ public class VideoProjectService : IVideoProjectService
         _logger = logger;
     }
 
+    /// <summary>
+    /// Title used until the article has been extracted; the pipeline replaces it with the real article title.
+    /// </summary>
+    public const string PlaceholderTitle = "Bản tin Reels tự động";
+
     public async Task<VideoProjectResponseDto> CreateProjectAsync(CreateVideoProjectDto dto, CancellationToken cancellationToken = default)
     {
         _logger.LogInformation("Creating new VideoProject from URL: {Url}", dto.SourceUrl);
 
         var project = new VideoProject
         {
-            Title = string.IsNullOrWhiteSpace(dto.Title) ? "Bản tin Reels tự động" : dto.Title,
+            Title = string.IsNullOrWhiteSpace(dto.Title) ? PlaceholderTitle : dto.Title.Trim(),
             SourceUrl = dto.SourceUrl,
             Publisher = string.IsNullOrWhiteSpace(dto.Publisher) ? "Báo điện tử" : dto.Publisher,
-            TargetDurationSeconds = dto.TargetDurationSeconds > 0 ? dto.TargetDurationSeconds : 50,
+            TargetDurationSeconds = dto.TargetDurationSeconds > 0 ? dto.TargetDurationSeconds : 105,
+            AiProvider = string.IsNullOrWhiteSpace(dto.AiProvider) ? null : dto.AiProvider,
+            Voice = string.IsNullOrWhiteSpace(dto.Voice) ? null : dto.Voice,
+            VoiceSpeed = string.IsNullOrWhiteSpace(dto.VoiceSpeed) ? null : dto.VoiceSpeed,
             Status = VideoProjectStatus.Pending,
             Resolution = "1080x1920",
             AspectRatio = "9:16",
@@ -62,7 +70,7 @@ public class VideoProjectService : IVideoProjectService
     {
         var projects = await _context.VideoProjects
             .AsNoTracking()
-            .Include(p => p.Scenes)
+            .Include(p => p.Scenes).ThenInclude(s => s.SelectedArticleImage)
             .Include(p => p.ProcessingJobs)
             .OrderByDescending(p => p.CreatedAtUtc)
             .Skip((page - 1) * pageSize)
@@ -76,7 +84,7 @@ public class VideoProjectService : IVideoProjectService
     {
         var project = await _context.VideoProjects
             .AsNoTracking()
-            .Include(p => p.Scenes)
+            .Include(p => p.Scenes).ThenInclude(s => s.SelectedArticleImage)
             .Include(p => p.ProcessingJobs)
             .FirstOrDefaultAsync(p => p.Id == id, cancellationToken);
 
@@ -93,26 +101,36 @@ public class VideoProjectService : IVideoProjectService
 
         var idempotencyKey = Guid.NewGuid().ToString();
 
-        // Enqueue job to Hangfire
+        // Reuse the placeholder job created together with the project instead of leaving it
+        // behind as an orphan "Pending" record that never runs.
+        var job = await _context.ProcessingJobs
+            .Where(j => j.VideoProjectId == projectId && j.Status == "Pending" && j.HangfireJobId == null)
+            .OrderBy(j => j.CreatedAtUtc)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (job == null)
+        {
+            job = new ProcessingJob { VideoProjectId = projectId };
+            _context.ProcessingJobs.Add(job);
+        }
+
+        job.IdempotencyKey = idempotencyKey;
+        job.Step = "Extracting";
+        job.Status = "Running";
+        job.StartedAtUtc = DateTime.UtcNow;
+        job.WorkerHost = Environment.MachineName;
+        project.Status = VideoProjectStatus.Extracting;
+        project.ErrorMessage = null;
+
+        // Persist the job record before enqueueing so the worker always finds it by idempotency key
+        await _context.SaveChangesAsync(cancellationToken);
+
         var hangfireJobId = _backgroundJobClient.Enqueue<IVideoProcessingJobExecutor>(
             executor => executor.ExecuteVideoProcessingPipelineAsync(projectId, idempotencyKey, CancellationToken.None));
 
         _logger.LogInformation("Enqueued Hangfire Job {JobId} for Project {ProjectId}", hangfireJobId, projectId);
 
-        var job = new ProcessingJob
-        {
-            VideoProjectId = projectId,
-            HangfireJobId = hangfireJobId,
-            IdempotencyKey = idempotencyKey,
-            Step = "Extracting",
-            Status = "Running",
-            StartedAtUtc = DateTime.UtcNow,
-            WorkerHost = Environment.MachineName
-        };
-
-        project.Status = VideoProjectStatus.Extracting;
-
-        _context.ProcessingJobs.Add(job);
+        job.HangfireJobId = hangfireJobId;
         await _context.SaveChangesAsync(cancellationToken);
 
         return new ProcessingJobResponseDto
@@ -143,8 +161,11 @@ public class VideoProjectService : IVideoProjectService
             CreatedAtUtc = project.CreatedAtUtc,
             UpdatedAtUtc = project.UpdatedAtUtc,
             ErrorMessage = project.ErrorMessage,
+            AiProvider = project.AiProvider,
+            Voice = project.Voice,
+            VoiceSpeed = project.VoiceSpeed,
             SceneCount = project.Scenes?.Count ?? 0,
-            Scenes = project.Scenes?.Select(s => new VideoSceneResponseDto
+            Scenes = project.Scenes?.OrderBy(s => s.SceneNumber).Select(s => new VideoSceneResponseDto
             {
                 Id = s.Id,
                 SceneNumber = s.SceneNumber,
@@ -152,6 +173,7 @@ public class VideoProjectService : IVideoProjectService
                 EndTimeSeconds = s.EndTimeSeconds,
                 VoiceText = s.VoiceText,
                 OnScreenText = s.OnScreenText,
+                ImageUrl = s.SelectedArticleImage?.OriginalImageUrl,
                 MotionType = s.MotionType,
                 TransitionType = s.TransitionType,
                 ScenePurpose = s.ScenePurpose

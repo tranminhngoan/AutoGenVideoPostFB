@@ -37,7 +37,13 @@ public class VideoRenderRequest
 {
     public Guid ProjectId { get; set; }
     public string Title { get; set; } = string.Empty;
+    /// <summary>Short lead shown under the headline on the green card (the script's hook).</summary>
+    public string? Summary { get; set; }
+    public string Publisher { get; set; } = string.Empty;
+    public DateTime PublishedDate { get; set; } = DateTime.UtcNow;
     public string AudioFilePath { get; set; } = string.Empty;
+    /// <summary>Real narration length (incl. short tail). The video ends exactly here.</summary>
+    public double AudioDurationSeconds { get; set; }
     public string SubtitleFilePath { get; set; } = string.Empty;
     public string Resolution { get; set; } = "1080x1920";
     public string AspectRatio { get; set; } = "9:16";

@@ -1,0 +1,42 @@
+# Single-service image for Railway: API + embedded Hangfire worker in one container,
+# so videos rendered in the background are served from the same disk.
+
+# ── Build ────────────────────────────────────────────────────────────────────
+FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
+WORKDIR /app
+
+COPY backend/NewsStudio.sln ./backend/
+COPY backend/src/NewsStudio.Domain/*.csproj ./backend/src/NewsStudio.Domain/
+COPY backend/src/NewsStudio.Application/*.csproj ./backend/src/NewsStudio.Application/
+COPY backend/src/NewsStudio.Infrastructure/*.csproj ./backend/src/NewsStudio.Infrastructure/
+COPY backend/src/NewsStudio.Api/*.csproj ./backend/src/NewsStudio.Api/
+COPY backend/src/NewsStudio.Worker/*.csproj ./backend/src/NewsStudio.Worker/
+COPY backend/tests/NewsStudio.Tests/*.csproj ./backend/tests/NewsStudio.Tests/
+RUN dotnet restore ./backend/NewsStudio.sln
+
+COPY backend/ ./backend/
+RUN dotnet publish ./backend/src/NewsStudio.Api/NewsStudio.Api.csproj -c Release -o /app/publish --no-restore
+
+# ── Runtime ──────────────────────────────────────────────────────────────────
+FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS runtime
+WORKDIR /app
+
+# FFmpeg renders the 9:16 video; Python + Pillow draws the news overlay; edge-tts is the free
+# voice option; DejaVu fonts cover Vietnamese diacritics.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        curl ffmpeg python3 python3-pip python3-pil fontconfig fonts-dejavu-core \
+    && pip3 install --no-cache-dir --break-system-packages edge-tts \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /tmp/newsstudio && chmod -R 777 /tmp/newsstudio \
+    && ffmpeg -version | head -n 1 && python3 -c "import PIL, edge_tts; print('python deps ok')"
+
+ENV ASPNETCORE_ENVIRONMENT=Production \
+    ASPNETCORE_URLS=http://+:8080 \
+    Storage__TempStoragePath=/tmp/newsstudio \
+    Hangfire__EmbeddedServer=true \
+    Simulation__Enabled=false
+
+EXPOSE 8080
+COPY --from=build /app/publish .
+
+ENTRYPOINT ["dotnet", "NewsStudio.Api.dll"]

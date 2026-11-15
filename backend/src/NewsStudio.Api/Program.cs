@@ -111,6 +111,26 @@ try
     builder.Services.AddApplicationServices();
     builder.Services.AddInfrastructureServices(builder.Configuration);
 
+    // Hosting platforms such as Railway assign the port at runtime through $PORT
+    var platformPort = Environment.GetEnvironmentVariable("PORT");
+    if (!string.IsNullOrWhiteSpace(platformPort) && int.TryParse(platformPort, out _))
+    {
+        builder.WebHost.UseUrls($"http://0.0.0.0:{platformPort}");
+    }
+
+    // Single-service deployments (e.g. Railway): run the Hangfire background server inside the API so
+    // rendering and serving share the same disk. Locally the separate NewsStudio.Worker does this.
+    var embeddedWorker = builder.Configuration.GetValue<bool>("Hangfire:EmbeddedServer", false);
+    if (embeddedWorker)
+    {
+        builder.Services.AddHangfireServer(options =>
+        {
+            options.WorkerCount = builder.Configuration.GetValue<int>("Storage:MaxConcurrentRenderJobs", 2);
+            options.ServerName = $"NewsStudio-Api-{Environment.MachineName}";
+            options.Queues = new[] { "default", "critical", "render" };
+        });
+    }
+
     var app = builder.Build();
 
     // Global Exception Handling (RFC 7807 ProblemDetails)
@@ -246,6 +266,32 @@ try
         catch (Exception ex)
         {
             Log.Warning(ex, "Database migration on startup check encountered an exception (tables may already exist or DB is warming up).");
+        }
+    }
+
+    // Embedded worker: same schedules the standalone NewsStudio.Worker sets up
+    if (embeddedWorker)
+    {
+        try
+        {
+            var recurring = app.Services.GetRequiredService<IRecurringJobManager>();
+            recurring.AddOrUpdate<NewsStudio.Application.Interfaces.ITrendingNewsService>(
+                "trending-news-refresh",
+                s => s.RefreshAsync(CancellationToken.None),
+                builder.Configuration["Trending:RefreshCron"] ?? "*/30 * * * *");
+            recurring.AddOrUpdate<NewsStudio.Application.Interfaces.IStorageCleanupService>(
+                "storage-cleanup",
+                s => s.RunStorageCleanupAsync(CancellationToken.None),
+                "*/15 * * * *");
+
+            var jobs = app.Services.GetRequiredService<IBackgroundJobClient>();
+            jobs.Enqueue<NewsStudio.Application.Interfaces.IJobRecoveryService>(s => s.RecoverDanglingJobsAsync(CancellationToken.None));
+            jobs.Enqueue<NewsStudio.Application.Interfaces.ITrendingNewsService>(s => s.RefreshAsync(CancellationToken.None));
+            Log.Information("Embedded Hangfire worker enabled: trending refresh + storage cleanup scheduled.");
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Failed to schedule embedded background jobs.");
         }
     }
 

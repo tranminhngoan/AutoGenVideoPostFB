@@ -7,6 +7,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Hangfire;
 using NewsStudio.Application.Interfaces;
 
 namespace NewsStudio.Worker;
@@ -34,7 +35,7 @@ public class Worker : BackgroundService
     {
         _logger.LogInformation("NewsStudio.Worker is starting with Hangfire Background Server active.");
 
-        var tempStoragePath = _configuration["Storage:TempStoragePath"] ?? "./tmp/newsstudio";
+        var tempStoragePath = NewsStudio.Infrastructure.Common.TempStorage.GetRoot(_configuration);
         try
         {
             if (!Directory.Exists(tempStoragePath))
@@ -84,6 +85,24 @@ public class Worker : BackgroundService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to execute startup Job Recovery check.");
+        }
+
+        // 1b. "Tin đang hot": refresh RSS feeds on a schedule (default every 30 minutes) and once now
+        try
+        {
+            var cron = _configuration["Trending:RefreshCron"] ?? "*/30 * * * *";
+            var recurring = _serviceProvider.GetRequiredService<Hangfire.IRecurringJobManager>();
+            recurring.AddOrUpdate<ITrendingNewsService>(
+                "trending-news-refresh",
+                service => service.RefreshAsync(CancellationToken.None),
+                cron);
+            _serviceProvider.GetRequiredService<Hangfire.IBackgroundJobClient>()
+                .Enqueue<ITrendingNewsService>(service => service.RefreshAsync(CancellationToken.None));
+            _logger.LogInformation("Trending news refresh scheduled ({Cron}) and queued once at startup.", cron);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to schedule trending news refresh.");
         }
 
         // 2. Main execution loop with periodic storage cleanup and heartbeat

@@ -45,8 +45,26 @@ public class ArticleExtractorService : IArticleExtractorService
         request.Headers.Add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
         request.Headers.Add("Accept-Language", "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7");
 
-        using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-        response.EnsureSuccessStatusCode();
+        HttpResponseMessage response;
+        try
+        {
+            response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        }
+        catch (HttpRequestException ex)
+        {
+            // e.g. BBC is blocked in Vietnam: the TLS handshake never completes
+            throw new InvalidOperationException(
+                $"Không mở được trang {uri.Host} — trang có thể bị chặn tại Việt Nam hoặc mạng không truy cập được ({ex.Message}). Hãy chọn bài từ báo khác.", ex);
+        }
+
+        using var _ = response;
+        if (!response.IsSuccessStatusCode)
+        {
+            var code = (int)response.StatusCode;
+            throw new InvalidOperationException(code is 401 or 402 or 403 or 429
+                ? $"{uri.Host} từ chối cho máy chủ đọc bài (HTTP {code}) — trang chặn truy cập tự động hoặc cần đăng nhập/trả phí. Hãy chọn bài từ báo khác."
+                : $"Không tải được bài báo từ {uri.Host} (HTTP {code}).");
+        }
 
         var html = await response.Content.ReadAsStringAsync(cancellationToken);
         return await ExtractFromHtmlAsync(html, url, cancellationToken);

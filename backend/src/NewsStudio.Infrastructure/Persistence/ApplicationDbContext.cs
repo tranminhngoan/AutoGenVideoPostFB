@@ -25,10 +25,29 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
     public DbSet<VideoMetric> VideoMetrics => Set<VideoMetric>();
     public DbSet<SystemSetting> SystemSettings => Set<SystemSetting>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
+    public DbSet<TrendingArticle> TrendingArticles => Set<TrendingArticle>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
+
+        // TrendingArticle Configuration ("Tin đang hot")
+        modelBuilder.Entity<TrendingArticle>(entity =>
+        {
+            entity.ToTable("TrendingArticles");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Url).HasMaxLength(2000).IsRequired();
+            entity.Property(e => e.Title).HasMaxLength(500).IsRequired();
+            entity.Property(e => e.ImageUrl).HasMaxLength(2000);
+            entity.Property(e => e.SourceKey).HasMaxLength(50).IsRequired();
+            entity.Property(e => e.SourceName).HasMaxLength(100).IsRequired();
+            entity.Property(e => e.Region).HasMaxLength(10).IsRequired();
+            entity.Property(e => e.Language).HasMaxLength(10).IsRequired();
+            entity.Property(e => e.TrendKeyword).HasMaxLength(200);
+            entity.HasIndex(e => e.Url).IsUnique();
+            entity.HasIndex(e => e.PublishedAtUtc);
+            entity.HasIndex(e => e.ClusterId);
+        });
 
         // Article Configuration
         modelBuilder.Entity<Article>(entity =>

@@ -23,6 +23,9 @@
     <TargetFramework>net8.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <!-- Shared with NewsStudio.Worker so a single `dotnet user-secrets set` configures both processes
+         (API keys stay outside the repository and don't depend on which terminal started the app). -->
+    <UserSecretsId>dotnet-NewsStudio.Worker-0bb5c013-76c3-40bf-9c72-d1794a811646</UserSecretsId>
   </PropertyGroup>
 
 </Project>

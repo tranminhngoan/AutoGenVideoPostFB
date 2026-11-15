@@ -46,7 +46,7 @@ public class Phase5TtsAndVideoRendererTests : IClassFixture<WebApplicationFactor
         result.Should().NotBeNull();
         File.Exists(result.AudioFilePath).Should().BeTrue();
         result.FileSizeBytes.Should().BeGreaterThan(1000);
-        result.AudioDurationSeconds.Should().BeInRange(55.0, 65.0);
+        result.AudioDurationSeconds.Should().BeGreaterThan(0); // real narration length, no padding to 55-65s
         result.Sha256Hash.Should().NotBeNullOrWhiteSpace();
 
         // Subtitles verification
@@ -117,7 +117,7 @@ public class Phase5TtsAndVideoRendererTests : IClassFixture<WebApplicationFactor
         // Assert
         result.Should().NotBeNull();
         result.Resolution.Should().Be("1080x1920");
-        result.DurationSeconds.Should().BeInRange(55.0, 65.0);
+        result.DurationSeconds.Should().BeGreaterThan(0); // video length follows the narration
         result.FileSizeBytes.Should().BeGreaterThan(1000);
         result.MimeType.Should().Be("video/mp4");
         File.Exists(result.OutputVideoPath).Should().BeTrue();

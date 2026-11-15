@@ -5,6 +5,7 @@ using Microsoft.Extensions.Logging;
 using NewsStudio.Application.DTOs;
 using NewsStudio.Application.Interfaces;
 using NewsStudio.Domain.Enums;
+using NewsStudio.Infrastructure.Common;
 
 namespace NewsStudio.Infrastructure.Ai;
 
@@ -41,23 +42,28 @@ public class ClaudeAiEditorService : IAIEditorService
         _logger.LogInformation("ClaudeAiEditorService generating script for project {ProjectId} with model {Model}",
             input.ProjectId, model);
 
-        if (!string.IsNullOrWhiteSpace(apiKey))
+        var simulate = SimulationMode.IsEnabled(_configuration);
+
+        if (string.IsNullOrWhiteSpace(apiKey))
         {
-            try
-            {
-                return await CallClaudeApiAsync(input, model, apiKey, cancellationToken);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Claude API call failed or timed out. Falling back to local editorial synthesis engine.");
-            }
-        }
-        else
-        {
-            _logger.LogInformation("No Claude API key configured. Using built-in editorial synthesis engine.");
+            _logger.LogInformation("No Claude API key configured. Using local editorial template script engine.");
+            return GeminiAiEditorService.GenerateDeterministicEditorialScript(input, "Claude", model);
         }
 
-        return GeminiAiEditorService.GenerateDeterministicEditorialScript(input, "Claude", model);
+        try
+        {
+            return await CallClaudeApiAsync(input, model, apiKey, cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            if (simulate)
+            {
+                _logger.LogWarning(ex, "Claude API call failed. Simulation mode: using local template script.");
+                return GeminiAiEditorService.GenerateDeterministicEditorialScript(input, "Claude", model);
+            }
+            _logger.LogError(ex, "Claude API call failed for project {ProjectId}", input.ProjectId);
+            throw new InvalidOperationException($"Gọi Claude thất bại: {ex.Message}", ex);
+        }
     }
 
     private async Task<EditorialScriptResult> CallClaudeApiAsync(
@@ -118,7 +124,7 @@ public class ClaudeAiEditorService : IAIEditorService
         parsed.AiProvider = "Claude";
         parsed.ModelName = model;
         parsed.PromptVersion = PromptTemplates.PromptVersion;
-        parsed.TokenUsage = totalTokens > 0 ? totalTokens : 600;
+        parsed.TokenUsage = totalTokens;
         // Claude 3.5 Haiku: $0.80/M input, $4.00/M output (~$0.0012/run)
         parsed.EstimatedCostUsd = Math.Round((inputTokens * 0.0000008m) + (outputTokens * 0.000004m), 6);
 
@@ -139,21 +145,21 @@ public class ClaudeAiEditorService : IAIEditorService
             var root = doc.RootElement;
 
             var title = GetStringProperty(root, "videoTitle", input.ArticleTitle);
-            var hook = GetStringProperty(root, "hook", "Điểm nóng tin tức hôm nay bạn không thể bỏ lỡ!");
+            var hook = GetStringProperty(root, "hook", "");
             var voiceOver = GetStringProperty(root, "voiceOverScript", "");
             var keyFacts = GetStringProperty(root, "keyFacts", "");
             var context = GetStringProperty(root, "context", "");
             var analysis = GetStringProperty(root, "analysis", "");
-            var conclusion = GetStringProperty(root, "conclusion", "Bạn nghĩ sao về thông tin này?");
+            var conclusion = GetStringProperty(root, "conclusion", "");
             var attribution = GetStringProperty(root, "sourceAttribution", $"Theo {input.Publisher}");
 
             if (string.IsNullOrWhiteSpace(voiceOver))
             {
-                voiceOver = $"{hook} {keyFacts} {analysis} {conclusion} {attribution}.";
+                throw new InvalidOperationException("AI trả về kịch bản rỗng. Hãy thử viết lại.");
             }
 
             var words = voiceOver.Split(new[] { ' ', '\n', '\r', '\t' }, StringSplitOptions.RemoveEmptyEntries).Length;
-            var estimatedSeconds = Math.Clamp((int)Math.Round(words / 2.3), 45, 60);
+            var estimatedSeconds = Math.Max(1, (int)Math.Round(words / 2.3));
 
             return new EditorialScriptResult
             {
@@ -169,9 +175,9 @@ public class ClaudeAiEditorService : IAIEditorService
                 EstimatedReadingSeconds = estimatedSeconds
             };
         }
-        catch
+        catch (JsonException ex)
         {
-            return GeminiAiEditorService.GenerateDeterministicEditorialScript(input, "Claude", "claude-3-5-haiku-20241022");
+            throw new InvalidOperationException("AI trả về kịch bản không đúng định dạng JSON. Hãy thử viết lại.", ex);
         }
     }
 

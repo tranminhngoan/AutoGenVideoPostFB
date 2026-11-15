@@ -7,9 +7,10 @@ public class CreateVideoProjectDto
     public string Title { get; set; } = string.Empty;
     public string SourceUrl { get; set; } = string.Empty;
     public string Publisher { get; set; } = "Online News";
-    public int TargetDurationSeconds { get; set; } = 50;
+    public int TargetDurationSeconds { get; set; } = 105; // upper bound; the AI shortens it for short articles
     public string? AiProvider { get; set; } = "Gemini";
-    public string? Voice { get; set; } = "vi-VN-HoaiMyNeural";
+    public string? Voice { get; set; } // null = server default (Tts:DefaultVoice, natural Gemini voice)
+    public string? VoiceSpeed { get; set; }
 }
 
 public class VideoProjectResponseDto
@@ -26,6 +27,9 @@ public class VideoProjectResponseDto
     public DateTime CreatedAtUtc { get; set; }
     public DateTime? UpdatedAtUtc { get; set; }
     public string? ErrorMessage { get; set; }
+    public string? AiProvider { get; set; }
+    public string? Voice { get; set; }
+    public string? VoiceSpeed { get; set; }
 
     public int SceneCount { get; set; }
     public List<VideoSceneResponseDto> Scenes { get; set; } = new();

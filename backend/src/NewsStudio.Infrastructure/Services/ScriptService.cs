@@ -65,7 +65,8 @@ public class ScriptService : IScriptService
             throw new InvalidOperationException($"Cannot generate script: Video project {projectId} has no article content.");
         }
 
-        var providerName = options?.AiProvider ?? "Gemini";
+        // Explicit request > choice saved on the project > default
+        var providerName = options?.AiProvider ?? project.AiProvider ?? "Gemini";
         var editor = _aiFactory.GetEditorService(providerName);
 
         var promptInput = new EditorialScriptPromptInput
@@ -141,7 +142,7 @@ public class ScriptService : IScriptService
         if (script == null) return null;
 
         var words = script.VoiceOverScript.Split(new[] { ' ', '\n', '\r', '\t' }, StringSplitOptions.RemoveEmptyEntries).Length;
-        var estSeconds = Math.Clamp((int)Math.Round(words / 2.3), 55, 65);
+        var estSeconds = Math.Max(1, (int)Math.Round(words / NewsStudio.Infrastructure.Ai.PromptTemplates.WordsPerSecond));
 
         return MapScriptToDto(script, words, estSeconds);
     }
@@ -171,7 +172,7 @@ public class ScriptService : IScriptService
         await _context.SaveChangesAsync(cancellationToken);
 
         var words = script.VoiceOverScript.Split(new[] { ' ', '\n', '\r', '\t' }, StringSplitOptions.RemoveEmptyEntries).Length;
-        var estSeconds = Math.Clamp((int)Math.Round(words / 2.3), 55, 65);
+        var estSeconds = Math.Max(1, (int)Math.Round(words / NewsStudio.Infrastructure.Ai.PromptTemplates.WordsPerSecond));
 
         return MapScriptToDto(script, words, estSeconds);
     }

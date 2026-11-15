@@ -75,6 +75,16 @@ public static class DependencyInjection
         services.AddScoped<ElevenLabsTtsService>();
         services.AddScoped<ITtsService>(sp => sp.GetRequiredService<EdgeTtsService>());
         services.AddScoped<ITtsService>(sp => sp.GetRequiredService<ElevenLabsTtsService>());
+        // "Tin đang hot": RSS aggregation + hot ranking
+        services.AddHttpClient<ITrendingNewsService, NewsStudio.Infrastructure.Trending.TrendingNewsService>()
+            .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+            {
+                // Several news sites always answer gzip/brotli-compressed
+                AutomaticDecompression = System.Net.DecompressionMethods.All
+            });
+        // Natural Vietnamese narration via Gemini TTS (voices "gemini:<Name>")
+        services.AddHttpClient<GeminiTtsService>();
+        services.AddScoped<ITtsService>(sp => sp.GetRequiredService<GeminiTtsService>());
         services.AddScoped<ITtsFactory, TtsFactory>();
         services.AddScoped<IVideoAssetService, VideoAssetService>();
         services.AddScoped<IVideoRendererService, FFmpegRendererService>();

@@ -2,6 +2,25 @@ import { SystemConfig, VideoProject, VideoProjectStatus } from '../types';
 
 const API_BASE = '/api';
 
+/**
+ * Builds a readable error message from a failed response. When the backend is down, the Vite dev
+ * proxy answers with a bare 5xx (no JSON body) — say that plainly instead of a generic failure.
+ */
+async function apiError(res: Response, fallback: string): Promise<string> {
+  const text = await res.text().catch(() => '');
+  try {
+    const body = JSON.parse(text);
+    const msg = body.error || body.message || body.detail || body.title;
+    if (msg) return String(msg);
+  } catch {
+    // not JSON
+  }
+  if (res.status >= 500 && !text.trim().startsWith('{')) {
+    return 'Không kết nối được máy chủ backend. Kiểm tra backend đã chạy và đang lắng nghe ở cổng 5000.';
+  }
+  return fallback;
+}
+
 export interface CreateProjectRequest {
   title: string;
   sourceUrl: string;
@@ -9,6 +28,7 @@ export interface CreateProjectRequest {
   targetDurationSeconds?: number;
   aiProvider?: string;
   voice?: string;
+  voiceSpeed?: string;
 }
 
 export interface ProcessingJobDto {
@@ -60,13 +80,37 @@ export const api = {
     }
   },
 
+  /** "Tin đang hot" — ranked stories from Vietnamese and international RSS feeds. */
+  async getTrending(params: { region?: string; source?: string; q?: string; hours?: number; limit?: number } = {}): Promise<TrendingOverviewDto> {
+    const qs = new URLSearchParams();
+    Object.entries(params).forEach(([k, v]) => {
+      if (v !== undefined && v !== null && v !== '') qs.append(k, String(v));
+    });
+    const res = await fetch(`${API_BASE}/trending?${qs}`);
+    if (!res.ok) throw new Error(await apiError(res, 'Không tải được danh sách tin hot'));
+    return await res.json();
+  },
+
+  async refreshTrending(): Promise<TrendingRefreshResultDto> {
+    const res = await fetch(`${API_BASE}/trending/refresh`, { method: 'POST' });
+    if (!res.ok) throw new Error(await apiError(res, 'Cập nhật tin hot thất bại'));
+    return await res.json();
+  },
+
+  /** Gemini models the server's API key can actually use (live from Google). */
+  async getAiModels(): Promise<AiModelsDto> {
+    const res = await fetch(`${API_BASE}/system/ai-models`);
+    if (!res.ok) throw new Error(await apiError(res, 'Không lấy được danh sách model AI'));
+    return await res.json();
+  },
+
   async getSystemInfo() {
     try {
       const res = await fetch(`${API_BASE}/system/info`);
       if (!res.ok) throw new Error('System info failed');
       return await res.json();
     } catch (e) {
-      return { appName: 'AI News Studio', version: '1.0.0', dotnetVersion: '8.0' };
+      return { appName: 'Trạm Tin 24/7', version: '1.0.0', dotnetVersion: '8.0' };
     }
   },
 
@@ -78,8 +122,7 @@ export const api = {
       body: JSON.stringify(data)
     });
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || 'Failed to create video project');
+      throw new Error(await apiError(res, 'Failed to create video project'));
     }
     return await res.json();
   },
@@ -109,8 +152,7 @@ export const api = {
       method: 'POST'
     });
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || 'Failed to enqueue processing job');
+      throw new Error(await apiError(res, 'Failed to enqueue processing job'));
     }
     return await res.json();
   },
@@ -144,8 +186,7 @@ export const api = {
       body: JSON.stringify({ url })
     });
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || 'Trích xuất bài báo thất bại');
+      throw new Error(await apiError(res, 'Trích xuất bài báo thất bại'));
     }
     return await res.json();
   },
@@ -177,8 +218,7 @@ export const api = {
       body: JSON.stringify(data)
     });
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || 'Cập nhật thông tin ảnh thất bại');
+      throw new Error(await apiError(res, 'Cập nhật thông tin ảnh thất bại'));
     }
     return await res.json();
   },
@@ -191,8 +231,7 @@ export const api = {
       body: JSON.stringify(options || {})
     });
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || 'Tạo kịch bản AI thất bại');
+      throw new Error(await apiError(res, 'Tạo kịch bản AI thất bại'));
     }
     return await res.json();
   },
@@ -214,8 +253,7 @@ export const api = {
       body: JSON.stringify(data)
     });
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || 'Cập nhật kịch bản thất bại');
+      throw new Error(await apiError(res, 'Cập nhật kịch bản thất bại'));
     }
     return await res.json();
   },
@@ -225,8 +263,7 @@ export const api = {
       method: 'POST'
     });
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || 'Phân cảnh kịch bản thất bại');
+      throw new Error(await apiError(res, 'Phân cảnh kịch bản thất bại'));
     }
     return await res.json();
   },
@@ -248,19 +285,22 @@ export const api = {
       body: JSON.stringify({ scenes })
     });
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || 'Cập nhật phân cảnh thất bại');
+      throw new Error(await apiError(res, 'Cập nhật phân cảnh thất bại'));
     }
     return await res.json();
   },
 
   // Phase 5 Video Rendering & Ephemeral Media APIs
-  async renderVideo(projectId: string, ttsProvider?: string): Promise<RenderStatusResponseDto> {
-    const url = `${API_BASE}/video-projects/${projectId}/render${ttsProvider ? `?ttsProvider=${ttsProvider}` : ''}`;
+  async renderVideo(projectId: string, ttsProvider?: string, voice?: string, speed?: string): Promise<RenderStatusResponseDto> {
+    const params = new URLSearchParams();
+    if (ttsProvider) params.append('ttsProvider', ttsProvider);
+    if (voice) params.append('voice', voice);
+    if (speed) params.append('speed', speed);
+    const queryString = params.toString();
+    const url = `${API_BASE}/video-projects/${projectId}/render${queryString ? `?${queryString}` : ''}`;
     const res = await fetch(url, { method: 'POST' });
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || 'Yêu cầu render video thất bại');
+      throw new Error(await apiError(res, 'Yêu cầu render video thất bại'));
     }
     return await res.json();
   },
@@ -308,8 +348,7 @@ export const api = {
   async evaluateQuality(projectId: string): Promise<VideoReviewDto> {
     const res = await fetch(`${API_BASE}/video-projects/${projectId}/review/evaluate`, { method: 'POST' });
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.message || 'Kiểm định chất lượng video thất bại');
+      throw new Error(await apiError(res, 'Kiểm định chất lượng video thất bại'));
     }
     return await res.json();
   },
@@ -321,8 +360,7 @@ export const api = {
       body: JSON.stringify({ decision: 'Approved', reviewedBy: reviewer, feedbackNotes: notes })
     });
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.message || 'Không thể phê duyệt video do lỗi nghiêm trọng');
+      throw new Error(await apiError(res, 'Không thể phê duyệt video do lỗi nghiêm trọng'));
     }
     return await res.json();
   },
@@ -334,8 +372,7 @@ export const api = {
       body: JSON.stringify({ decision: 'Rejected', reviewedBy: reviewer, feedbackNotes: notes })
     });
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.message || 'Gửi từ chối video thất bại');
+      throw new Error(await apiError(res, 'Gửi từ chối video thất bại'));
     }
     return await res.json();
   },
@@ -347,8 +384,7 @@ export const api = {
       body: JSON.stringify({ action, notes })
     });
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.message || `Yêu cầu thực hiện ${action} thất bại`);
+      throw new Error(await apiError(res, `Yêu cầu thực hiện ${action} thất bại`));
     }
     return true;
   },
@@ -360,8 +396,7 @@ export const api = {
       body: JSON.stringify(data)
     });
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.message || 'Cập nhật tiêu đề & caption thất bại');
+      throw new Error(await apiError(res, 'Cập nhật tiêu đề & caption thất bại'));
     }
     return true;
   },
@@ -393,8 +428,7 @@ export const api = {
       body: JSON.stringify(data)
     });
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.message || 'Kết nối Facebook Page thất bại');
+      throw new Error(await apiError(res, 'Kết nối Facebook Page thất bại'));
     }
     return await res.json();
   },
@@ -427,8 +461,7 @@ export const api = {
       body: JSON.stringify(options || {})
     });
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.message || 'Xuất bản Facebook Reels thất bại');
+      throw new Error(await apiError(res, 'Xuất bản Facebook Reels thất bại'));
     }
     return await res.json();
   },
@@ -446,8 +479,7 @@ export const api = {
   async fetchPostMetrics(postId: string): Promise<VideoMetricDto> {
     const res = await fetch(`${API_BASE}/facebook/posts/${postId}/metrics`);
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.message || 'Cập nhật số liệu Insights thất bại');
+      throw new Error(await apiError(res, 'Cập nhật số liệu Insights thất bại'));
     }
     return await res.json();
   },
@@ -477,6 +509,60 @@ export const api = {
     return await res.json();
   }
 };
+
+export interface TrendingArticleDto {
+  id: string;
+  url: string;
+  title: string;
+  summary?: string | null;
+  imageUrl?: string | null;
+  sourceKey: string;
+  sourceName: string;
+  region: 'VN' | 'World' | string;
+  language: string;
+  publishedAtUtc: string;
+  isFeatured: boolean;
+  coverageCount: number;
+  relatedSources: string[];
+  trendKeyword?: string | null;
+  trendTraffic?: number | null;
+  hotScore: number;
+  reasons: string[];
+}
+
+export interface TrendingSourceDto {
+  key: string;
+  name: string;
+  region: string;
+  language: string;
+  itemCount: number;
+}
+
+export interface TrendingRefreshResultDto {
+  startedAtUtc: string;
+  finishedAtUtc: string;
+  feedsOk: number;
+  feedsFailed: number;
+  failedFeeds: string[];
+  itemsFetched: number;
+  newItems: number;
+  trendKeywords: number;
+  totalStored: number;
+}
+
+export interface TrendingOverviewDto {
+  items: TrendingArticleDto[];
+  sources: TrendingSourceDto[];
+  lastRefresh?: TrendingRefreshResultDto | null;
+  trendKeywords: string[];
+}
+
+export interface AiModelsDto {
+  configured: boolean;
+  current: string;
+  currentAvailable: boolean;
+  models: { id: string; displayName: string }[];
+}
 
 export interface SystemMetricsDto {
   cpuUsagePercent: number;

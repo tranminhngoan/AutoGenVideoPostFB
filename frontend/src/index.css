@@ -2,41 +2,128 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Design tokens — RGB channels so Tailwind opacity modifiers work (bg-fg/5 etc.) */
+:root,
+:root[data-theme='light'] {
+  color-scheme: light;
+  --canvas: 247 247 245;
+  --surface: 255 255 255;
+  --subtle: 250 250 249;
+  --muted: 241 241 238;
+  --line: 229 229 225;
+  --line-strong: 211 211 206;
+  --fg: 24 24 23;
+  --fg-muted: 92 92 88;
+  --fg-subtle: 140 140 134;
+  --accent: 37 89 214;
+  --accent-fg: 255 255 255;
+  --success: 22 128 61;
+  --warning: 176 92 8;
+  --danger: 196 40 40;
+  --brand: 217 58 43;
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --canvas: 14 14 15;
+  --surface: 23 23 25;
+  --subtle: 28 28 31;
+  --muted: 36 36 40;
+  --line: 44 44 48;
+  --line-strong: 62 62 67;
+  --fg: 236 236 234;
+  --fg-muted: 166 166 161;
+  --fg-subtle: 116 116 112;
+  --accent: 110 150 255;
+  --accent-fg: 14 14 15;
+  --success: 74 200 120;
+  --warning: 240 176 60;
+  --danger: 248 113 113;
+  --brand: 233 84 66;
+}
+
 @layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
   body {
-    background-color: #0B0F19;
-    color: #F9FAFB;
-    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+    @apply bg-canvas text-fg font-sans antialiased;
+    font-size: 14px;
+    line-height: 1.5;
+    font-feature-settings: 'cv11', 'ss01';
+  }
+  ::selection {
+    background: rgb(var(--accent) / 0.22);
+  }
+  :focus-visible {
+    outline: 2px solid rgb(var(--accent) / 0.7);
+    outline-offset: 2px;
+  }
+  input:focus-visible,
+  textarea:focus-visible,
+  select:focus-visible {
+    outline: none;
+  }
+  h1, h2, h3, h4 {
+    letter-spacing: -0.011em;
+  }
+  html {
+    -webkit-tap-highlight-color: transparent;
+  }
+  /* Long URLs, paths and words must wrap instead of pushing the page sideways on phones */
+  p, dd, li, h1, h2, h3, span, a {
+    overflow-wrap: anywhere;
   }
 }
 
-/* Glassmorphism and futuristic borders */
-.glass-panel {
-  background: rgba(17, 24, 39, 0.7);
-  backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+/* iOS zooms into any focused field under 16px — keep fields at 16px on phones */
+@media (max-width: 640px) {
+  input,
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
 }
 
-.glass-panel-hover {
-  transition: all 0.2s ease-in-out;
-}
-.glass-panel-hover:hover {
-  border-color: rgba(99, 102, 241, 0.4);
-  box-shadow: 0 0 20px -5px rgba(99, 102, 241, 0.2);
+@layer utilities {
+  /* Bottom safe area (iPhone home indicator) */
+  .pb-safe {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .pt-safe {
+    padding-top: env(safe-area-inset-top);
+  }
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+  .scrollbar-none {
+    scrollbar-width: none;
+  }
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
 }
 
 /* Scrollbar */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(var(--line-strong)) transparent;
 }
-::-webkit-scrollbar-track {
-  background: #0B0F19;
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
 }
 ::-webkit-scrollbar-thumb {
-  background: #1F2937;
+  background: rgb(var(--line-strong));
   border-radius: 9999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
 }
-::-webkit-scrollbar-thumb:hover {
-  background: #374151;
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Native media controls blend better on dark */
+audio {
+  color-scheme: light dark;
 }
