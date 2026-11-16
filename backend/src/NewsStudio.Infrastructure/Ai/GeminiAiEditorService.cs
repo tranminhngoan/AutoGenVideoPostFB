@@ -37,15 +37,12 @@ public class GeminiAiEditorService : IAIEditorService
             ? modelName
             : _configuration["Ai:Gemini:Model"] ?? "gemini-flash-latest";
 
-        var apiKey = _configuration["Ai:Gemini:ApiKey"]
-            ?? Environment.GetEnvironmentVariable("GEMINI_API_KEY");
-
         _logger.LogInformation("GeminiAiEditorService generating script for project {ProjectId} with model {Model}",
             input.ProjectId, model);
 
         var simulate = SimulationMode.IsEnabled(_configuration);
 
-        if (string.IsNullOrWhiteSpace(apiKey))
+        if (!GeminiKeys.HasAny(_configuration))
         {
             _logger.LogInformation("No Gemini API key configured. Using local editorial template script engine.");
             return GenerateDeterministicEditorialScript(input, "Gemini", model);
@@ -53,7 +50,7 @@ public class GeminiAiEditorService : IAIEditorService
 
         try
         {
-            return await CallGeminiApiAsync(input, model, apiKey, cancellationToken);
+            return await CallGeminiApiAsync(input, model, cancellationToken);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -70,10 +67,8 @@ public class GeminiAiEditorService : IAIEditorService
     private async Task<EditorialScriptResult> CallGeminiApiAsync(
         EditorialScriptPromptInput input,
         string model,
-        string apiKey,
         CancellationToken cancellationToken)
     {
-        var url = $"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={apiKey}";
         var userPrompt = PromptTemplates.BuildUserPrompt(
             input.ArticleTitle,
             input.Publisher,
@@ -103,18 +98,41 @@ public class GeminiAiEditorService : IAIEditorService
             }
         };
 
-        using var response = await _httpClient.PostAsJsonAsync(url, requestBody, cancellationToken);
-        if (!response.IsSuccessStatusCode)
+        // Free key first; when Google refuses it (quota used up etc.) the same request goes to the paid key.
+        var keys = GeminiKeys.InOrder(_configuration, model);
+        HttpResponseMessage? response = null;
+        GeminiKeys.Key usedKey = keys[0];
+        for (var i = 0; i < keys.Count; i++)
         {
+            usedKey = keys[i];
+            var url = $"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={usedKey.Value}";
+            response?.Dispose();
+            response = await _httpClient.PostAsJsonAsync(url, requestBody, cancellationToken);
+            if (response.IsSuccessStatusCode) break;
+
             // Keep Google's own explanation — a bare "404" hides that the model name is wrong/retired.
             var reason = await ReadGoogleErrorAsync(response, cancellationToken);
+            if (usedKey.IsFree && i < keys.Count - 1)
+            {
+                GeminiKeys.MarkFreeRefused(model, response.StatusCode, reason);
+                _logger.LogInformation("Gemini free key refused (HTTP {Status}) for {Model}; using paid key. {Reason}",
+                    (int)response.StatusCode, model, reason);
+                continue;
+            }
+            if (usedKey.IsFree) GeminiKeys.MarkFreeRefused(model, response.StatusCode, reason);
+
             var hint = response.StatusCode == System.Net.HttpStatusCode.NotFound
                 ? $" Model \"{model}\" không dùng được với API key này — xem danh sách model khả dụng trong Cài đặt rồi đặt lại Ai:Gemini:Model."
-                : string.Empty;
-            throw new HttpRequestException($"HTTP {(int)response.StatusCode}: {reason}.{hint}", null, response.StatusCode);
+                : (int)response.StatusCode == 429 && usedKey.IsFree
+                    ? " Key miễn phí đã hết lượt — thêm key trả phí (Ai__Gemini__ApiKey) để tự chuyển sang khi hết lượt free."
+                    : string.Empty;
+            var status = response.StatusCode;
+            response.Dispose();
+            throw new HttpRequestException($"HTTP {(int)status}: {reason}.{hint}", null, status);
         }
 
-        var jsonDoc = await response.Content.ReadFromJsonAsync<JsonDocument>(cancellationToken: cancellationToken);
+        using var okResponse = response!;
+        var jsonDoc = await okResponse.Content.ReadFromJsonAsync<JsonDocument>(cancellationToken: cancellationToken);
         if (jsonDoc == null) throw new InvalidOperationException("Empty response from Gemini API");
 
         var text = jsonDoc.RootElement
@@ -137,7 +155,9 @@ public class GeminiAiEditorService : IAIEditorService
         parsed.PromptVersion = PromptTemplates.PromptVersion;
         parsed.TokenUsage = totalTokens > 0 ? totalTokens : CountTokensApprox(userPrompt + text);
         // Approx Gemini Flash cost: $0.075 / 1M input, $0.30 / 1M output (~$0.0002 / run)
-        parsed.EstimatedCostUsd = Math.Round((decimal)parsed.TokenUsage * 0.0000002m, 6);
+        parsed.EstimatedCostUsd = usedKey.IsFree ? 0m : Math.Round((decimal)parsed.TokenUsage * 0.0000002m, 6);
+        _logger.LogInformation("Gemini script for project {ProjectId} used the {KeyType} key ({Tokens} tokens)",
+            input.ProjectId, usedKey.Label, parsed.TokenUsage);
 
         return parsed;
     }
@@ -290,7 +310,7 @@ public class GeminiAiEditorService : IAIEditorService
     /// </summary>
     public async Task<List<AiModelInfoDto>?> ListAvailableModelsAsync(CancellationToken cancellationToken = default)
     {
-        var apiKey = _configuration["Ai:Gemini:ApiKey"] ?? Environment.GetEnvironmentVariable("GEMINI_API_KEY");
+        var apiKey = GeminiKeys.ForListing(_configuration);
         if (string.IsNullOrWhiteSpace(apiKey)) return null;
 
         var result = new List<AiModelInfoDto>();

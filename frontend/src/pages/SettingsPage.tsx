@@ -204,6 +204,25 @@ function DefaultsSection({ config }: { config: SystemConfig | null }) {
             <KeyRound className="mt-0.5 h-3.5 w-3.5 shrink-0" />
             API key được cấu hình bằng biến môi trường trên máy chủ, không nhập ở giao diện.
           </p>
+          {config?.ai.gemini && (
+            <div className="space-y-1.5 rounded-lg border border-line p-3 text-xs text-fg-muted">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-medium text-fg">Key Gemini miễn phí</span>
+                <Badge tone={config.ai.gemini.hasFreeKey ? 'success' : 'neutral'}>
+                  {config.ai.gemini.hasFreeKey ? 'Đã có · dùng trước' : 'Chưa có'}
+                </Badge>
+                <span className="font-medium text-fg">Key trả phí</span>
+                <Badge tone={config.ai.gemini.hasPaidKey ? 'success' : 'neutral'}>
+                  {config.ai.gemini.hasPaidKey ? 'Đã có · dùng khi hết lượt free' : 'Chưa có'}
+                </Badge>
+              </div>
+              <p>
+                Mỗi lần viết kịch bản, đọc giọng hay tìm ảnh, app dùng key miễn phí trước. Khi Google báo hết lượt free,
+                app tự chuyển sang key trả phí. Key miễn phí lấy từ một project <b>không gắn billing</b>, đặt vào biến{' '}
+                <code className="font-mono text-fg">Ai__Gemini__FreeApiKey</code>.
+              </p>
+            </div>
+          )}
           {config?.ai.gemini?.isConfigured && <GeminiModelStatus />}
         </CardBody>
       </Card>

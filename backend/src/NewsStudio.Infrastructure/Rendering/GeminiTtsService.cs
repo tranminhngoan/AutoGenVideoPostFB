@@ -54,8 +54,7 @@ public class GeminiTtsService : ITtsService
         TtsSynthesisRequest request,
         CancellationToken cancellationToken = default)
     {
-        var apiKey = _configuration["Ai:Gemini:ApiKey"] ?? Environment.GetEnvironmentVariable("GEMINI_API_KEY");
-        if (string.IsNullOrWhiteSpace(apiKey))
+        if (!GeminiKeys.HasAny(_configuration))
         {
             throw new InvalidOperationException(
                 "Giọng đọc Gemini cần API key. Đặt Ai:Gemini:ApiKey (user-secrets) hoặc GEMINI_API_KEY trên máy chủ.");
@@ -98,7 +97,7 @@ public class GeminiTtsService : ITtsService
         }
         else
         {
-            pcm = await RequestSpeechAsync(apiKey, model, voiceName, prompt, cancellationToken);
+            pcm = await RequestSpeechAsync(model, voiceName, prompt, cancellationToken);
             try { await File.WriteAllBytesAsync(cachePath, pcm, cancellationToken); }
             catch (IOException ex) { _logger.LogWarning("Could not cache TTS audio: {Message}", ex.Message); }
         }
@@ -153,7 +152,54 @@ public class GeminiTtsService : ITtsService
         return string.IsNullOrWhiteSpace(style) ? text : $"{style.Trim()}: {text}";
     }
 
-    private async Task<byte[]> RequestSpeechAsync(string apiKey, string model, string voiceName, string prompt, CancellationToken ct)
+    /// <summary>Free key first (see <see cref="GeminiKeys"/>); falls through to the paid key when the free one is refused.</summary>
+    private async Task<byte[]> RequestSpeechAsync(string model, string voiceName, string prompt, CancellationToken ct)
+    {
+        var keys = GeminiKeys.InOrder(_configuration, model);
+        for (var i = 0; ; i++)
+        {
+            var key = keys[i];
+            var hasNext = i < keys.Count - 1;
+            var (pcm, status, reason) = await SendSpeechRequestAsync(key.Value, model, voiceName, prompt, ct);
+            if (pcm != null)
+            {
+                _logger.LogInformation("Gemini TTS used the {KeyType} key ({Model})", key.Label, model);
+                return pcm;
+            }
+
+            if (key.IsFree) GeminiKeys.MarkFreeRefused(model, status, reason);
+            if (key.IsFree && hasNext)
+            {
+                _logger.LogInformation("Gemini TTS free key refused (HTTP {Status}); using paid key. {Reason}", (int)status, reason);
+                continue;
+            }
+            throw BuildSpeechError(model, status, reason, key.IsFree);
+        }
+    }
+
+    private static InvalidOperationException BuildSpeechError(string model, System.Net.HttpStatusCode status, string reason, bool freeKey)
+    {
+        if ((int)status == 429)
+        {
+            var retry = System.Text.RegularExpressions.Regex.Match(reason, @"retry in (?:(\d+)h)?(?:(\d+)m)?");
+            var wait = retry.Success
+                ? $" Có thể dùng lại sau khoảng {(retry.Groups[1].Success ? retry.Groups[1].Value + " giờ " : "")}{(retry.Groups[2].Success ? retry.Groups[2].Value + " phút" : "")}."
+                : string.Empty;
+            var freeTier = freeKey
+                           || reason.Contains("free_tier", StringComparison.OrdinalIgnoreCase)
+                           || reason.Contains("Free Tier", StringComparison.OrdinalIgnoreCase);
+            return new InvalidOperationException(freeTier
+                ? $"Key Gemini đang ở gói MIỄN PHÍ và đã hết lượt đọc giọng (model {model}).{wait} " +
+                  "Để không bị gián đoạn: đặt thêm key của project đã gắn billing vào Ai__Gemini__ApiKey — app sẽ dùng key miễn phí trước rồi tự chuyển sang key trả phí. " +
+                  "Trong lúc chờ, hãy chọn giọng Hoài My hoặc Nam Minh."
+                : $"Gemini đang giới hạn tốc độ đọc giọng (model {model}).{wait} Thử lại sau ít phút hoặc chọn giọng Hoài My / Nam Minh.");
+        }
+        return new InvalidOperationException($"Tạo giọng đọc Gemini thất bại (HTTP {(int)status}): {reason}");
+    }
+
+    /// <summary>One TTS call. Returns the PCM audio, or null plus Google's status/reason on failure.</summary>
+    private async Task<(byte[]? Pcm, System.Net.HttpStatusCode Status, string Reason)> SendSpeechRequestAsync(
+        string apiKey, string model, string voiceName, string prompt, CancellationToken ct)
     {
         var url = $"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={apiKey}";
         var body = new
@@ -173,22 +219,7 @@ public class GeminiTtsService : ITtsService
         var json = await response.Content.ReadAsStringAsync(ct);
         if (!response.IsSuccessStatusCode)
         {
-            var reason = ExtractError(json);
-            if ((int)response.StatusCode == 429)
-            {
-                var retry = System.Text.RegularExpressions.Regex.Match(reason, @"retry in (?:(\d+)h)?(?:(\d+)m)?");
-                var wait = retry.Success
-                    ? $" Có thể dùng lại sau khoảng {(retry.Groups[1].Success ? retry.Groups[1].Value + " giờ " : "")}{(retry.Groups[2].Success ? retry.Groups[2].Value + " phút" : "")}."
-                    : string.Empty;
-                var freeTier = reason.Contains("free_tier", StringComparison.OrdinalIgnoreCase)
-                               || reason.Contains("Free Tier", StringComparison.OrdinalIgnoreCase);
-                throw new InvalidOperationException(freeTier
-                    ? $"Key Gemini đang ở gói MIỄN PHÍ và đã hết lượt đọc giọng trong ngày (model {model}).{wait} " +
-                      "Để dùng không giới hạn: nạp tiền cho tài khoản billing (số dư phải > 0) và đảm bảo key thuộc project đã gắn billing. " +
-                      "Trong lúc chờ, hãy chọn giọng Hoài My hoặc Nam Minh."
-                    : $"Gemini đang giới hạn tốc độ đọc giọng (model {model}).{wait} Thử lại sau ít phút hoặc chọn giọng Hoài My / Nam Minh.");
-            }
-            throw new InvalidOperationException($"Tạo giọng đọc Gemini thất bại (HTTP {(int)response.StatusCode}): {reason}");
+            return (null, response.StatusCode, ExtractError(json));
         }
 
         using var doc = JsonDocument.Parse(json);
@@ -205,7 +236,7 @@ public class GeminiTtsService : ITtsService
                     audio.Write(bytes);
                 }
             }
-            if (audio.Length > 0) return audio.ToArray();
+            if (audio.Length > 0) return (audio.ToArray(), response.StatusCode, string.Empty);
         }
 
         throw new InvalidOperationException("Gemini không trả về dữ liệu âm thanh. Thử lại hoặc chọn giọng khác.");

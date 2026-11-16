@@ -42,9 +42,10 @@ public class SystemController : ControllerBase
     {
         var aiProvider = _configuration["Ai:Provider"] ?? "Gemini";
         // Read the same keys the AI editor services actually use
-        var geminiKey = _configuration["Ai:Gemini:ApiKey"] ?? Environment.GetEnvironmentVariable("GEMINI_API_KEY");
+        var hasGeminiFreeKey = NewsStudio.Infrastructure.Common.GeminiKeys.Free(_configuration) != null;
+        var hasGeminiPaidKey = NewsStudio.Infrastructure.Common.GeminiKeys.Paid(_configuration) != null;
         var claudeKey = _configuration["Ai:Claude:ApiKey"] ?? Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY");
-        var hasGeminiKey = !string.IsNullOrWhiteSpace(geminiKey);
+        var hasGeminiKey = hasGeminiFreeKey || hasGeminiPaidKey;
         var hasClaudeKey = !string.IsNullOrWhiteSpace(claudeKey);
         var isClaude = aiProvider.Equals("Claude", StringComparison.OrdinalIgnoreCase);
         var ttsProvider = _configuration["Tts:Provider"] ?? "EdgeTts";
@@ -63,7 +64,7 @@ public class SystemController : ControllerBase
                 model = isClaude
                     ? _configuration["Ai:Claude:Model"] ?? "claude-3-5-haiku-20241022"
                     : _configuration["Ai:Gemini:Model"] ?? "gemini-flash-latest",
-                gemini = new { isConfigured = hasGeminiKey, model = _configuration["Ai:Gemini:Model"] ?? "gemini-flash-latest" },
+                gemini = new { isConfigured = hasGeminiKey, hasFreeKey = hasGeminiFreeKey, hasPaidKey = hasGeminiPaidKey, model = _configuration["Ai:Gemini:Model"] ?? "gemini-flash-latest" },
                 claude = new { isConfigured = hasClaudeKey, model = _configuration["Ai:Claude:Model"] ?? "claude-3-5-haiku-20241022" }
             },
             tts = new

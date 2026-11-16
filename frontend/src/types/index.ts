@@ -74,7 +74,8 @@ export interface SystemConfig {
     provider: 'Gemini' | 'Claude' | string;
     isConfigured: boolean;
     model: string;
-    gemini?: { isConfigured: boolean; model: string };
+    /** hasFreeKey: key from a project without billing, tried first; hasPaidKey: billed key used when the free quota runs out. */
+    gemini?: { isConfigured: boolean; model: string; hasFreeKey?: boolean; hasPaidKey?: boolean };
     claude?: { isConfigured: boolean; model: string };
   };
   tts: {

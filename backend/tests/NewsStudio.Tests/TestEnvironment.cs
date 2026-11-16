@@ -39,6 +39,7 @@ internal static class TestEnvironment
         // loaded here and every test run would make billed Gemini/Claude calls. A whitespace value
         // overrides user-secrets and machine env vars, and the services treat it as "no key".
         Environment.SetEnvironmentVariable("Ai__Gemini__ApiKey", " ");
+        Environment.SetEnvironmentVariable("Ai__Gemini__FreeApiKey", " ");
         Environment.SetEnvironmentVariable("Ai__Claude__ApiKey", " ");
         // Offline tests use the Edge-TTS path; the default Gemini voice needs a real key.
         Environment.SetEnvironmentVariable("Tts__DefaultVoice", "vi-VN-HoaiMyNeural");

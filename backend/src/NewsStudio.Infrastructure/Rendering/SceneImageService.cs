@@ -389,8 +389,7 @@ public class SceneImageService
     private async Task<List<string>> SuggestQueriesAsync(Article article, VideoProject project, CancellationToken ct)
     {
         var queries = new List<string>();
-        var apiKey = _configuration["Ai:Gemini:ApiKey"] ?? Environment.GetEnvironmentVariable("GEMINI_API_KEY");
-        if (!string.IsNullOrWhiteSpace(apiKey))
+        if (GeminiKeys.HasAny(_configuration))
         {
             try
             {
@@ -406,14 +405,24 @@ public class SceneImageService
                     contents = new[] { new { parts = new[] { new { text = prompt } } } },
                     generationConfig = new { temperature = 0.2, maxOutputTokens = 1024, responseMimeType = "application/json" }
                 };
-                using var request = new HttpRequestMessage(HttpMethod.Post,
-                    $"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent")
+                // Free key first, paid key when the free one is refused (see GeminiKeys).
+                HttpResponseMessage? response = null;
+                var keys = GeminiKeys.InOrder(_configuration, model);
+                for (var i = 0; i < keys.Count; i++)
                 {
-                    Content = JsonContent.Create(body)
-                };
-                request.Headers.TryAddWithoutValidation("x-goog-api-key", apiKey);
-                using var response = await _http.SendAsync(request, ct);
-                if (response.IsSuccessStatusCode)
+                    using var request = new HttpRequestMessage(HttpMethod.Post,
+                        $"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent")
+                    {
+                        Content = JsonContent.Create(body)
+                    };
+                    request.Headers.TryAddWithoutValidation("x-goog-api-key", keys[i].Value);
+                    response?.Dispose();
+                    response = await _http.SendAsync(request, ct);
+                    if (response.IsSuccessStatusCode || !keys[i].IsFree) break;
+                    GeminiKeys.MarkFreeRefused(model, response.StatusCode, await response.Content.ReadAsStringAsync(ct));
+                }
+                using var _ = response;
+                if (response != null && response.IsSuccessStatusCode)
                 {
                     using var doc = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync(ct), cancellationToken: ct);
                     var text = doc.RootElement.GetProperty("candidates")[0].GetProperty("content").GetProperty("parts")[0]
@@ -429,7 +438,7 @@ public class SceneImageService
                 }
                 else
                 {
-                    _logger.LogWarning("Gemini image-keyword request returned HTTP {Status}; using title keywords.", (int)response.StatusCode);
+                    _logger.LogWarning("Gemini image-keyword request returned HTTP {Status}; using title keywords.", (int?)response?.StatusCode);
                 }
             }
             catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
