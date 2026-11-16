@@ -28,6 +28,7 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
     public DbSet<TrendingArticle> TrendingArticles => Set<TrendingArticle>();
     public DbSet<AutoPostSettings> AutoPostSettings => Set<AutoPostSettings>();
     public DbSet<AutoPostRun> AutoPostRuns => Set<AutoPostRun>();
+    public DbSet<DailyDigestRun> DailyDigestRuns => Set<DailyDigestRun>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -45,7 +46,23 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
             entity.Property(e => e.AiProvider).HasMaxLength(50);
             entity.Property(e => e.Topic).HasMaxLength(50).IsRequired();
             entity.Property(e => e.TopicKeywords).HasMaxLength(1000);
+            entity.Property(e => e.DigestTime).HasMaxLength(5).IsRequired();
             entity.HasIndex(e => e.FacebookAccountId);
+        });
+
+        modelBuilder.Entity<DailyDigestRun>(entity =>
+        {
+            entity.ToTable("DailyDigestRuns");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.DigestDate).HasMaxLength(10).IsRequired();
+            entity.Property(e => e.Status).HasMaxLength(20).IsRequired();
+            entity.Property(e => e.WorkFolder).HasMaxLength(500);
+            entity.Property(e => e.PostId).HasMaxLength(100);
+            entity.Property(e => e.PostError).HasMaxLength(1000);
+            entity.Property(e => e.StoryPostId).HasMaxLength(100);
+            entity.Property(e => e.StoryError).HasMaxLength(1000);
+            entity.Property(e => e.Message).HasMaxLength(1000);
+            entity.HasIndex(e => new { e.FacebookAccountId, e.DigestDate });
         });
 
         modelBuilder.Entity<AutoPostRun>(entity =>

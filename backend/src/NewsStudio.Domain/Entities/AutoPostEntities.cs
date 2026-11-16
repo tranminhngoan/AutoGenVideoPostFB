@@ -36,6 +36,53 @@ public class AutoPostSettings : BaseEntity
 
     /// <summary>How long before a slot the video production starts, so it is ready on time.</summary>
     public int LeadMinutes { get; set; } = 40;
+
+    /// <summary>Post the daily "Điểm tin nóng" digest (one wall post with pictures + one Story) of this page's topic.</summary>
+    public bool DigestEnabled { get; set; } = true;
+
+    /// <summary>"HH:mm" Vietnam time of the daily digest.</summary>
+    public string DigestTime { get; set; } = "20:30";
+
+    /// <summary>How many stories the digest summarises.</summary>
+    public int DigestItems { get; set; } = 6;
+}
+
+/// <summary>
+/// One daily "Điểm tin nóng" digest of a page: the day's most striking stories of its topic, each as a
+/// picture with a short summary written on it, posted as one multi-picture wall post and one Story.
+/// </summary>
+public class DailyDigestRun : BaseEntity
+{
+    public Guid? FacebookAccountId { get; set; }
+
+    /// <summary>"yyyy-MM-dd" Vietnam date.</summary>
+    public string DigestDate { get; set; } = string.Empty;
+
+    /// <summary>A preview made from the app ("Tạo thử"): pictures only, nothing posted.</summary>
+    public bool IsPreview { get; set; }
+
+    /// <summary>Working → Published / Partial (one of post or Story failed) / Failed, or Preview.</summary>
+    public string Status { get; set; } = "Working";
+
+    /// <summary>The chosen stories (JSON list of DailyDigestItemDto).</summary>
+    public string? ItemsJson { get; set; }
+
+    /// <summary>Text of the wall post.</summary>
+    public string? Caption { get; set; }
+
+    /// <summary>Folder holding the pictures and the Story video (temporary storage).</summary>
+    public string? WorkFolder { get; set; }
+
+    public string? PostId { get; set; }
+    public string? PostError { get; set; }
+    public string? StoryPostId { get; set; }
+    public string? StoryError { get; set; }
+
+    public DateTime? StartedAtUtc { get; set; }
+    public DateTime? PublishedAtUtc { get; set; }
+
+    /// <summary>Latest progress / error note in Vietnamese.</summary>
+    public string? Message { get; set; }
 }
 
 /// <summary>One automatic post: a time slot, the story chosen for it, its video and the Facebook result.</summary>

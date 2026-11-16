@@ -111,6 +111,12 @@ public class Worker : BackgroundService
                 "facebook-stats-sync",
                 service => service.SyncAsync(false, CancellationToken.None),
                 "7,37 * * * *");
+
+            // Daily "Điểm tin nóng" (one wall post + one Story per page, evening)
+            recurring.AddOrUpdate<IDailyDigestService>(
+                "daily-digest",
+                service => service.TickAsync(CancellationToken.None),
+                "*/5 * * * *");
         }
         catch (Exception ex)
         {

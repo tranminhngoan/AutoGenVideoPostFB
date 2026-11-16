@@ -22,4 +22,10 @@ public interface IFacebookPublishingService
     Task<PublishReelResultDto> PublishReelAsync(Guid videoProjectId, PublishReelRequestDto? request = null, CancellationToken cancellationToken = default);
     Task<VideoMetricDto?> FetchMetricsAsync(Guid facebookPostId, CancellationToken cancellationToken = default);
     Task<List<FacebookPostDto>> GetProjectPostsAsync(Guid videoProjectId, CancellationToken cancellationToken = default);
+
+    /// <summary>One post on the page's wall with several pictures (in order) and a text; returns the post id.</summary>
+    Task<string> PublishPhotoPostAsync(Guid facebookAccountId, IReadOnlyList<string> imagePaths, string message, CancellationToken cancellationToken = default);
+
+    /// <summary>Posts a (≤ 60 s, 9:16) video as a Page Story; returns the story's post id.</summary>
+    Task<string> PublishVideoStoryAsync(Guid facebookAccountId, string videoPath, CancellationToken cancellationToken = default);
 }

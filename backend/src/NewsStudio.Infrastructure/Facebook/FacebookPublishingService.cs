@@ -518,6 +518,86 @@ public class FacebookPublishingService : IFacebookPublishingService
         return (videoId, postId);
     }
 
+    private async Task<(string PageId, string Token)> PageTokenAsync(Guid facebookAccountId, CancellationToken ct)
+    {
+        var account = await _context.FacebookAccounts.AsNoTracking().FirstOrDefaultAsync(a => a.Id == facebookAccountId, ct);
+        if (account == null || !account.IsActive || string.IsNullOrWhiteSpace(account.EncryptedAccessToken))
+            throw new InvalidOperationException("Page chưa được kết nối hoặc đã ngắt kết nối. Vào Cài đặt → Facebook để kết nối lại.");
+        return (account.PageId, _tokenProtection.DecryptToken(account.EncryptedAccessToken));
+    }
+
+    public async Task<string> PublishPhotoPostAsync(Guid facebookAccountId, IReadOnlyList<string> imagePaths, string message, CancellationToken cancellationToken = default)
+    {
+        if (imagePaths.Count == 0) throw new ArgumentException("Bài đăng cần ít nhất một ảnh.");
+        var (pageId, token) = await PageTokenAsync(facebookAccountId, cancellationToken);
+        var baseUrl = $"https://graph.facebook.com/{_graphApiVersion}/{pageId}";
+
+        // 1. Upload every picture unpublished, keeping the order
+        var mediaIds = new List<string>();
+        foreach (var path in imagePaths)
+        {
+            using var form = new MultipartFormDataContent();
+            form.Add(new StringContent(token), "access_token");
+            form.Add(new StringContent("false"), "published");
+            var bytes = new ByteArrayContent(await File.ReadAllBytesAsync(path, cancellationToken));
+            bytes.Headers.ContentType = new MediaTypeHeaderValue("image/jpeg");
+            form.Add(bytes, "source", Path.GetFileName(path));
+            using var res = await _httpClient.PostAsync($"{baseUrl}/photos", form, cancellationToken);
+            if (!res.IsSuccessStatusCode)
+                throw new InvalidOperationException($"Tải ảnh {mediaIds.Count + 1}/{imagePaths.Count} lên thất bại. {await ReadGraphErrorAsync(res, cancellationToken)}");
+            var body = await res.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: cancellationToken);
+            mediaIds.Add(body.GetProperty("id").GetString()!);
+        }
+
+        // 2. One feed post with all of them attached
+        var fields = new List<KeyValuePair<string, string>>
+        {
+            new("access_token", token),
+            new("message", message)
+        };
+        for (var i = 0; i < mediaIds.Count; i++)
+            fields.Add(new($"attached_media[{i}]", JsonSerializer.Serialize(new { media_fbid = mediaIds[i] })));
+        using var post = await _httpClient.PostAsync($"{baseUrl}/feed", new FormUrlEncodedContent(fields), cancellationToken);
+        if (!post.IsSuccessStatusCode)
+            throw new InvalidOperationException($"Đăng bài viết thất bại. {await ReadGraphErrorAsync(post, cancellationToken)}");
+        var postBody = await post.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: cancellationToken);
+        return postBody.GetProperty("id").GetString()!;
+    }
+
+    public async Task<string> PublishVideoStoryAsync(Guid facebookAccountId, string videoPath, CancellationToken cancellationToken = default)
+    {
+        var (pageId, token) = await PageTokenAsync(facebookAccountId, cancellationToken);
+        var url = $"https://graph.facebook.com/{_graphApiVersion}/{pageId}/video_stories";
+
+        using var start = await _httpClient.PostAsJsonAsync(url, new { upload_phase = "start", access_token = token }, cancellationToken);
+        if (!start.IsSuccessStatusCode)
+            throw new InvalidOperationException($"Khởi tạo Story thất bại. {await ReadGraphErrorAsync(start, cancellationToken)}");
+        var startData = await start.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: cancellationToken);
+        var videoId = startData.GetProperty("video_id").GetString()!;
+        var uploadUrl = startData.GetProperty("upload_url").GetString()!;
+
+        // Binary upload to rupload.facebook.com (offset + file_size headers, as for Reels)
+        var size = new FileInfo(videoPath).Length;
+        await using (var stream = File.OpenRead(videoPath))
+        using (var upload = new HttpRequestMessage(HttpMethod.Post, uploadUrl))
+        {
+            upload.Headers.Authorization = new AuthenticationHeaderValue("OAuth", token);
+            upload.Headers.TryAddWithoutValidation("offset", "0");
+            upload.Headers.TryAddWithoutValidation("file_size", size.ToString());
+            upload.Content = new StreamContent(stream);
+            upload.Content.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
+            using var res = await _httpClient.SendAsync(upload, cancellationToken);
+            if (!res.IsSuccessStatusCode)
+                throw new InvalidOperationException($"Tải video Story lên thất bại. {await ReadGraphErrorAsync(res, cancellationToken)}");
+        }
+
+        using var finish = await _httpClient.PostAsJsonAsync(url, new { upload_phase = "finish", video_id = videoId, access_token = token }, cancellationToken);
+        if (!finish.IsSuccessStatusCode)
+            throw new InvalidOperationException($"Đăng Story thất bại. {await ReadGraphErrorAsync(finish, cancellationToken)}");
+        var data = await finish.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: cancellationToken);
+        return data.TryGetProperty("post_id", out var pid) && pid.GetString() is { Length: > 0 } postId ? postId : videoId;
+    }
+
     public async Task<VideoMetricDto?> FetchMetricsAsync(Guid facebookPostId, CancellationToken cancellationToken = default)
     {
         var post = await _context.FacebookPosts

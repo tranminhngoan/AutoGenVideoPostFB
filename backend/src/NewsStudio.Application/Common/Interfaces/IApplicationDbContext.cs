@@ -21,6 +21,7 @@ public interface IApplicationDbContext
     DbSet<TrendingArticle> TrendingArticles { get; }
     DbSet<AutoPostSettings> AutoPostSettings { get; }
     DbSet<AutoPostRun> AutoPostRuns { get; }
+    DbSet<DailyDigestRun> DailyDigestRuns { get; }
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

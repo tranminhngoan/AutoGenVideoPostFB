@@ -18,6 +18,12 @@ public class AutoPostSettingsDto
     public string? AiProvider { get; set; }
     public int TargetDurationSeconds { get; set; } = 105;
     public int LeadMinutes { get; set; } = 40;
+    /// <summary>Daily "Điểm tin nóng" digest: one wall post with pictures + one Story.</summary>
+    public bool DigestEnabled { get; set; } = true;
+    /// <summary>"HH:mm" Vietnam time of the digest.</summary>
+    public string DigestTime { get; set; } = "20:30";
+    /// <summary>Number of stories in the digest (3–9).</summary>
+    public int DigestItems { get; set; } = 6;
 }
 
 public class AutoPostRunDto

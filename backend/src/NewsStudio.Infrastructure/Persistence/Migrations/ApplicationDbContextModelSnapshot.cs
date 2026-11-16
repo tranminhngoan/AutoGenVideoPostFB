@@ -311,6 +311,17 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                     b.Property<DateTime>("CreatedAtUtc")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<bool>("DigestEnabled")
+                        .HasColumnType("boolean");
+
+                    b.Property<int>("DigestItems")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("DigestTime")
+                        .IsRequired()
+                        .HasMaxLength(5)
+                        .HasColumnType("character varying(5)");
+
                     b.Property<bool>("Enabled")
                         .HasColumnType("boolean");
 
@@ -361,6 +372,77 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                     b.HasIndex("FacebookAccountId");
 
                     b.ToTable("AutoPostSettings", (string)null);
+                });
+
+            modelBuilder.Entity("NewsStudio.Domain.Entities.DailyDigestRun", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Caption")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("DigestDate")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)");
+
+                    b.Property<Guid?>("FacebookAccountId")
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("IsPreview")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("ItemsJson")
+                        .HasColumnType("text");
+
+                    b.Property<string>("Message")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<string>("PostError")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<string>("PostId")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<DateTime?>("PublishedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("StartedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<string>("StoryError")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<string>("StoryPostId")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<DateTime?>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("WorkFolder")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("FacebookAccountId", "DigestDate");
+
+                    b.ToTable("DailyDigestRuns", (string)null);
                 });
 
             modelBuilder.Entity("NewsStudio.Domain.Entities.FacebookAccount", b =>

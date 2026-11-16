@@ -17,6 +17,7 @@ import {
   Card,
   CardBody,
   CardHeader,
+  Checkbox,
   EmptyState,
   Field,
   Input,
@@ -27,6 +28,7 @@ import {
   cn,
 } from '../components/ui';
 import { useConfirm, useToast } from '../components/feedback';
+import { DailyDigestCard } from '../components/DailyDigestCard';
 import { AutoPostPageCard, AutoPostTotals, PageAvatar, RegionBadge, RunDetails, StateBadge, isActiveRun } from '../components/AutoPostWidgets';
 import { href, navigate, useRoute } from '../lib/router';
 import { errorText } from '../lib/format';
@@ -453,6 +455,8 @@ function PageDetail({
         </CardBody>
       </Card>
 
+      <DailyDigestCard page={page} settings={page.settings} />
+
       <Card>
         <CardHeader title="Cài đặt Page" description="Chủ đề, số video, khung giờ và giọng đọc riêng cho Page này. Token kết nối Page sửa ở Cài đặt → Facebook." />
         <CardBody className="space-y-5">
@@ -564,6 +568,36 @@ function PageDetail({
                 ))}
               </Select>
             </Field>
+          </div>
+
+          <div className="space-y-3 border-t border-line pt-5">
+            <Checkbox
+              checked={form.digestEnabled}
+              onChange={(v) => update({ digestEnabled: v })}
+              label="Bản tin tối (Điểm tin nóng)"
+              description="Mỗi ngày 1 lần: chọn các tin giật gân nhất trong ngày về chủ đề của Page, mỗi tin 1 ảnh có tóm tắt ngắn in trên ảnh, đăng 1 bài viết nhiều ảnh + 1 Story."
+            />
+            {form.digestEnabled && (
+              <div className="grid gap-5 pl-6 sm:grid-cols-2">
+                <Field label="Giờ đăng bản tin" hint="Giờ Việt Nam. Gợi ý 20:00–21:00, lúc đông người lướt Facebook.">
+                  <input
+                    type="time"
+                    value={form.digestTime}
+                    onChange={(e) => update({ digestTime: e.target.value })}
+                    className="h-9 w-32 rounded-md border border-line-strong bg-surface px-3 font-mono text-sm text-fg focus:border-accent focus:ring-[3px] focus:ring-accent/15"
+                  />
+                </Field>
+                <Field label="Số tin trong bản tin" hint="Story dài khoảng 4 + 6 giây mỗi tin (tối đa 60 giây).">
+                  <Select value={form.digestItems} onChange={(e) => update({ digestItems: Number(e.target.value) })}>
+                    {[3, 4, 5, 6, 7, 8, 9].map((n) => (
+                      <option key={n} value={n}>
+                        {n} tin
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+              </div>
+            )}
           </div>
 
           <div className="flex flex-wrap items-center justify-end gap-2 border-t border-line pt-4">

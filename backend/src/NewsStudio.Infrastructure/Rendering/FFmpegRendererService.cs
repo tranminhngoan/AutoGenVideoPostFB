@@ -199,6 +199,42 @@ public class FFmpegRendererService : IVideoRendererService
         };
     }
 
+    public async Task<string> RenderSlideshowAsync(IReadOnlyList<string> imagePaths, IReadOnlyList<double> seconds, string outputPath, CancellationToken cancellationToken = default)
+    {
+        if (imagePaths.Count == 0 || imagePaths.Count != seconds.Count)
+            throw new ArgumentException("Cần mỗi ảnh một thời lượng.");
+        var ffmpegPath = FindFfmpegExecutable();
+        if (string.IsNullOrWhiteSpace(ffmpegPath) || !File.Exists(ffmpegPath))
+            throw new InvalidOperationException("Không tìm thấy FFmpeg trên máy chủ để dựng video Story.");
+
+        static string F(double v) => v.ToString("0.###", CultureInfo.InvariantCulture);
+        var total = seconds.Sum();
+        var args = new StringBuilder("-y ");
+        for (var i = 0; i < imagePaths.Count; i++)
+            args.Append($"-loop 1 -framerate 30 -t {F(seconds[i])} -i \"{imagePaths[i]}\" ");
+        // Silent stereo track: Stories expect AAC audio
+        args.Append($"-f lavfi -t {F(total)} -i anullsrc=r=48000:cl=stereo ");
+
+        var filter = new StringBuilder();
+        for (var i = 0; i < imagePaths.Count; i++)
+        {
+            var fade = Math.Min(0.35, seconds[i] / 4);
+            filter.Append($"[{i}:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setsar=1,fps=30,format=yuv420p,")
+                  .Append($"fade=t=in:st=0:d={F(fade)},fade=t=out:st={F(seconds[i] - fade)}:d={F(fade)}[v{i}];");
+        }
+        for (var i = 0; i < imagePaths.Count; i++) filter.Append($"[v{i}]");
+        filter.Append($"concat=n={imagePaths.Count}:v=1:a=0[v]");
+
+        args.Append($"-filter_complex \"{filter}\" -map \"[v]\" -map {imagePaths.Count}:a ")
+            .Append("-c:v libx264 -preset veryfast -crf 22 -pix_fmt yuv420p -r 30 -g 60 -keyint_min 60 -sc_threshold 0 ")
+            .Append("-c:a aac -b:a 128k -ar 48000 -ac 2 -shortest -movflags +faststart ")
+            .Append($"\"{outputPath}\"");
+
+        _logger.LogInformation("Rendering {Count}-picture Story slideshow ({Seconds}s) to {Path}", imagePaths.Count, total, outputPath);
+        await ExecuteFfmpegProcessAsync(ffmpegPath, args.ToString(), null, cancellationToken);
+        return outputPath;
+    }
+
     private string FindFfmpegExecutable()
     {
         var cfgPath = _configuration["Ffmpeg:BinaryPath"];
@@ -230,7 +266,7 @@ public class FFmpegRendererService : IVideoRendererService
         return string.Empty;
     }
 
-    private static string? FindPythonExecutable()
+    internal static string? FindPythonExecutable()
     {
         var candidates = new[]
         {
@@ -268,14 +304,17 @@ public class FFmpegRendererService : IVideoRendererService
         return null;
     }
 
-    private static string? FindOverlayScriptPath()
+    private static string? FindOverlayScriptPath() => FindScriptPath("generate_news_overlay.py");
+
+    /// <summary>Python helper shipped in the Scripts folder (next to the app, or in the source tree when developing).</summary>
+    internal static string? FindScriptPath(string fileName)
     {
         var candidates = new[]
         {
-            Path.Combine(AppContext.BaseDirectory, "Scripts", "generate_news_overlay.py"),
-            Path.Combine(Directory.GetCurrentDirectory(), "Scripts", "generate_news_overlay.py"),
-            Path.Combine(Directory.GetCurrentDirectory(), "backend", "src", "NewsStudio.Infrastructure", "Scripts", "generate_news_overlay.py"),
-            @"d:\Project\AutoGenVideoPostFB\backend\src\NewsStudio.Infrastructure\Scripts\generate_news_overlay.py"
+            Path.Combine(AppContext.BaseDirectory, "Scripts", fileName),
+            Path.Combine(Directory.GetCurrentDirectory(), "Scripts", fileName),
+            Path.Combine(Directory.GetCurrentDirectory(), "backend", "src", "NewsStudio.Infrastructure", "Scripts", fileName),
+            Path.Combine(@"d:\Project\AutoGenVideoPostFB\backend\src\NewsStudio.Infrastructure\Scripts", fileName)
         };
 
         return candidates.FirstOrDefault(File.Exists);

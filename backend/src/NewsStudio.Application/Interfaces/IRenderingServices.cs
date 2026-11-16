@@ -36,6 +36,12 @@ public interface IVideoRendererService
         VideoRenderRequest request,
         IProgress<int>? progress = null,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// 9:16 slideshow MP4 (Story): each picture shown for its number of seconds with a short fade,
+    /// a silent stereo track, settings that meet Meta's Stories spec. Returns <paramref name="outputPath"/>.
+    /// </summary>
+    Task<string> RenderSlideshowAsync(IReadOnlyList<string> imagePaths, IReadOnlyList<double> seconds, string outputPath, CancellationToken cancellationToken = default);
 }
 
 public interface IVideoAssetService

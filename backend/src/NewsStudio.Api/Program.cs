@@ -291,6 +291,10 @@ try
                 "facebook-stats-sync",
                 s => s.SyncAsync(false, CancellationToken.None),
                 "7,37 * * * *");
+            recurring.AddOrUpdate<NewsStudio.Application.Interfaces.IDailyDigestService>(
+                "daily-digest",
+                s => s.TickAsync(CancellationToken.None),
+                "*/5 * * * *");
 
             var jobs = app.Services.GetRequiredService<IBackgroundJobClient>();
             jobs.Enqueue<NewsStudio.Application.Interfaces.IJobRecoveryService>(s => s.RecoverDanglingJobsAsync(CancellationToken.None));

@@ -135,6 +135,25 @@ export const api = {
     return await res.json();
   },
 
+  // ── Bản tin tối (Điểm tin nóng) ──
+  async getDailyDigests(pageId?: string): Promise<DailyDigestRunDto[]> {
+    const res = await fetch(`${API_BASE}/daily-digest${pageId ? `?pageId=${pageId}` : ''}`);
+    if (!res.ok) throw new Error(await apiError(res, 'Không tải được bản tin'));
+    return await res.json();
+  },
+
+  async previewDailyDigest(facebookAccountId: string): Promise<DailyDigestRunDto> {
+    const res = await fetch(`${API_BASE}/daily-digest/pages/${facebookAccountId}/preview`, { method: 'POST' });
+    if (!res.ok) throw new Error(await apiError(res, 'Không tạo được bản tin thử'));
+    return await res.json();
+  },
+
+  async publishDailyDigest(facebookAccountId: string): Promise<DailyDigestRunDto> {
+    const res = await fetch(`${API_BASE}/daily-digest/pages/${facebookAccountId}/publish`, { method: 'POST' });
+    if (!res.ok) throw new Error(await apiError(res, 'Không đăng được bản tin'));
+    return await res.json();
+  },
+
   async cancelAutoPostRun(id: string): Promise<void> {
     const res = await fetch(`${API_BASE}/auto-post/runs/${id}/cancel`, { method: 'POST' });
     if (!res.ok) throw new Error(await apiError(res, 'Không huỷ được lượt đăng'));
@@ -918,6 +937,46 @@ export interface AutoPostSettingsDto {
   aiProvider?: string | null;
   targetDurationSeconds: number;
   leadMinutes: number;
+  /** Daily "Điểm tin nóng": one wall post with pictures + one Story */
+  digestEnabled: boolean;
+  /** "HH:mm", Vietnam time */
+  digestTime: string;
+  /** Stories in the digest (3–9) */
+  digestItems: number;
+}
+
+export interface DailyDigestItemDto {
+  title: string;
+  headline: string;
+  summary: string;
+  sourceName: string;
+  url: string;
+  imageUrl?: string | null;
+  coverageCount: number;
+  hotScore: number;
+}
+
+export type DailyDigestStatus = 'Working' | 'Published' | 'Partial' | 'Failed' | 'Preview';
+
+export interface DailyDigestRunDto {
+  id: string;
+  facebookAccountId?: string | null;
+  pageName?: string | null;
+  digestDate: string;
+  isPreview: boolean;
+  status: DailyDigestStatus;
+  message?: string | null;
+  caption?: string | null;
+  items: DailyDigestItemDto[];
+  postImages: string[];
+  storyImages: string[];
+  postId?: string | null;
+  postUrl?: string | null;
+  postError?: string | null;
+  storyPostId?: string | null;
+  storyError?: string | null;
+  createdAtUtc: string;
+  publishedAtUtc?: string | null;
 }
 
 export type AutoPostRunStatus = 'Producing' | 'WaitingSlot' | 'Publishing' | 'Published' | 'Failed' | 'Skipped';

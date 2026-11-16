@@ -138,11 +138,11 @@ public class AutoPostService : IAutoPostService
         _ => slotIndex % 2 == 0 ? "VN" : "World"
     };
 
-    private static DateTime VietnamDate(DateTime utc) => (utc + VietnamOffset).Date;
+    internal static DateTime VietnamDate(DateTime utc) => (utc + VietnamOffset).Date;
 
-    private static DateTime DayStartUtc(DateTime vietnamDate) => DateTime.SpecifyKind(vietnamDate - VietnamOffset, DateTimeKind.Utc);
+    internal static DateTime DayStartUtc(DateTime vietnamDate) => DateTime.SpecifyKind(vietnamDate - VietnamOffset, DateTimeKind.Utc);
 
-    private static DateTime SlotUtc(DateTime vietnamDate, string time) =>
+    internal static DateTime SlotUtc(DateTime vietnamDate, string time) =>
         DateTime.SpecifyKind(vietnamDate + TimeSpan.ParseExact(time, @"hh\:mm", CultureInfo.InvariantCulture) - VietnamOffset, DateTimeKind.Utc);
 
     public static string SlotKey(DateTime vietnamDate, string time, Guid pageId) =>
@@ -210,7 +210,10 @@ public class AutoPostService : IAutoPostService
         VoiceSpeed = s.VoiceSpeed,
         AiProvider = s.AiProvider,
         TargetDurationSeconds = s.TargetDurationSeconds,
-        LeadMinutes = s.LeadMinutes
+        LeadMinutes = s.LeadMinutes,
+        DigestEnabled = s.DigestEnabled,
+        DigestTime = s.DigestTime,
+        DigestItems = s.DigestItems
     };
 
     public async Task<AutoPostSettingsDto> UpdateSettingsAsync(Guid facebookAccountId, AutoPostSettingsDto dto, CancellationToken cancellationToken = default)
@@ -239,6 +242,9 @@ public class AutoPostService : IAutoPostService
         settings.AiProvider = string.IsNullOrWhiteSpace(dto.AiProvider) ? null : dto.AiProvider.Trim();
         settings.TargetDurationSeconds = Math.Clamp(dto.TargetDurationSeconds, 30, 150);
         settings.LeadMinutes = Math.Clamp(dto.LeadMinutes, 15, 120);
+        settings.DigestEnabled = dto.DigestEnabled;
+        settings.DigestTime = ParseSlots(dto.DigestTime ?? "").FirstOrDefault() ?? "20:30";
+        settings.DigestItems = Math.Clamp(dto.DigestItems, DailyDigestService.MinItems, DailyDigestService.MaxItems);
         settings.UpdatedAtUtc = DateTime.UtcNow;
         await _context.SaveChangesAsync(cancellationToken);
 

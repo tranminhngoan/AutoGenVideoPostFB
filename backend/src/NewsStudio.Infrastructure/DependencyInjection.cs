@@ -115,6 +115,12 @@ public static class DependencyInjection
         services.AddScoped<ISystemMetricsService, SystemMetricsService>();
         services.AddScoped<IStorageCleanupService, StorageCleanupService>();
         services.AddScoped<IAutoPostService, AutoPostService>();
+        // Daily "Điểm tin nóng" digest (pictures of the day's hottest stories → wall post + Story)
+        services.AddHttpClient<IDailyDigestService, DailyDigestService>()
+            .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+            {
+                AutomaticDecompression = System.Net.DecompressionMethods.All
+            });
 
         return services;
     }
