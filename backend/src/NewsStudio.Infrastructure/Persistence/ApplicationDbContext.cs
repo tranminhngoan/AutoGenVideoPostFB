@@ -43,13 +43,16 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
             entity.Property(e => e.Voice).HasMaxLength(100);
             entity.Property(e => e.VoiceSpeed).HasMaxLength(20);
             entity.Property(e => e.AiProvider).HasMaxLength(50);
+            entity.Property(e => e.Topic).HasMaxLength(50).IsRequired();
+            entity.Property(e => e.TopicKeywords).HasMaxLength(1000);
+            entity.HasIndex(e => e.FacebookAccountId);
         });
 
         modelBuilder.Entity<AutoPostRun>(entity =>
         {
             entity.ToTable("AutoPostRuns");
             entity.HasKey(e => e.Id);
-            entity.Property(e => e.SlotKey).HasMaxLength(50).IsRequired();
+            entity.Property(e => e.SlotKey).HasMaxLength(100).IsRequired();
             entity.Property(e => e.Status).HasMaxLength(30).IsRequired();
             entity.Property(e => e.ArticleUrl).HasMaxLength(2000);
             entity.Property(e => e.ArticleTitle).HasMaxLength(500);
@@ -59,6 +62,7 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
             entity.HasIndex(e => e.SlotKey).IsUnique();
             entity.HasIndex(e => e.ScheduledAtUtc);
             entity.HasIndex(e => e.Status);
+            entity.HasIndex(e => e.FacebookAccountId);
         });
 
         // TrendingArticle Configuration ("Tin đang hot")
@@ -74,6 +78,7 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
             entity.Property(e => e.Region).HasMaxLength(10).IsRequired();
             entity.Property(e => e.Language).HasMaxLength(10).IsRequired();
             entity.Property(e => e.TrendKeyword).HasMaxLength(200);
+            entity.Property(e => e.Topics).HasMaxLength(300);
             entity.HasIndex(e => e.Url).IsUnique();
             entity.HasIndex(e => e.PublishedAtUtc);
             entity.HasIndex(e => e.ClusterId);

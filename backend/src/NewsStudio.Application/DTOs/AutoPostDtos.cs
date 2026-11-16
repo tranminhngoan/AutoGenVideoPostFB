@@ -1,8 +1,13 @@
 namespace NewsStudio.Application.DTOs;
 
+/// <summary>Auto-post settings of one Facebook Page.</summary>
 public class AutoPostSettingsDto
 {
     public bool Enabled { get; set; }
+    /// <summary>Topic key (GET /api/trending/topics): "tong-hop", "the-thao", … or "tu-chon".</summary>
+    public string Topic { get; set; } = "tong-hop";
+    /// <summary>Comma-separated keywords; required for "tu-chon", optional extra matches otherwise.</summary>
+    public string? TopicKeywords { get; set; }
     public int PostsPerDay { get; set; } = 5;
     /// <summary>"HH:mm" in Vietnam time, one per post.</summary>
     public List<string> TimeSlots { get; set; } = new();
@@ -12,7 +17,6 @@ public class AutoPostSettingsDto
     public string? VoiceSpeed { get; set; }
     public string? AiProvider { get; set; }
     public int TargetDurationSeconds { get; set; } = 105;
-    public Guid? FacebookAccountId { get; set; }
     public int LeadMinutes { get; set; } = 40;
 }
 
@@ -20,6 +24,8 @@ public class AutoPostRunDto
 {
     public Guid Id { get; set; }
     public string SlotKey { get; set; } = string.Empty;
+    public Guid? FacebookAccountId { get; set; }
+    public string? PageName { get; set; }
     public DateTime ScheduledAtUtc { get; set; }
     /// <summary>"HH:mm" Vietnam time.</summary>
     public string SlotTime { get; set; } = string.Empty;
@@ -55,14 +61,47 @@ public class AutoPostSlotDto
     public AutoPostRunDto? Run { get; set; }
 }
 
+/// <summary>A connected Facebook Page with its schedule and today's progress.</summary>
+public class AutoPostPageDto
+{
+    public Guid FacebookAccountId { get; set; }
+    public string PageId { get; set; } = string.Empty;
+    public string PageName { get; set; } = string.Empty;
+    /// <summary>Connection status of the page token ("Active", "Expired", …).</summary>
+    public string TokenStatus { get; set; } = "Active";
+    public DateTime? TokenExpiresAtUtc { get; set; }
+    public AutoPostSettingsDto Settings { get; set; } = new();
+    public string TopicName { get; set; } = string.Empty;
+    public List<AutoPostSlotDto> TodaySlots { get; set; } = new();
+    public int PublishedToday { get; set; }
+    public int FailedToday { get; set; }
+    public DateTime? NextSlotUtc { get; set; }
+    /// <summary>The run being produced / waiting / posting right now, if any.</summary>
+    public AutoPostRunDto? CurrentRun { get; set; }
+    public AutoPostRunDto? LastPublished { get; set; }
+    public List<string> Warnings { get; set; } = new();
+}
+
+public class AutoPostTotalsDto
+{
+    public int Pages { get; set; }
+    public int PagesEnabled { get; set; }
+    /// <summary>Posts planned today across enabled pages.</summary>
+    public int PlannedToday { get; set; }
+    public int PublishedToday { get; set; }
+    public int InProgress { get; set; }
+    public int FailedToday { get; set; }
+    public int PublishedLast7Days { get; set; }
+}
+
 public class AutoPostOverviewDto
 {
-    public AutoPostSettingsDto Settings { get; set; } = new();
     public string Today { get; set; } = string.Empty;
-    public List<AutoPostSlotDto> TodaySlots { get; set; } = new();
+    public List<AutoPostPageDto> Pages { get; set; } = new();
+    public AutoPostTotalsDto Totals { get; set; } = new();
+    /// <summary>Last 7 days, every page, newest first.</summary>
     public List<AutoPostRunDto> RecentRuns { get; set; } = new();
-    public int PublishedToday { get; set; }
-    public DateTime? NextSlotUtc { get; set; }
-    public bool FacebookConnected { get; set; }
+    /// <summary>How many videos are made at the same time across all pages.</summary>
+    public int MaxConcurrentVideos { get; set; } = 1;
     public List<string> Warnings { get; set; } = new();
 }

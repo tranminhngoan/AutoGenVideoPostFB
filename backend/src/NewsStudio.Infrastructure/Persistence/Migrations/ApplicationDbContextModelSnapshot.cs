@@ -232,6 +232,9 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                     b.Property<DateTime>("CreatedAtUtc")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<Guid?>("FacebookAccountId")
+                        .HasColumnType("uuid");
+
                     b.Property<string>("FacebookPostUrl")
                         .HasMaxLength(500)
                         .HasColumnType("character varying(500)");
@@ -257,8 +260,8 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
 
                     b.Property<string>("SlotKey")
                         .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("character varying(50)");
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
 
                     b.Property<string>("SourceName")
                         .HasMaxLength(100)
@@ -282,6 +285,8 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("FacebookAccountId");
 
                     b.HasIndex("ScheduledAtUtc");
 
@@ -331,6 +336,15 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                         .HasMaxLength(500)
                         .HasColumnType("character varying(500)");
 
+                    b.Property<string>("Topic")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<string>("TopicKeywords")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
                     b.Property<DateTime?>("UpdatedAtUtc")
                         .HasColumnType("timestamp with time zone");
 
@@ -343,6 +357,8 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(20)");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("FacebookAccountId");
 
                     b.ToTable("AutoPostSettings", (string)null);
                 });
@@ -626,6 +642,10 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasMaxLength(500)
                         .HasColumnType("character varying(500)");
+
+                    b.Property<string>("Topics")
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)");
 
                     b.Property<string>("TrendKeyword")
                         .HasMaxLength(200)

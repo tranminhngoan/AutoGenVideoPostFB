@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Flame, RefreshCw, Search, ExternalLink, Globe2, Newspaper, TrendingUp, SlidersHorizontal, Sparkles } from 'lucide-react';
-import { api, TrendingArticleDto, TrendingOverviewDto } from '../services/api';
-import { Badge, Button, ButtonLink, Card, EmptyState, IconButton, Input, PageHeader, Segmented, Skeleton, Tabs, Thumb, cn } from '../components/ui';
+import { api, NewsTopicDto, TrendingArticleDto, TrendingOverviewDto } from '../services/api';
+import { Badge, Button, ButtonLink, Card, EmptyState, IconButton, Input, PageHeader, Segmented, Select, Skeleton, Tabs, Thumb, cn } from '../components/ui';
 import { useToast } from '../components/feedback';
 import { createVideoFromUrl } from '../lib/actions';
 import { href, navigate } from '../lib/router';
@@ -24,6 +24,12 @@ export const TrendingPage: React.FC<TrendingPageProps> = ({ onCreated }) => {
   const [region, setRegion] = useState<Region>('all');
   const [hours, setHours] = useState(24);
   const [source, setSource] = useState<string>('');
+  const [topic, setTopic] = useState<string>('');
+  const [topics, setTopics] = useState<NewsTopicDto[]>([]);
+
+  useEffect(() => {
+    api.getNewsTopics().then((t) => setTopics(t.filter((x) => x.key !== 'tong-hop' && x.key !== 'tu-chon'))).catch(() => setTopics([]));
+  }, []);
   const [search, setSearch] = useState('');
   const [debounced, setDebounced] = useState('');
   const [data, setData] = useState<TrendingOverviewDto | null>(null);
@@ -40,7 +46,7 @@ export const TrendingPage: React.FC<TrendingPageProps> = ({ onCreated }) => {
     async (silent = false) => {
       if (!silent) setLoading(true);
       try {
-        setData(await api.getTrending({ region, hours, source: source || undefined, q: debounced || undefined, limit: 80 }));
+        setData(await api.getTrending({ region, hours, source: source || undefined, q: debounced || undefined, topic: topic || undefined, limit: 80 }));
       } catch (err) {
         if (!silent) toast.error('Không tải được tin hot', errorText(err, ''));
       } finally {
@@ -48,7 +54,7 @@ export const TrendingPage: React.FC<TrendingPageProps> = ({ onCreated }) => {
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [region, hours, source, debounced]
+    [region, hours, source, debounced, topic]
   );
 
   useEffect(() => {
@@ -140,6 +146,16 @@ export const TrendingPage: React.FC<TrendingPageProps> = ({ onCreated }) => {
         />
         <div className="flex items-center gap-2 md:pb-1.5">
           <Segmented size="sm" value={hours} onChange={setHours} options={WINDOWS} />
+          {topics.length > 0 && (
+            <Select size="sm" value={topic} onChange={(e) => setTopic(e.target.value)} className="w-36 shrink-0" aria-label="Chủ đề">
+              <option value="">Mọi chủ đề</option>
+              {topics.map((t) => (
+                <option key={t.key} value={t.key}>
+                  {t.name}
+                </option>
+              ))}
+            </Select>
+          )}
           <div className="w-full md:w-56">
             <Input leading={<Search />} value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Tìm trong tin hot…" />
           </div>

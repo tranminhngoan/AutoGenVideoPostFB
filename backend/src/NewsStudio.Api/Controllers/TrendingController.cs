@@ -25,6 +25,7 @@ public class TrendingController : ControllerBase
         [FromQuery] string? q = null,
         [FromQuery] int hours = 24,
         [FromQuery] int limit = 60,
+        [FromQuery] string? topic = null,
         CancellationToken cancellationToken = default)
     {
         var result = await _trending.GetTrendingAsync(new TrendingQuery
@@ -33,10 +34,18 @@ public class TrendingController : ControllerBase
             Source = source,
             Search = q,
             Hours = hours,
-            Limit = limit
+            Limit = limit,
+            Topic = topic
         }, cancellationToken);
         return Ok(result);
     }
+
+    /// <summary>News topics a Page can be dedicated to (key, Vietnamese name, description).</summary>
+    [HttpGet("topics")]
+    public ActionResult<List<NewsTopicDto>> Topics() =>
+        Ok(NewsStudio.Infrastructure.Trending.NewsTopics.All
+            .Select(t => new NewsTopicDto { Key = t.Key, Name = t.Name, Description = t.Description })
+            .ToList());
 
     /// <summary>Fetches all feeds now (the Worker also does this automatically every 30 minutes).</summary>
     [HttpPost("refresh")]

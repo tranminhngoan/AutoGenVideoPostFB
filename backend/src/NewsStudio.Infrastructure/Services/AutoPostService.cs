@@ -8,24 +8,30 @@ using NewsStudio.Application.Interfaces;
 using NewsStudio.Domain.Entities;
 using NewsStudio.Domain.Enums;
 using NewsStudio.Infrastructure.Common;
+using NewsStudio.Infrastructure.Trending;
 
 namespace NewsStudio.Infrastructure.Services;
 
 /// <summary>
-/// "Tự động đăng". A recurring job (every 2 minutes) does, for each daily time slot (Vietnam time):
+/// "Tự động đăng" for several Facebook Pages, each dedicated to one news topic and posting with its own
+/// page token. A recurring job (every 2 minutes):
 /// <list type="number">
-/// <item>LeadMinutes before the slot: pick the hottest story not turned into a video yet (no repeats, also
-/// not the same story from another outlet), alternating Vietnam / international news, and start the normal
-/// video pipeline for its link.</item>
-/// <item>When the video is ready and the slot time has come: approve it (the quality check still blocks
-/// videos with serious problems) and post it to the Facebook Page.</item>
+/// <item>LeadMinutes before each page's slot: picks the hottest story OF THAT PAGE'S TOPIC that no page has
+/// used yet (no repeated links, and not the same story from another outlet), alternating Vietnam /
+/// international news, and starts the normal video pipeline for its link.</item>
+/// <item>Videos are made one at a time (AutoPost:MaxConcurrentVideos) across all pages, earliest slot first,
+/// so the server isn't overloaded and a worker stays free for the scheduler.</item>
+/// <item>When the video is ready and the slot time has come: approves it (the quality check still blocks
+/// videos with serious problems) and posts it to that page.</item>
 /// </list>
-/// A story whose video fails is replaced by the next hottest one (once), as long as the slot isn't long past.
+/// A story whose video fails is replaced by the next hottest one (once), while the slot isn't long past.
 /// </summary>
 public class AutoPostService : IAutoPostService
 {
     public static readonly TimeSpan VietnamOffset = TimeSpan.FromHours(7);
     public const int MaxPostsPerDay = 12;
+    /// <summary>Default slots of each newly connected page are shifted by this much, so videos aren't all made at once.</summary>
+    public const int StaggerMinutesPerPage = 10;
 
     public const string Producing = "Producing";
     public const string WaitingSlot = "WaitingSlot";
@@ -35,13 +41,14 @@ public class AutoPostService : IAutoPostService
     public const string Skipped = "Skipped";
 
     private const int MaxAttempts = 2;
-    /// <summary>A slot can still start this late (e.g. the server was restarting at the slot time).</summary>
+    /// <summary>A slot can still start this late (queue busy, or the server was restarting at the slot time).</summary>
     private static readonly TimeSpan LateWindow = TimeSpan.FromMinutes(90);
     /// <summary>A replacement story is only tried while the slot is less than this far in the past.</summary>
     private static readonly TimeSpan RetryWindow = TimeSpan.FromMinutes(60);
     private static readonly TimeSpan ProduceTimeout = TimeSpan.FromMinutes(75);
     private static readonly TimeSpan PublishingStuckAfter = TimeSpan.FromMinutes(15);
     private static readonly TimeSpan RepeatStoryWindow = TimeSpan.FromDays(3);
+    private static readonly int[] LookBackHours = { 12, 24, 48 };
 
     private static readonly SemaphoreSlim TickLock = new(1, 1);
 
@@ -71,13 +78,16 @@ public class AutoPostService : IAutoPostService
         _logger = logger;
     }
 
+    private int MaxConcurrentVideos => Math.Clamp(_configuration.GetValue("AutoPost:MaxConcurrentVideos", 1), 1, 4);
+
     // ---------------------------------------------------------------- schedule helpers
 
     /// <summary>
     /// Suggested posting times (Vietnam) for a number of posts per day, built around Facebook's busy hours
     /// in Vietnam: breakfast/commute, lunch break, after work, evening prime time and before bed.
+    /// <paramref name="offsetMinutes"/> shifts every time (used to stagger several pages).
     /// </summary>
-    public static List<string> SuggestSlots(int count)
+    public static List<string> SuggestSlots(int count, int offsetMinutes = 0)
     {
         count = Math.Clamp(count, 1, MaxPostsPerDay);
         string[] preset = count switch
@@ -92,14 +102,19 @@ public class AutoPostService : IAutoPostService
             8 => new[] { "06:30", "08:30", "11:00", "12:30", "15:00", "17:30", "20:00", "21:30" },
             _ => Array.Empty<string>()
         };
-        if (preset.Length > 0) return preset.ToList();
+        var times = preset.Length > 0
+            ? preset.Select(p => TimeSpan.ParseExact(p, @"hh\:mm", CultureInfo.InvariantCulture)).ToList()
+            : Enumerable.Range(0, count) // more than 8: spread evenly between 06:30 and 22:30
+                .Select(i => TimeSpan.FromHours(6.5) + TimeSpan.FromMinutes(Math.Round(i * 960.0 / (count - 1) / 5) * 5))
+                .ToList();
 
-        // More than 8: spread evenly between 06:30 and 22:30
-        var start = TimeSpan.FromHours(6.5);
-        var step = (TimeSpan.FromHours(22.5) - start) / (count - 1);
-        return Enumerable.Range(0, count)
-            .Select(i => start + TimeSpan.FromMinutes(Math.Round((step * i).TotalMinutes / 5) * 5))
+        var offset = TimeSpan.FromMinutes(((offsetMinutes % 60) + 60) % 60);
+        return times
+            .Select(t => t + offset)
+            .Select(t => t >= TimeSpan.FromDays(1) ? t - TimeSpan.FromDays(1) : t)
             .Select(t => t.ToString(@"hh\:mm", CultureInfo.InvariantCulture))
+            .Distinct()
+            .OrderBy(t => t, StringComparer.Ordinal)
             .ToList();
     }
 
@@ -125,30 +140,69 @@ public class AutoPostService : IAutoPostService
 
     private static DateTime VietnamDate(DateTime utc) => (utc + VietnamOffset).Date;
 
+    private static DateTime DayStartUtc(DateTime vietnamDate) => DateTime.SpecifyKind(vietnamDate - VietnamOffset, DateTimeKind.Utc);
+
     private static DateTime SlotUtc(DateTime vietnamDate, string time) =>
         DateTime.SpecifyKind(vietnamDate + TimeSpan.ParseExact(time, @"hh\:mm", CultureInfo.InvariantCulture) - VietnamOffset, DateTimeKind.Utc);
 
-    private static string SlotKey(DateTime vietnamDate, string time) =>
-        $"{vietnamDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)} {time}";
+    public static string SlotKey(DateTime vietnamDate, string time, Guid pageId) =>
+        $"{vietnamDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)} {time} {pageId:N}";
 
     private static string VietnamTime(DateTime utc) => (utc + VietnamOffset).ToString("HH:mm", CultureInfo.InvariantCulture);
 
-    // ---------------------------------------------------------------- settings / overview
+    // ---------------------------------------------------------------- pages & settings
 
-    private async Task<AutoPostSettings> LoadSettingsAsync(CancellationToken ct)
+    private sealed record PageSchedule(FacebookAccount Page, AutoPostSettings Settings);
+
+    /// <summary>
+    /// Every active connected page with its settings. Pages connected for the first time get settings
+    /// (switched off, default times shifted per page); the old single-page settings row is handed to the
+    /// first page so an existing schedule keeps working.
+    /// </summary>
+    private async Task<List<PageSchedule>> LoadPagesAsync(CancellationToken ct)
     {
-        var settings = await _context.AutoPostSettings.OrderBy(s => s.CreatedAtUtc).FirstOrDefaultAsync(ct);
-        if (settings != null) return settings;
+        var pages = await _context.FacebookAccounts
+            .Where(a => a.IsActive)
+            .OrderBy(a => a.CreatedAtUtc)
+            .ToListAsync(ct);
+        var all = await _context.AutoPostSettings.OrderBy(s => s.CreatedAtUtc).ToListAsync(ct);
+        var legacy = all.FirstOrDefault(s => s.FacebookAccountId == null);
 
-        settings = new AutoPostSettings { TimeSlots = string.Join(",", SuggestSlots(5)) };
-        _context.AutoPostSettings.Add(settings);
-        await _context.SaveChangesAsync(ct);
-        return settings;
+        var result = new List<PageSchedule>();
+        var changed = false;
+        for (var i = 0; i < pages.Count; i++)
+        {
+            var page = pages[i];
+            var settings = all.FirstOrDefault(s => s.FacebookAccountId == page.Id);
+            if (settings == null && legacy != null)
+            {
+                settings = legacy;
+                settings.FacebookAccountId = page.Id;
+                legacy = null;
+                changed = true;
+            }
+            if (settings == null)
+            {
+                settings = new AutoPostSettings
+                {
+                    FacebookAccountId = page.Id,
+                    TimeSlots = string.Join(",", SuggestSlots(5, i * StaggerMinutesPerPage))
+                };
+                _context.AutoPostSettings.Add(settings);
+                all.Add(settings);
+                changed = true;
+            }
+            result.Add(new PageSchedule(page, settings));
+        }
+        if (changed) await _context.SaveChangesAsync(ct);
+        return result;
     }
 
     private static AutoPostSettingsDto ToDto(AutoPostSettings s) => new()
     {
         Enabled = s.Enabled,
+        Topic = s.Topic,
+        TopicKeywords = s.TopicKeywords,
         PostsPerDay = s.PostsPerDay,
         TimeSlots = ParseSlots(s.TimeSlots),
         RegionMode = s.RegionMode,
@@ -156,19 +210,27 @@ public class AutoPostService : IAutoPostService
         VoiceSpeed = s.VoiceSpeed,
         AiProvider = s.AiProvider,
         TargetDurationSeconds = s.TargetDurationSeconds,
-        FacebookAccountId = s.FacebookAccountId,
         LeadMinutes = s.LeadMinutes
     };
 
-    public async Task<AutoPostSettingsDto> UpdateSettingsAsync(AutoPostSettingsDto dto, CancellationToken cancellationToken = default)
+    public async Task<AutoPostSettingsDto> UpdateSettingsAsync(Guid facebookAccountId, AutoPostSettingsDto dto, CancellationToken cancellationToken = default)
     {
-        var settings = await LoadSettingsAsync(cancellationToken);
+        var schedule = (await LoadPagesAsync(cancellationToken)).FirstOrDefault(p => p.Page.Id == facebookAccountId)
+                       ?? throw new KeyNotFoundException("Page này chưa được kết nối hoặc đã ngắt kết nối.");
+        var settings = schedule.Settings;
+
+        var topic = NewsTopics.Find(dto.Topic)?.Key ?? NewsTopics.General;
+        var keywords = NewsTopics.ParseKeywords(dto.TopicKeywords);
+        if (topic == NewsTopics.Custom && keywords.Count == 0 && dto.Enabled)
+            throw new ArgumentException("Chủ đề \"Tự chọn từ khoá\" cần ít nhất một từ khoá.");
 
         var count = Math.Clamp(dto.PostsPerDay, 1, MaxPostsPerDay);
         var slots = ParseSlots(string.Join(",", dto.TimeSlots ?? new List<string>()));
         if (slots.Count != count) slots = SuggestSlots(count);
 
         settings.Enabled = dto.Enabled;
+        settings.Topic = topic;
+        settings.TopicKeywords = keywords.Count > 0 ? string.Join(", ", keywords) : null;
         settings.PostsPerDay = count;
         settings.TimeSlots = string.Join(",", slots);
         settings.RegionMode = dto.RegionMode is "VN" or "World" ? dto.RegionMode : "Mixed";
@@ -176,71 +238,133 @@ public class AutoPostService : IAutoPostService
         settings.VoiceSpeed = string.IsNullOrWhiteSpace(dto.VoiceSpeed) ? null : dto.VoiceSpeed.Trim();
         settings.AiProvider = string.IsNullOrWhiteSpace(dto.AiProvider) ? null : dto.AiProvider.Trim();
         settings.TargetDurationSeconds = Math.Clamp(dto.TargetDurationSeconds, 30, 150);
-        settings.FacebookAccountId = dto.FacebookAccountId;
         settings.LeadMinutes = Math.Clamp(dto.LeadMinutes, 15, 120);
         settings.UpdatedAtUtc = DateTime.UtcNow;
         await _context.SaveChangesAsync(cancellationToken);
 
-        _logger.LogInformation("Auto-post settings saved: enabled={Enabled}, {Count}/day at {Slots}, region {Region}",
-            settings.Enabled, settings.PostsPerDay, settings.TimeSlots, settings.RegionMode);
+        _logger.LogInformation("Auto-post settings for page {Page}: enabled={Enabled}, topic {Topic}, {Count}/day at {Slots}",
+            schedule.Page.PageName, settings.Enabled, settings.Topic, settings.PostsPerDay, settings.TimeSlots);
         return ToDto(settings);
     }
 
+    // ---------------------------------------------------------------- overview
+
     public async Task<AutoPostOverviewDto> GetOverviewAsync(CancellationToken cancellationToken = default)
     {
-        var settings = await LoadSettingsAsync(cancellationToken);
+        var pages = await LoadPagesAsync(cancellationToken);
         var now = DateTime.UtcNow;
         var today = VietnamDate(now);
-        var dayStartUtc = DateTime.SpecifyKind(today - VietnamOffset, DateTimeKind.Utc);
-        var since = dayStartUtc.AddDays(-7);
+        var dayStart = DayStartUtc(today);
 
         var runs = await _context.AutoPostRuns.AsNoTracking()
-            .Where(r => r.ScheduledAtUtc >= since)
+            .Where(r => r.ScheduledAtUtc >= dayStart.AddDays(-7))
             .OrderByDescending(r => r.ScheduledAtUtc)
-            .Take(80)
+            .Take(300)
             .ToListAsync(cancellationToken);
-        var runDtos = await MapRunsAsync(runs, cancellationToken);
-        var byKey = runDtos.ToDictionary(r => r.SlotKey);
+        var pageNames = await _context.FacebookAccounts.AsNoTracking()
+            .ToDictionaryAsync(a => a.Id, a => a.PageName, cancellationToken);
+        var runDtos = await MapRunsAsync(runs, pageNames, cancellationToken);
+        var byKey = runDtos.GroupBy(r => r.SlotKey).ToDictionary(g => g.Key, g => g.First());
+        var todayRuns = runDtos.Where(r => r.ScheduledAtUtc >= dayStart).ToList();
 
-        var slots = ParseSlots(settings.TimeSlots);
-        var todaySlots = slots.Select((time, i) =>
+        var pageDtos = new List<AutoPostPageDto>();
+        foreach (var (page, settings) in pages)
         {
-            var at = SlotUtc(today, time);
-            byKey.TryGetValue(SlotKey(today, time), out var run);
-            return new AutoPostSlotDto
+            var slots = ParseSlots(settings.TimeSlots);
+            var todaySlots = slots.Select((time, i) =>
             {
-                Time = time,
-                ScheduledAtUtc = at,
-                PlannedRegion = run?.Region ?? PlannedRegion(settings.RegionMode, i),
-                State = run?.Status ?? (now > at + LateWindow ? "Missed" : "Upcoming"),
-                Run = run
-            };
-        }).ToList();
+                var at = SlotUtc(today, time);
+                byKey.TryGetValue(SlotKey(today, time, page.Id), out var run);
+                return new AutoPostSlotDto
+                {
+                    Time = time,
+                    ScheduledAtUtc = at,
+                    PlannedRegion = run?.Region ?? PlannedRegion(settings.RegionMode, i),
+                    State = run?.Status ?? (now > at + LateWindow ? "Missed" : "Upcoming"),
+                    Run = run
+                };
+            }).ToList();
 
-        var facebookConnected = await _context.FacebookAccounts.AnyAsync(a => a.IsActive, cancellationToken);
-        var warnings = new List<string>();
-        if (!facebookConnected)
-            warnings.Add("Chưa kết nối Page Facebook. Vào Cài đặt → Facebook để kết nối, nếu không video sẽ không đăng được.");
+            // "Đăng ngay" runs of today also belong on the page's timeline
+            foreach (var manual in todayRuns.Where(r => r.IsManual && r.FacebookAccountId == page.Id))
+            {
+                todaySlots.Add(new AutoPostSlotDto
+                {
+                    Time = manual.SlotTime,
+                    ScheduledAtUtc = manual.ScheduledAtUtc,
+                    PlannedRegion = manual.Region ?? "VN",
+                    State = manual.Status,
+                    Run = manual
+                });
+            }
+            todaySlots = todaySlots.OrderBy(s => s.ScheduledAtUtc).ToList();
+
+            var pageRuns = runDtos.Where(r => r.FacebookAccountId == page.Id).ToList();
+            var warnings = new List<string>();
+            if (settings.Topic == NewsTopics.Custom && string.IsNullOrWhiteSpace(settings.TopicKeywords))
+                warnings.Add("Chủ đề tự chọn nhưng chưa có từ khoá nào.");
+            if (page.TokenExpiresAtUtc != null && page.TokenExpiresAtUtc < now.AddDays(7))
+                warnings.Add(page.TokenExpiresAtUtc < now
+                    ? "Token của Page đã hết hạn. Vào Cài đặt → Facebook để kết nối lại."
+                    : $"Token của Page sắp hết hạn ({(page.TokenExpiresAtUtc.Value + VietnamOffset):dd/MM}).");
+            if (!string.Equals(page.Status, "Active", StringComparison.OrdinalIgnoreCase))
+                warnings.Add($"Kết nối Page đang ở trạng thái \"{page.Status}\"{(string.IsNullOrWhiteSpace(page.ErrorMessage) ? "" : ": " + page.ErrorMessage)}.");
+
+            DateTime? next = null;
+            if (settings.Enabled)
+            {
+                next = todaySlots.Where(s => s.Run == null && s.ScheduledAtUtc > now).Select(s => (DateTime?)s.ScheduledAtUtc).FirstOrDefault();
+                if (next == null && slots.Count > 0) next = SlotUtc(today.AddDays(1), slots[0]);
+            }
+
+            pageDtos.Add(new AutoPostPageDto
+            {
+                FacebookAccountId = page.Id,
+                PageId = page.PageId,
+                PageName = page.PageName,
+                TokenStatus = page.Status,
+                TokenExpiresAtUtc = page.TokenExpiresAtUtc,
+                Settings = ToDto(settings),
+                TopicName = NewsTopics.NameOf(settings.Topic),
+                TodaySlots = todaySlots,
+                PublishedToday = pageRuns.Count(r => r.Status == Published && r.ScheduledAtUtc >= dayStart),
+                FailedToday = pageRuns.Count(r => r.Status == Failed && r.ScheduledAtUtc >= dayStart),
+                NextSlotUtc = next,
+                CurrentRun = pageRuns.Where(IsActive).OrderBy(r => r.ScheduledAtUtc).FirstOrDefault(),
+                LastPublished = pageRuns.Where(r => r.Status == Published).OrderByDescending(r => r.PublishedAtUtc ?? r.ScheduledAtUtc).FirstOrDefault(),
+                Warnings = warnings
+            });
+        }
+
+        var warningsAll = new List<string>();
+        if (pages.Count == 0)
+            warningsAll.Add("Chưa kết nối Page Facebook nào. Vào Cài đặt → Facebook để thêm Page (mỗi Page một token riêng).");
         if (!GeminiKeys.HasAny(_configuration) && !SimulationMode.IsEnabled(_configuration))
-            warnings.Add("Máy chủ chưa có API key Gemini nên không viết được kịch bản.");
-
-        DateTime? next = todaySlots.Where(s => s.ScheduledAtUtc > now && s.Run == null).Select(s => (DateTime?)s.ScheduledAtUtc).FirstOrDefault();
-        if (next == null && slots.Count > 0) next = SlotUtc(today.AddDays(1), slots[0]);
+            warningsAll.Add("Máy chủ chưa có API key Gemini nên không viết được kịch bản.");
 
         return new AutoPostOverviewDto
         {
-            Settings = ToDto(settings),
             Today = today.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
-            TodaySlots = todaySlots,
-            RecentRuns = runDtos,
-            PublishedToday = runDtos.Count(r => r.Status == Published && r.ScheduledAtUtc >= dayStartUtc),
-            NextSlotUtc = settings.Enabled ? next : null,
-            FacebookConnected = facebookConnected,
-            Warnings = warnings
+            Pages = pageDtos,
+            Totals = new AutoPostTotalsDto
+            {
+                Pages = pageDtos.Count,
+                PagesEnabled = pageDtos.Count(p => p.Settings.Enabled),
+                PlannedToday = pageDtos.Where(p => p.Settings.Enabled).Sum(p => p.Settings.PostsPerDay),
+                PublishedToday = todayRuns.Count(r => r.Status == Published),
+                InProgress = runDtos.Count(IsActive),
+                FailedToday = todayRuns.Count(r => r.Status == Failed),
+                PublishedLast7Days = runDtos.Count(r => r.Status == Published)
+            },
+            RecentRuns = runDtos.Take(150).ToList(),
+            MaxConcurrentVideos = MaxConcurrentVideos,
+            Warnings = warningsAll
         };
     }
 
-    private async Task<List<AutoPostRunDto>> MapRunsAsync(List<AutoPostRun> runs, CancellationToken ct)
+    private static bool IsActive(AutoPostRunDto r) => r.Status is Producing or WaitingSlot or Publishing;
+
+    private async Task<List<AutoPostRunDto>> MapRunsAsync(List<AutoPostRun> runs, IReadOnlyDictionary<Guid, string> pageNames, CancellationToken ct)
     {
         var projectIds = runs.Where(r => r.VideoProjectId != null).Select(r => r.VideoProjectId!.Value).Distinct().ToList();
         var projects = await _context.VideoProjects.AsNoTracking()
@@ -258,6 +382,8 @@ public class AutoPostService : IAutoPostService
         {
             Id = r.Id,
             SlotKey = r.SlotKey,
+            FacebookAccountId = r.FacebookAccountId,
+            PageName = r.FacebookAccountId != null && pageNames.TryGetValue(r.FacebookAccountId.Value, out var name) ? name : null,
             ScheduledAtUtc = r.ScheduledAtUtc,
             SlotTime = VietnamTime(r.ScheduledAtUtc),
             SlotDate = VietnamDate(r.ScheduledAtUtc).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
@@ -281,19 +407,21 @@ public class AutoPostService : IAutoPostService
 
     // ---------------------------------------------------------------- manual actions
 
-    public async Task<AutoPostRunDto> RunNowAsync(CancellationToken cancellationToken = default)
+    public async Task<AutoPostRunDto> RunNowAsync(Guid facebookAccountId, CancellationToken cancellationToken = default)
     {
-        var settings = await LoadSettingsAsync(cancellationToken);
+        var schedule = (await LoadPagesAsync(cancellationToken)).FirstOrDefault(p => p.Page.Id == facebookAccountId)
+                       ?? throw new KeyNotFoundException("Page này chưa được kết nối hoặc đã ngắt kết nối.");
         var now = DateTime.UtcNow;
         var today = VietnamDate(now);
-        var dayStartUtc = DateTime.SpecifyKind(today - VietnamOffset, DateTimeKind.Utc);
+        var dayStart = DayStartUtc(today);
 
-        // "Mixed": take the region posted less today
-        var region = settings.RegionMode;
+        // "Mixed": take the region this page posted less today
+        var region = schedule.Settings.RegionMode;
         if (region is not ("VN" or "World"))
         {
             var todayRegions = await _context.AutoPostRuns
-                .Where(r => r.ScheduledAtUtc >= dayStartUtc && r.Region != null && r.Status != Failed && r.Status != Skipped)
+                .Where(r => r.FacebookAccountId == facebookAccountId && r.ScheduledAtUtc >= dayStart
+                            && r.Region != null && r.Status != Failed && r.Status != Skipped)
                 .Select(r => r.Region!)
                 .ToListAsync(cancellationToken);
             region = todayRegions.Count(r => r == "World") < todayRegions.Count(r => r == "VN") ? "World" : "VN";
@@ -301,7 +429,8 @@ public class AutoPostService : IAutoPostService
 
         var run = new AutoPostRun
         {
-            SlotKey = $"{today:yyyy-MM-dd} now-{(now + VietnamOffset):HHmmss}",
+            SlotKey = $"{today:yyyy-MM-dd} now-{(now + VietnamOffset):HHmmss}-{Guid.NewGuid():N}"[..36] + $" {facebookAccountId:N}",
+            FacebookAccountId = facebookAccountId,
             ScheduledAtUtc = now,
             IsManual = true,
             Status = Producing,
@@ -310,9 +439,10 @@ public class AutoPostService : IAutoPostService
         _context.AutoPostRuns.Add(run);
         await _context.SaveChangesAsync(cancellationToken);
 
-        await StartProductionAsync(run, settings, region, now, cancellationToken);
+        await StartProductionAsync(run, schedule.Settings, region, now, cancellationToken);
         await _context.SaveChangesAsync(cancellationToken);
-        return (await MapRunsAsync(new List<AutoPostRun> { run }, cancellationToken))[0];
+        var names = new Dictionary<Guid, string> { [facebookAccountId] = schedule.Page.PageName };
+        return (await MapRunsAsync(new List<AutoPostRun> { run }, names, cancellationToken))[0];
     }
 
     public async Task<bool> CancelRunAsync(Guid runId, CancellationToken cancellationToken = default)
@@ -334,7 +464,8 @@ public class AutoPostService : IAutoPostService
         if (!await TickLock.WaitAsync(0, cancellationToken)) return;
         try
         {
-            var settings = await LoadSettingsAsync(cancellationToken);
+            var pages = await LoadPagesAsync(cancellationToken);
+            var byPage = pages.ToDictionary(p => p.Page.Id);
             var now = DateTime.UtcNow;
 
             // 1. Move running posts forward
@@ -346,7 +477,7 @@ public class AutoPostService : IAutoPostService
             {
                 try
                 {
-                    await AdvanceAsync(run, settings, now, cancellationToken);
+                    await AdvanceAsync(run, run.FacebookAccountId != null ? byPage.GetValueOrDefault(run.FacebookAccountId.Value) : null, now, cancellationToken);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
@@ -358,30 +489,49 @@ public class AutoPostService : IAutoPostService
                 await _context.SaveChangesAsync(cancellationToken);
             }
 
-            if (!settings.Enabled) return;
+            // 2. Start due slots of every enabled page, earliest first, while the shared video queue has room
+            var producing = active.Count(r => r.Status == Producing);
+            if (producing >= MaxConcurrentVideos) return;
 
-            // 2. Start the next due slot (one per tick, and not while another video is being made unless the slot is close)
             var today = VietnamDate(now);
-            var slots = ParseSlots(settings.TimeSlots);
-            var lead = TimeSpan.FromMinutes(settings.LeadMinutes);
-            for (var i = 0; i < slots.Count; i++)
+            var due = new List<(DateTime At, string Key, PageSchedule Schedule, int Index)>();
+            foreach (var schedule in pages.Where(p => p.Settings.Enabled))
             {
-                var at = SlotUtc(today, slots[i]);
-                if (now < at - lead || now > at + LateWindow) continue;
+                var slots = ParseSlots(schedule.Settings.TimeSlots);
+                var lead = TimeSpan.FromMinutes(schedule.Settings.LeadMinutes);
+                for (var i = 0; i < slots.Count; i++)
+                {
+                    var at = SlotUtc(today, slots[i]);
+                    if (now >= at - lead && now <= at + LateWindow)
+                        due.Add((at, SlotKey(today, slots[i], schedule.Page.Id), schedule, i));
+                }
+            }
+            if (due.Count == 0) return;
 
-                var key = SlotKey(today, slots[i]);
-                if (await _context.AutoPostRuns.AnyAsync(r => r.SlotKey == key, cancellationToken)) continue;
-                if (active.Any(r => r.Status == Producing) && now < at - TimeSpan.FromMinutes(10)) break;
+            var keys = due.Select(d => d.Key).ToList();
+            var started = (await _context.AutoPostRuns.Where(r => keys.Contains(r.SlotKey)).Select(r => r.SlotKey).ToListAsync(cancellationToken))
+                .ToHashSet();
 
-                var run = new AutoPostRun { SlotKey = key, ScheduledAtUtc = at, Status = Producing, StartedAtUtc = now };
+            foreach (var slot in due.Where(d => !started.Contains(d.Key)).OrderBy(d => d.At))
+            {
+                if (producing >= MaxConcurrentVideos) break;
+
+                var run = new AutoPostRun
+                {
+                    SlotKey = slot.Key,
+                    FacebookAccountId = slot.Schedule.Page.Id,
+                    ScheduledAtUtc = slot.At,
+                    Status = Producing,
+                    StartedAtUtc = now
+                };
                 _context.AutoPostRuns.Add(run);
                 await _context.SaveChangesAsync(cancellationToken);
-                _logger.LogInformation("Auto-post slot {Slot} started", key);
+                _logger.LogInformation("Auto-post slot {Time} started for page {Page}", VietnamTime(slot.At), slot.Schedule.Page.PageName);
 
-                await StartProductionAsync(run, settings, PlannedRegion(settings.RegionMode, i), now, cancellationToken);
+                await StartProductionAsync(run, slot.Schedule.Settings, PlannedRegion(slot.Schedule.Settings.RegionMode, slot.Index), now, cancellationToken);
                 run.UpdatedAtUtc = DateTime.UtcNow;
                 await _context.SaveChangesAsync(cancellationToken);
-                break;
+                if (run.Status == Producing) producing++;
             }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -395,12 +545,19 @@ public class AutoPostService : IAutoPostService
         }
     }
 
-    private async Task AdvanceAsync(AutoPostRun run, AutoPostSettings settings, DateTime now, CancellationToken ct)
+    private async Task AdvanceAsync(AutoPostRun run, PageSchedule? schedule, DateTime now, CancellationToken ct)
     {
-        if (!settings.Enabled && !run.IsManual && run.Status is Producing or WaitingSlot)
+        if (schedule == null && run.Status is Producing or WaitingSlot)
+        {
+            run.Status = Failed;
+            run.Message = "Page của lượt này đã ngắt kết nối. Video (nếu đã làm) vẫn ở trang Video.";
+            return;
+        }
+
+        if (schedule != null && !schedule.Settings.Enabled && !run.IsManual && run.Status is Producing or WaitingSlot)
         {
             run.Status = Skipped;
-            run.Message = "Đã tắt tự động đăng. Video (nếu đã làm) vẫn nằm ở trang Video để duyệt tay.";
+            run.Message = "Đã tắt tự động đăng cho Page này. Video (nếu đã làm) vẫn nằm ở trang Video để duyệt tay.";
             return;
         }
 
@@ -430,7 +587,7 @@ public class AutoPostService : IAutoPostService
                     case VideoProjectStatus.AwaitingApproval:
                         if (now >= run.ScheduledAtUtc)
                         {
-                            await PublishAsync(run, settings, ct);
+                            await PublishAsync(run, ct);
                         }
                         else
                         {
@@ -445,12 +602,12 @@ public class AutoPostService : IAutoPostService
                         break;
                     case VideoProjectStatus.Failed:
                     case VideoProjectStatus.Cancelled:
-                        await RetryOrFailAsync(run, settings, now, project.ErrorMessage ?? "Dựng video thất bại", ct);
+                        await RetryOrFailAsync(run, schedule!.Settings, now, project.ErrorMessage ?? "Dựng video thất bại", ct);
                         break;
                     default:
                         if (run.StartedAtUtc != null && now - run.StartedAtUtc > ProduceTimeout)
                         {
-                            await RetryOrFailAsync(run, settings, now, "Làm video quá lâu, có thể bị kẹt", ct);
+                            await RetryOrFailAsync(run, schedule!.Settings, now, "Làm video quá lâu, có thể bị kẹt", ct);
                         }
                         else
                         {
@@ -469,12 +626,12 @@ public class AutoPostService : IAutoPostService
                         : "Video không còn ở trạng thái chờ đăng (đã bị sửa hoặc làm lại).";
                     break;
                 }
-                if (now >= run.ScheduledAtUtc) await PublishAsync(run, settings, ct);
+                if (now >= run.ScheduledAtUtc) await PublishAsync(run, ct);
                 break;
 
             case Publishing:
                 // Only reached when a previous tick died mid-upload; publishing is idempotent per video.
-                if (now - (run.UpdatedAtUtc ?? run.CreatedAtUtc) > PublishingStuckAfter) await PublishAsync(run, settings, ct);
+                if (now - (run.UpdatedAtUtc ?? run.CreatedAtUtc) > PublishingStuckAfter) await PublishAsync(run, ct);
                 break;
         }
     }
@@ -498,18 +655,19 @@ public class AutoPostService : IAutoPostService
     {
         run.Attempts++;
 
-        if (!SimulationMode.IsEnabled(_configuration) && !await _context.FacebookAccounts.AnyAsync(a => a.IsActive, ct))
+        var keywords = NewsTopics.ParseKeywords(settings.TopicKeywords);
+        if (settings.Topic == NewsTopics.Custom && keywords.Count == 0)
         {
             run.Status = Failed;
-            run.Message = "Chưa kết nối Page Facebook nên không tự đăng được. Vào Cài đặt → Facebook để kết nối.";
+            run.Message = "Page dùng chủ đề \"Tự chọn từ khoá\" nhưng chưa có từ khoá nào.";
             return;
         }
 
-        var pick = await PickStoryAsync(region, allowOtherRegion: settings.RegionMode is not ("VN" or "World"), now, ct);
+        var pick = await PickStoryAsync(settings.Topic, keywords, region, allowOtherRegion: settings.RegionMode is not ("VN" or "World"), now, ct);
         if (pick == null)
         {
             run.Status = Failed;
-            run.Message = "Không còn tin hot nào chưa làm video trong 24 giờ qua.";
+            run.Message = $"Không còn tin hot nào thuộc chủ đề \"{NewsTopics.NameOf(settings.Topic)}\" chưa làm video trong 48 giờ qua.";
             return;
         }
 
@@ -539,15 +697,17 @@ public class AutoPostService : IAutoPostService
         await _context.SaveChangesAsync(ct);
 
         await _projects.EnqueueProjectProcessingAsync(project.Id, ct);
-        _logger.LogInformation("Auto-post {Slot}: making video for \"{Title}\" ({Source}, score {Score:F0})",
-            run.SlotKey, pick.Value.Item.Title, pick.Value.Item.SourceName, pick.Value.Item.HotScore);
+        _logger.LogInformation("Auto-post {Slot}: making video for \"{Title}\" ({Source}, topic {Topic}, score {Score:F0})",
+            run.SlotKey, pick.Value.Item.Title, pick.Value.Item.SourceName, settings.Topic, pick.Value.Item.HotScore);
     }
 
     /// <summary>
-    /// Hottest story in <paramref name="region"/> that has no video yet: its link was never used, and no
-    /// other outlet's article about the same story (same cluster) was used in the last few days.
+    /// Hottest story of <paramref name="topic"/> in <paramref name="region"/> that no page has used: its link
+    /// was never made into a video, and no other outlet's article about the same story (same cluster or same
+    /// title) was used in the last few days — so two pages never post the same news.
     /// </summary>
-    private async Task<(TrendingArticleDto Item, Guid? ClusterId)?> PickStoryAsync(string region, bool allowOtherRegion, DateTime now, CancellationToken ct)
+    private async Task<(TrendingArticleDto Item, Guid? ClusterId)?> PickStoryAsync(
+        string topic, List<string> keywords, string region, bool allowOtherRegion, DateTime now, CancellationToken ct)
     {
         var usedUrlList = await _context.VideoProjects.AsNoTracking().Select(p => p.SourceUrl).ToListAsync(ct);
         usedUrlList.AddRange(await _context.AutoPostRuns.AsNoTracking()
@@ -577,13 +737,29 @@ public class AutoPostService : IAutoPostService
         var usedTitles = (await _context.VideoProjects.AsNoTracking()
                 .Where(p => p.CreatedAtUtc >= since).Select(p => p.Title).ToListAsync(ct))
             .Select(NormalizeTitle).ToHashSet();
+        // Same story in another language isn't clustered (clusters are per language): names such as
+        // "Nvidia" + "Huang" shared with a story used in the last day mean it's the same news.
+        var recentNames = (await _context.AutoPostRuns.AsNoTracking()
+                .Where(r => r.CreatedAtUtc >= now.AddDays(-1) && r.ArticleTitle != null)
+                .Select(r => r.ArticleTitle!)
+                .ToListAsync(ct))
+            .Select(ProperNames)
+            .Where(n => n.Count >= 2)
+            .ToList();
 
         var regions = allowOtherRegion ? new[] { region, region == "VN" ? "World" : "VN" } : new[] { region };
-        foreach (var r in regions)
+        foreach (var hours in LookBackHours)
         {
-            foreach (var hours in new[] { 12, 24 })
+            foreach (var r in regions)
             {
-                var overview = await _trending.GetTrendingAsync(new TrendingQuery { Region = r, Hours = hours, Limit = 80 }, ct);
+                var overview = await _trending.GetTrendingAsync(new TrendingQuery
+                {
+                    Region = r,
+                    Hours = hours,
+                    Limit = 120,
+                    Topic = topic,
+                    Keywords = keywords
+                }, ct);
                 var items = overview.Items.OrderByDescending(i => i.HotScore).ToList();
                 if (items.Count == 0) continue;
 
@@ -599,6 +775,8 @@ public class AutoPostService : IAutoPostService
                     if (usedUrls.Contains(NormalizeUrl(item.Url))) continue;
                     if (usedStories.Contains(item.Id) || (cluster != null && usedStories.Contains(cluster.Value))) continue;
                     if (usedTitles.Contains(NormalizeTitle(item.Title))) continue;
+                    var names = ProperNames(item.Title);
+                    if (names.Count >= 2 && recentNames.Any(n => n.Intersect(names).Count() >= 2)) continue;
                     return (item, cluster);
                 }
             }
@@ -606,7 +784,7 @@ public class AutoPostService : IAutoPostService
         return null;
     }
 
-    private async Task PublishAsync(AutoPostRun run, AutoPostSettings settings, CancellationToken ct)
+    private async Task PublishAsync(AutoPostRun run, CancellationToken ct)
     {
         var projectId = run.VideoProjectId!.Value;
         run.Status = Publishing;
@@ -631,7 +809,8 @@ public class AutoPostService : IAutoPostService
             return;
         }
 
-        var result = await _facebook.PublishReelAsync(projectId, new PublishReelRequestDto { FacebookAccountId = settings.FacebookAccountId }, ct);
+        // Each page posts with its own token: the request names the page explicitly
+        var result = await _facebook.PublishReelAsync(projectId, new PublishReelRequestDto { FacebookAccountId = run.FacebookAccountId }, ct);
         if (string.Equals(result.UploadStatus, "Published", StringComparison.OrdinalIgnoreCase))
         {
             run.Status = Published;
@@ -679,6 +858,32 @@ public class AutoPostService : IAutoPostService
         }
         return u.ToLowerInvariant();
     }
+
+    private static readonly System.Text.RegularExpressions.Regex NameRegex = new(@"(?<![\p{L}\p{N}])[A-Z][a-zA-Z]{3,}(?![\p{L}\p{N}])",System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>
+    /// Latin-script proper names in a title (e.g. "Nvidia", "Huang", "Trump"), ignoring the first word and
+    /// accent-free Vietnamese syllables that are capitalised in headlines.
+    /// </summary>
+    public static HashSet<string> ProperNames(string title)
+    {
+        var words = title.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        var body = string.Join(' ', words.Skip(1));
+        return NameRegex.Matches(body)
+            .Select(m => m.Value.ToLowerInvariant())
+            .Where(w => !CommonCapitalised.Contains(w))
+            .ToHashSet();
+    }
+
+    private static readonly HashSet<string> CommonCapitalised = new(StringComparer.OrdinalIgnoreCase)
+    {
+        // Vietnamese syllables without accents that appear capitalised in names / places
+        "long", "minh", "linh", "lan", "thanh", "trang", "giang", "binh", "hoang", "quang", "phong", "tien",
+        "anh", "nam", "hung", "dung", "tuan", "khanh", "ninh", "kien", "lam", "son", "chi", "tam", "tin",
+        // English words often capitalised in headlines
+        "news", "live", "update", "says", "after", "with", "from", "over", "into", "what", "will", "this",
+        "that", "more", "than", "year", "world", "first", "people", "report", "government", "president"
+    };
 
     private static string NormalizeTitle(string? title) =>
         new string((title ?? string.Empty).ToLowerInvariant().Where(char.IsLetterOrDigit).ToArray());

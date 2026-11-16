@@ -1,43 +1,36 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import {
-  AlertTriangle,
-  CalendarClock,
-  CheckCircle2,
-  ExternalLink,
-  Film,
-  Globe2,
-  Newspaper,
-  Power,
-  RotateCcw,
-  Save,
-  Send,
-  X,
-} from 'lucide-react';
+import { AlertTriangle, CalendarClock, Link2, Power, RotateCcw, Save, Send } from 'lucide-react';
 import {
   api,
   AutoPostOverviewDto,
+  AutoPostPageDto,
   AutoPostRegionMode,
   AutoPostRunDto,
   AutoPostSettingsDto,
-  AutoPostSlotDto,
-  FacebookAccountDto,
+  NewsTopicDto,
 } from '../services/api';
-import { Alert, Badge, Button, ButtonLink, Card, CardBody, CardHeader, EmptyState, Field, PageHeader, ProgressBar, Segmented, Select, Skeleton, cn } from '../components/ui';
+import {
+  Alert,
+  Badge,
+  Button,
+  ButtonLink,
+  Card,
+  CardBody,
+  CardHeader,
+  EmptyState,
+  Field,
+  Input,
+  PageHeader,
+  Segmented,
+  Select,
+  Skeleton,
+  cn,
+} from '../components/ui';
 import { useConfirm, useToast } from '../components/feedback';
-import { href } from '../lib/router';
-import { errorText, formatDateTime, Tone } from '../lib/format';
+import { AutoPostPageCard, AutoPostTotals, PageAvatar, RegionBadge, RunDetails, StateBadge, isActiveRun } from '../components/AutoPostWidgets';
+import { href, navigate, useRoute } from '../lib/router';
+import { errorText } from '../lib/format';
 import { DURATIONS, VOICES, durationLabel } from '../lib/prefs';
-
-const STATE_META: Record<string, { label: string; tone: Tone; pulse?: boolean }> = {
-  Upcoming: { label: 'Sắp tới', tone: 'neutral' },
-  Missed: { label: 'Đã qua', tone: 'neutral' },
-  Producing: { label: 'Đang làm video', tone: 'info', pulse: true },
-  WaitingSlot: { label: 'Chờ đến giờ đăng', tone: 'info' },
-  Publishing: { label: 'Đang đăng', tone: 'info', pulse: true },
-  Published: { label: 'Đã đăng', tone: 'success' },
-  Failed: { label: 'Lỗi', tone: 'danger' },
-  Skipped: { label: 'Đã huỷ', tone: 'neutral' },
-};
 
 const REGION_OPTIONS: { value: AutoPostRegionMode; label: string }[] = [
   { value: 'Mixed', label: 'Xen kẽ VN + quốc tế' },
@@ -47,143 +40,39 @@ const REGION_OPTIONS: { value: AutoPostRegionMode; label: string }[] = [
 
 const LEAD_OPTIONS = [20, 30, 40, 60, 90];
 
-function RegionBadge({ region }: { region?: string | null }) {
-  if (!region) return null;
-  return region === 'World' ? (
-    <Badge tone="info">
-      <Globe2 className="h-3 w-3" /> Quốc tế
-    </Badge>
-  ) : (
-    <Badge tone="warning">
-      <Newspaper className="h-3 w-3" /> Việt Nam
-    </Badge>
-  );
-}
-
-function StateBadge({ state }: { state: string }) {
-  const meta = STATE_META[state] ?? { label: state, tone: 'neutral' as Tone };
-  return (
-    <Badge tone={meta.tone} dot pulse={meta.pulse}>
-      {meta.label}
-    </Badge>
-  );
-}
-
-const isActiveRun = (run?: AutoPostRunDto | null) => !!run && ['Producing', 'WaitingSlot', 'Publishing'].includes(run.status);
+const formatDay = (isoDate: string) => isoDate.split('-').reverse().join('/');
 
 export const AutoPostPage: React.FC = () => {
   const toast = useToast();
   const confirm = useConfirm();
+  const route = useRoute();
+  const selectedId = route.query.get('page');
   const [data, setData] = useState<AutoPostOverviewDto | null>(null);
-  const [form, setForm] = useState<AutoPostSettingsDto | null>(null);
-  const [dirty, setDirty] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [runningNow, setRunningNow] = useState(false);
-  const [pages, setPages] = useState<FacebookAccountDto[]>([]);
+  const [topics, setTopics] = useState<NewsTopicDto[]>([]);
 
   const load = useCallback(
     async (silent = false) => {
       try {
-        const overview = await api.getAutoPost();
-        setData(overview);
-        setForm((current) => (current && dirty ? current : overview.settings));
+        setData(await api.getAutoPost());
       } catch (err) {
         if (!silent) toast.error('Không tải được lịch tự động đăng', errorText(err, ''));
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [dirty]
+    []
   );
 
   useEffect(() => {
     load();
-    api.getFacebookPages().then(setPages).catch(() => setPages([]));
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    api.getNewsTopics().then(setTopics).catch(() => setTopics([]));
+  }, [load]);
 
   // Follow progress: poll quickly while something is running, slowly otherwise
-  const busy = useMemo(
-    () => !!data && (data.todaySlots.some((s) => isActiveRun(s.run)) || data.recentRuns.some(isActiveRun)),
-    [data]
-  );
+  const busy = useMemo(() => !!data && data.recentRuns.some(isActiveRun), [data]);
   useEffect(() => {
     const t = setInterval(() => load(true), busy ? 8000 : 30000);
     return () => clearInterval(t);
   }, [busy, load]);
-
-  const update = (patch: Partial<AutoPostSettingsDto>) => {
-    setForm((f) => (f ? { ...f, ...patch } : f));
-    setDirty(true);
-  };
-
-  const changeCount = async (raw: number) => {
-    const count = Math.max(1, Math.min(12, Math.round(raw) || 1));
-    update({ postsPerDay: count });
-    try {
-      update({ postsPerDay: count, timeSlots: await api.suggestAutoPostSlots(count) });
-    } catch {
-      /* keep the current times; the server suggests new ones on save if the count doesn't match */
-    }
-  };
-
-  const setSlot = (index: number, value: string) => {
-    if (!form) return;
-    const next = [...form.timeSlots];
-    next[index] = value;
-    update({ timeSlots: next });
-  };
-
-  const save = async (override?: Partial<AutoPostSettingsDto>) => {
-    if (!form) return;
-    setSaving(true);
-    try {
-      const saved = await api.saveAutoPostSettings({ ...form, ...override });
-      setForm(saved);
-      setDirty(false);
-      toast.success(
-        override?.enabled === true ? 'Đã bật tự động đăng' : override?.enabled === false ? 'Đã tắt tự động đăng' : 'Đã lưu cài đặt'
-      );
-      await load(true);
-    } catch (err) {
-      toast.error('Lưu thất bại', errorText(err, ''));
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const toggle = async () => {
-    if (!form) return;
-    if (!form.enabled) {
-      const ok = await confirm({
-        title: `Bật tự động đăng ${form.postsPerDay} video mỗi ngày?`,
-        description:
-          `Vào các giờ ${form.timeSlots.join(', ')} (giờ Việt Nam), app sẽ tự chọn tin hot nhất chưa làm, tạo video và đăng thẳng lên Page Facebook, không cần duyệt tay. ` +
-          'Video có lỗi nghiêm trọng (kiểm tra chất lượng) vẫn bị chặn đăng. Mỗi video tốn phí AI như khi bạn tạo tay.',
-        confirmLabel: 'Bật tự động đăng',
-      });
-      if (!ok) return;
-    }
-    await save({ enabled: !form.enabled });
-  };
-
-  const runNow = async () => {
-    const ok = await confirm({
-      title: 'Đăng 1 tin ngay bây giờ?',
-      description: 'App chọn tin hot nhất chưa làm video, tạo video và đăng lên Facebook ngay khi xong (khoảng 5–15 phút). Lượt này không tính vào lịch.',
-      confirmLabel: 'Đăng ngay',
-    });
-    if (!ok) return;
-    setRunningNow(true);
-    try {
-      const run = await api.autoPostRunNow();
-      if (run.status === 'Failed') toast.error('Không bắt đầu được', run.message ?? '');
-      else toast.success('Đã bắt đầu', run.articleTitle ?? undefined);
-      await load(true);
-    } catch (err) {
-      toast.error('Không bắt đầu được', errorText(err, ''));
-    } finally {
-      setRunningNow(false);
-    }
-  };
 
   const cancelRun = async (run: AutoPostRunDto) => {
     const ok = await confirm({
@@ -202,29 +91,28 @@ export const AutoPostPage: React.FC = () => {
     }
   };
 
-  if (!data || !form) {
+  if (!data) {
     return (
       <div className="space-y-4">
         <Skeleton className="h-10 w-64" />
-        <Skeleton className="h-40 w-full" />
+        <Skeleton className="h-24 w-full" />
         <Skeleton className="h-64 w-full" />
       </div>
     );
   }
 
-  const nextSlot = data.todaySlots.find((s) => s.state === 'Upcoming');
-  const history = data.recentRuns.filter((r) => r.slotDate !== data.today || r.isManual);
+  const selected = data.pages.find((p) => p.facebookAccountId === selectedId) ?? null;
 
   return (
     <div className="space-y-5">
       <PageHeader
         title="Tự động đăng"
-        description="Mỗi ngày tự chọn tin hot nhất (Việt Nam và quốc tế, không trùng tin), làm video rồi đăng lên Page Facebook theo khung giờ."
+        description="Mỗi Page một chủ đề và một lịch riêng. App tự chọn tin hot nhất đúng chủ đề (không trùng tin giữa các Page), làm video rồi đăng bằng token riêng của Page đó."
         actions={
-          <Button icon={<Send className="h-4 w-4" />} loading={runningNow} onClick={runNow}>
-            <span className="hidden sm:inline">Đăng 1 tin ngay</span>
-            <span className="sm:hidden">Đăng ngay</span>
-          </Button>
+          <ButtonLink href={href('/settings/facebook')} icon={<Link2 className="h-4 w-4" />}>
+            <span className="hidden sm:inline">Kết nối Page mới</span>
+            <span className="sm:hidden">Thêm Page</span>
+          </ButtonLink>
         }
       />
 
@@ -234,69 +122,367 @@ export const AutoPostPage: React.FC = () => {
         </Alert>
       ))}
 
-      {/* On / off + summary */}
-      <Card>
-        <CardBody className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-start gap-3">
-            <span
-              className={cn(
-                'mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full',
-                form.enabled ? 'bg-success/10 text-success' : 'bg-muted text-fg-subtle'
-              )}
-            >
-              <Power className="h-5 w-5" />
-            </span>
-            <div>
-              <p className="text-[15px] font-semibold text-fg">
-                {form.enabled ? 'Đang bật tự động đăng' : 'Tự động đăng đang tắt'}
-              </p>
-              <p className="mt-0.5 text-[13px] text-fg-muted">
-                Hôm nay đã đăng <b className="text-fg">{data.publishedToday}</b>/{form.postsPerDay} video
-                {form.enabled && nextSlot && (
-                  <>
-                    {' '}· Lượt tiếp theo <b className="text-fg">{nextSlot.time}</b> ({nextSlot.plannedRegion === 'World' ? 'tin quốc tế' : 'tin Việt Nam'}),
-                    bắt đầu làm video trước {form.leadMinutes} phút
-                  </>
-                )}
-                {form.enabled && !nextSlot && ' · Hết lượt hôm nay, mai chạy tiếp'}
-              </p>
-            </div>
-          </div>
-          <Button
-            variant={form.enabled ? 'secondary' : 'primary'}
-            icon={<Power className="h-4 w-4" />}
-            loading={saving}
-            onClick={toggle}
-            className="sm:shrink-0"
-          >
-            {form.enabled ? 'Tắt tự động đăng' : 'Bật tự động đăng'}
-          </Button>
-        </CardBody>
-      </Card>
+      <AutoPostTotals totals={data.totals} />
 
-      {/* Today */}
+      {data.pages.length > 0 && (
+        <div className="-mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">
+          <div className="flex w-max gap-1.5 pb-1">
+            <PageTab label="Tất cả Page" active={!selected} onClick={() => navigate('/auto-post')} />
+            {data.pages.map((p) => (
+              <PageTab
+                key={p.facebookAccountId}
+                label={p.pageName}
+                sub={p.topicName}
+                enabled={p.settings.enabled}
+                active={selected?.facebookAccountId === p.facebookAccountId}
+                onClick={() => navigate(`/auto-post?page=${p.facebookAccountId}`)}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {data.pages.length === 0 ? (
+        <Card>
+          <EmptyState
+            icon={<Link2 />}
+            title="Chưa có Page nào"
+            description="Kết nối từng Page Facebook (mỗi Page một token riêng) rồi quay lại đây để chọn chủ đề và lịch đăng."
+            action={
+              <ButtonLink variant="primary" href={href('/settings/facebook')}>
+                Kết nối Page
+              </ButtonLink>
+            }
+          />
+        </Card>
+      ) : selected ? (
+        <PageDetail
+          key={selected.facebookAccountId}
+          page={selected}
+          index={data.pages.indexOf(selected)}
+          topics={topics}
+          today={data.today}
+          history={data.recentRuns.filter((r) => r.facebookAccountId === selected.facebookAccountId && (r.slotDate !== data.today))}
+          onChanged={() => load(true)}
+          onCancel={cancelRun}
+        />
+      ) : (
+        <AllPages data={data} onCancel={cancelRun} />
+      )}
+    </div>
+  );
+};
+
+function PageTab({
+  label,
+  sub,
+  enabled,
+  active,
+  onClick,
+}: {
+  label: string;
+  sub?: string;
+  enabled?: boolean;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        'flex max-w-[220px] items-center gap-2 rounded-md border px-3 py-1.5 text-left transition-colors',
+        active ? 'border-accent bg-accent/[0.06] text-fg' : 'border-line bg-surface text-fg-muted hover:text-fg'
+      )}
+    >
+      {enabled !== undefined && <span className={cn('h-2 w-2 shrink-0 rounded-full', enabled ? 'bg-success' : 'bg-fg-subtle/50')} />}
+      <span className="min-w-0">
+        <span className="block truncate text-sm font-medium">{label}</span>
+        {sub && <span className="block truncate text-[11px] text-fg-subtle">{sub}</span>}
+      </span>
+    </button>
+  );
+}
+
+/* ───────────────────────── All pages ───────────────────────── */
+
+function AllPages({ data, onCancel }: { data: AutoPostOverviewDto; onCancel: (run: AutoPostRunDto) => void }) {
+  // Today's slots of every page in one timeline
+  const timeline = data.pages
+    .flatMap((p) => p.todaySlots.map((slot) => ({ page: p, slot })))
+    .sort((a, b) => a.slot.scheduledAtUtc.localeCompare(b.slot.scheduledAtUtc));
+  const history = data.recentRuns.filter((r) => r.slotDate !== data.today);
+
+  return (
+    <>
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        {data.pages.map((p) => (
+          <AutoPostPageCard key={p.facebookAccountId} page={p} onOpen={() => navigate(`/auto-post?page=${p.facebookAccountId}`)} />
+        ))}
+      </div>
+
       <Card>
-        <CardHeader title={`Hôm nay · ${data.today.split('-').reverse().join('/')}`} description="Giờ Việt Nam. Trang tự cập nhật tiến trình." />
+        <CardHeader
+          title={`Lịch hôm nay · ${formatDay(data.today)}`}
+          description={`Tất cả Page, giờ Việt Nam. Mỗi lần làm ${data.maxConcurrentVideos} video, Page nào đến giờ trước làm trước.`}
+        />
         <CardBody className="pt-3">
-          {data.todaySlots.length === 0 ? (
-            <EmptyState icon={<CalendarClock />} title="Chưa có khung giờ nào" />
+          {timeline.length === 0 ? (
+            <EmptyState icon={<CalendarClock />} title="Hôm nay chưa có lượt nào" />
           ) : (
             <ol className="divide-y divide-line">
-              {data.todaySlots.map((slot) => (
-                <SlotRow key={slot.time} slot={slot} enabled={form.enabled} onCancel={cancelRun} />
+              {timeline.map(({ page, slot }) => (
+                <li key={`${page.facebookAccountId}-${slot.time}-${slot.run?.id ?? ''}`} className="flex flex-col gap-2 py-3 sm:flex-row sm:items-start sm:gap-4">
+                  <div className="flex w-44 shrink-0 items-center gap-2">
+                    <span className="font-mono text-base font-semibold text-fg">{slot.time}</span>
+                    <a href={href(`/auto-post?page=${page.facebookAccountId}`)} className="min-w-0 truncate text-xs text-fg-muted hover:text-fg hover:underline">
+                      {page.pageName}
+                    </a>
+                  </div>
+                  {slot.run ? (
+                    <RunDetails run={slot.run} onCancel={onCancel} />
+                  ) : (
+                    <div className="flex flex-wrap items-center gap-2 text-[13px] text-fg-muted">
+                      <StateBadge state={slot.state} />
+                      <RegionBadge region={slot.plannedRegion} />
+                      <Badge tone="neutral">{page.topicName}</Badge>
+                      {!page.settings.enabled && slot.state === 'Upcoming' && <span>Page đang tắt tự động đăng</span>}
+                    </div>
+                  )}
+                </li>
               ))}
             </ol>
           )}
         </CardBody>
       </Card>
 
-      {/* Settings */}
+      <HistoryCard runs={history} showPage onCancel={onCancel} />
+    </>
+  );
+}
+
+function HistoryCard({ runs, showPage, onCancel }: { runs: AutoPostRunDto[]; showPage?: boolean; onCancel: (run: AutoPostRunDto) => void }) {
+  return (
+    <Card>
+      <CardHeader title="Lịch sử 7 ngày" description="Các lượt đã chạy trước hôm nay." />
+      <CardBody className="pt-3">
+        {runs.length === 0 ? (
+          <p className="py-6 text-center text-[13px] text-fg-muted">Chưa có lượt nào.</p>
+        ) : (
+          <ul className="divide-y divide-line">
+            {runs.map((run) => (
+              <li key={run.id} className="flex flex-col gap-1.5 py-3 sm:flex-row sm:items-start sm:gap-4">
+                <div className="w-36 shrink-0 text-xs text-fg-muted">
+                  <span className="font-mono text-sm text-fg">{run.slotTime}</span> · {formatDay(run.slotDate).slice(0, 5)}
+                </div>
+                <RunDetails run={run} showPage={showPage} onCancel={onCancel} />
+              </li>
+            ))}
+          </ul>
+        )}
+      </CardBody>
+    </Card>
+  );
+}
+
+/* ───────────────────────── One page ───────────────────────── */
+
+function PageDetail({
+  page,
+  index,
+  topics,
+  today,
+  history,
+  onChanged,
+  onCancel,
+}: {
+  page: AutoPostPageDto;
+  index: number;
+  topics: NewsTopicDto[];
+  today: string;
+  history: AutoPostRunDto[];
+  onChanged: () => Promise<void> | void;
+  onCancel: (run: AutoPostRunDto) => void;
+}) {
+  const toast = useToast();
+  const confirm = useConfirm();
+  const [form, setForm] = useState<AutoPostSettingsDto>(page.settings);
+  const [dirty, setDirty] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [runningNow, setRunningNow] = useState(false);
+
+  // Keep the form in sync with the server while the user hasn't edited it
+  useEffect(() => {
+    if (!dirty) setForm(page.settings);
+  }, [page.settings, dirty]);
+
+  const update = (patch: Partial<AutoPostSettingsDto>) => {
+    setForm((f) => ({ ...f, ...patch }));
+    setDirty(true);
+  };
+
+  const suggest = async (raw: number) => {
+    const count = Math.max(1, Math.min(12, Math.round(raw) || 1));
+    update({ postsPerDay: count });
+    try {
+      // Shift each page's times a little so videos of different pages aren't made at the same moment
+      update({ postsPerDay: count, timeSlots: await api.suggestAutoPostSlots(count, index * 10) });
+    } catch {
+      /* the server suggests times on save if the count doesn't match */
+    }
+  };
+
+  const save = async (override?: Partial<AutoPostSettingsDto>) => {
+    setSaving(true);
+    try {
+      const saved = await api.saveAutoPostSettings(page.facebookAccountId, { ...form, ...override });
+      setForm(saved);
+      setDirty(false);
+      toast.success(
+        override?.enabled === true ? `Đã bật tự động đăng cho ${page.pageName}` : override?.enabled === false ? 'Đã tắt tự động đăng' : 'Đã lưu cài đặt'
+      );
+      await onChanged();
+    } catch (err) {
+      toast.error('Lưu thất bại', errorText(err, ''));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const toggle = async () => {
+    if (!form.enabled) {
+      const topicName = topics.find((t) => t.key === form.topic)?.name ?? page.topicName;
+      const ok = await confirm({
+        title: `Bật tự động đăng cho ${page.pageName}?`,
+        description:
+          `Mỗi ngày ${form.postsPerDay} video chủ đề "${topicName}" vào ${form.timeSlots.join(', ')} (giờ VN), đăng thẳng lên Page bằng token của Page, không cần duyệt tay. ` +
+          'Video có lỗi nghiêm trọng vẫn bị chặn đăng. Mỗi video tốn phí AI như khi tạo tay.',
+        confirmLabel: 'Bật tự động đăng',
+      });
+      if (!ok) return;
+    }
+    await save({ enabled: !form.enabled });
+  };
+
+  const runNow = async () => {
+    const ok = await confirm({
+      title: `Đăng 1 tin lên ${page.pageName} ngay?`,
+      description: 'App chọn tin hot nhất đúng chủ đề chưa làm video, tạo video và đăng ngay khi xong (khoảng 5–15 phút). Lượt này không tính vào lịch.',
+      confirmLabel: 'Đăng ngay',
+    });
+    if (!ok) return;
+    setRunningNow(true);
+    try {
+      const run = await api.autoPostRunNow(page.facebookAccountId);
+      if (run.status === 'Failed') toast.error('Không bắt đầu được', run.message ?? '');
+      else toast.success('Đã bắt đầu', run.articleTitle ?? undefined);
+      await onChanged();
+    } catch (err) {
+      toast.error('Không bắt đầu được', errorText(err, ''));
+    } finally {
+      setRunningNow(false);
+    }
+  };
+
+  const nextSlot = page.todaySlots.find((s) => s.state === 'Upcoming');
+  const topicMeta = topics.find((t) => t.key === form.topic);
+
+  return (
+    <>
+      {page.warnings.map((w) => (
+        <Alert key={w} tone="warning" icon={<AlertTriangle className="h-4 w-4" />}>
+          {w}
+        </Alert>
+      ))}
+
       <Card>
-        <CardHeader
-          title="Cài đặt lịch đăng"
-          description="Đổi số video mỗi ngày thì khung giờ được gợi ý lại theo giờ đông người xem Facebook ở Việt Nam. Bạn vẫn sửa từng giờ được."
-        />
+        <CardBody className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex min-w-0 items-start gap-3">
+            <PageAvatar name={page.pageName} enabled={form.enabled} className="h-10 w-10" />
+            <div className="min-w-0">
+              <p className="truncate text-[15px] font-semibold text-fg">{page.pageName}</p>
+              <p className="mt-0.5 text-[13px] text-fg-muted">
+                {page.topicName} · Hôm nay đã đăng <b className="text-fg">{page.publishedToday}</b>/{form.postsPerDay}
+                {form.enabled && nextSlot && (
+                  <>
+                    {' '}· Lượt tiếp theo <b className="text-fg">{nextSlot.time}</b>
+                  </>
+                )}
+                {!form.enabled && ' · Đang tắt tự động đăng'}
+              </p>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2 sm:shrink-0">
+            <Button icon={<Send className="h-4 w-4" />} loading={runningNow} onClick={runNow}>
+              Đăng 1 tin ngay
+            </Button>
+            <Button variant={form.enabled ? 'secondary' : 'primary'} icon={<Power className="h-4 w-4" />} loading={saving} onClick={toggle}>
+              {form.enabled ? 'Tắt tự động đăng' : 'Bật tự động đăng'}
+            </Button>
+          </div>
+        </CardBody>
+      </Card>
+
+      <Card>
+        <CardHeader title={`Hôm nay · ${formatDay(today)}`} description="Giờ Việt Nam. Trang tự cập nhật tiến trình." />
+        <CardBody className="pt-3">
+          {page.todaySlots.length === 0 ? (
+            <EmptyState icon={<CalendarClock />} title="Chưa có khung giờ nào" />
+          ) : (
+            <ol className="divide-y divide-line">
+              {page.todaySlots.map((slot) => (
+                <li key={`${slot.time}-${slot.run?.id ?? ''}`} className="flex flex-col gap-2 py-3 sm:flex-row sm:items-start sm:gap-4">
+                  <div className="flex w-36 shrink-0 items-center gap-2 sm:flex-col sm:items-start sm:gap-1">
+                    <span className="font-mono text-lg font-semibold leading-none text-fg">{slot.time}</span>
+                    <RegionBadge region={slot.plannedRegion} />
+                  </div>
+                  {slot.run ? (
+                    <RunDetails run={slot.run} onCancel={onCancel} />
+                  ) : (
+                    <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2 text-[13px] text-fg-muted">
+                      <StateBadge state={slot.state} />
+                      {slot.state === 'Upcoming' &&
+                        (form.enabled ? 'App sẽ chọn tin hot nhất đúng chủ đề lúc gần đến giờ.' : 'Tự động đăng đang tắt nên lượt này sẽ không chạy.')}
+                      {slot.state === 'Missed' && 'Không có lượt đăng ở khung giờ này.'}
+                    </div>
+                  )}
+                </li>
+              ))}
+            </ol>
+          )}
+        </CardBody>
+      </Card>
+
+      <Card>
+        <CardHeader title="Cài đặt Page" description="Chủ đề, số video, khung giờ và giọng đọc riêng cho Page này. Token kết nối Page sửa ở Cài đặt → Facebook." />
         <CardBody className="space-y-5">
+          <div className="grid gap-5 sm:grid-cols-2">
+            <Field label="Chủ đề của Page" hint={topicMeta?.description}>
+              <Select value={form.topic} onChange={(e) => update({ topic: e.target.value })}>
+                {topics.length === 0 && <option value={form.topic}>{page.topicName}</option>}
+                {topics.map((t) => (
+                  <option key={t.key} value={t.key}>
+                    {t.name}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field
+              label={form.topic === 'tu-chon' ? 'Từ khoá (bắt buộc)' : 'Từ khoá thêm'}
+              hint={
+                form.topic === 'tu-chon'
+                  ? 'Chỉ lấy tin có chứa một trong các từ này. Cách nhau bằng dấu phẩy.'
+                  : 'Không bắt buộc. Tin chứa các từ này cũng được tính vào chủ đề. Cách nhau bằng dấu phẩy.'
+              }
+            >
+              <Input
+                value={form.topicKeywords ?? ''}
+                onChange={(e) => update({ topicKeywords: e.target.value })}
+                placeholder="vd: bóng đá Anh, Premier League"
+              />
+            </Field>
+          </div>
+
           <div className="grid gap-5 sm:grid-cols-2">
             <Field label="Số video tối đa mỗi ngày" hint="Từ 1 đến 12. Mặc định 5.">
               <input
@@ -304,7 +490,7 @@ export const AutoPostPage: React.FC = () => {
                 min={1}
                 max={12}
                 value={form.postsPerDay}
-                onChange={(e) => changeCount(Number(e.target.value))}
+                onChange={(e) => suggest(Number(e.target.value))}
                 className="h-9 w-28 rounded-md border border-line-strong bg-surface px-3 text-sm text-fg focus:border-accent focus:ring-[3px] focus:ring-accent/15"
               />
             </Field>
@@ -315,7 +501,7 @@ export const AutoPostPage: React.FC = () => {
 
           <Field
             label="Khung giờ đăng (giờ Việt Nam)"
-            hint="Mặc định: 07:00 ăn sáng / đi làm · 11:30 nghỉ trưa · 17:30 tan tầm · 20:00 giờ vàng buổi tối · 21:30 trước giờ ngủ."
+            hint="Gợi ý theo giờ đông người xem: sáng đi làm, nghỉ trưa, tan tầm, giờ vàng tối, trước khi ngủ. Mỗi Page lệch nhau vài phút để video không phải làm cùng lúc."
           >
             <div className="flex flex-wrap items-center gap-2">
               {form.timeSlots.map((t, i) => (
@@ -324,21 +510,23 @@ export const AutoPostPage: React.FC = () => {
                   <input
                     type="time"
                     value={t}
-                    onChange={(e) => setSlot(i, e.target.value)}
+                    onChange={(e) => {
+                      const next = [...form.timeSlots];
+                      next[i] = e.target.value;
+                      update({ timeSlots: next });
+                    }}
                     className="h-7 rounded border-0 bg-transparent px-1 font-mono text-sm text-fg focus:ring-0"
                   />
-                  {form.regionMode === 'Mixed' && (
-                    <span className="text-[11px] text-fg-subtle">{i % 2 === 0 ? 'VN' : 'QT'}</span>
-                  )}
+                  {form.regionMode === 'Mixed' && <span className="text-[11px] text-fg-subtle">{i % 2 === 0 ? 'VN' : 'QT'}</span>}
                 </div>
               ))}
-              <Button size="sm" variant="ghost" icon={<RotateCcw className="h-3.5 w-3.5" />} onClick={() => changeCount(form.postsPerDay)}>
+              <Button size="sm" variant="ghost" icon={<RotateCcw className="h-3.5 w-3.5" />} onClick={() => suggest(form.postsPerDay)}>
                 Gợi ý lại
               </Button>
             </div>
           </Field>
 
-          <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid gap-5 sm:grid-cols-3">
             <Field label="Giọng đọc">
               <Select value={form.voice ?? ''} onChange={(e) => update({ voice: e.target.value || null })}>
                 <option value="">Mặc định của máy chủ</option>
@@ -376,16 +564,6 @@ export const AutoPostPage: React.FC = () => {
                 ))}
               </Select>
             </Field>
-            <Field label="Đăng lên Page">
-              <Select value={form.facebookAccountId ?? ''} onChange={(e) => update({ facebookAccountId: e.target.value || null })}>
-                <option value="">{pages.length ? `Page đầu tiên (${pages[0].pageName})` : 'Chưa kết nối Page'}</option>
-                {pages.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.pageName}
-                  </option>
-                ))}
-              </Select>
-            </Field>
           </div>
 
           <div className="flex flex-wrap items-center justify-end gap-2 border-t border-line pt-4">
@@ -394,7 +572,7 @@ export const AutoPostPage: React.FC = () => {
               <Button
                 variant="ghost"
                 onClick={() => {
-                  setForm(data.settings);
+                  setForm(page.settings);
                   setDirty(false);
                 }}
               >
@@ -408,100 +586,7 @@ export const AutoPostPage: React.FC = () => {
         </CardBody>
       </Card>
 
-      {/* History */}
-      <Card>
-        <CardHeader title="Lịch sử 7 ngày" description="Các lượt đã chạy, kể cả lượt bấm “Đăng ngay”." />
-        <CardBody className="pt-3">
-          {history.length === 0 ? (
-            <p className="py-6 text-center text-[13px] text-fg-muted">Chưa có lượt nào.</p>
-          ) : (
-            <ul className="divide-y divide-line">
-              {history.map((run) => (
-                <li key={run.id} className="flex flex-col gap-1.5 py-3 sm:flex-row sm:items-start sm:gap-4">
-                  <div className="w-36 shrink-0 text-xs text-fg-muted">
-                    <span className="font-mono text-sm text-fg">{run.slotTime}</span> · {run.slotDate.split('-').reverse().slice(0, 2).join('/')}
-                    {run.isManual && <span className="ml-1 text-fg-subtle">(đăng ngay)</span>}
-                  </div>
-                  <RunDetails run={run} onCancel={cancelRun} />
-                </li>
-              ))}
-            </ul>
-          )}
-        </CardBody>
-      </Card>
-    </div>
-  );
-};
-
-function SlotRow({ slot, enabled, onCancel }: { slot: AutoPostSlotDto; enabled: boolean; onCancel: (run: AutoPostRunDto) => void }) {
-  return (
-    <li className="flex flex-col gap-2 py-3 sm:flex-row sm:items-start sm:gap-4">
-      <div className="flex w-36 shrink-0 items-center gap-2 sm:flex-col sm:items-start sm:gap-1">
-        <span className="font-mono text-lg font-semibold leading-none text-fg">{slot.time}</span>
-        <RegionBadge region={slot.plannedRegion} />
-      </div>
-      {slot.run ? (
-        <RunDetails run={slot.run} onCancel={onCancel} />
-      ) : (
-        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2 text-[13px] text-fg-muted">
-          <StateBadge state={slot.state} />
-          {slot.state === 'Upcoming' &&
-            (enabled ? 'App sẽ chọn tin hot nhất lúc gần đến giờ.' : 'Tự động đăng đang tắt nên lượt này sẽ không chạy.')}
-          {slot.state === 'Missed' && 'Không có lượt đăng ở khung giờ này.'}
-        </div>
-      )}
-    </li>
-  );
-}
-
-function RunDetails({ run, onCancel }: { run: AutoPostRunDto; onCancel: (run: AutoPostRunDto) => void }) {
-  const producing = run.status === 'Producing';
-  return (
-    <div className="min-w-0 flex-1 space-y-1.5">
-      <div className="flex flex-wrap items-center gap-2">
-        <StateBadge state={run.status} />
-        {run.region && <RegionBadge region={run.region} />}
-        {run.hotScore != null && <span className="text-xs text-fg-subtle">Độ hot {Math.round(run.hotScore)}</span>}
-        {run.attempts > 1 && <span className="text-xs text-fg-subtle">Lần thử {run.attempts}</span>}
-      </div>
-      {run.articleTitle && (
-        <p className="text-sm font-medium leading-snug text-fg">
-          {run.articleUrl ? (
-            <a href={run.articleUrl} target="_blank" rel="noreferrer" className="hover:underline">
-              {run.articleTitle}
-            </a>
-          ) : (
-            run.articleTitle
-          )}
-          {run.sourceName && <span className="ml-1.5 font-normal text-fg-muted">· {run.sourceName}</span>}
-        </p>
-      )}
-      {producing && run.progressPercentage != null && <ProgressBar value={run.progressPercentage} className="max-w-sm" />}
-      {run.message && (
-        <p className={cn('text-[13px]', run.status === 'Failed' ? 'text-danger' : 'text-fg-muted')}>{run.message}</p>
-      )}
-      {run.publishedAtUtc && run.status === 'Published' && (
-        <p className="flex items-center gap-1 text-xs text-fg-subtle">
-          <CheckCircle2 className="h-3.5 w-3.5 text-success" /> Đăng lúc {formatDateTime(run.publishedAtUtc)}
-        </p>
-      )}
-      <div className="flex flex-wrap gap-2 pt-0.5">
-        {run.videoProjectId && (
-          <ButtonLink size="sm" variant="ghost" href={href(`/videos/${run.videoProjectId}`)} icon={<Film className="h-3.5 w-3.5" />}>
-            Xem video
-          </ButtonLink>
-        )}
-        {run.facebookPostUrl && (
-          <ButtonLink size="sm" variant="ghost" href={run.facebookPostUrl} target="_blank" rel="noreferrer" icon={<ExternalLink className="h-3.5 w-3.5" />}>
-            Xem trên Facebook
-          </ButtonLink>
-        )}
-        {(run.status === 'Producing' || run.status === 'WaitingSlot') && (
-          <Button size="sm" variant="danger-soft" icon={<X className="h-3.5 w-3.5" />} onClick={() => onCancel(run)}>
-            Huỷ lượt
-          </Button>
-        )}
-      </div>
-    </div>
+      <HistoryCard runs={history} onCancel={onCancel} />
+    </>
   );
 }

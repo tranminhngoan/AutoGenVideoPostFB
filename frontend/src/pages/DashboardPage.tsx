@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { ArrowRight, Link2, ChevronRight, AlertTriangle, Clock3, Inbox, Flame } from 'lucide-react';
-import { api, SystemMetricsDto, SystemCostSummaryDto, TrendingArticleDto } from '../services/api';
+import { api, AutoPostOverviewDto, SystemMetricsDto, SystemCostSummaryDto, TrendingArticleDto } from '../services/api';
+import { AutoPostPageCard, AutoPostTotals, isActiveRun } from '../components/AutoPostWidgets';
 import { VideoProject } from '../types';
 import {
   Button,
@@ -40,6 +41,24 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ projects, onCreate
   const [costs, setCosts] = useState<SystemCostSummaryDto | null>(null);
   const [statsLoaded, setStatsLoaded] = useState(false);
   const [hot, setHot] = useState<TrendingArticleDto[] | null>(null);
+  const [autoPost, setAutoPost] = useState<AutoPostOverviewDto | null>(null);
+
+  // Every Facebook Page's auto-posting at a glance (faster refresh while videos are being made)
+  useEffect(() => {
+    let alive = true;
+    let timer: ReturnType<typeof setTimeout>;
+    const loadAutoPost = async () => {
+      const data = await api.getAutoPost().catch(() => null);
+      if (!alive) return;
+      setAutoPost(data);
+      timer = setTimeout(loadAutoPost, data?.recentRuns.some(isActiveRun) ? 10000 : 30000);
+    };
+    loadAutoPost();
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
+  }, []);
 
   useEffect(() => {
     const loadHot = () =>
@@ -151,6 +170,38 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ projects, onCreate
           hint={costs ? `Tổng ${formatUsd(costs.totalCostUsd, 2)}` : undefined}
         />
       </div>
+
+      {/* Auto-posting across all Facebook Pages */}
+      {autoPost && (
+        <section className="mb-6 space-y-3">
+          <div className="flex items-end justify-between gap-3">
+            <div>
+              <h2 className="text-[15px] font-semibold text-fg">Các Page tự động đăng</h2>
+              <p className="text-[13px] text-fg-muted">Mỗi Page một chủ đề, tự chọn tin hot, làm video và đăng theo lịch.</p>
+            </div>
+            <a href={href('/auto-post')} className="inline-flex shrink-0 items-center gap-1 text-[13px] text-fg-muted hover:text-fg">
+              Quản lý <ChevronRight className="h-4 w-4" />
+            </a>
+          </div>
+          {autoPost.pages.length === 0 ? (
+            <Card className="flex flex-col items-start gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-[13px] text-fg-muted">Chưa kết nối Page Facebook nào. Mỗi Page dùng một token riêng và một chủ đề riêng.</p>
+              <Button size="sm" onClick={() => navigate('/settings/facebook')}>
+                Kết nối Page
+              </Button>
+            </Card>
+          ) : (
+            <>
+              <AutoPostTotals totals={autoPost.totals} />
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                {autoPost.pages.map((p) => (
+                  <AutoPostPageCard key={p.facebookAccountId} page={p} onOpen={() => navigate(`/auto-post?page=${p.facebookAccountId}`)} />
+                ))}
+              </div>
+            </>
+          )}
+        </section>
+      )}
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <div className="min-w-0 space-y-6 lg:col-span-2">

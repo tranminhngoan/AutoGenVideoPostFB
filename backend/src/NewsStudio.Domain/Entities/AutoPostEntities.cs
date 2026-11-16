@@ -3,12 +3,21 @@ using NewsStudio.Domain.Common;
 namespace NewsStudio.Domain.Entities;
 
 /// <summary>
-/// "Tự động đăng" settings (a single row). Every day, at each time slot (Vietnam time), the hottest unused
-/// story is turned into a video and posted to the Facebook Page without manual steps.
+/// "Tự động đăng" settings of ONE Facebook Page. Every day, at each time slot (Vietnam time), the hottest
+/// unused story of the page's topic is turned into a video and posted to that page (with its own token).
 /// </summary>
 public class AutoPostSettings : BaseEntity
 {
+    /// <summary>The page these settings belong to (one row per page).</summary>
+    public Guid? FacebookAccountId { get; set; }
+
     public bool Enabled { get; set; }
+
+    /// <summary>Topic key (see NewsTopics): "tong-hop", "the-thao", "cong-nghe", … or "tu-chon".</summary>
+    public string Topic { get; set; } = "tong-hop";
+
+    /// <summary>Comma-separated extra keywords; the only filter for the "tu-chon" topic.</summary>
+    public string? TopicKeywords { get; set; }
 
     /// <summary>Maximum automatic posts per day (= number of time slots).</summary>
     public int PostsPerDay { get; set; } = 5;
@@ -25,9 +34,6 @@ public class AutoPostSettings : BaseEntity
     public string? AiProvider { get; set; }
     public int TargetDurationSeconds { get; set; } = 105;
 
-    /// <summary>Page to post to; null = the first connected page.</summary>
-    public Guid? FacebookAccountId { get; set; }
-
     /// <summary>How long before a slot the video production starts, so it is ready on time.</summary>
     public int LeadMinutes { get; set; } = 40;
 }
@@ -35,10 +41,13 @@ public class AutoPostSettings : BaseEntity
 /// <summary>One automatic post: a time slot, the story chosen for it, its video and the Facebook result.</summary>
 public class AutoPostRun : BaseEntity
 {
-    /// <summary>"2026-11-16 07:00" for a scheduled slot, "2026-11-16 now-0915" for "Đăng ngay". Unique.</summary>
+    /// <summary>"2026-11-16 07:00 {pageId}" for a scheduled slot, "2026-11-16 now-091530 {pageId}" for "Đăng ngay". Unique.</summary>
     public string SlotKey { get; set; } = string.Empty;
     public DateTime ScheduledAtUtc { get; set; }
     public bool IsManual { get; set; }
+
+    /// <summary>Page the video is posted to.</summary>
+    public Guid? FacebookAccountId { get; set; }
 
     /// <summary>Producing → WaitingSlot → Publishing → Published, or Failed / Skipped.</summary>
     public string Status { get; set; } = "Producing";

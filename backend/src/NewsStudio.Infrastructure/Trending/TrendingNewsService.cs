@@ -120,11 +120,24 @@ public class TrendingNewsService : ITrendingNewsService
         // 2. Keep recent items, de-duplicate by URL (the same story can be in "latest" and "featured")
         var now = DateTime.UtcNow;
         var cutoff = now.AddHours(-KeepHours);
-        var items = fetched.SelectMany(f => f.items)
-            .Where(i => i.PublishedAtUtc >= cutoff)
+        var allItems = fetched.SelectMany(f => f.items).Where(i => i.PublishedAtUtc >= cutoff).ToList();
+        // A story can be in the home feed and in one or more section feeds: keep every section topic
+        var sectionTopics = allItems
+            .Where(i => i.Feed.Topic != null)
             .GroupBy(i => i.Url)
-            .Select(g => g.OrderByDescending(i => i.Featured).First() with { Featured = g.Any(i => i.Featured) })
+            .ToDictionary(g => g.Key, g => g.Select(i => i.Feed.Topic!).Distinct().ToList());
+        var items = allItems
+            .GroupBy(i => i.Url)
+            // Prefer the home/latest feed entry as the source of record, then featured
+            .Select(g => g.OrderByDescending(i => i.Featured).ThenBy(i => i.Feed.Topic != null).First() with { Featured = g.Any(i => i.Featured) })
             .ToList();
+        string TopicsOf(ParsedItem item, string? existingTopics)
+        {
+            var topics = NewsTopics.Classify(item.Title, item.Summary, null);
+            if (sectionTopics.TryGetValue(item.Url, out var fromSections)) topics.AddRange(fromSections);
+            if (!string.IsNullOrEmpty(existingTopics)) topics.AddRange(existingTopics.Split(',', StringSplitOptions.RemoveEmptyEntries));
+            return string.Join(",", topics.Distinct().OrderBy(t => t, StringComparer.Ordinal));
+        }
         result.ItemsFetched = items.Count;
 
         // 3. Upsert
@@ -141,6 +154,7 @@ public class TrendingNewsService : ITrendingNewsService
                 row.Summary = item.Summary ?? row.Summary;
                 row.ImageUrl = item.ImageUrl ?? row.ImageUrl;
                 row.IsFeatured |= item.Featured;
+                row.Topics = TopicsOf(item, row.Topics);
                 row.LastSeenAtUtc = now;
                 row.UpdatedAtUtc = now;
             }
@@ -158,7 +172,8 @@ public class TrendingNewsService : ITrendingNewsService
                     Language = item.Feed.Language,
                     PublishedAtUtc = item.PublishedAtUtc,
                     LastSeenAtUtc = now,
-                    IsFeatured = item.Featured
+                    IsFeatured = item.Featured,
+                    Topics = TopicsOf(item, null)
                 });
                 result.NewItems++;
             }
@@ -200,7 +215,8 @@ public class TrendingNewsService : ITrendingNewsService
                 url,
                 extra["Region"] ?? "VN",
                 extra["Language"] ?? "vi",
-                extra.GetValue<bool>("Featured")));
+                extra.GetValue<bool>("Featured"),
+                Topic: string.IsNullOrWhiteSpace(extra["Topic"]) ? null : extra["Topic"]));
         }
         return feeds;
     }
@@ -475,21 +491,32 @@ public class TrendingNewsService : ITrendingNewsService
             foreach (var t in tokens[i])
                 (index.TryGetValue(t, out var l) ? l : index[t] = new List<int>()).Add(i);
 
+        // Words found in many titles ("việt", "nam", "giải", "mỹ"…) say nothing about being the same story
+        // and chain unrelated stories together, so they are ignored; rarer shared words weigh more (IDF).
+        var commonLimit = Math.Max(25, n / 60);
+        double Weight(string t) => Math.Log((n + 1.0) / index[t].Count);
+        var titleWeight = tokens.Select(ts => ts.Where(t => index[t].Count <= commonLimit).Sum(Weight)).ToArray();
+
         for (var i = 0; i < n; i++)
         {
-            var shared = new Dictionary<int, int>();
+            var shared = new Dictionary<int, (int Count, double Weight)>();
             foreach (var t in tokens[i])
             {
                 var posting = index[t];
-                if (posting.Count > 150) continue; // too common to be meaningful
+                if (posting.Count > commonLimit) continue;
+                var w = Weight(t);
                 foreach (var j in posting)
-                    if (j > i) shared[j] = shared.GetValueOrDefault(j) + 1;
+                    if (j > i)
+                    {
+                        var cur = shared.GetValueOrDefault(j);
+                        shared[j] = (cur.Count + 1, cur.Weight + w);
+                    }
             }
-            foreach (var (j, count) in shared)
+            foreach (var (j, overlap) in shared)
             {
                 if (rows[i].Language != rows[j].Language) continue;
-                var min = Math.Min(tokens[i].Count, tokens[j].Count);
-                if (count >= 3 && min > 0 && (double)count / min >= 0.5)
+                var smaller = Math.Min(titleWeight[i], titleWeight[j]);
+                if (overlap.Count >= 3 && smaller > 0 && overlap.Weight / smaller >= 0.55)
                 {
                     parent[Find(i)] = Find(j);
                 }
@@ -546,6 +573,19 @@ public class TrendingNewsService : ITrendingNewsService
 
         IEnumerable<TrendingArticle> filtered = rows;
         if (query.Region is "VN" or "World") filtered = filtered.Where(r => r.Region == query.Region);
+
+        // Topic: a story belongs to a topic when ANY outlet's article about it does (e.g. the sports
+        // section's copy), so keep whole clusters that have at least one matching article.
+        var topic = string.IsNullOrWhiteSpace(query.Topic) ? NewsTopics.General : query.Topic.Trim();
+        var keywords = query.Keywords ?? new List<string>();
+        if (topic != NewsTopics.General || keywords.Count > 0)
+        {
+            bool Matches(TrendingArticle r) =>
+                (topic != NewsTopics.General && topic != NewsTopics.Custom && HasTopic(r.Topics, topic))
+                || (keywords.Count > 0 && NewsTopics.MatchesKeywords(r.Title, r.Summary, keywords));
+            var matchingStories = rows.Where(Matches).Select(r => r.ClusterId ?? r.Id).ToHashSet();
+            filtered = filtered.Where(r => matchingStories.Contains(r.ClusterId ?? r.Id));
+        }
         if (!string.IsNullOrWhiteSpace(query.Source)) filtered = filtered.Where(r => r.SourceKey == query.Source);
         if (!string.IsNullOrWhiteSpace(query.Search))
         {
@@ -574,6 +614,9 @@ public class TrendingNewsService : ITrendingNewsService
             TrendKeywords = await ReadSettingAsync<List<string>>(KeywordsKey, cancellationToken) ?? new List<string>()
         };
     }
+
+    private static bool HasTopic(string? topics, string topic) =>
+        !string.IsNullOrEmpty(topics) && topics.Split(',').Contains(topic, StringComparer.Ordinal);
 
     private static TrendingArticleDto ToDto(TrendingArticle r, DateTime now)
     {
@@ -612,7 +655,8 @@ public class TrendingNewsService : ITrendingNewsService
             TrendKeyword = r.TrendKeyword,
             TrendTraffic = r.TrendTraffic,
             HotScore = score,
-            Reasons = reasons
+            Reasons = reasons,
+            Topics = string.IsNullOrEmpty(r.Topics) ? new List<string>() : r.Topics.Split(',', StringSplitOptions.RemoveEmptyEntries).ToList()
         };
     }
 

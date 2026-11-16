@@ -21,6 +21,8 @@ public class TrendingArticleDto
     public double HotScore { get; set; }
     /// <summary>Why it is ranked hot, in plain Vietnamese.</summary>
     public List<string> Reasons { get; set; } = new();
+    /// <summary>Topic keys, e.g. "the-thao".</summary>
+    public List<string> Topics { get; set; } = new();
 }
 
 public class TrendingQuery
@@ -32,6 +34,10 @@ public class TrendingQuery
     /// <summary>Only items published within this many hours.</summary>
     public int Hours { get; set; } = 24;
     public int Limit { get; set; } = 60;
+    /// <summary>Topic key ("tong-hop" or empty = all topics).</summary>
+    public string? Topic { get; set; }
+    /// <summary>Extra keywords: a story matching any of them is included (used by "Tự chọn từ khoá" pages).</summary>
+    public List<string>? Keywords { get; set; }
 }
 
 public class TrendingSourceDto
@@ -62,4 +68,11 @@ public class TrendingOverviewDto
     public List<TrendingSourceDto> Sources { get; set; } = new();
     public TrendingRefreshResultDto? LastRefresh { get; set; }
     public List<string> TrendKeywords { get; set; } = new();
+}
+
+public class NewsTopicDto
+{
+    public string Key { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public string Description { get; set; } = string.Empty;
 }

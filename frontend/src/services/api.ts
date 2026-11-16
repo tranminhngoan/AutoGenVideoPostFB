@@ -81,7 +81,7 @@ export const api = {
   },
 
   /** "Tin đang hot" — ranked stories from Vietnamese and international RSS feeds. */
-  async getTrending(params: { region?: string; source?: string; q?: string; hours?: number; limit?: number } = {}): Promise<TrendingOverviewDto> {
+  async getTrending(params: { region?: string; source?: string; q?: string; hours?: number; limit?: number; topic?: string } = {}): Promise<TrendingOverviewDto> {
     const qs = new URLSearchParams();
     Object.entries(params).forEach(([k, v]) => {
       if (v !== undefined && v !== null && v !== '') qs.append(k, String(v));
@@ -91,15 +91,15 @@ export const api = {
     return await res.json();
   },
 
-  // ── Tự động đăng ──
+  // ── Tự động đăng (nhiều Page) ──
   async getAutoPost(): Promise<AutoPostOverviewDto> {
     const res = await fetch(`${API_BASE}/auto-post`);
     if (!res.ok) throw new Error(await apiError(res, 'Không tải được lịch tự động đăng'));
     return await res.json();
   },
 
-  async saveAutoPostSettings(settings: AutoPostSettingsDto): Promise<AutoPostSettingsDto> {
-    const res = await fetch(`${API_BASE}/auto-post/settings`, {
+  async saveAutoPostSettings(facebookAccountId: string, settings: AutoPostSettingsDto): Promise<AutoPostSettingsDto> {
+    const res = await fetch(`${API_BASE}/auto-post/pages/${facebookAccountId}/settings`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(settings),
@@ -108,14 +108,14 @@ export const api = {
     return await res.json();
   },
 
-  async suggestAutoPostSlots(count: number): Promise<string[]> {
-    const res = await fetch(`${API_BASE}/auto-post/suggest-slots?count=${count}`);
+  async suggestAutoPostSlots(count: number, offset = 0): Promise<string[]> {
+    const res = await fetch(`${API_BASE}/auto-post/suggest-slots?count=${count}&offset=${offset}`);
     if (!res.ok) throw new Error(await apiError(res, 'Không gợi ý được khung giờ'));
     return await res.json();
   },
 
-  async autoPostRunNow(): Promise<AutoPostRunDto> {
-    const res = await fetch(`${API_BASE}/auto-post/run-now`, { method: 'POST' });
+  async autoPostRunNow(facebookAccountId: string): Promise<AutoPostRunDto> {
+    const res = await fetch(`${API_BASE}/auto-post/pages/${facebookAccountId}/run-now`, { method: 'POST' });
     if (!res.ok) throw new Error(await apiError(res, 'Không bắt đầu được lượt đăng'));
     return await res.json();
   },
@@ -123,6 +123,12 @@ export const api = {
   async cancelAutoPostRun(id: string): Promise<void> {
     const res = await fetch(`${API_BASE}/auto-post/runs/${id}/cancel`, { method: 'POST' });
     if (!res.ok) throw new Error(await apiError(res, 'Không huỷ được lượt đăng'));
+  },
+
+  async getNewsTopics(): Promise<NewsTopicDto[]> {
+    const res = await fetch(`${API_BASE}/trending/topics`);
+    if (!res.ok) throw new Error(await apiError(res, 'Không tải được danh sách chủ đề'));
+    return await res.json();
   },
 
   async refreshTrending(): Promise<TrendingRefreshResultDto> {
@@ -562,6 +568,8 @@ export interface TrendingArticleDto {
   trendTraffic?: number | null;
   hotScore: number;
   reasons: string[];
+  /** Topic keys, e.g. "the-thao" */
+  topics?: string[];
 }
 
 export interface TrendingSourceDto {
@@ -870,11 +878,22 @@ export interface VideoMetricDto {
   collectedAtUtc: string;
 }
 
-// ── Tự động đăng ──
+// ── Tự động đăng (nhiều Page) ──
 export type AutoPostRegionMode = 'Mixed' | 'VN' | 'World';
 
+export interface NewsTopicDto {
+  key: string;
+  name: string;
+  description: string;
+}
+
+/** Settings of one Facebook Page. */
 export interface AutoPostSettingsDto {
   enabled: boolean;
+  /** Topic key: 'tong-hop', 'the-thao', … or 'tu-chon' */
+  topic: string;
+  /** Comma-separated keywords (required for 'tu-chon') */
+  topicKeywords?: string | null;
   postsPerDay: number;
   /** "HH:mm", Vietnam time */
   timeSlots: string[];
@@ -883,7 +902,6 @@ export interface AutoPostSettingsDto {
   voiceSpeed?: string | null;
   aiProvider?: string | null;
   targetDurationSeconds: number;
-  facebookAccountId?: string | null;
   leadMinutes: number;
 }
 
@@ -892,6 +910,8 @@ export type AutoPostRunStatus = 'Producing' | 'WaitingSlot' | 'Publishing' | 'Pu
 export interface AutoPostRunDto {
   id: string;
   slotKey: string;
+  facebookAccountId?: string | null;
+  pageName?: string | null;
   scheduledAtUtc: string;
   slotTime: string;
   slotDate: string;
@@ -921,13 +941,38 @@ export interface AutoPostSlotDto {
   run?: AutoPostRunDto | null;
 }
 
-export interface AutoPostOverviewDto {
+export interface AutoPostPageDto {
+  facebookAccountId: string;
+  pageId: string;
+  pageName: string;
+  tokenStatus: string;
+  tokenExpiresAtUtc?: string | null;
   settings: AutoPostSettingsDto;
-  today: string;
+  topicName: string;
   todaySlots: AutoPostSlotDto[];
-  recentRuns: AutoPostRunDto[];
   publishedToday: number;
+  failedToday: number;
   nextSlotUtc?: string | null;
-  facebookConnected: boolean;
+  currentRun?: AutoPostRunDto | null;
+  lastPublished?: AutoPostRunDto | null;
+  warnings: string[];
+}
+
+export interface AutoPostTotalsDto {
+  pages: number;
+  pagesEnabled: number;
+  plannedToday: number;
+  publishedToday: number;
+  inProgress: number;
+  failedToday: number;
+  publishedLast7Days: number;
+}
+
+export interface AutoPostOverviewDto {
+  today: string;
+  pages: AutoPostPageDto[];
+  totals: AutoPostTotalsDto;
+  recentRuns: AutoPostRunDto[];
+  maxConcurrentVideos: number;
   warnings: string[];
 }

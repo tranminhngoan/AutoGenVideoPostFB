@@ -35,6 +35,9 @@ public class TrendingArticle : BaseEntity
     /// <summary>Comma-separated names of the other outlets covering the story.</summary>
     public string? RelatedSources { get; set; }
 
+    /// <summary>Comma-separated topic keys (see NewsTopics), e.g. "the-thao,giai-tri".</summary>
+    public string? Topics { get; set; }
+
     /// <summary>Google Trends search term this story matches, if any.</summary>
     public string? TrendKeyword { get; set; }
     /// <summary>Approximate Google Trends search volume for the matched term.</summary>

@@ -355,6 +355,7 @@ function FacebookSection() {
       <Card>
         <CardHeader
           title="Trang đã kết nối"
+          description="Kết nối được nhiều Page, mỗi Page một token riêng. Chủ đề và lịch đăng của từng Page chỉnh ở mục Tự động đăng."
           actions={
             <Button size="sm" variant="ghost" icon={<RefreshCw className="h-3.5 w-3.5" />} onClick={load}>
               Làm mới
@@ -382,9 +383,17 @@ function FacebookSection() {
                       {p.tokenExpiresAtUtc && ` · Hết hạn ${formatDateTime(p.tokenExpiresAtUtc)}`}
                     </div>
                   </div>
-                  <Button size="sm" variant="danger-soft" icon={<Trash2 className="h-3.5 w-3.5" />} onClick={() => disconnect(p)}>
-                    Ngắt
-                  </Button>
+                  <div className="flex shrink-0 items-center gap-1">
+                    <a
+                      href={href(`/auto-post?page=${p.id}`)}
+                      className="inline-flex h-8 items-center rounded-md px-2.5 text-[13px] text-fg-muted hover:bg-muted hover:text-fg"
+                    >
+                      Chủ đề &amp; lịch
+                    </a>
+                    <Button size="sm" variant="danger-soft" icon={<Trash2 className="h-3.5 w-3.5" />} onClick={() => disconnect(p)}>
+                      Ngắt
+                    </Button>
+                  </div>
                 </li>
               ))}
             </ul>
@@ -393,7 +402,7 @@ function FacebookSection() {
       </Card>
 
       <Card>
-        <CardHeader title="Kết nối trang mới" description="Cần Page Access Token lấy từ Meta for Developers." />
+        <CardHeader title="Kết nối trang mới" description="Mỗi Page cần Page Access Token riêng lấy từ Meta for Developers. Thêm lần lượt từng Page." />
         <form onSubmit={connect}>
           <CardBody className="space-y-4">
             <Field
