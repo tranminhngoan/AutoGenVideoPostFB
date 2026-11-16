@@ -33,6 +33,7 @@ import {
   VideoReviewDto,
   FacebookPostDto,
   FacebookAccountDto,
+  EditorialPassDto,
 } from '../services/api';
 import { VideoProject } from '../types';
 import {
@@ -123,6 +124,9 @@ export const VideoDetailPage: React.FC<VideoDetailPageProps> = ({ projectId, onC
   const [selectedPageId, setSelectedPageId] = useState('');
   const [publishCaption, setPublishCaption] = useState('');
   const [autoCleanup, setAutoCleanup] = useState(true);
+  const [firstComment, setFirstComment] = useState('');
+  const [editorial, setEditorial] = useState<EditorialPassDto | null>(null);
+  const [checking, setChecking] = useState(false);
 
   const loadData = useCallback(
     async (silent = false) => {
@@ -330,7 +334,24 @@ export const VideoDetailPage: React.FC<VideoDetailPageProps> = ({ projectId, onC
   const openPublish = () => {
     const parts = [project?.title, script?.hook, script?.sourceAttribution, prefs.hashtags].filter(Boolean);
     setPublishCaption(parts.join('\n\n'));
+    setFirstComment('');
+    setEditorial(null);
     setShowPublish(true);
+  };
+
+  // AI: check headline/text against the article, write a professional caption and the first comment
+  const runEditorial = async () => {
+    setChecking(true);
+    try {
+      const pass = await api.editorialPass(projectId);
+      setEditorial(pass);
+      setPublishCaption(pass.caption);
+      setFirstComment(pass.firstComment);
+    } catch (err) {
+      toast.error('AI chưa kiểm tra được', errorText(err, ''));
+    } finally {
+      setChecking(false);
+    }
   };
 
   const publish = async () => {
@@ -340,9 +361,11 @@ export const VideoDetailPage: React.FC<VideoDetailPageProps> = ({ projectId, onC
         pageId: selectedPageId || undefined,
         customCaption: publishCaption,
         autoCleanupAssets: autoCleanup,
+        firstComment: firstComment.trim() || undefined,
       });
       setShowPublish(false);
-      toast.success('Đã đăng lên Facebook', `Mã video: ${result.facebookVideoId}`);
+      toast.success('Đã đăng lên Facebook', result.firstCommentId ? 'Đã bình luận đầu tiên.' : `Mã video: ${result.facebookVideoId}`);
+      if (result.firstCommentError) toast.error('Chưa bình luận được', result.firstCommentError);
       await loadData(true);
       setTab('publish');
       onChanged?.();
@@ -1173,6 +1196,11 @@ export const VideoDetailPage: React.FC<VideoDetailPageProps> = ({ projectId, onC
                           )}
                         </div>
                       </div>
+                      {(publishedPost.firstCommentId || publishedPost.firstCommentError) && (
+                        <p className={cn('mt-3 border-t border-line pt-3 text-[13px]', publishedPost.firstCommentId ? 'text-fg-muted' : 'text-danger')}>
+                          {publishedPost.firstCommentId ? 'Đã bình luận đầu tiên dưới bài.' : `Chưa bình luận được: ${publishedPost.firstCommentError}`}
+                        </p>
+                      )}
                     </CardBody>
                   </Card>
 
@@ -1340,8 +1368,31 @@ export const VideoDetailPage: React.FC<VideoDetailPageProps> = ({ projectId, onC
               </Alert>
             )}
           </Field>
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-line bg-subtle px-3 py-2.5 text-[13px]">
+            <span className="text-fg-muted">AI so tiêu đề với bài gốc, viết caption chuyên nghiệp và bình luận đầu tiên.</span>
+            <Button size="sm" icon={<Sparkles className="h-3.5 w-3.5" />} loading={checking} onClick={runEditorial}>
+              AI kiểm tra &amp; viết caption
+            </Button>
+          </div>
+          {editorial && !editorial.consistent && (
+            <Alert tone="danger" icon={<AlertTriangle />} title="Tiêu đề/nội dung video chưa khớp bài gốc">
+              <ul className="list-disc pl-4">
+                {editorial.issues.map((i) => (
+                  <li key={i}>{i}</li>
+                ))}
+              </ul>
+            </Alert>
+          )}
+          {editorial?.consistent && (
+            <Alert tone="success" icon={<CheckCircle2 />}>
+              Tiêu đề và nội dung khớp với bài gốc.
+            </Alert>
+          )}
           <Field label="Nội dung bài đăng" hint={`${publishCaption.length} ký tự`}>
             <Textarea rows={6} value={publishCaption} onChange={(e) => setPublishCaption(e.target.value)} />
+          </Field>
+          <Field label="Bình luận đầu tiên" optional hint="Page tự bình luận ngay sau khi đăng: câu hỏi mở + link bài gốc, giúp bài có tương tác sớm.">
+            <Textarea rows={3} value={firstComment} onChange={(e) => setFirstComment(e.target.value)} placeholder="Để trống nếu không muốn bình luận" />
           </Field>
           <Checkbox
             checked={autoCleanup}

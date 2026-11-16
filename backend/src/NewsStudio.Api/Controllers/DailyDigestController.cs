@@ -25,8 +25,8 @@ public class DailyDigestController : ControllerBase
     /// <summary>Makes today's digest pictures for a page without posting (to check before the evening).</summary>
     [HttpPost("pages/{id:guid}/preview")]
     [ProducesResponseType(typeof(DailyDigestRunDto), StatusCodes.Status200OK)]
-    public Task<IActionResult> Preview(Guid id, CancellationToken cancellationToken)
-        => Run(() => _digest.PreviewAsync(id, cancellationToken));
+    public Task<IActionResult> Preview(Guid id, [FromQuery] string? kind, CancellationToken cancellationToken)
+        => Run(() => _digest.PreviewAsync(id, kind, cancellationToken));
 
     /// <summary>Makes and posts today's digest for a page right now.</summary>
     [HttpPost("pages/{id:guid}/publish")]

@@ -242,6 +242,9 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                     b.Property<double?>("HotScore")
                         .HasColumnType("double precision");
 
+                    b.Property<bool>("IsBreaking")
+                        .HasColumnType("boolean");
+
                     b.Property<bool>("IsManual")
                         .HasColumnType("boolean");
 
@@ -308,6 +311,15 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                         .HasMaxLength(50)
                         .HasColumnType("character varying(50)");
 
+                    b.Property<bool>("AutoTune")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("BreakingEnabled")
+                        .HasColumnType("boolean");
+
+                    b.Property<int>("BreakingPerDay")
+                        .HasColumnType("integer");
+
                     b.Property<DateTime>("CreatedAtUtc")
                         .HasColumnType("timestamp with time zone");
 
@@ -367,6 +379,9 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                         .HasMaxLength(20)
                         .HasColumnType("character varying(20)");
 
+                    b.Property<bool>("WeeklyDigestEnabled")
+                        .HasColumnType("boolean");
+
                     b.HasKey("Id");
 
                     b.HasIndex("FacebookAccountId");
@@ -399,6 +414,11 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
 
                     b.Property<string>("ItemsJson")
                         .HasColumnType("text");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)");
 
                     b.Property<string>("Message")
                         .HasMaxLength(1000)
@@ -513,6 +533,14 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(100)");
 
                     b.Property<string>("FacebookVideoId")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("FirstCommentError")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<string>("FirstCommentId")
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)");
 
@@ -897,6 +925,9 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
 
                     b.Property<DateTime>("CreatedAtUtc")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("EditorialPassJson")
+                        .HasColumnType("text");
 
                     b.Property<string>("ErrorMessage")
                         .HasColumnType("text");

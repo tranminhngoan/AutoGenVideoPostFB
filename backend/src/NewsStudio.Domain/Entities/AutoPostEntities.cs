@@ -45,6 +45,18 @@ public class AutoPostSettings : BaseEntity
 
     /// <summary>How many stories the digest summarises.</summary>
     public int DigestItems { get; set; } = 6;
+
+    /// <summary>On Sundays the evening digest is "Tuần qua có gì" (the week's biggest stories) instead.</summary>
+    public bool WeeklyDigestEnabled { get; set; } = true;
+
+    /// <summary>Post a story right away (outside the time slots) when it suddenly becomes big news.</summary>
+    public bool BreakingEnabled { get; set; } = true;
+
+    /// <summary>At most this many breaking-news videos per day.</summary>
+    public int BreakingPerDay { get; set; } = 2;
+
+    /// <summary>Learn from this page's views: prefer the kinds of stories that got the most views.</summary>
+    public bool AutoTune { get; set; } = true;
 }
 
 /// <summary>
@@ -57,6 +69,9 @@ public class DailyDigestRun : BaseEntity
 
     /// <summary>"yyyy-MM-dd" Vietnam date.</summary>
     public string DigestDate { get; set; } = string.Empty;
+
+    /// <summary>"Daily" or "Weekly" (Sunday: "Tuần qua có gì").</summary>
+    public string Kind { get; set; } = "Daily";
 
     /// <summary>A preview made from the app ("Tạo thử"): pictures only, nothing posted.</summary>
     public bool IsPreview { get; set; }
@@ -92,6 +107,9 @@ public class AutoPostRun : BaseEntity
     public string SlotKey { get; set; } = string.Empty;
     public DateTime ScheduledAtUtc { get; set; }
     public bool IsManual { get; set; }
+
+    /// <summary>Started outside the schedule because the story suddenly became big news.</summary>
+    public bool IsBreaking { get; set; }
 
     /// <summary>Page the video is posted to.</summary>
     public Guid? FacebookAccountId { get; set; }

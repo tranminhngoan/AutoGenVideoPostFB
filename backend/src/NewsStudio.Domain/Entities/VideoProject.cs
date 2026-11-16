@@ -35,6 +35,9 @@ public class VideoProject : BaseEntity
     /// <summary>News topic of that page (see NewsTopics) — picks the video's colour theme.</summary>
     public string? Topic { get; set; }
 
+    /// <summary>Latest AI editorial pass (JSON of EditorialPassDto): headline vs article check, caption, first comment.</summary>
+    public string? EditorialPassJson { get; set; }
+
     public string? OutputVideoPath { get; set; }
     public string? ErrorMessage { get; set; }
 

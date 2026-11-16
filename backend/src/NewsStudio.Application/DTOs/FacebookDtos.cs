@@ -71,6 +71,8 @@ public class PublishReelRequestDto
     public string? PageId { get; set; }
     public string? CustomCaption { get; set; }
     public bool AutoCleanupAssets { get; set; } = true;
+    /// <summary>The page's own first comment under the Reel (e.g. a question + link to the article). Empty = none.</summary>
+    public string? FirstComment { get; set; }
 }
 
 public class PublishReelResultDto
@@ -83,6 +85,8 @@ public class PublishReelResultDto
     public DateTime? PublishedAtUtc { get; set; }
     public string? ErrorMessage { get; set; }
     public bool EphemeralAssetsCleanedUp { get; set; }
+    public string? FirstCommentId { get; set; }
+    public string? FirstCommentError { get; set; }
 }
 
 public class FacebookPostDto
@@ -99,6 +103,8 @@ public class FacebookPostDto
     public string Status { get; set; } = "Pending";
     public string? ErrorMessage { get; set; }
     public VideoMetricDto? LatestMetric { get; set; }
+    public string? FirstCommentId { get; set; }
+    public string? FirstCommentError { get; set; }
 }
 
 public class VideoMetricDto

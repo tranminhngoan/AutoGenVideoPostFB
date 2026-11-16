@@ -23,6 +23,8 @@ public class DailyDigestRunDto
     public Guid? FacebookAccountId { get; set; }
     public string? PageName { get; set; }
     public string DigestDate { get; set; } = string.Empty;
+    /// <summary>"Daily" or "Weekly".</summary>
+    public string Kind { get; set; } = "Daily";
     public bool IsPreview { get; set; }
     /// <summary>Working | Published | Partial | Failed | Preview</summary>
     public string Status { get; set; } = string.Empty;

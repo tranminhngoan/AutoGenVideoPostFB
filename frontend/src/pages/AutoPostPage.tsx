@@ -29,6 +29,7 @@ import {
 } from '../components/ui';
 import { useConfirm, useToast } from '../components/feedback';
 import { DailyDigestCard } from '../components/DailyDigestCard';
+import { PageInsightsCard } from '../components/PageInsightsCard';
 import { AutoPostPageCard, AutoPostTotals, PageAvatar, RegionBadge, RunDetails, StateBadge, isActiveRun } from '../components/AutoPostWidgets';
 import { href, navigate, useRoute } from '../lib/router';
 import { errorText } from '../lib/format';
@@ -457,6 +458,13 @@ function PageDetail({
 
       <DailyDigestCard page={page} settings={page.settings} />
 
+      <PageInsightsCard
+        pageId={page.facebookAccountId}
+        autoTune={page.settings.autoTune}
+        currentSlots={page.settings.timeSlots}
+        onApplySlots={(slots) => save({ timeSlots: slots, postsPerDay: slots.length })}
+      />
+
       <Card>
         <CardHeader title="Cài đặt Page" description="Chủ đề, số video, khung giờ và giọng đọc riêng cho Page này. Token kết nối Page sửa ở Cài đặt → Facebook." />
         <CardBody className="space-y-5">
@@ -596,8 +604,44 @@ function PageDetail({
                     ))}
                   </Select>
                 </Field>
+                <div className="sm:col-span-2">
+                  <Checkbox
+                    checked={form.weeklyDigestEnabled}
+                    onChange={(v) => update({ weeklyDigestEnabled: v })}
+                    label="Chủ nhật: bản tin tuần “Tuần qua có gì”"
+                    description="Tối Chủ nhật thay bản tin ngày bằng những tin lớn nhất của cả tuần."
+                  />
+                </div>
               </div>
             )}
+          </div>
+
+          <div className="space-y-3 border-t border-line pt-5">
+            <Checkbox
+              checked={form.breakingEnabled}
+              onChange={(v) => update({ breakingEnabled: v })}
+              label="Tin nóng đăng ngay"
+              description="Khi một tin đúng chủ đề bùng lên (từ 6 báo cùng đưa trong 3 giờ, hoặc lên Google Trends), app làm video và đăng ngay, không chờ khung giờ. Chỉ 6:00–23:00, cách nhau ít nhất 2 giờ."
+            />
+            {form.breakingEnabled && (
+              <div className="pl-6">
+                <Field label="Tối đa mỗi ngày">
+                  <Select value={form.breakingPerDay} onChange={(e) => update({ breakingPerDay: Number(e.target.value) })} className="w-32">
+                    {[1, 2, 3, 4, 5].map((n) => (
+                      <option key={n} value={n}>
+                        {n} tin
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+              </div>
+            )}
+            <Checkbox
+              checked={form.autoTune}
+              onChange={(v) => update({ autoTune: v })}
+              label="Tự học từ lượt xem"
+              description="Khi chọn tin, ưu tiên loại tin và khu vực (Việt Nam / quốc tế) mà người xem Page này xem nhiều nhất. Chỉ áp dụng khi đã có đủ số liệu."
+            />
           </div>
 
           <div className="flex flex-wrap items-center justify-end gap-2 border-t border-line pt-4">

@@ -44,6 +44,19 @@ public class DailyDigestService : IDailyDigestService
     public const string Failed = "Failed";
     public const string Preview = "Preview";
 
+    public const string Daily = "Daily";
+    public const string Weekly = "Weekly";
+
+    /// <summary>Sundays (when enabled) the evening digest is "Tuần qua có gì" — the week's biggest stories.</summary>
+    public static string KindFor(AutoPostSettings settings, DateTime vietnamDate) =>
+        settings.WeeklyDigestEnabled && vietnamDate.DayOfWeek == DayOfWeek.Sunday ? Weekly : Daily;
+
+    /// <summary>"16/11/2026" for a daily digest, "10/11 – 16/11/2026" for a weekly one.</summary>
+    public static string DateLabel(string kind, DateTime vietnamDate) =>
+        kind == Weekly
+            ? $"{vietnamDate.AddDays(-6).ToString("dd/MM", CultureInfo.InvariantCulture)} – {vietnamDate.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture)}"
+            : vietnamDate.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture);
+
     /// <summary>The digest still runs this long after its time (server restarting at that moment).</summary>
     private static readonly TimeSpan LateWindow = TimeSpan.FromHours(2);
     private static readonly TimeSpan KeepFilesFor = TimeSpan.FromDays(3);
@@ -115,7 +128,7 @@ public class DailyDigestService : IDailyDigestService
                 _logger.LogInformation("Daily digest {Date} starting for page {Page}", todayKey, page.PageName);
                 try
                 {
-                    await RunAsync(page, settings, publish: true, cancellationToken);
+                    await RunAsync(page, settings, publish: true, KindFor(settings, today), cancellationToken);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
@@ -164,8 +177,8 @@ public class DailyDigestService : IDailyDigestService
         if (stuck.Count > 0) await _context.SaveChangesAsync(ct);
     }
 
-    public Task<DailyDigestRunDto> PreviewAsync(Guid facebookAccountId, CancellationToken cancellationToken = default) =>
-        RunForPageAsync(facebookAccountId, publish: false, cancellationToken);
+    public Task<DailyDigestRunDto> PreviewAsync(Guid facebookAccountId, string? kind = null, CancellationToken cancellationToken = default) =>
+        RunForPageAsync(facebookAccountId, publish: false, kind, cancellationToken);
 
     public async Task<DailyDigestRunDto> PublishNowAsync(Guid facebookAccountId, CancellationToken cancellationToken = default)
     {
@@ -174,10 +187,10 @@ public class DailyDigestService : IDailyDigestService
         if (await _context.DailyDigestRuns.AnyAsync(r => r.FacebookAccountId == facebookAccountId && r.DigestDate == todayKey && !r.IsPreview
                                                         && (r.Status == Published || r.Status == Partial || r.Status == Working), cancellationToken))
             throw new InvalidOperationException("Hôm nay Page này đã đăng (hoặc đang đăng) bản tin rồi. Mỗi ngày chỉ đăng một bản tin.");
-        return await RunForPageAsync(facebookAccountId, publish: true, cancellationToken);
+        return await RunForPageAsync(facebookAccountId, publish: true, null, cancellationToken);
     }
 
-    private async Task<DailyDigestRunDto> RunForPageAsync(Guid facebookAccountId, bool publish, CancellationToken ct)
+    private async Task<DailyDigestRunDto> RunForPageAsync(Guid facebookAccountId, bool publish, string? kind, CancellationToken ct)
     {
         var (page, settings) = (await LoadPagesAsync(ct)).FirstOrDefault(p => p.Page.Id == facebookAccountId);
         if (page == null) throw new KeyNotFoundException("Page này chưa được kết nối hoặc đã ngắt kết nối.");
@@ -186,7 +199,8 @@ public class DailyDigestService : IDailyDigestService
             throw new InvalidOperationException("Đang làm bản tin khác, thử lại sau ít phút.");
         try
         {
-            var run = await RunAsync(page, settings!, publish, ct);
+            var today = AutoPostService.VietnamDate(DateTime.UtcNow);
+            var run = await RunAsync(page, settings!, publish, kind is Weekly or Daily ? kind : KindFor(settings!, today), ct);
             return ToDto(run, page.PageName);
         }
         finally
@@ -209,7 +223,7 @@ public class DailyDigestService : IDailyDigestService
 
     // ---------------------------------------------------------------- one digest
 
-    private async Task<DailyDigestRun> RunAsync(FacebookAccount page, AutoPostSettings settings, bool publish, CancellationToken ct)
+    private async Task<DailyDigestRun> RunAsync(FacebookAccount page, AutoPostSettings settings, bool publish, string kind, CancellationToken ct)
     {
         var now = DateTime.UtcNow;
         var today = AutoPostService.VietnamDate(now);
@@ -217,10 +231,11 @@ public class DailyDigestService : IDailyDigestService
         {
             FacebookAccountId = page.Id,
             DigestDate = DateKey(today),
+            Kind = kind,
             IsPreview = !publish,
             Status = Working,
             StartedAtUtc = now,
-            Message = "Đang chọn tin nóng trong ngày."
+            Message = kind == Weekly ? "Đang chọn những tin lớn nhất tuần qua." : "Đang chọn tin nóng trong ngày."
         };
         _context.DailyDigestRuns.Add(run);
         await _context.SaveChangesAsync(ct);
@@ -234,14 +249,14 @@ public class DailyDigestService : IDailyDigestService
         try
         {
             var count = Math.Clamp(settings.DigestItems, MinItems, MaxItems);
-            var items = await SelectStoriesAsync(settings, count, folder, ct);
+            var items = await SelectStoriesAsync(page.Id, settings, count, folder, kind, ct);
             run.ItemsJson = JsonSerializer.Serialize(items.Select(i => i.Item).ToList());
 
             run.Message = "Đang vẽ ảnh bản tin.";
             await _context.SaveChangesAsync(ct);
             var theme = NewsTopics.Find(settings.Topic)?.Key ?? NewsTopics.General;
-            var (postImages, storyImages) = await RenderCardsAsync(page.PageName, theme, today, items, folder, ct);
-            run.Caption = BuildCaption(theme, today, items.Select(i => i.Item).ToList());
+            var (postImages, storyImages) = await RenderCardsAsync(page.PageName, theme, today, kind, items, folder, ct);
+            run.Caption = BuildCaption(theme, today, items.Select(i => i.Item).ToList(), kind);
 
             if (!publish)
             {
@@ -283,7 +298,7 @@ public class DailyDigestService : IDailyDigestService
                 : Failed;
             run.Message = run.Status switch
             {
-                Published => $"Đã đăng bài viết {items.Count} tin và Story.",
+                Published => $"Đã đăng {(kind == Weekly ? "bản tin tuần" : "bài viết")} {items.Count} tin và Story.",
                 Partial when run.PostId != null => $"Đã đăng bài viết {items.Count} tin. Story lỗi: {Shorten(run.StoryError, 300)}",
                 Partial => $"Đã đăng Story. Bài viết lỗi: {Shorten(run.PostError, 300)}",
                 _ => $"Không đăng được. {Shorten(run.PostError, 300)}"
@@ -306,29 +321,37 @@ public class DailyDigestService : IDailyDigestService
     private sealed record Candidate(TrendingArticleDto Article, string Text, List<string> ImageUrls);
 
     private async Task<List<(DailyDigestItemDto Item, string Photo)>> SelectStoriesAsync(
-        AutoPostSettings settings, int count, string folder, CancellationToken ct)
+        Guid pageId, AutoPostSettings settings, int count, string folder, string kind, CancellationToken ct)
     {
         var keywords = NewsTopics.ParseKeywords(settings.TopicKeywords);
         if (settings.Topic == NewsTopics.Custom && keywords.Count == 0)
             throw new InvalidOperationException("Page dùng chủ đề \"Tự chọn từ khoá\" nhưng chưa có từ khoá nào.");
 
-        // 1. Today's hottest stories of the topic, Vietnam + international (one per story cluster)
+        // 1. Candidates. Daily: today's hottest stories of the topic, Vietnam + international (one per story
+        //    cluster). Weekly: the stories of this week's evening digests (the best of each day), then the
+        //    biggest stories of the last 3 days by number of outlets.
+        var weekly = kind == Weekly;
         var overview = await _trending.GetTrendingAsync(new TrendingQuery
         {
             Region = "all",
-            Hours = 24,
+            Hours = weekly ? 72 : 24,
             Limit = 150,
             Topic = settings.Topic,
             Keywords = keywords
         }, ct);
-        var pool = overview.Items.OrderByDescending(i => i.HotScore).Take(CandidatePool).ToList();
+        var pool = weekly
+            ? (await WeekDigestItemsAsync(pageId, ct))
+                .Concat(overview.Items.OrderByDescending(i => i.CoverageCount).ThenByDescending(i => i.HotScore))
+                .GroupBy(i => AutoPostService.NormalizeUrl(i.Url)).Select(g => g.First())
+                .Take(CandidatePool).ToList()
+            : overview.Items.OrderByDescending(i => i.HotScore).Take(CandidatePool).ToList();
         if (pool.Count < MinItems)
             throw new InvalidOperationException(
-                $"24 giờ qua mới có {pool.Count} tin thuộc chủ đề \"{NewsTopics.NameOf(settings.Topic)}\", chưa đủ để làm bản tin (cần ít nhất {MinItems}).");
+                $"{(weekly ? "Tuần qua" : "24 giờ qua")} mới có {pool.Count} tin thuộc chủ đề \"{NewsTopics.NameOf(settings.Topic)}\", chưa đủ để làm bản tin (cần ít nhất {MinItems}).");
 
         // 2. AI picks the most striking, distinct events (a few extra in case some have no usable picture)
         var topicName = NewsTopics.NameOf(settings.Topic);
-        var picksJson = await _gemini.GenerateJsonAsync(PickSystemPrompt, BuildPickPrompt(topicName, keywords, pool, count + 4), ct);
+        var picksJson = await _gemini.GenerateJsonAsync(weekly ? WeeklyPickSystemPrompt : PickSystemPrompt, BuildPickPrompt(topicName, keywords, pool, count + 4), ct);
         var picks = ParsePicks(picksJson, pool.Count);
         if (picks.Count == 0) throw new InvalidOperationException("AI không chọn được tin nào. Thử lại sau.");
 
@@ -377,6 +400,41 @@ public class DailyDigestService : IDailyDigestService
         }
         if (result.Count < MinItems)
             throw new InvalidOperationException("AI không viết được tóm tắt cho đủ tin. Thử lại sau.");
+        return result;
+    }
+
+    /// <summary>Stories of this page's evening digests of the last 6 days (already the best of each day).</summary>
+    private async Task<List<TrendingArticleDto>> WeekDigestItemsAsync(Guid pageId, CancellationToken ct)
+    {
+        var since = DateKey(AutoPostService.VietnamDate(DateTime.UtcNow).AddDays(-6));
+        var runs = await _context.DailyDigestRuns.AsNoTracking()
+            .Where(r => r.FacebookAccountId == pageId && !r.IsPreview && r.Kind == Daily
+                        && (r.Status == Published || r.Status == Partial) && string.Compare(r.DigestDate, since) >= 0)
+            .OrderByDescending(r => r.DigestDate)
+            .Select(r => new { r.ItemsJson, r.CreatedAtUtc })
+            .ToListAsync(ct);
+        var result = new List<TrendingArticleDto>();
+        foreach (var run in runs)
+        {
+            List<DailyDigestItemDto>? items;
+            try { items = JsonSerializer.Deserialize<List<DailyDigestItemDto>>(run.ItemsJson ?? "[]"); }
+            catch (JsonException) { continue; }
+            foreach (var i in items ?? new())
+            {
+                result.Add(new TrendingArticleDto
+                {
+                    Id = Guid.NewGuid(),
+                    Title = i.Title,
+                    Summary = $"{i.Headline}. {i.Summary}",
+                    Url = i.Url,
+                    ImageUrl = i.ImageUrl,
+                    SourceName = i.SourceName,
+                    CoverageCount = i.CoverageCount,
+                    HotScore = i.HotScore,
+                    PublishedAtUtc = run.CreatedAtUtc
+                });
+            }
+        }
         return result;
     }
 
@@ -444,6 +502,12 @@ public class DailyDigestService : IDailyDigestService
         "ảnh hưởng lớn tới nhiều người, hoặc được nhiều báo cùng đưa / nhiều người tìm kiếm. Mỗi tin phải là một sự kiện khác nhau " +
         "(không chọn hai tin về cùng một việc). Bỏ qua quảng cáo, PR doanh nghiệp, tử vi, mẹo vặt, tin không thuộc chủ đề. " +
         "Chỉ trả về JSON.";
+
+    private const string WeeklyPickSystemPrompt =
+        "Bạn là biên tập viên trang tin trên Facebook. Từ danh sách tin của tuần qua, chọn những tin LỚN NHẤT, đáng nhớ nhất " +
+        "của cả tuần để làm bản tin \"Tuần qua có gì\" tối Chủ nhật: sự kiện gây chấn động, ảnh hưởng nhiều người, được nhiều báo đưa, " +
+        "hoặc gây tranh cãi lớn. Mỗi tin một sự kiện khác nhau (không chọn hai tin về cùng một việc, kể cả khác ngày). " +
+        "Bỏ qua quảng cáo, PR, tin vụn vặt, tin không thuộc chủ đề. Chỉ trả về JSON.";
 
     private const string WriteSystemPrompt =
         "Bạn viết bản tin tóm tắt ngắn bằng tiếng Việt cho trang tin trên Facebook. Với mỗi tin: một tiêu đề ngắn, hấp dẫn " +
@@ -548,7 +612,7 @@ public class DailyDigestService : IDailyDigestService
     // ---------------------------------------------------------------- pictures + text
 
     private async Task<(List<string> Post, List<string> Story)> RenderCardsAsync(
-        string pageName, string theme, DateTime vietnamDate, List<(DailyDigestItemDto Item, string Photo)> items, string folder, CancellationToken ct)
+        string pageName, string theme, DateTime vietnamDate, string kind, List<(DailyDigestItemDto Item, string Photo)> items, string folder, CancellationToken ct)
     {
         var python = FFmpegRendererService.FindPythonExecutable()
                      ?? throw new InvalidOperationException("Không tìm thấy Python trên máy chủ để vẽ ảnh bản tin.");
@@ -561,8 +625,8 @@ public class DailyDigestService : IDailyDigestService
             brand = pageName,
             theme,
             topic_label = theme is NewsTopics.General or NewsTopics.Custom ? "" : NewsTopics.NameOf(theme),
-            date = vietnamDate.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture),
-            title = "Điểm tin nóng",
+            date = DateLabel(kind, vietnamDate),
+            title = kind == Weekly ? "Tuần qua có gì" : "Điểm tin nóng",
             items = items.Select(i => new { photo = i.Photo, headline = i.Item.Headline, summary = i.Item.Summary, source = i.Item.SourceName })
         };
         Directory.CreateDirectory(folder);
@@ -601,12 +665,20 @@ public class DailyDigestService : IDailyDigestService
     private static readonly string[] NumberEmoji = { "1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟" };
 
     /// <summary>Wall post text: title line, then every story (headline, summary, source).</summary>
-    public static string BuildCaption(string topic, DateTime vietnamDate, IReadOnlyList<DailyDigestItemDto> items)
+    public static string BuildCaption(string topic, DateTime vietnamDate, IReadOnlyList<DailyDigestItemDto> items, string kind = Daily)
     {
         var sb = new StringBuilder();
         var topicPart = topic is NewsTopics.General or NewsTopics.Custom ? "" : $" {NewsTopics.NameOf(topic).ToUpper(new CultureInfo("vi-VN"))}";
-        sb.Append($"🔥 ĐIỂM TIN NÓNG{topicPart} NGÀY {vietnamDate.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture)}\n");
-        sb.Append($"{items.Count} tin đáng chú ý nhất hôm nay, xem nhanh trong một phút.\n");
+        if (kind == Weekly)
+        {
+            sb.Append($"🗓 TUẦN QUA CÓ GÌ{topicPart} ({DateLabel(Weekly, vietnamDate)})\n");
+            sb.Append($"{items.Count} tin lớn nhất tuần, xem nhanh trong một phút.\n");
+        }
+        else
+        {
+            sb.Append($"🔥 ĐIỂM TIN NÓNG{topicPart} NGÀY {vietnamDate.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture)}\n");
+            sb.Append($"{items.Count} tin đáng chú ý nhất hôm nay, xem nhanh trong một phút.\n");
+        }
         for (var i = 0; i < items.Count; i++)
         {
             sb.Append('\n');
@@ -614,7 +686,7 @@ public class DailyDigestService : IDailyDigestService
             sb.Append($"{items[i].Summary}\n");
             sb.Append($"(Nguồn: {items[i].SourceName})\n");
         }
-        sb.Append("\n#DiemTinNong #TinTuc");
+        sb.Append(kind == Weekly ? "\n#TuanQuaCoGi #TinTuc" : "\n#DiemTinNong #TinTuc");
         return sb.ToString();
     }
 
@@ -663,6 +735,7 @@ public class DailyDigestService : IDailyDigestService
             FacebookAccountId = r.FacebookAccountId,
             PageName = pageName,
             DigestDate = r.DigestDate,
+            Kind = r.Kind,
             IsPreview = r.IsPreview,
             Status = r.Status,
             Message = r.Message,

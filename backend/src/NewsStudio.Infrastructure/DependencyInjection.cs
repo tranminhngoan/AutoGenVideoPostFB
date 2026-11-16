@@ -115,6 +115,9 @@ public static class DependencyInjection
         services.AddScoped<ISystemMetricsService, SystemMetricsService>();
         services.AddScoped<IStorageCleanupService, StorageCleanupService>();
         services.AddScoped<IAutoPostService, AutoPostService>();
+        // AI editorial pass before posting (headline vs article, caption, first comment) + learning from views
+        services.AddScoped<IEditorialAssistantService, EditorialAssistantService>();
+        services.AddScoped<IPageInsightsService, PageInsightsService>();
         // Daily "Điểm tin nóng" digest (pictures of the day's hottest stories → wall post + Story)
         services.AddHttpClient<IDailyDigestService, DailyDigestService>()
             .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler

@@ -186,6 +186,7 @@ export function RunDetails({
     <div className="min-w-0 flex-1 space-y-1.5">
       <div className="flex flex-wrap items-center gap-2">
         <StateBadge state={run.status} />
+        {run.isBreaking && <Badge tone="danger">Tin nóng</Badge>}
         {showPage && run.pageName && <Badge tone="neutral">{run.pageName}</Badge>}
         {run.region && <RegionBadge region={run.region} />}
         {run.hotScore != null && <span className="text-xs text-fg-subtle">Độ hot {Math.round(run.hotScore)}</span>}

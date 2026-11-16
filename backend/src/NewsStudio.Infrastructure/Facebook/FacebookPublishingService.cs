@@ -425,6 +425,22 @@ public class FacebookPublishingService : IFacebookPublishingService
 
         await _context.SaveChangesAsync(cancellationToken);
 
+        // 6b. The page's own first comment (question + article link). The Reel is already live, so a
+        //     failure is only recorded (e.g. the token lacks pages_manage_engagement).
+        if (!string.IsNullOrWhiteSpace(request?.FirstComment) && !_simulate)
+        {
+            try
+            {
+                postRecord.FirstCommentId = await PostCommentAsync(rawPageToken, fbVideoId, fbPostId, request.FirstComment.Trim(), cancellationToken);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogWarning("First comment on {PostId} failed: {Message}", fbPostId, ex.Message);
+                postRecord.FirstCommentError = ex.Message.Length > 1000 ? ex.Message[..1000] : ex.Message;
+            }
+            await _context.SaveChangesAsync(CancellationToken.None);
+        }
+
         // 7. CLEAN UP EPHEMERAL ASSETS (STRICT MASTER PLAN REQUIREMENT)
         var cleanedUp = false;
         if (request?.AutoCleanupAssets != false)
@@ -449,8 +465,31 @@ public class FacebookPublishingService : IFacebookPublishingService
             PostUrl = $"https://www.facebook.com/reel/{fbVideoId}",
             UploadStatus = "Published",
             PublishedAtUtc = postRecord.PublishedAtUtc,
-            EphemeralAssetsCleanedUp = cleanedUp
+            EphemeralAssetsCleanedUp = cleanedUp,
+            FirstCommentId = postRecord.FirstCommentId,
+            FirstCommentError = postRecord.FirstCommentError
         };
+    }
+
+    /// <summary>Comments as the page under a Reel (on the video, or on its post when the video refuses).</summary>
+    private async Task<string> PostCommentAsync(string token, string videoId, string postId, string message, CancellationToken ct)
+    {
+        string? lastError = null;
+        foreach (var target in new[] { videoId, postId }.Where(t => !string.IsNullOrWhiteSpace(t)).Distinct())
+        {
+            using var res = await _httpClient.PostAsync($"https://graph.facebook.com/{_graphApiVersion}/{target}/comments",
+                new FormUrlEncodedContent(new Dictionary<string, string> { ["message"] = message, ["access_token"] = token }), ct);
+            if (res.IsSuccessStatusCode)
+            {
+                var body = await res.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: ct);
+                return body.TryGetProperty("id", out var id) ? id.GetString() ?? target : target;
+            }
+            lastError = await ReadGraphErrorAsync(res, ct);
+        }
+        var permission = lastError != null && (lastError.Contains("permission", StringComparison.OrdinalIgnoreCase) || lastError.Contains("(#200)") || lastError.Contains("(#10)"));
+        throw new InvalidOperationException(permission
+            ? $"Token của Page chưa có quyền bình luận (pages_manage_engagement). Kết nối lại Page bằng Kết nối nhanh, nhớ tick quyền này. {lastError}"
+            : $"Không bình luận được. {lastError}");
     }
 
     private async Task<(string VideoId, string PostId)> ExecuteMetaReelsPublishAsync(
@@ -520,7 +559,7 @@ public class FacebookPublishingService : IFacebookPublishingService
 
     /// <summary>Permissions the app uses: listing pages, posting Reels/Stories/photos, reading views.</summary>
     public static readonly string[] RequiredPermissions =
-        { "pages_show_list", "pages_read_engagement", "pages_manage_posts", "read_insights" };
+        { "pages_show_list", "pages_read_engagement", "pages_manage_posts", "pages_manage_engagement", "read_insights" };
 
     public async Task<UserTokenPagesResultDto> ConnectFromUserTokenAsync(UserTokenConnectRequestDto request, CancellationToken cancellationToken = default)
     {
@@ -952,6 +991,8 @@ public class FacebookPublishingService : IFacebookPublishingService
                 PublishedAtUtc = p.PublishedAtUtc,
                 Status = p.Status,
                 ErrorMessage = p.ErrorMessage,
+                FirstCommentId = p.FirstCommentId,
+                FirstCommentError = p.FirstCommentError,
                 LatestMetric = latestMetric != null ? new VideoMetricDto
                 {
                     Id = latestMetric.Id,

@@ -35,6 +35,10 @@ public class FacebookPost : BaseEntity
     public string Status { get; set; } = "Pending";
     public string? ErrorMessage { get; set; }
 
+    /// <summary>The page's own first comment under the Reel (question + link to the article).</summary>
+    public string? FirstCommentId { get; set; }
+    public string? FirstCommentError { get; set; }
+
     // Navigation
     public ICollection<VideoMetric> Metrics { get; set; } = new List<VideoMetric>();
 }

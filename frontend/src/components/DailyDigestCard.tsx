@@ -20,7 +20,7 @@ export function DailyDigestCard({ page, settings }: { page: AutoPostPageDto; set
   const toast = useToast();
   const confirm = useConfirm();
   const [runs, setRuns] = useState<DailyDigestRunDto[] | null>(null);
-  const [busy, setBusy] = useState<'preview' | 'publish' | null>(null);
+  const [busy, setBusy] = useState<'preview' | 'weekly' | 'publish' | null>(null);
   const [view, setView] = useState<'post' | 'story'>('post');
 
   const load = useCallback(async () => {
@@ -43,10 +43,10 @@ export function DailyDigestCard({ page, settings }: { page: AutoPostPageDto; set
     return () => clearInterval(t);
   }, [working, load]);
 
-  const preview = async () => {
-    setBusy('preview');
+  const preview = async (weekly = false) => {
+    setBusy(weekly ? 'weekly' : 'preview');
     try {
-      const run = await api.previewDailyDigest(page.facebookAccountId);
+      const run = await api.previewDailyDigest(page.facebookAccountId, weekly ? 'Weekly' : undefined);
       if (run.status === 'Failed') toast.error('Không tạo được bản tin', run.message ?? '');
       else toast.success('Đã tạo bản tin thử', 'Chưa đăng gì lên Facebook.');
       await load();
@@ -91,13 +91,19 @@ export function DailyDigestCard({ page, settings }: { page: AutoPostPageDto; set
             ? !settings.digestEnabled
               ? 'Đang tắt. Bật trong Cài đặt Page bên dưới.'
               : 'Chỉ tự đăng khi Tự động đăng của Page đang bật.'
-            : `Mỗi ngày lúc ${settings.digestTime}: ${settings.digestItems} tin giật gân nhất về chủ đề của Page, đăng 1 bài viết nhiều ảnh + 1 Story.`
+            : `Mỗi ngày lúc ${settings.digestTime}: ${settings.digestItems} tin giật gân nhất về chủ đề của Page, đăng 1 bài viết nhiều ảnh + 1 Story.` +
+              (settings.weeklyDigestEnabled ? ' Chủ nhật là bản tin tuần “Tuần qua có gì”.' : '')
         }
         actions={
           <div className="flex flex-wrap gap-2">
-            <Button size="sm" icon={<Eye className="h-3.5 w-3.5" />} loading={busy === 'preview'} disabled={busy !== null} onClick={preview}>
+            <Button size="sm" icon={<Eye className="h-3.5 w-3.5" />} loading={busy === 'preview'} disabled={busy !== null} onClick={() => preview()}>
               {busy === 'preview' ? 'Đang làm (1–2 phút)…' : 'Tạo thử'}
             </Button>
+            {settings.weeklyDigestEnabled && (
+              <Button size="sm" variant="ghost" loading={busy === 'weekly'} disabled={busy !== null} onClick={() => preview(true)}>
+                {busy === 'weekly' ? 'Đang làm…' : 'Thử bản tin tuần'}
+              </Button>
+            )}
             <Button size="sm" variant="primary" icon={<Send className="h-3.5 w-3.5" />} loading={busy === 'publish'} disabled={busy !== null} onClick={publish}>
               Đăng ngay
             </Button>
@@ -119,6 +125,7 @@ export function DailyDigestCard({ page, settings }: { page: AutoPostPageDto; set
               <Badge tone={STATUS[latest.status].tone} dot pulse={latest.status === 'Working'}>
                 {STATUS[latest.status].label}
               </Badge>
+              {latest.kind === 'Weekly' && <Badge tone="info">Bản tin tuần</Badge>}
               <span className="text-fg-muted">
                 {formatDay(latest.digestDate)} · {formatDateTime(latest.publishedAtUtc ?? latest.createdAtUtc)}
               </span>
@@ -197,6 +204,7 @@ export function DailyDigestCard({ page, settings }: { page: AutoPostPageDto; set
               {older.map((r) => (
                 <li key={r.id} className="flex flex-wrap items-center gap-2">
                   <Badge tone={STATUS[r.status].tone}>{STATUS[r.status].label}</Badge>
+                  {r.kind === 'Weekly' && <Badge tone="info">Tuần</Badge>}
                   <span className="text-fg-muted">{formatDay(r.digestDate)}</span>
                   <span className="min-w-0 flex-1 truncate text-fg-muted">{r.message}</span>
                   {r.postUrl && (

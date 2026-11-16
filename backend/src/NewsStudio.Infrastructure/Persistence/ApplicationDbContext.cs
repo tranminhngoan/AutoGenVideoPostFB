@@ -55,6 +55,7 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
             entity.ToTable("DailyDigestRuns");
             entity.HasKey(e => e.Id);
             entity.Property(e => e.DigestDate).HasMaxLength(10).IsRequired();
+            entity.Property(e => e.Kind).HasMaxLength(10).IsRequired();
             entity.Property(e => e.Status).HasMaxLength(20).IsRequired();
             entity.Property(e => e.WorkFolder).HasMaxLength(500);
             entity.Property(e => e.PostId).HasMaxLength(100);
@@ -278,6 +279,8 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
             entity.Property(e => e.FacebookVideoId).HasMaxLength(100);
             entity.Property(e => e.UploadStatus).HasMaxLength(50);
             entity.Property(e => e.Status).HasMaxLength(50);
+            entity.Property(e => e.FirstCommentId).HasMaxLength(100);
+            entity.Property(e => e.FirstCommentError).HasMaxLength(1000);
 
             entity.HasOne(e => e.VideoProject)
                   .WithMany(p => p.FacebookPosts)

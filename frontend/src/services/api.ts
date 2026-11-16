@@ -142,8 +142,8 @@ export const api = {
     return await res.json();
   },
 
-  async previewDailyDigest(facebookAccountId: string): Promise<DailyDigestRunDto> {
-    const res = await fetch(`${API_BASE}/daily-digest/pages/${facebookAccountId}/preview`, { method: 'POST' });
+  async previewDailyDigest(facebookAccountId: string, kind?: 'Daily' | 'Weekly'): Promise<DailyDigestRunDto> {
+    const res = await fetch(`${API_BASE}/daily-digest/pages/${facebookAccountId}/preview${kind ? `?kind=${kind}` : ''}`, { method: 'POST' });
     if (!res.ok) throw new Error(await apiError(res, 'Không tạo được bản tin thử'));
     return await res.json();
   },
@@ -151,6 +151,19 @@ export const api = {
   async publishDailyDigest(facebookAccountId: string): Promise<DailyDigestRunDto> {
     const res = await fetch(`${API_BASE}/daily-digest/pages/${facebookAccountId}/publish`, { method: 'POST' });
     if (!res.ok) throw new Error(await apiError(res, 'Không đăng được bản tin'));
+    return await res.json();
+  },
+
+  async getPageInsights(facebookAccountId: string): Promise<PageInsightsDto> {
+    const res = await fetch(`${API_BASE}/auto-post/pages/${facebookAccountId}/insights`);
+    if (!res.ok) throw new Error(await apiError(res, 'Không tải được số liệu học được'));
+    return await res.json();
+  },
+
+  /** AI checks the video against the article and writes caption + first comment. */
+  async editorialPass(projectId: string): Promise<EditorialPassDto> {
+    const res = await fetch(`${API_BASE}/video-projects/${projectId}/editorial-pass`, { method: 'POST' });
+    if (!res.ok) throw new Error(await apiError(res, 'AI chưa kiểm tra được'));
     return await res.json();
   },
 
@@ -899,6 +912,8 @@ export interface PublishReelRequestDto {
   pageId?: string;
   customCaption?: string;
   autoCleanupAssets?: boolean;
+  /** The page's own first comment under the Reel */
+  firstComment?: string;
 }
 
 export interface PublishReelResultDto {
@@ -910,6 +925,8 @@ export interface PublishReelResultDto {
   publishedAtUtc?: string;
   errorMessage?: string;
   ephemeralAssetsCleanedUp: boolean;
+  firstCommentId?: string | null;
+  firstCommentError?: string | null;
 }
 
 export interface FacebookPostDto {
@@ -925,6 +942,8 @@ export interface FacebookPostDto {
   status: string;
   errorMessage?: string;
   latestMetric?: VideoMetricDto;
+  firstCommentId?: string | null;
+  firstCommentError?: string | null;
 }
 
 export interface VideoMetricDto {
@@ -970,6 +989,42 @@ export interface AutoPostSettingsDto {
   digestTime: string;
   /** Stories in the digest (3–9) */
   digestItems: number;
+  /** Sundays: "Tuần qua có gì" instead of the daily digest */
+  weeklyDigestEnabled: boolean;
+  /** Post big breaking news right away */
+  breakingEnabled: boolean;
+  /** Max breaking-news videos per day (0–5) */
+  breakingPerDay: number;
+  /** Prefer the kinds of stories that got the most views */
+  autoTune: boolean;
+}
+
+export interface EditorialPassDto {
+  consistent: boolean;
+  issues: string[];
+  caption: string;
+  firstComment: string;
+  checkedAtUtc: string;
+}
+
+export interface InsightBucketDto {
+  key: string;
+  label: string;
+  videos: number;
+  averageViews: number;
+  ratio: number;
+}
+
+export interface PageInsightsDto {
+  facebookAccountId: string;
+  samples: number;
+  minSamples: number;
+  enoughData: boolean;
+  averageViews: number;
+  hours: InsightBucketDto[];
+  topics: InsightBucketDto[];
+  regions: InsightBucketDto[];
+  suggestedSlots: string[];
 }
 
 export interface DailyDigestItemDto {
@@ -990,6 +1045,7 @@ export interface DailyDigestRunDto {
   facebookAccountId?: string | null;
   pageName?: string | null;
   digestDate: string;
+  kind: 'Daily' | 'Weekly';
   isPreview: boolean;
   status: DailyDigestStatus;
   message?: string | null;
@@ -1017,6 +1073,7 @@ export interface AutoPostRunDto {
   slotTime: string;
   slotDate: string;
   isManual: boolean;
+  isBreaking?: boolean;
   status: AutoPostRunStatus;
   attempts: number;
   articleUrl?: string | null;

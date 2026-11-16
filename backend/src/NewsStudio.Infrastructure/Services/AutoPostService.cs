@@ -57,6 +57,8 @@ public class AutoPostService : IAutoPostService
     private readonly IVideoProjectService _projects;
     private readonly IVideoReviewService _review;
     private readonly IFacebookPublishingService _facebook;
+    private readonly IEditorialAssistantService _editorial;
+    private readonly IPageInsightsService _insights;
     private readonly IConfiguration _configuration;
     private readonly ILogger<AutoPostService> _logger;
 
@@ -66,9 +68,13 @@ public class AutoPostService : IAutoPostService
         IVideoProjectService projects,
         IVideoReviewService review,
         IFacebookPublishingService facebook,
+        IEditorialAssistantService editorial,
+        IPageInsightsService insights,
         IConfiguration configuration,
         ILogger<AutoPostService> logger)
     {
+        _editorial = editorial;
+        _insights = insights;
         _context = context;
         _trending = trending;
         _projects = projects;
@@ -213,7 +219,11 @@ public class AutoPostService : IAutoPostService
         LeadMinutes = s.LeadMinutes,
         DigestEnabled = s.DigestEnabled,
         DigestTime = s.DigestTime,
-        DigestItems = s.DigestItems
+        DigestItems = s.DigestItems,
+        WeeklyDigestEnabled = s.WeeklyDigestEnabled,
+        BreakingEnabled = s.BreakingEnabled,
+        BreakingPerDay = s.BreakingPerDay,
+        AutoTune = s.AutoTune
     };
 
     public async Task<AutoPostSettingsDto> UpdateSettingsAsync(Guid facebookAccountId, AutoPostSettingsDto dto, CancellationToken cancellationToken = default)
@@ -245,6 +255,10 @@ public class AutoPostService : IAutoPostService
         settings.DigestEnabled = dto.DigestEnabled;
         settings.DigestTime = ParseSlots(dto.DigestTime ?? "").FirstOrDefault() ?? "20:30";
         settings.DigestItems = Math.Clamp(dto.DigestItems, DailyDigestService.MinItems, DailyDigestService.MaxItems);
+        settings.WeeklyDigestEnabled = dto.WeeklyDigestEnabled;
+        settings.BreakingEnabled = dto.BreakingEnabled;
+        settings.BreakingPerDay = Math.Clamp(dto.BreakingPerDay, 0, MaxBreakingPerDay);
+        settings.AutoTune = dto.AutoTune;
         settings.UpdatedAtUtc = DateTime.UtcNow;
         await _context.SaveChangesAsync(cancellationToken);
 
@@ -394,6 +408,7 @@ public class AutoPostService : IAutoPostService
             SlotTime = VietnamTime(r.ScheduledAtUtc),
             SlotDate = VietnamDate(r.ScheduledAtUtc).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
             IsManual = r.IsManual,
+            IsBreaking = r.IsBreaking,
             Status = r.Status,
             Attempts = r.Attempts,
             ArticleUrl = r.ArticleUrl,
@@ -512,8 +527,6 @@ public class AutoPostService : IAutoPostService
                         due.Add((at, SlotKey(today, slots[i], schedule.Page.Id), schedule, i));
                 }
             }
-            if (due.Count == 0) return;
-
             var keys = due.Select(d => d.Key).ToList();
             var started = (await _context.AutoPostRuns.Where(r => keys.Contains(r.SlotKey)).Select(r => r.SlotKey).ToListAsync(cancellationToken))
                 .ToHashSet();
@@ -539,6 +552,10 @@ public class AutoPostService : IAutoPostService
                 await _context.SaveChangesAsync(cancellationToken);
                 if (run.Status == Producing) producing++;
             }
+
+            // 3. Breaking news: a story that suddenly becomes big news is posted right away (scheduled slots first)
+            if (producing < MaxConcurrentVideos)
+                await StartBreakingNewsAsync(pages, now, cancellationToken);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -644,7 +661,7 @@ public class AutoPostService : IAutoPostService
 
     private async Task RetryOrFailAsync(AutoPostRun run, AutoPostSettings settings, DateTime now, string reason, CancellationToken ct)
     {
-        if (run.Attempts < MaxAttempts && now < run.ScheduledAtUtc + RetryWindow)
+        if (!run.IsBreaking && run.Attempts < MaxAttempts && now < run.ScheduledAtUtc + RetryWindow)
         {
             _logger.LogWarning("Auto-post {Slot}: story failed ({Reason}); picking another one", run.SlotKey, reason);
             var previousTitle = run.ArticleTitle;
@@ -657,7 +674,8 @@ public class AutoPostService : IAutoPostService
         run.Message = $"Không làm được video: {Shorten(reason, 300)}";
     }
 
-    private async Task StartProductionAsync(AutoPostRun run, AutoPostSettings settings, string region, DateTime now, CancellationToken ct)
+    private async Task StartProductionAsync(AutoPostRun run, AutoPostSettings settings, string region, DateTime now, CancellationToken ct,
+        (TrendingArticleDto Item, Guid? ClusterId)? preselected = null)
     {
         run.Attempts++;
 
@@ -669,7 +687,14 @@ public class AutoPostService : IAutoPostService
             return;
         }
 
-        var pick = await PickStoryAsync(settings.Topic, keywords, region, allowOtherRegion: settings.RegionMode is not ("VN" or "World"), now, ct);
+        // "Tự học": stories of the kinds this page's audience watches most come first
+        Func<TrendingArticleDto, double>? weight = null;
+        if (preselected == null && settings.AutoTune && settings.FacebookAccountId is Guid pageId)
+        {
+            var insights = await _insights.GetAsync(pageId, ct);
+            if (insights.EnoughData) weight = i => PageInsightsService.Boost(insights, i.Topics, i.Region);
+        }
+        var pick = preselected ?? await PickStoryAsync(settings.Topic, keywords, region, allowOtherRegion: settings.RegionMode is not ("VN" or "World"), now, ct, weight: weight);
         if (pick == null)
         {
             run.Status = Failed;
@@ -715,7 +740,8 @@ public class AutoPostService : IAutoPostService
     /// title) was used in the last few days — so two pages never post the same news.
     /// </summary>
     private async Task<(TrendingArticleDto Item, Guid? ClusterId)?> PickStoryAsync(
-        string topic, List<string> keywords, string region, bool allowOtherRegion, DateTime now, CancellationToken ct)
+        string topic, List<string> keywords, string region, bool allowOtherRegion, DateTime now, CancellationToken ct,
+        Func<TrendingArticleDto, bool>? accept = null, int[]? lookBackHours = null, Func<TrendingArticleDto, double>? weight = null)
     {
         var usedUrlList = await _context.VideoProjects.AsNoTracking().Select(p => p.SourceUrl).ToListAsync(ct);
         usedUrlList.AddRange(await _context.AutoPostRuns.AsNoTracking()
@@ -756,7 +782,7 @@ public class AutoPostService : IAutoPostService
             .ToList();
 
         var regions = allowOtherRegion ? new[] { region, region == "VN" ? "World" : "VN" } : new[] { region };
-        foreach (var hours in LookBackHours)
+        foreach (var hours in lookBackHours ?? LookBackHours)
         {
             foreach (var r in regions)
             {
@@ -768,7 +794,10 @@ public class AutoPostService : IAutoPostService
                     Topic = topic,
                     Keywords = keywords
                 }, ct);
-                var items = overview.Items.OrderByDescending(i => i.HotScore).ToList();
+                var items = overview.Items
+                    .Where(i => accept == null || accept(i))
+                    .OrderByDescending(i => i.HotScore * (weight?.Invoke(i) ?? 1))
+                    .ToList();
                 if (items.Count == 0) continue;
 
                 var ids = items.Select(i => i.Id).ToList();
@@ -790,6 +819,81 @@ public class AutoPostService : IAutoPostService
             }
         }
         return null;
+    }
+
+    // ---------------------------------------------------------------- breaking news
+
+    public const int MaxBreakingPerDay = 5;
+    /// <summary>A story is breaking news when this many outlets cover it within a few hours…</summary>
+    public const int BreakingMinOutlets = 6;
+    /// <summary>…or it matches a Google Trends search this big (and at least two outlets have it).</summary>
+    public const int BreakingMinSearches = 20000;
+    public static readonly TimeSpan BreakingMaxAge = TimeSpan.FromHours(3);
+    private static readonly TimeSpan BreakingGap = TimeSpan.FromHours(2);
+
+    public static bool IsBreakingNews(TrendingArticleDto item, DateTime nowUtc) =>
+        nowUtc - item.PublishedAtUtc <= BreakingMaxAge
+        && (item.CoverageCount >= BreakingMinOutlets || (item.TrendTraffic >= BreakingMinSearches && item.CoverageCount >= 2));
+
+    /// <summary>
+    /// A page may post breaking news now: 06:00–23:00, under its daily limit, 2 h after its last breaking
+    /// post, and not right around a scheduled post (that post will pick the big story anyway).
+    /// </summary>
+    public static bool BreakingAllowed(DateTime nowUtc, IReadOnlyList<string> slots, IReadOnlyList<DateTime> todaysBreakingUtc, int perDay)
+    {
+        var hour = (nowUtc + VietnamOffset).Hour;
+        if (hour < 6 || hour >= 23 || perDay <= 0) return false;
+        if (todaysBreakingUtc.Count >= perDay) return false;
+        if (todaysBreakingUtc.Any(t => nowUtc - t < BreakingGap)) return false;
+        var today = VietnamDate(nowUtc);
+        return !slots.Any(slot =>
+        {
+            var diff = SlotUtc(today, slot) - nowUtc;
+            return diff < TimeSpan.FromMinutes(60) && diff > TimeSpan.FromMinutes(-30);
+        });
+    }
+
+    private async Task StartBreakingNewsAsync(List<PageSchedule> pages, DateTime now, CancellationToken ct)
+    {
+        var dayStart = DayStartUtc(VietnamDate(now));
+        foreach (var schedule in pages.Where(p => p.Settings.Enabled && p.Settings.BreakingEnabled))
+        {
+            var pageId = schedule.Page.Id;
+            var todays = await _context.AutoPostRuns.AsNoTracking()
+                .Where(r => r.FacebookAccountId == pageId && r.IsBreaking && r.ScheduledAtUtc >= dayStart)
+                .Select(r => r.ScheduledAtUtc)
+                .ToListAsync(ct);
+            if (!BreakingAllowed(now, ParseSlots(schedule.Settings.TimeSlots), todays, schedule.Settings.BreakingPerDay)) continue;
+
+            var settings = schedule.Settings;
+            var keywords = NewsTopics.ParseKeywords(settings.TopicKeywords);
+            if (settings.Topic == NewsTopics.Custom && keywords.Count == 0) continue;
+            var region = settings.RegionMode == "World" ? "World" : "VN";
+            var pick = await PickStoryAsync(settings.Topic, keywords, region, allowOtherRegion: settings.RegionMode is not ("VN" or "World"), now, ct,
+                accept: i => IsBreakingNews(i, now), lookBackHours: new[] { (int)BreakingMaxAge.TotalHours });
+            if (pick == null) continue;
+
+            var run = new AutoPostRun
+            {
+                SlotKey = $"{VietnamDate(now):yyyy-MM-dd} breaking-{now + VietnamOffset:HHmmss} {pageId:N}",
+                FacebookAccountId = pageId,
+                ScheduledAtUtc = now,
+                IsBreaking = true,
+                Status = Producing,
+                StartedAtUtc = now
+            };
+            _context.AutoPostRuns.Add(run);
+            await _context.SaveChangesAsync(ct);
+            _logger.LogInformation("Breaking news for page {Page}: {Title} ({Outlets} outlets, trends {Trends})",
+                schedule.Page.PageName, pick.Value.Item.Title, pick.Value.Item.CoverageCount, pick.Value.Item.TrendTraffic);
+
+            await StartProductionAsync(run, settings, region, now, ct, pick);
+            if (run.Status == Producing)
+                run.Message = $"Tin nóng ({pick.Value.Item.CoverageCount} báo cùng đưa): đang làm video, xong là đăng ngay.";
+            run.UpdatedAtUtc = DateTime.UtcNow;
+            await _context.SaveChangesAsync(ct);
+            return; // one video at a time
+        }
     }
 
     private async Task PublishAsync(AutoPostRun run, CancellationToken ct)
@@ -817,14 +921,42 @@ public class AutoPostService : IAutoPostService
             return;
         }
 
+        // AI editorial pass: the headline must match the article; professional caption + first comment
+        EditorialPassDto? pass = null;
+        string? passNote = null;
+        try
+        {
+            pass = await _editorial.RunAsync(projectId, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // AI unavailable: post with the plain caption rather than miss the slot, and say so
+            _logger.LogWarning(ex, "Editorial pass for {Slot} failed", run.SlotKey);
+            passNote = $" (Không kiểm tra được tiêu đề và viết caption bằng AI: {Shorten(ex.Message, 160)})";
+        }
+        if (pass is { Consistent: false })
+        {
+            run.Status = Failed;
+            run.Message = $"Không tự đăng vì tiêu đề/nội dung video chưa khớp bài gốc: {Shorten(string.Join("; ", pass.Issues), 400)} Vào trang Video để xem và quyết định.";
+            return;
+        }
+
         // Each page posts with its own token: the request names the page explicitly
-        var result = await _facebook.PublishReelAsync(projectId, new PublishReelRequestDto { FacebookAccountId = run.FacebookAccountId }, ct);
+        var result = await _facebook.PublishReelAsync(projectId, new PublishReelRequestDto
+        {
+            FacebookAccountId = run.FacebookAccountId,
+            CustomCaption = pass?.Caption,
+            FirstComment = pass?.FirstComment
+        }, ct);
         if (string.Equals(result.UploadStatus, "Published", StringComparison.OrdinalIgnoreCase))
         {
             run.Status = Published;
             run.FacebookPostUrl = result.PostUrl;
             run.PublishedAtUtc = result.PublishedAtUtc ?? DateTime.UtcNow;
-            run.Message = "Đã đăng lên Facebook.";
+            run.Message = "Đã đăng lên Facebook."
+                          + (result.FirstCommentId != null ? " Đã bình luận đầu tiên." : "")
+                          + (result.FirstCommentError != null ? $" Chưa bình luận được: {Shorten(result.FirstCommentError, 200)}" : "")
+                          + (passNote ?? "");
             _logger.LogInformation("Auto-post {Slot} published: {Url}", run.SlotKey, result.PostUrl);
         }
         else

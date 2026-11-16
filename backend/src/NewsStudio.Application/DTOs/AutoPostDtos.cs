@@ -24,6 +24,14 @@ public class AutoPostSettingsDto
     public string DigestTime { get; set; } = "20:30";
     /// <summary>Number of stories in the digest (3–9).</summary>
     public int DigestItems { get; set; } = 6;
+    /// <summary>Sundays: "Tuần qua có gì" (the week's biggest stories) instead of the daily digest.</summary>
+    public bool WeeklyDigestEnabled { get; set; } = true;
+    /// <summary>Post big breaking news right away, outside the time slots.</summary>
+    public bool BreakingEnabled { get; set; } = true;
+    /// <summary>Maximum breaking-news videos per day (0–5).</summary>
+    public int BreakingPerDay { get; set; } = 2;
+    /// <summary>Prefer the kinds of stories that got the most views on this page.</summary>
+    public bool AutoTune { get; set; } = true;
 }
 
 public class AutoPostRunDto
@@ -38,6 +46,8 @@ public class AutoPostRunDto
     /// <summary>"yyyy-MM-dd" Vietnam date.</summary>
     public string SlotDate { get; set; } = string.Empty;
     public bool IsManual { get; set; }
+    /// <summary>Started outside the schedule because the story suddenly became big news.</summary>
+    public bool IsBreaking { get; set; }
     public string Status { get; set; } = string.Empty;
     public int Attempts { get; set; }
     public string? ArticleUrl { get; set; }

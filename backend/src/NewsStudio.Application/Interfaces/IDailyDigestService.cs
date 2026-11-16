@@ -12,7 +12,8 @@ public interface IDailyDigestService
     Task TickAsync(CancellationToken cancellationToken = default);
 
     /// <summary>Makes the pictures of today's digest for a page without posting anything.</summary>
-    Task<DailyDigestRunDto> PreviewAsync(Guid facebookAccountId, CancellationToken cancellationToken = default);
+    /// <param name="kind">"Daily" / "Weekly"; null = today's kind (weekly on Sundays when enabled).</param>
+    Task<DailyDigestRunDto> PreviewAsync(Guid facebookAccountId, string? kind = null, CancellationToken cancellationToken = default);
 
     /// <summary>Makes and posts today's digest for a page right now.</summary>
     Task<DailyDigestRunDto> PublishNowAsync(Guid facebookAccountId, CancellationToken cancellationToken = default);
