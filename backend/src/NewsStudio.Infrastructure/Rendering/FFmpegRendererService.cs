@@ -120,10 +120,12 @@ public class FFmpegRendererService : IVideoRendererService
                 if (cleanSummary.Length > 400) cleanSummary = cleanSummary[..400];
                 var cleanPub = (!string.IsNullOrWhiteSpace(request.Publisher) ? request.Publisher : "TIN TỨC 24H").Replace("\"", "\\\"");
                 var dateStr = request.PublishedDate.ToString("dd/MM/yyyy");
-                // Channel brand shown in the logo pill — rule: every video carries "Trạm Tin 24/7"
-                var brand = (_configuration["Branding:Name"] is { Length: > 0 } b ? b : "Trạm Tin 24/7").Replace("\"", "\\\"");
+                // Brand pill = name of the Facebook Page the video is made for; colours follow its topic
+                var brand = (string.IsNullOrWhiteSpace(request.BrandName) ? "Trạm Tin 24/7" : request.BrandName.Trim()).Replace("\"", "\\\"");
+                var theme = System.Text.RegularExpressions.Regex.IsMatch(request.Theme ?? "", "^[a-z-]{1,30}$") ? request.Theme : "tong-hop";
+                var topicLabel = (request.TopicLabel ?? string.Empty).Replace("\"", "\\\"");
 
-                var overlayArgs = $"\"{overlayScript}\" --output \"{overlayPath}\" --title \"{cleanTitle}\" --summary \"{cleanSummary}\" --publisher \"{cleanPub}\" --date \"{dateStr}\" --logo \"{brand}\"";
+                var overlayArgs = $"\"{overlayScript}\" --output \"{overlayPath}\" --title \"{cleanTitle}\" --summary \"{cleanSummary}\" --publisher \"{cleanPub}\" --date \"{dateStr}\" --logo \"{brand}\" --theme \"{theme}\" --topic-label \"{topicLabel}\"";
                 _logger.LogInformation("Generating news overlay at {Path} via Python script", overlayPath);
                 await RunProcessAsync(pythonExe, overlayArgs, cancellationToken);
             }

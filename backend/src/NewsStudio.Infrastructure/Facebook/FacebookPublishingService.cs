@@ -278,6 +278,12 @@ public class FacebookPublishingService : IFacebookPublishingService
         {
             account = await _context.FacebookAccounts.FirstOrDefaultAsync(a => a.PageId == request.PageId && a.IsActive, cancellationToken);
         }
+        else if (project.FacebookAccountId != null
+                 && await _context.FacebookAccounts.AnyAsync(a => a.Id == project.FacebookAccountId && a.IsActive, cancellationToken))
+        {
+            // The page the video was made for (its name is on the video)
+            account = await _context.FacebookAccounts.FindAsync(new object[] { project.FacebookAccountId.Value }, cancellationToken);
+        }
         else
         {
             account = await _context.FacebookAccounts.FirstOrDefaultAsync(a => a.IsActive, cancellationToken);

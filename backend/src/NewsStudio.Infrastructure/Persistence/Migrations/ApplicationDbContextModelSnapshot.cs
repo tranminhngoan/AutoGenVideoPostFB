@@ -819,6 +819,9 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                     b.Property<string>("ErrorMessage")
                         .HasColumnType("text");
 
+                    b.Property<Guid?>("FacebookAccountId")
+                        .HasColumnType("uuid");
+
                     b.Property<int>("Fps")
                         .HasColumnType("integer");
 
@@ -854,6 +857,10 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasMaxLength(500)
                         .HasColumnType("character varying(500)");
+
+                    b.Property<string>("Topic")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
 
                     b.Property<DateTime?>("UpdatedAtUtc")
                         .HasColumnType("timestamp with time zone");

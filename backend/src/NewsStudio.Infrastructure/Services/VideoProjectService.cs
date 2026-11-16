@@ -34,6 +34,23 @@ public class VideoProjectService : IVideoProjectService
     {
         _logger.LogInformation("Creating new VideoProject from URL: {Url}", dto.SourceUrl);
 
+        // The page the video is made for: its name goes on the video, its topic picks the colours
+        var pages = await _context.FacebookAccounts.AsNoTracking()
+            .Where(a => a.IsActive)
+            .Select(a => new { a.Id, a.PageName })
+            .ToListAsync(cancellationToken);
+        Guid? pageId = dto.FacebookAccountId is Guid requested && pages.Any(p => p.Id == requested)
+            ? requested
+            : pages.Count == 1 ? pages[0].Id : null;
+        string? topic = null;
+        if (pageId != null)
+        {
+            topic = await _context.AutoPostSettings.AsNoTracking()
+                .Where(s => s.FacebookAccountId == pageId)
+                .Select(s => s.Topic)
+                .FirstOrDefaultAsync(cancellationToken);
+        }
+
         var project = new VideoProject
         {
             Title = string.IsNullOrWhiteSpace(dto.Title) ? PlaceholderTitle : dto.Title.Trim(),
@@ -43,6 +60,8 @@ public class VideoProjectService : IVideoProjectService
             AiProvider = string.IsNullOrWhiteSpace(dto.AiProvider) ? null : dto.AiProvider,
             Voice = string.IsNullOrWhiteSpace(dto.Voice) ? null : dto.Voice,
             VoiceSpeed = string.IsNullOrWhiteSpace(dto.VoiceSpeed) ? null : dto.VoiceSpeed,
+            FacebookAccountId = pageId,
+            Topic = topic,
             Status = VideoProjectStatus.Pending,
             Resolution = "1080x1920",
             AspectRatio = "9:16",
@@ -63,7 +82,9 @@ public class VideoProjectService : IVideoProjectService
         _context.ProcessingJobs.Add(job);
         await _context.SaveChangesAsync(cancellationToken);
 
-        return MapToDto(project, new List<ProcessingJob> { job });
+        var created = MapToDto(project, new List<ProcessingJob> { job });
+        created.PageName = pages.FirstOrDefault(p => p.Id == pageId)?.PageName;
+        return created;
     }
 
     public async Task<IEnumerable<VideoProjectResponseDto>> GetProjectsAsync(int page = 1, int pageSize = 20, CancellationToken cancellationToken = default)
@@ -77,7 +98,13 @@ public class VideoProjectService : IVideoProjectService
             .Take(pageSize)
             .ToListAsync(cancellationToken);
 
-        return projects.Select(p => MapToDto(p, p.ProcessingJobs));
+        var names = await PageNamesAsync(cancellationToken);
+        return projects.Select(p =>
+        {
+            var dto = MapToDto(p, p.ProcessingJobs);
+            dto.PageName = p.FacebookAccountId != null ? names.GetValueOrDefault(p.FacebookAccountId.Value) : null;
+            return dto;
+        });
     }
 
     public async Task<VideoProjectResponseDto?> GetProjectByIdAsync(Guid id, CancellationToken cancellationToken = default)
@@ -88,7 +115,16 @@ public class VideoProjectService : IVideoProjectService
             .Include(p => p.ProcessingJobs)
             .FirstOrDefaultAsync(p => p.Id == id, cancellationToken);
 
-        return project == null ? null : MapToDto(project, project.ProcessingJobs);
+        if (project == null) return null;
+        var dto = MapToDto(project, project.ProcessingJobs);
+        if (project.FacebookAccountId != null)
+        {
+            dto.PageName = await _context.FacebookAccounts.AsNoTracking()
+                .Where(a => a.Id == project.FacebookAccountId)
+                .Select(a => a.PageName)
+                .FirstOrDefaultAsync(cancellationToken);
+        }
+        return dto;
     }
 
     public async Task<ProcessingJobResponseDto> EnqueueProjectProcessingAsync(Guid projectId, CancellationToken cancellationToken = default)
@@ -145,6 +181,9 @@ public class VideoProjectService : IVideoProjectService
         };
     }
 
+    private Task<Dictionary<Guid, string>> PageNamesAsync(CancellationToken ct) =>
+        _context.FacebookAccounts.AsNoTracking().ToDictionaryAsync(a => a.Id, a => a.PageName, ct);
+
     private static VideoProjectResponseDto MapToDto(VideoProject project, IEnumerable<ProcessingJob>? jobs)
     {
         return new VideoProjectResponseDto
@@ -164,6 +203,8 @@ public class VideoProjectService : IVideoProjectService
             AiProvider = project.AiProvider,
             Voice = project.Voice,
             VoiceSpeed = project.VoiceSpeed,
+            FacebookAccountId = project.FacebookAccountId,
+            Topic = project.Topic,
             SceneCount = project.Scenes?.Count ?? 0,
             Scenes = project.Scenes?.OrderBy(s => s.SceneNumber).Select(s => new VideoSceneResponseDto
             {

@@ -151,7 +151,9 @@ export const VideoDetailPage: React.FC<VideoDetailPageProps> = ({ projectId, onC
         setReview(reviewData);
         setFbPosts(postsData);
         setPages(pagesData);
-        setSelectedPageId((cur) => cur || pagesData[0]?.pageId || '');
+        // Default to the page the video was made for (its name is on the video)
+        const madeFor = pagesData.find((pg) => pg.id === projData?.facebookAccountId);
+        setSelectedPageId((cur) => cur || madeFor?.pageId || pagesData[0]?.pageId || '');
       } catch (err) {
         if (!silent) toast.error('Không tải được dữ liệu video', errorText(err, ''));
       } finally {
@@ -1314,13 +1316,21 @@ export const VideoDetailPage: React.FC<VideoDetailPageProps> = ({ projectId, onC
         <div className="space-y-4">
           <Field label="Trang Facebook">
             {pages.length > 0 ? (
-              <Select value={selectedPageId} onChange={(e) => setSelectedPageId(e.target.value)}>
-                {pages.map((p) => (
-                  <option key={p.id} value={p.pageId}>
-                    {p.pageName}
-                  </option>
-                ))}
-              </Select>
+              <>
+                <Select value={selectedPageId} onChange={(e) => setSelectedPageId(e.target.value)}>
+                  {pages.map((p) => (
+                    <option key={p.id} value={p.pageId}>
+                      {p.pageName}
+                      {p.id === project?.facebookAccountId ? ' (tên trên video)' : ''}
+                    </option>
+                  ))}
+                </Select>
+                {project?.pageName && pages.find((p) => p.pageId === selectedPageId && p.id !== project.facebookAccountId) && (
+                  <p className="mt-1.5 text-xs text-warning">
+                    Video đang mang tên “{project.pageName}”. Đăng lên Page khác thì tên trên video sẽ không khớp.
+                  </p>
+                )}
+              </>
             ) : (
               <Alert tone="warning" icon={<Facebook />}>
                 Chưa kết nối trang nào. Video sẽ được đăng lên trang mặc định cấu hình trên máy chủ.{' '}

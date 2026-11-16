@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Link2, ClipboardPaste, Info } from 'lucide-react';
-import { Button, Card, Field, Input, PageHeader, RadioCard, Segmented, Checkbox, Divider } from '../components/ui';
+import { Button, Card, Field, Input, PageHeader, RadioCard, Segmented, Checkbox, Divider, Select } from '../components/ui';
+import { api, FacebookAccountDto } from '../services/api';
 import { useToast } from '../components/feedback';
 import { createVideoFromUrl } from '../lib/actions';
 import { navigate } from '../lib/router';
@@ -23,6 +24,20 @@ export const CreateVideoPage: React.FC<CreateVideoPageProps> = ({ initialUrl = '
   const [aiProvider, setAiProvider] = useState<AiProvider>(prefs.aiProvider);
   const [duration, setDuration] = useState(prefs.targetDuration);
   const [voice, setVoice] = useState(prefs.voice);
+  const [pages, setPages] = useState<FacebookAccountDto[]>([]);
+  const [pageId, setPageId] = useState(prefs.defaultPageId ?? '');
+
+  useEffect(() => {
+    api
+      .getFacebookPages()
+      .then((list) => {
+        const active = list.filter((p) => p.isActive);
+        setPages(active);
+        // Forget a remembered page that was disconnected
+        setPageId((cur) => (cur && !active.some((p) => p.id === cur) ? '' : cur));
+      })
+      .catch(() => setPages([]));
+  }, []);
   const [rememberDefaults, setRememberDefaults] = useState(false);
   const [touched, setTouched] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -56,8 +71,9 @@ export const CreateVideoPage: React.FC<CreateVideoPageProps> = ({ initialUrl = '
     if (!urlValid) return;
     setSubmitting(true);
     try {
-      if (rememberDefaults) savePrefs({ aiProvider, voice, targetDuration: duration });
-      const project = await createVideoFromUrl({ url, title, aiProvider, voice, targetDuration: duration });
+      // The chosen page is always remembered: quick "Tạo video" buttons elsewhere use it too
+      savePrefs(rememberDefaults ? { aiProvider, voice, targetDuration: duration, defaultPageId: pageId } : { defaultPageId: pageId });
+      const project = await createVideoFromUrl({ url, title, aiProvider, voice, targetDuration: duration, facebookAccountId: pageId });
       toast.success('Đã bắt đầu tạo video', 'Bạn có thể theo dõi tiến độ ở trang chi tiết.');
       onCreated();
       navigate(`/videos/${project.id}`);
@@ -112,6 +128,24 @@ export const CreateVideoPage: React.FC<CreateVideoPageProps> = ({ initialUrl = '
             >
               <Input id="title" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Ví dụ: Cầu Mỹ Thuận 2 chính thức thông xe" />
             </Field>
+
+            {pages.length > 0 && (
+              <Field
+                label="Làm video cho Page"
+                htmlFor="page"
+                hint="Tên Page hiện trên video, màu video theo chủ đề của Page (chỉnh ở Tự động đăng). Video cũng đăng mặc định lên Page này."
+              >
+                <Select id="page" value={pageId} onChange={(e) => setPageId(e.target.value)}>
+                  <option value="">{pages.length === 1 ? pages[0].pageName : 'Chưa chọn (dùng tên mặc định)'}</option>
+                  {pages.length > 1 &&
+                    pages.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.pageName}
+                      </option>
+                    ))}
+                </Select>
+              </Field>
+            )}
           </div>
 
           <Divider />

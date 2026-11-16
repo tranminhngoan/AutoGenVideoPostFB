@@ -203,6 +203,25 @@ public class AutoPostApiTests : IClassFixture<WebApplicationFactory<Program>>
 
             (await _client.PutAsJsonAsync($"/api/auto-post/pages/{Guid.NewGuid()}/settings", new AutoPostSettingsDto()))
                 .StatusCode.Should().Be(HttpStatusCode.NotFound);
+
+            // A video made for the sports page carries that page's name and topic (brand + colours)
+            var created = await _client.PostAsJsonAsync("/api/video-projects", new CreateVideoProjectDto
+            {
+                SourceUrl = "https://example.com/the-thao/" + Guid.NewGuid().ToString("N"),
+                FacebookAccountId = sport.Id
+            });
+            created.StatusCode.Should().BeOneOf(HttpStatusCode.OK, HttpStatusCode.Created);
+            var project = await created.Content.ReadFromJsonAsync<VideoProjectResponseDto>();
+            project!.FacebookAccountId.Should().Be(sport.Id);
+            project.PageName.Should().Be("Test Thể Thao");
+            project.Topic.Should().Be("the-thao");
+            using (var scope = _factory.Services.CreateScope())
+            {
+                var db = scope.ServiceProvider.GetRequiredService<IApplicationDbContext>();
+                db.VideoProjects.RemoveRange(await db.VideoProjects.Where(p => p.Id == project.Id).ToListAsync());
+                db.ProcessingJobs.RemoveRange(await db.ProcessingJobs.Where(j => j.VideoProjectId == project.Id).ToListAsync());
+                await db.SaveChangesAsync();
+            }
         }
         finally
         {

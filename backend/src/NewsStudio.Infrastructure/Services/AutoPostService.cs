@@ -687,7 +687,9 @@ public class AutoPostService : IAutoPostService
             TargetDurationSeconds = settings.TargetDurationSeconds,
             AiProvider = settings.AiProvider,
             Voice = settings.Voice,
-            VoiceSpeed = settings.VoiceSpeed
+            VoiceSpeed = settings.VoiceSpeed,
+            // The video carries this page's name and its topic's colours
+            FacebookAccountId = run.FacebookAccountId
         }, ct);
 
         run.VideoProjectId = project.Id;

@@ -11,6 +11,11 @@ public class CreateVideoProjectDto
     public string? AiProvider { get; set; } = "Gemini";
     public string? Voice { get; set; } // null = server default (Tts:DefaultVoice, natural Gemini voice)
     public string? VoiceSpeed { get; set; }
+    /// <summary>
+    /// Page the video is for (its name is shown on the video; its topic sets the colours).
+    /// Null: the only connected page, if there is exactly one.
+    /// </summary>
+    public Guid? FacebookAccountId { get; set; }
 }
 
 public class VideoProjectResponseDto
@@ -30,6 +35,9 @@ public class VideoProjectResponseDto
     public string? AiProvider { get; set; }
     public string? Voice { get; set; }
     public string? VoiceSpeed { get; set; }
+    public Guid? FacebookAccountId { get; set; }
+    public string? PageName { get; set; }
+    public string? Topic { get; set; }
 
     public int SceneCount { get; set; }
     public List<VideoSceneResponseDto> Scenes { get; set; } = new();

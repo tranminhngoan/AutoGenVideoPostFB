@@ -13,10 +13,50 @@ from PIL import Image, ImageDraw, ImageFont
 WIDTH, HEIGHT = 1080, 1920
 SAFE_LEFT = 120          # cropped edge on tall phones + breathing room
 SAFE_RIGHT = 850         # clear of Facebook's right-hand action buttons
-CARD_TOP = 1050          # green news card starts here (image area is above)
+CARD_TOP = 1050          # news card starts here (image area is above)
 TEXT_BOTTOM = 1530       # Facebook's page name / caption overlay starts below this
 
-GREEN = (16, 149, 90, 255)
+# ─────────────────────────────────────────────────────────────────────────────
+# Colour theme per news topic (the Facebook Page's topic): card gradient top → bottom
+# and an accent used for the divider line, brand pill, rings, topic tag and tints.
+# ─────────────────────────────────────────────────────────────────────────────
+THEMES = {
+    "tong-hop":     {"top": (13, 85, 52),   "bottom": (6, 38, 24),   "accent": (34, 197, 94)},    # green
+    "tu-chon":      {"top": (13, 85, 52),   "bottom": (6, 38, 24),   "accent": (34, 197, 94)},
+    "thoi-su":      {"top": (120, 18, 28),  "bottom": (48, 6, 12),   "accent": (239, 68, 68)},    # news red
+    "the-gioi":     {"top": (17, 45, 102),  "bottom": (6, 16, 42),   "accent": (59, 130, 246)},   # navy
+    "kinh-doanh":   {"top": (110, 70, 8),   "bottom": (44, 27, 3),   "accent": (245, 158, 11)},   # amber gold
+    "bat-dong-san": {"top": (12, 92, 96),   "bottom": (4, 36, 38),   "accent": (20, 184, 166)},   # deep teal
+    "cong-nghe":    {"top": (52, 38, 140),  "bottom": (18, 12, 56),  "accent": (129, 140, 248)},  # indigo
+    "the-thao":     {"top": (168, 60, 8),   "bottom": (66, 20, 3),   "accent": (249, 115, 22)},   # orange
+    "giai-tri":     {"top": (138, 22, 92),  "bottom": (54, 7, 36),   "accent": (236, 72, 153)},   # pink
+    "suc-khoe":     {"top": (8, 108, 118),  "bottom": (3, 42, 48),   "accent": (34, 211, 238)},   # cyan
+    "giao-duc":     {"top": (24, 82, 158),  "bottom": (8, 32, 66),   "accent": (96, 165, 250)},   # sky blue
+    "phap-luat":    {"top": (46, 46, 56),   "bottom": (14, 14, 20),  "accent": (220, 38, 38)},    # charcoal + red
+    "doi-song":     {"top": (156, 58, 46),  "bottom": (62, 20, 16),  "accent": (251, 146, 60)},   # warm coral
+    "xe":           {"top": (40, 44, 54),   "bottom": (12, 14, 20),  "accent": (250, 204, 21)},   # graphite + yellow
+    "du-lich":      {"top": (6, 118, 138),  "bottom": (2, 46, 58),   "accent": (45, 212, 191)},   # turquoise
+    "khoa-hoc":     {"top": (62, 22, 112),  "bottom": (20, 6, 40),   "accent": (168, 85, 247)},   # purple
+}
+
+
+def _mix(color, other, ratio):
+    return tuple(int(color[i] + (other[i] - color[i]) * ratio) for i in range(3))
+
+
+def _palette(theme):
+    t = THEMES.get(theme or "", THEMES["tong-hop"])
+    accent = t["accent"]
+    return {
+        "top": t["top"] + (255,),
+        "bottom": t["bottom"] + (255,),
+        "accent": accent + (255,),
+        "line": accent + (200,),
+        "ring": accent + (45,),
+        "pill": _mix(accent, (0, 0, 0), 0.28) + (255,),
+        "date_text": _mix(accent, (255, 255, 255), 0.7) + (255,),
+        "summary_text": _mix(accent, (255, 255, 255), 0.84) + (255,),
+    }
 
 
 def _font(paths, size):
@@ -58,7 +98,7 @@ def _wrap(draw, text, font, max_width):
 def _fit_text_block(draw, title, summary, box_w, box_h):
     """
     Pick the largest font size at which the headline (bold, upper case) plus the
-    summary (regular) fill the green card without overflowing it. Short stories get
+    summary (regular) fill the news card without overflowing it. Short stories get
     big text; long ones shrink down to a readable minimum and are then trimmed.
     """
     title_text = title.strip().upper()
@@ -92,20 +132,33 @@ def _fit_text_block(draw, title, summary, box_w, box_h):
     return t_font, t_lines, t_lh, s_font, s_lines, s_lh, gap if s_lines else 0
 
 
-def generate_news_overlay(output_path, title, summary="", publisher="TIN TỨC 24H", date_str="", logo_text="Trạm Tin 24/7"):
+def _fit_brand(draw, brand, max_text_w):
+    """Largest font (28 -> 20 px) at which the page name fits the pill; very long names are shortened."""
+    for size in range(28, 19, -2):
+        font = _font(BOLD_FONTS, size)
+        if draw.textlength(brand, font=font) <= max_text_w:
+            return font, brand
+    font = _font(BOLD_FONTS, 20)
+    while len(brand) > 4 and draw.textlength(brand + "…", font=font) > max_text_w:
+        brand = brand[:-1].rstrip()
+    return font, brand + "…"
+
+
+def generate_news_overlay(output_path, title, summary="", publisher="TIN TỨC 24H", date_str="", logo_text="Trạm Tin 24/7",
+                          theme="tong-hop", topic_label=""):
     img = Image.new("RGBA", (WIDTH, HEIGHT), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
+    pal = _palette(theme)
 
-    font_logo = _font(BOLD_FONTS, 28)
     font_meta = _font(BOLD_FONTS, 22)
 
     # 1. (No source credit on the video — owner's decision. `publisher` is still accepted for compatibility.)
 
-    # 2. Green news card (full width background)
+    # 2. News card in the topic's colours (full width background)
     card_h = HEIGHT - CARD_TOP
     card_img = Image.new("RGBA", (WIDTH, card_h), (0, 0, 0, 0))
     c_draw = ImageDraw.Draw(card_img)
-    top_color, bot_color = (13, 85, 52, 255), (6, 38, 24, 255)
+    top_color, bot_color = pal["top"], pal["bottom"]
     for y in range(card_h):
         ratio = y / card_h
         c_draw.line([(0, y), (WIDTH, y)], fill=tuple(
@@ -113,22 +166,22 @@ def generate_news_overlay(output_path, title, summary="", publisher="TIN TỨC 2
     for radius in [280, 480, 680]:
         c_draw.ellipse(
             [(WIDTH // 2 - radius, card_h // 2 - radius + 50), (WIDTH // 2 + radius, card_h // 2 + radius + 50)],
-            outline=(20, 115, 72, 45), width=2)
+            outline=pal["ring"], width=2)
     img.paste(card_img, (0, CARD_TOP))
-    draw.line([(0, CARD_TOP), (WIDTH, CARD_TOP)], fill=(34, 197, 94, 200), width=3)
+    draw.line([(0, CARD_TOP), (WIDTH, CARD_TOP)], fill=pal["line"], width=3)
 
-    # 3. Brand pill on the card edge
-    brand = (logo_text or "Trạm Tin 24/7").strip()
+    # 3. Brand pill on the card edge: the name of the Facebook Page posting the video
     logo_h, icon_d = 64, 44
     logo_y = CARD_TOP - 36
+    font_logo, brand = _fit_brand(draw, (logo_text or "Trạm Tin 24/7").strip(), SAFE_RIGHT - SAFE_LEFT - (10 + icon_d + 14 + 26))
     t_bbox = draw.textbbox((0, 0), brand, font=font_logo)
     logo_w = 10 + icon_d + 14 + (t_bbox[2] - t_bbox[0]) + 26
     x0 = SAFE_LEFT
     draw.rounded_rectangle([x0 - 2, logo_y - 2, x0 + logo_w + 2, logo_y + logo_h + 4], radius=32, fill=(0, 0, 0, 90))
-    draw.rounded_rectangle([x0, logo_y, x0 + logo_w, logo_y + logo_h], radius=32, fill=GREEN, outline=(255, 255, 255, 220), width=2)
+    draw.rounded_rectangle([x0, logo_y, x0 + logo_w, logo_y + logo_h], radius=32, fill=pal["pill"], outline=(255, 255, 255, 220), width=2)
     cx0, cy0 = x0 + 10, logo_y + 10
     draw.ellipse([cx0, cy0, cx0 + icon_d, cy0 + icon_d], fill=(255, 255, 255, 255))
-    draw.polygon([(cx0 + 17, cy0 + 12), (cx0 + 17, cy0 + 32), (cx0 + 33, cy0 + 22)], fill=GREEN)
+    draw.polygon([(cx0 + 17, cy0 + 12), (cx0 + 17, cy0 + 32), (cx0 + 33, cy0 + 22)], fill=pal["pill"])
     text_h = t_bbox[3] - t_bbox[1]
     draw.text((cx0 + icon_d + 14, logo_y + (logo_h - text_h) // 2 - t_bbox[1]), brand, font=font_logo, fill=(255, 255, 255, 255))
 
@@ -141,7 +194,17 @@ def generate_news_overlay(output_path, title, summary="", publisher="TIN TỨC 2
     dw, dh = d_bbox[2] - d_bbox[0] + 20, d_bbox[3] - d_bbox[1] + 12
     date_y = CARD_TOP + 52
     draw.rounded_rectangle([SAFE_LEFT, date_y, SAFE_LEFT + dw, date_y + dh], radius=6, fill=(255, 255, 255, 30))
-    draw.text((SAFE_LEFT + 10, date_y + 6 - d_bbox[1]), date_text, font=font_meta, fill=(187, 247, 208, 255))
+    draw.text((SAFE_LEFT + 10, date_y + 6 - d_bbox[1]), date_text, font=font_meta, fill=pal["date_text"])
+
+    # 4b. Topic tag next to the date (e.g. "THỂ THAO"), only when it fits inside the safe zone
+    label = (topic_label or "").strip().upper()
+    if label:
+        l_bbox = draw.textbbox((0, 0), label, font=font_meta)
+        lw = l_bbox[2] - l_bbox[0] + 24
+        lx = SAFE_LEFT + dw + 14
+        if lx + lw <= SAFE_RIGHT:
+            draw.rounded_rectangle([lx, date_y, lx + lw, date_y + dh], radius=6, fill=pal["accent"])
+            draw.text((lx + 12, date_y + 6 - l_bbox[1]), label, font=font_meta, fill=(255, 255, 255, 255))
 
     # 5. Headline + summary, auto-sized to fill the card inside the safe zone
     box_top = date_y + dh + 30
@@ -157,7 +220,7 @@ def generate_news_overlay(output_path, title, summary="", publisher="TIN TỨC 2
     y += gap
     for line in s_lines:
         draw.text((SAFE_LEFT + 1, y + 1), line, font=s_font, fill=(0, 0, 0, 160))
-        draw.text((SAFE_LEFT, y), line, font=s_font, fill=(214, 245, 226, 255))
+        draw.text((SAFE_LEFT, y), line, font=s_font, fill=pal["summary_text"])
         y += s_lh
 
     # (No fake progress bar / timer: the overlay is static — players show real progress.)
@@ -174,6 +237,8 @@ if __name__ == "__main__":
     parser.add_argument("--publisher", default="TIN TỨC 24H")
     parser.add_argument("--date", default="")
     parser.add_argument("--logo", default="Trạm Tin 24/7")
+    parser.add_argument("--theme", default="tong-hop")
+    parser.add_argument("--topic-label", default="")
     args = parser.parse_args()
 
     generate_news_overlay(
@@ -183,4 +248,6 @@ if __name__ == "__main__":
         publisher=args.publisher,
         date_str=args.date,
         logo_text=args.logo,
+        theme=args.theme,
+        topic_label=args.topic_label,
     )

@@ -7,6 +7,8 @@ export interface StudioPrefs {
   /** Upper bound in seconds — the AI shortens the video when the article has less to say. */
   targetDuration: number;
   hashtags: string;
+  /** Facebook Page (account id) new videos are made for: its name goes on the video. '' = ask the server. */
+  defaultPageId?: string;
 }
 
 export interface VoiceOption {

@@ -51,6 +51,12 @@ public class VideoRenderRequest
     public List<VideoScenePlanDto> Scenes { get; set; } = new();
     public bool EnableAudioDucking { get; set; } = true;
     public string BackgroundMusicTrack { get; set; } = "ambient-news";
+    /// <summary>Name shown in the brand pill: the Facebook Page the video is made for.</summary>
+    public string BrandName { get; set; } = "Trạm Tin 24/7";
+    /// <summary>Topic key choosing the colour theme ("tong-hop", "the-thao", …).</summary>
+    public string Theme { get; set; } = "tong-hop";
+    /// <summary>Topic label shown on the card, e.g. "THỂ THAO"; empty for general news.</summary>
+    public string? TopicLabel { get; set; }
 }
 
 public class VideoRenderResult

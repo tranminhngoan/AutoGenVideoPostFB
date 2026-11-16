@@ -107,8 +107,21 @@ public class VideoProductionService : IVideoProductionService
             await _context.SaveChangesAsync(cancellationToken);
 
             // 4. Render 9:16 Vertical Video
+            // Brand = the Facebook Page the video is made for; colours follow that page's topic
+            var pageName = project.FacebookAccountId == null ? null : await _context.FacebookAccounts.AsNoTracking()
+                .Where(a => a.Id == project.FacebookAccountId)
+                .Select(a => a.PageName)
+                .FirstOrDefaultAsync(cancellationToken);
+            var theme = NewsStudio.Infrastructure.Trending.NewsTopics.Find(project.Topic)?.Key ?? NewsStudio.Infrastructure.Trending.NewsTopics.General;
+
             var renderRequest = new VideoRenderRequest
             {
+                BrandName = !string.IsNullOrWhiteSpace(pageName) ? pageName.Trim()
+                    : _configuration["Branding:Name"] is { Length: > 0 } configured ? configured : "Trạm Tin 24/7",
+                Theme = theme,
+                TopicLabel = theme is NewsStudio.Infrastructure.Trending.NewsTopics.General or NewsStudio.Infrastructure.Trending.NewsTopics.Custom
+                    ? null
+                    : NewsStudio.Infrastructure.Trending.NewsTopics.NameOf(theme).ToUpperInvariant(),
                 ProjectId = projectId,
                 Title = project.Title,
                 Summary = project.Script.Hook,

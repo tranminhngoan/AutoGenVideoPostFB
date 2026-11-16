@@ -61,6 +61,11 @@ export interface VideoProject {
   aiProvider?: string | null;
   voice?: string | null;
   voiceSpeed?: string | null;
+  /** Facebook Page the video is made for (name shown on the video) */
+  facebookAccountId?: string | null;
+  pageName?: string | null;
+  /** Topic of that page — sets the video colours */
+  topic?: string | null;
   sceneCount: number;
   scenes: VideoScene[];
   jobs?: ProjectJob[];

@@ -27,6 +27,14 @@ public class VideoProject : BaseEntity
     /// <summary>TTS speaking-rate offset chosen when the project was created, e.g. "+12%".</summary>
     public string? VoiceSpeed { get; set; }
 
+    /// <summary>
+    /// Facebook Page the video is made for: its name is the brand shown on the video, and the video is
+    /// posted there by default.
+    /// </summary>
+    public Guid? FacebookAccountId { get; set; }
+    /// <summary>News topic of that page (see NewsTopics) — picks the video's colour theme.</summary>
+    public string? Topic { get; set; }
+
     public string? OutputVideoPath { get; set; }
     public string? ErrorMessage { get; set; }
 

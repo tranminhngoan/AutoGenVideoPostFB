@@ -9,7 +9,7 @@ public static class PromptTemplates
     /// <summary>Natural Vietnamese news-reading pace used to turn a time budget into a word budget.</summary>
     public const double WordsPerSecond = 2.5;
 
-    public const string SystemEditorialPrompt = @"Bạn là biên tập viên bản tin của kênh Trạm Tin 24/7.
+    public const string SystemEditorialPrompt = @"Bạn là biên tập viên bản tin của một kênh tin tức trên Facebook.
 Nhiệm vụ: đọc bài báo đã bóc tách và viết lại thành lời dẫn cho một video tin tức dọc 9:16 đăng Facebook Reels.
 
 NGUYÊN TẮC BẮT BUỘC:

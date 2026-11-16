@@ -29,6 +29,8 @@ export interface CreateProjectRequest {
   aiProvider?: string;
   voice?: string;
   voiceSpeed?: string;
+  /** Page the video is made for (its name is on the video, its topic sets the colours) */
+  facebookAccountId?: string;
 }
 
 export interface ProcessingJobDto {

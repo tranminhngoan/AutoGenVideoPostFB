@@ -120,6 +120,7 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
         // VideoProject Configuration
         modelBuilder.Entity<VideoProject>(entity =>
         {
+            entity.Property(e => e.Topic).HasMaxLength(50);
             entity.ToTable("VideoProjects");
             entity.HasKey(e => e.Id);
             entity.Property(e => e.Title).HasMaxLength(500).IsRequired();

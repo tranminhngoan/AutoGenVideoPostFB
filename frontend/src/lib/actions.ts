@@ -9,6 +9,8 @@ export interface CreateOptions {
   voice?: string;
   speed?: string;
   targetDuration?: number;
+  /** Page the video is made for; defaults to the remembered choice */
+  facebookAccountId?: string;
 }
 
 /** Creates a project from an article URL and queues the processing pipeline. */
@@ -24,6 +26,7 @@ export async function createVideoFromUrl(opts: CreateOptions) {
     aiProvider: opts.aiProvider ?? prefs.aiProvider,
     voice: opts.voice ?? prefs.voice,
     voiceSpeed: opts.speed ?? prefs.speed,
+    facebookAccountId: (opts.facebookAccountId ?? prefs.defaultPageId) || undefined,
   });
   await api.processVideoProject(project.id);
   return project;
