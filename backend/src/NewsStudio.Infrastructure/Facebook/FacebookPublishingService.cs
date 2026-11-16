@@ -530,126 +530,45 @@ public class FacebookPublishingService : IFacebookPublishingService
             return null;
         }
 
-        var views = 0L;
-        var reach = 0L;
-        var engagement = 0L;
-        var shares = 0L;
-        var comments = 0L;
-        var watchTime = 0.0;
-        string? insightsError = null;
-
+        GraphVideoStats stats;
         if (post.FacebookAccount == null || string.IsNullOrWhiteSpace(post.FacebookVideoId))
         {
-            insightsError = "Bài đăng chưa có mã video Facebook hoặc trang đã bị ngắt kết nối.";
+            stats = new GraphVideoStats { Error = "Bài đăng chưa có mã video Facebook hoặc trang đã bị ngắt kết nối." };
         }
         else
         {
             var rawToken = _tokenProtection.DecryptToken(post.FacebookAccount.EncryptedAccessToken);
-            var apiSucceeded = false;
-            try
-            {
-                // 1. Lấy số liệu trực tiếp từ đối tượng Video (views, likes, comments)
-                var videoFieldsUrl = $"https://graph.facebook.com/{_graphApiVersion}/{post.FacebookVideoId}?fields=views,likes.summary(true),comments.summary(true)&access_token={rawToken}";
-                var videoRes = await _httpClient.GetAsync(videoFieldsUrl, cancellationToken);
-                if (videoRes.IsSuccessStatusCode)
-                {
-                    apiSucceeded = true;
-                    var vDoc = await videoRes.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: cancellationToken);
-                    if (vDoc.TryGetProperty("views", out var viewsProp) && viewsProp.TryGetInt64(out var vw))
-                    {
-                        views = vw;
-                    }
-                    if (vDoc.TryGetProperty("likes", out var likesProp) && likesProp.TryGetProperty("summary", out var lSummary) && lSummary.TryGetProperty("total_count", out var lCount) && lCount.TryGetInt64(out var lc))
-                    {
-                        engagement = lc;
-                    }
-                    if (vDoc.TryGetProperty("comments", out var commProp) && commProp.TryGetProperty("summary", out var cSummary) && cSummary.TryGetProperty("total_count", out var cCount) && cCount.TryGetInt64(out var cc))
-                    {
-                        comments = cc;
-                    }
-                }
-
-                // 2. Lấy số lượt chia sẻ nếu có FacebookPostId
-                if (!string.IsNullOrWhiteSpace(post.FacebookPostId))
-                {
-                    var postFieldsUrl = $"https://graph.facebook.com/{_graphApiVersion}/{post.FacebookPostId}?fields=shares&access_token={rawToken}";
-                    var postRes = await _httpClient.GetAsync(postFieldsUrl, cancellationToken);
-                    if (postRes.IsSuccessStatusCode)
-                    {
-                        var pDoc = await postRes.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: cancellationToken);
-                        if (pDoc.TryGetProperty("shares", out var sharesProp) && sharesProp.TryGetProperty("count", out var sCount) && sCount.TryGetInt64(out var sc))
-                        {
-                            shares = sc;
-                        }
-                    }
-                }
-
-                // 3. Lấy thêm chỉ số video_insights nếu khả dụng (chỉ dùng các metric hợp lệ cho video)
-                var insightsUrl = $"https://graph.facebook.com/{_graphApiVersion}/{post.FacebookVideoId}/video_insights?metric=total_video_views,total_video_avg_time_watched&access_token={rawToken}";
-                var response = await _httpClient.GetAsync(insightsUrl, cancellationToken);
-                if (response.IsSuccessStatusCode)
-                {
-                    apiSucceeded = true;
-                    var doc = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: cancellationToken);
-                    if (doc.TryGetProperty("data", out var dataArray) && dataArray.ValueKind == JsonValueKind.Array)
-                    {
-                        foreach (var item in dataArray.EnumerateArray())
-                        {
-                            var name = item.TryGetProperty("name", out var n) ? n.GetString() : null;
-                            if (item.TryGetProperty("values", out var vals) && vals.GetArrayLength() > 0)
-                            {
-                                var valObj = vals[0];
-                                if (valObj.TryGetProperty("value", out var v))
-                                {
-                                    if (name == "total_video_views" && v.TryGetInt64(out var vw) && vw > views) views = vw;
-                                    if (name == "total_video_avg_time_watched" && v.TryGetDouble(out var wt)) watchTime = wt;
-                                }
-                            }
-                        }
-                    }
-                }
-                else
-                {
-                    _logger.LogInformation("video_insights endpoint returned non-success ({StatusCode}). Continuing with object-level metrics.", response.StatusCode);
-                }
-
-                // Reach ước tính từ Views
-                reach = Math.Max(reach, views);
-
-                if (!apiSucceeded)
-                {
-                    insightsError = await ReadGraphErrorAsync(response, cancellationToken);
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning("Insights API call could not be completed: {Message}", ex.Message);
-                if (!apiSucceeded)
-                {
-                    insightsError = "Không kết nối được tới Meta Graph API: " + ex.Message;
-                }
-            }
+            stats = await ReadVideoStatsAsync(rawToken, post.FacebookVideoId, post.FacebookPostId, cancellationToken);
         }
 
         // Never store zeros as if they were real numbers when Meta could not be reached
-        if (insightsError != null && !_simulate)
+        if (stats.Error != null && !_simulate)
         {
-            throw new InvalidOperationException($"Không lấy được số liệu từ Facebook. {insightsError}");
+            throw new InvalidOperationException($"Không lấy được số liệu từ Facebook. {stats.Error}");
         }
 
-        var metric = new VideoMetric
+        // One snapshot per video per (Vietnam) day: later reads the same day update it, so the
+        // history stays small and day-by-day view gains can be computed for the dashboard.
+        var now = DateTime.UtcNow;
+        var dayStartUtc = VietnamDayStartUtc(now);
+        var metric = post.Metrics
+            .Where(m => m.Status == "Recorded" && m.CollectedAtUtc >= dayStartUtc)
+            .OrderByDescending(m => m.CollectedAtUtc)
+            .FirstOrDefault();
+        if (metric == null)
         {
-            FacebookPostId = post.Id,
-            Views = views,
-            Reach = reach,
-            Engagement = engagement,
-            Shares = shares,
-            Comments = comments,
-            WatchTimeSeconds = watchTime,
-            CollectedAtUtc = DateTime.UtcNow,
-            Status = "Recorded"
-        };
-        _context.VideoMetrics.Add(metric);
+            metric = new VideoMetric { FacebookPostId = post.Id, Status = "Recorded" };
+            _context.VideoMetrics.Add(metric);
+        }
+        // Lifetime counters only go up: a lower reading (e.g. a metric briefly missing) keeps the old value
+        var previous = post.Metrics.Where(m => m != metric).OrderByDescending(m => m.CollectedAtUtc).FirstOrDefault();
+        metric.Views = Math.Max(stats.Views, previous?.Views ?? 0);
+        metric.Reach = Math.Max(stats.Reach, previous?.Reach ?? 0);
+        metric.Engagement = Math.Max(stats.Likes, previous?.Engagement ?? 0);
+        metric.Shares = Math.Max(stats.Shares, previous?.Shares ?? 0);
+        metric.Comments = Math.Max(stats.Comments, previous?.Comments ?? 0);
+        metric.WatchTimeSeconds = stats.AvgWatchSeconds > 0 ? stats.AvgWatchSeconds : previous?.WatchTimeSeconds ?? 0;
+        metric.CollectedAtUtc = now;
         await _context.SaveChangesAsync(cancellationToken);
 
         return new VideoMetricDto
@@ -665,6 +584,168 @@ public class FacebookPublishingService : IFacebookPublishingService
             CollectedAtUtc = metric.CollectedAtUtc
         };
     }
+
+    /// <summary>Midnight (UTC+7) of the Vietnam day containing <paramref name="utc"/>, as UTC.</summary>
+    public static DateTime VietnamDayStartUtc(DateTime utc) => utc.AddHours(7).Date.AddHours(-7);
+
+    private sealed class GraphVideoStats
+    {
+        public long Views { get; set; }
+        public long Reach { get; set; }
+        public long Likes { get; set; }
+        public long Comments { get; set; }
+        public long Shares { get; set; }
+        public double AvgWatchSeconds { get; set; }
+        public string? Error { get; set; }
+    }
+
+    /// <summary>
+    /// Reads a published Reel's lifetime numbers. Views come from the Reels insights
+    /// (fb_reels_total_plays = plays incl. replays, needs the read_insights permission), then the classic
+    /// video insights, then the video's plain "views" field as a last resort.
+    /// </summary>
+    private async Task<GraphVideoStats> ReadVideoStatsAsync(string token, string videoId, string? postId, CancellationToken ct)
+    {
+        var stats = new GraphVideoStats();
+        var gotViews = false;
+        string? insightsError = null;
+        var baseUrl = $"https://graph.facebook.com/{_graphApiVersion}";
+        try
+        {
+            // 1. Reels insights
+            var reels = await GetGraphAsync($"{baseUrl}/{videoId}/video_insights?metric=fb_reels_total_plays,blue_reels_play_count,post_impressions_unique,post_video_avg_time_watched,post_video_social_actions&access_token={token}", ct);
+            if (reels.Ok)
+            {
+                var values = InsightValues(reels.Body);
+                if (values.ContainsKey("fb_reels_total_plays") || values.ContainsKey("blue_reels_play_count"))
+                {
+                    stats.Views = Math.Max(Number(values, "fb_reels_total_plays"), Number(values, "blue_reels_play_count"));
+                    gotViews = true;
+                }
+                stats.Reach = Number(values, "post_impressions_unique");
+                var avgMs = Number(values, "post_video_avg_time_watched");
+                if (avgMs > 0) stats.AvgWatchSeconds = Math.Round(avgMs / 1000.0, 1);
+                if (values.TryGetValue("post_video_social_actions", out var social) && social.ValueKind == JsonValueKind.Object)
+                {
+                    foreach (var prop in social.EnumerateObject())
+                    {
+                        if (!prop.Value.TryGetInt64(out var n)) continue;
+                        if (prop.Name.Contains("comment", StringComparison.OrdinalIgnoreCase)) stats.Comments = Math.Max(stats.Comments, n);
+                        if (prop.Name.Contains("share", StringComparison.OrdinalIgnoreCase)) stats.Shares = Math.Max(stats.Shares, n);
+                    }
+                }
+            }
+            else
+            {
+                insightsError = reels.Error;
+            }
+
+            // 2. Classic video insights (videos that aren't Reels, or older API behaviour)
+            if (!gotViews)
+            {
+                var video = await GetGraphAsync($"{baseUrl}/{videoId}/video_insights?metric=total_video_views,total_video_impressions_unique,total_video_avg_time_watched&access_token={token}", ct);
+                if (video.Ok)
+                {
+                    var values = InsightValues(video.Body);
+                    if (values.ContainsKey("total_video_views"))
+                    {
+                        stats.Views = Number(values, "total_video_views");
+                        gotViews = true;
+                    }
+                    stats.Reach = Math.Max(stats.Reach, Number(values, "total_video_impressions_unique"));
+                    var avgMs = Number(values, "total_video_avg_time_watched");
+                    if (stats.AvgWatchSeconds == 0 && avgMs > 0) stats.AvgWatchSeconds = Math.Round(avgMs / 1000.0, 1);
+                }
+                else
+                {
+                    insightsError ??= video.Error;
+                }
+            }
+
+            // 3. Plain "views" field (works with pages_read_engagement only on some videos)
+            if (!gotViews)
+            {
+                var field = await GetGraphAsync($"{baseUrl}/{videoId}?fields=views&access_token={token}", ct);
+                if (field.Ok && field.Body.TryGetProperty("views", out var v) && v.TryGetInt64(out var vw))
+                {
+                    stats.Views = vw;
+                    gotViews = true;
+                }
+            }
+
+            // Likes and comments from the video object
+            var counts = await GetGraphAsync($"{baseUrl}/{videoId}?fields=likes.summary(true),comments.summary(true)&access_token={token}", ct);
+            if (counts.Ok)
+            {
+                stats.Likes = SummaryCount(counts.Body, "likes");
+                stats.Comments = Math.Max(stats.Comments, SummaryCount(counts.Body, "comments"));
+            }
+
+            // Shares from the post
+            if (!string.IsNullOrWhiteSpace(postId))
+            {
+                var shares = await GetGraphAsync($"{baseUrl}/{postId}?fields=shares&access_token={token}", ct);
+                if (shares.Ok && shares.Body.TryGetProperty("shares", out var sp) && sp.TryGetProperty("count", out var sc) && sc.TryGetInt64(out var n))
+                {
+                    stats.Shares = Math.Max(stats.Shares, n);
+                }
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning("Reading Reel stats for video {VideoId} failed: {Message}", videoId, ex.Message);
+            insightsError = "Không kết nối được tới Meta Graph API: " + ex.Message;
+        }
+
+        if (!gotViews)
+        {
+            var permission = insightsError != null
+                && (insightsError.Contains("permission", StringComparison.OrdinalIgnoreCase)
+                    || insightsError.Contains("read_insights", StringComparison.OrdinalIgnoreCase)
+                    || insightsError.Contains("(#10)") || insightsError.Contains("(#200)"));
+            stats.Error = permission
+                ? "Token của Page chưa có quyền xem thống kê (read_insights). Hãy tạo lại Page Access Token có thêm quyền read_insights và pages_read_engagement rồi kết nối lại Page. Chi tiết: " + insightsError
+                : insightsError ?? "Meta không trả về lượt xem cho video này.";
+        }
+        return stats;
+    }
+
+    private async Task<(bool Ok, JsonElement Body, string? Error)> GetGraphAsync(string url, CancellationToken ct)
+    {
+        using var response = await _httpClient.GetAsync(url, ct);
+        if (!response.IsSuccessStatusCode) return (false, default, await ReadGraphErrorAsync(response, ct));
+        return (true, await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: ct), null);
+    }
+
+    /// <summary>metric name → value of its first (lifetime) entry.</summary>
+    private static Dictionary<string, JsonElement> InsightValues(JsonElement body)
+    {
+        var result = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+        if (!body.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array) return result;
+        foreach (var item in data.EnumerateArray())
+        {
+            if (item.TryGetProperty("name", out var name) && name.GetString() is { } key
+                && item.TryGetProperty("values", out var vals) && vals.ValueKind == JsonValueKind.Array && vals.GetArrayLength() > 0
+                && vals[0].TryGetProperty("value", out var value))
+            {
+                result[key] = value.Clone();
+            }
+        }
+        return result;
+    }
+
+    private static long Number(Dictionary<string, JsonElement> values, string key)
+    {
+        if (!values.TryGetValue(key, out var v)) return 0;
+        if (v.ValueKind == JsonValueKind.Number) return v.TryGetInt64(out var n) ? n : (long)v.GetDouble();
+        if (v.ValueKind == JsonValueKind.Object)
+            return v.EnumerateObject().Sum(p => p.Value.ValueKind == JsonValueKind.Number && p.Value.TryGetInt64(out var x) ? x : 0);
+        return 0;
+    }
+
+    private static long SummaryCount(JsonElement body, string field) =>
+        body.TryGetProperty(field, out var f) && f.TryGetProperty("summary", out var s)
+        && s.TryGetProperty("total_count", out var c) && c.TryGetInt64(out var n) ? n : 0;
 
     public async Task<List<FacebookPostDto>> GetProjectPostsAsync(Guid videoProjectId, CancellationToken cancellationToken = default)
     {

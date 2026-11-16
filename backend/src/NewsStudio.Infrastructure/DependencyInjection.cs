@@ -108,6 +108,7 @@ public static class DependencyInjection
         // Phase 7: Facebook Graph API & Reels Publishing
         services.AddSingleton<IFacebookTokenProtectionService, FacebookTokenProtectionService>();
         services.AddHttpClient<IFacebookPublishingService, FacebookPublishingService>();
+        services.AddScoped<IPageStatsService, NewsStudio.Infrastructure.Facebook.PageStatsService>();
 
         // Phase 8: Production Hardening, Job Recovery, Metrics & Storage Cleanup
         services.AddScoped<IJobRecoveryService, JobRecoveryService>();

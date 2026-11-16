@@ -13,10 +13,26 @@ namespace NewsStudio.Api.Controllers;
 public class FacebookController : ControllerBase
 {
     private readonly IFacebookPublishingService _facebookService;
+    private readonly IPageStatsService _pageStats;
 
-    public FacebookController(IFacebookPublishingService facebookService)
+    public FacebookController(IFacebookPublishingService facebookService, IPageStatsService pageStats)
     {
         _facebookService = facebookService;
+        _pageStats = pageStats;
+    }
+
+    /// <summary>Lượt xem Reels theo từng Page: tổng, hôm nay, 7 ngày và từng ngày.</summary>
+    [HttpGet("page-stats")]
+    public async Task<ActionResult<PageStatsOverviewDto>> GetPageStats([FromQuery] int days = 14, CancellationToken cancellationToken = default)
+    {
+        return Ok(await _pageStats.GetOverviewAsync(days, cancellationToken));
+    }
+
+    /// <summary>Đọc ngay số liệu mới nhất từ Facebook cho các Reels đã đăng.</summary>
+    [HttpPost("page-stats/sync")]
+    public async Task<ActionResult<PageStatsSyncResultDto>> SyncPageStats(CancellationToken cancellationToken)
+    {
+        return Ok(await _pageStats.SyncAsync(true, cancellationToken));
     }
 
     /// <summary>

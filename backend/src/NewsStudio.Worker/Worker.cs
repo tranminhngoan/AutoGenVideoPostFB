@@ -105,6 +105,12 @@ public class Worker : BackgroundService
                 "auto-post-tick",
                 service => service.TickAsync(CancellationToken.None),
                 "*/2 * * * *");
+
+            // Views of published Reels, per Facebook Page (dashboard)
+            recurring.AddOrUpdate<IPageStatsService>(
+                "facebook-stats-sync",
+                service => service.SyncAsync(false, CancellationToken.None),
+                "7,37 * * * *");
         }
         catch (Exception ex)
         {

@@ -287,6 +287,10 @@ try
                 "auto-post-tick",
                 s => s.TickAsync(CancellationToken.None),
                 "*/2 * * * *");
+            recurring.AddOrUpdate<NewsStudio.Application.Interfaces.IPageStatsService>(
+                "facebook-stats-sync",
+                s => s.SyncAsync(false, CancellationToken.None),
+                "7,37 * * * *");
 
             var jobs = app.Services.GetRequiredService<IBackgroundJobClient>();
             jobs.Enqueue<NewsStudio.Application.Interfaces.IJobRecoveryService>(s => s.RecoverDanglingJobsAsync(CancellationToken.None));

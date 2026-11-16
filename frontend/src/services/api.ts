@@ -93,6 +93,19 @@ export const api = {
     return await res.json();
   },
 
+  // ── Lượt xem theo Page ──
+  async getPageStats(days = 14): Promise<PageStatsOverviewDto> {
+    const res = await fetch(`${API_BASE}/facebook/page-stats?days=${days}`);
+    if (!res.ok) throw new Error(await apiError(res, 'Không tải được thống kê lượt xem'));
+    return await res.json();
+  },
+
+  async syncPageStats(): Promise<PageStatsSyncResultDto> {
+    const res = await fetch(`${API_BASE}/facebook/page-stats/sync`, { method: 'POST' });
+    if (!res.ok) throw new Error(await apiError(res, 'Không cập nhật được số liệu từ Facebook'));
+    return await res.json();
+  },
+
   // ── Tự động đăng (nhiều Page) ──
   async getAutoPost(): Promise<AutoPostOverviewDto> {
     const res = await fetch(`${API_BASE}/auto-post`);
@@ -977,4 +990,53 @@ export interface AutoPostOverviewDto {
   recentRuns: AutoPostRunDto[];
   maxConcurrentVideos: number;
   warnings: string[];
+}
+
+// ── Lượt xem theo Page ──
+export interface PageTopVideoDto {
+  videoProjectId: string;
+  title: string;
+  postUrl?: string | null;
+  views: number;
+  publishedAtUtc?: string | null;
+}
+
+export interface PageViewStatsDto {
+  facebookAccountId: string;
+  pageName: string;
+  topic?: string | null;
+  topicName?: string | null;
+  isActive: boolean;
+  videos: number;
+  videosWithStats: number;
+  totalViews: number;
+  viewsToday: number;
+  views7Days: number;
+  viewsPrevious7Days: number;
+  averageViewsPerVideo: number;
+  reach: number;
+  likes: number;
+  comments: number;
+  shares: number;
+  /** Views gained per day, aligned to PageStatsOverviewDto.dates */
+  dailyViews: number[];
+  topVideo?: PageTopVideoDto | null;
+  lastSyncedUtc?: string | null;
+  syncError?: string | null;
+}
+
+export interface PageStatsOverviewDto {
+  days: number;
+  /** Vietnam dates (yyyy-MM-dd), oldest first */
+  dates: string[];
+  dailyViews: number[];
+  totals: { videos: number; totalViews: number; viewsToday: number; views7Days: number; viewsPrevious7Days: number };
+  pages: PageViewStatsDto[];
+  lastSyncUtc?: string | null;
+}
+
+export interface PageStatsSyncResultDto {
+  postsChecked: number;
+  postsUpdated: number;
+  errors: string[];
 }
