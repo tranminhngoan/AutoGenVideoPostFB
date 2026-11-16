@@ -85,8 +85,8 @@ public class ArticleService : IArticleService
                 Status = category == ImageCategory.Unsuitable ? "Excluded" : "Extracted"
             };
 
+            // EF relationship fix-up already puts it in article.Images (adding it again listed every image twice)
             _context.ArticleImages.Add(articleImage);
-            article.Images.Add(articleImage);
         }
 
         await _context.SaveChangesAsync(cancellationToken);
@@ -144,7 +144,7 @@ public class ArticleService : IArticleService
 
         if (dto.SelectedForVideo.HasValue)
         {
-            image.Status = dto.SelectedForVideo.Value ? "Extracted" : "Excluded";
+            image.Status = NewsStudio.Infrastructure.Common.ImageStatus.Toggle(image.Status, dto.SelectedForVideo.Value);
         }
 
         await _context.SaveChangesAsync(cancellationToken);
@@ -164,7 +164,8 @@ public class ArticleService : IArticleService
             RightsStatus = image.RightsStatus.ToString(),
             Category = image.Category.ToString(),
             Status = image.Status,
-            SelectedForVideo = image.Status != "Excluded"
+            ErrorMessage = image.ErrorMessage,
+            SelectedForVideo = NewsStudio.Infrastructure.Common.ImageStatus.IsSelectedForVideo(image.Status)
         };
     }
 
@@ -199,7 +200,8 @@ public class ArticleService : IArticleService
                 RightsStatus = i.RightsStatus.ToString(),
                 Category = i.Category.ToString(),
                 Status = i.Status,
-                SelectedForVideo = i.Status != "Excluded"
+                ErrorMessage = i.ErrorMessage,
+                SelectedForVideo = NewsStudio.Infrastructure.Common.ImageStatus.IsSelectedForVideo(i.Status)
             }).ToList()
         };
     }

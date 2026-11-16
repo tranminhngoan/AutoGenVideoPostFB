@@ -88,7 +88,7 @@ public class ScriptService : IScriptService
                 Order = img.ArticleImageOrder,
                 Category = img.Category.ToString(),
                 RightsStatus = img.RightsStatus.ToString(),
-                SelectedForVideo = img.Status != "Excluded"
+                SelectedForVideo = NewsStudio.Infrastructure.Common.ImageStatus.IsSelectedForVideo(img.Status)
             }).ToList()
         };
 
@@ -199,7 +199,7 @@ public class ScriptService : IScriptService
             Order = img.ArticleImageOrder,
             Category = img.Category.ToString(),
             RightsStatus = img.RightsStatus.ToString(),
-            SelectedForVideo = img.Status != "Excluded"
+            SelectedForVideo = NewsStudio.Infrastructure.Common.ImageStatus.IsSelectedForVideo(img.Status)
         }).ToList() ?? new List<ArticleImageInputDto>();
 
         var scriptResult = new EditorialScriptResult
@@ -240,6 +240,8 @@ public class ScriptService : IScriptService
             ImageUrl = s.SelectedArticleImage?.OriginalImageUrl,
             ImageCaption = s.ImageCaption ?? s.SelectedArticleImage?.Caption,
             VisualType = s.SelectedArticleImageId.HasValue ? "Image" : "Typography",
+            ImageSource = s.SelectedArticleImage == null ? null
+                : NewsStudio.Infrastructure.Common.ImageStatus.IsWebSearch(s.SelectedArticleImage.Status) ? "WebSearch" : "Article",
             MotionType = s.MotionType,
             TransitionType = s.TransitionType,
             ScenePurpose = s.ScenePurpose

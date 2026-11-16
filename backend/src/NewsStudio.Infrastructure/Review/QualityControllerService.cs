@@ -345,6 +345,28 @@ public class QualityControllerService : IQualityControllerService
             };
         }
 
+        // Related Creative Commons pictures added when the article's own images were blocked
+        var webImages = scenesWithImages
+            .Select(s => s.SelectedArticleImage!)
+            .Where(i => NewsStudio.Infrastructure.Common.ImageStatus.IsWebSearch(i.Status))
+            .Select(i => i.Id)
+            .Distinct()
+            .Count();
+        if (webImages > 0)
+        {
+            return new QualityCheckItemDto
+            {
+                CheckCode = "QC_05_IMAGE_RIGHTS",
+                Title = "Bản quyền & nguồn gốc hình ảnh",
+                Category = "Legal & Compliance",
+                Passed = true,
+                Score = 9,
+                IsFatal = false,
+                Details = $"Có {webImages} ảnh minh hoạ lấy từ kho ảnh Creative Commons (cho phép dùng thương mại) vì ảnh gốc của bài không tải được. Thông tin tác giả/giấy phép lưu kèm từng ảnh.",
+                Recommendation = "Xem lại ảnh minh hoạ có đúng nội dung tin không; nên ghi công tác giả trong phần mô tả bài đăng."
+            };
+        }
+
         return new QualityCheckItemDto
         {
             CheckCode = "QC_05_IMAGE_RIGHTS",

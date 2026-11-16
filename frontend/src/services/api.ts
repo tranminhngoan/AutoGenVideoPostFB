@@ -681,6 +681,8 @@ export interface VideoScenePlanDto {
   scenePurpose: string;
   cropType?: string;
   isImageReused?: boolean;
+  /** 'WebSearch' = related Creative Commons illustration (the article's own photos could not be fetched) */
+  imageSource?: 'Article' | 'WebSearch' | null;
 }
 
 export interface ArticleImageDto {
@@ -696,7 +698,9 @@ export interface ArticleImageDto {
   imageHash?: string;
   rightsStatus: string;
   category: string;
+  /** Extracted | Excluded | Unavailable (could not be downloaded) | WebSearch (related CC illustration) */
   status: string;
+  errorMessage?: string | null;
   selectedForVideo: boolean;
 }
 

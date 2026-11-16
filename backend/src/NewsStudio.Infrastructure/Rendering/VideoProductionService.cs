@@ -14,6 +14,7 @@ public class VideoProductionService : IVideoProductionService
     private readonly ITtsFactory _ttsFactory;
     private readonly IVideoRendererService _rendererService;
     private readonly IVideoAssetService _assetService;
+    private readonly SceneImageService _sceneImages;
     private readonly ILogger<VideoProductionService> _logger;
     private readonly TimeSpan _assetTtl;
     private readonly IConfiguration _configuration;
@@ -23,9 +24,11 @@ public class VideoProductionService : IVideoProductionService
         ITtsFactory ttsFactory,
         IVideoRendererService rendererService,
         IVideoAssetService assetService,
+        SceneImageService sceneImages,
         IConfiguration configuration,
         ILogger<VideoProductionService> logger)
     {
+        _sceneImages = sceneImages;
         _context = context;
         _ttsFactory = ttsFactory;
         _rendererService = rendererService;
@@ -69,6 +72,10 @@ public class VideoProductionService : IVideoProductionService
         VideoRenderResult renderResult;
         try
         {
+            // 1b. Real pictures for every scene (download + related-image fallback) — checked before
+            //     the paid voice-over so a video with no usable image fails early and cheaply.
+            await _sceneImages.EnsureSceneImagesAsync(project, cancellationToken);
+
             // 2. Synthesize Speech & Subtitles
             // Explicit request > choice saved on the project > configured default
             var selectedVoice = !string.IsNullOrWhiteSpace(voice)
@@ -121,7 +128,10 @@ public class VideoProductionService : IVideoProductionService
                     VoiceText = s.VoiceText,
                     OnScreenText = s.OnScreenText,
                     SelectedArticleImageId = s.SelectedArticleImageId,
-                    ImageUrl = s.SelectedArticleImage?.OriginalImageUrl,
+                    // Prefer the copy already downloaded and verified by SceneImageService
+                    ImageUrl = !string.IsNullOrWhiteSpace(s.SelectedArticleImage?.LocalTempPath) && File.Exists(s.SelectedArticleImage.LocalTempPath)
+                        ? s.SelectedArticleImage.LocalTempPath
+                        : s.SelectedArticleImage?.OriginalImageUrl,
                     ImageCaption = s.ImageCaption ?? s.SelectedArticleImage?.Caption,
                     VisualType = s.SelectedArticleImageId.HasValue ? "Image" : "Typography",
                     MotionType = s.MotionType,

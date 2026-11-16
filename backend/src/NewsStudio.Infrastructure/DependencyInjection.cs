@@ -88,6 +88,12 @@ public static class DependencyInjection
         services.AddScoped<ITtsFactory, TtsFactory>();
         services.AddScoped<IVideoAssetService, VideoAssetService>();
         services.AddScoped<IVideoRendererService, FFmpegRendererService>();
+        // Downloads/validates scene pictures; falls back to related CC images (Openverse) — never a black video
+        services.AddHttpClient<SceneImageService>()
+            .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+            {
+                AutomaticDecompression = System.Net.DecompressionMethods.All
+            });
         services.AddScoped<IVideoProductionService, VideoProductionService>();
 
         // Phase 6: Video Review & Quality Control

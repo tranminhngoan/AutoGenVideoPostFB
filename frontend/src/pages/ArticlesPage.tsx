@@ -332,7 +332,17 @@ export const ArticlesPage: React.FC = () => {
                           {RIGHTS[img.rightsStatus]?.label ?? img.rightsStatus}
                         </Badge>
                         {img.category && <Badge>{IMAGE_CATEGORY[img.category] ?? img.category}</Badge>}
+                        {img.status?.startsWith('WebSearch') && <Badge tone="info">Ảnh minh hoạ</Badge>}
+                        {img.status === 'Unavailable' && <Badge tone="danger">Không tải được</Badge>}
                       </div>
+                      {img.status?.startsWith('WebSearch') && img.altText && (
+                        <p className="mt-1 line-clamp-3 break-words text-[11px] text-fg-subtle" title={img.altText}>
+                          {img.altText}
+                        </p>
+                      )}
+                      {img.status === 'Unavailable' && img.errorMessage && (
+                        <p className="mt-1 text-[11px] text-fg-subtle">{img.errorMessage}</p>
+                      )}
                     </div>
                   ))}
                 </div>

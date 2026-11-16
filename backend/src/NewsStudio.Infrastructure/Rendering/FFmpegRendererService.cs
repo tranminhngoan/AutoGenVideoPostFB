@@ -40,45 +40,66 @@ public class FFmpegRendererService : IVideoRendererService
 
         progress?.Report(10);
 
-        // Download any remote scene images locally for reliable FFmpeg consumption
+        // Scene images normally arrive already downloaded and verified (SceneImageService).
+        // Remote URLs left over are fetched here with a per-URL file name, so a re-render never
+        // picks up a stale picture from an earlier attempt.
         string? localPrimaryImage = null;
         using var httpClient = new HttpClient();
-        httpClient.Timeout = TimeSpan.FromSeconds(10);
+        httpClient.Timeout = TimeSpan.FromSeconds(20);
+        httpClient.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 AI-News-Studio/1.0");
 
-        for (int i = 0; i < request.Scenes.Count; i++)
+        foreach (var scene in request.Scenes)
         {
-            var scene = request.Scenes[i];
-            if (!string.IsNullOrWhiteSpace(scene.ImageUrl))
+            if (string.IsNullOrWhiteSpace(scene.ImageUrl)) continue;
+
+            if (File.Exists(scene.ImageUrl))
             {
-                if (File.Exists(scene.ImageUrl))
+                localPrimaryImage ??= scene.ImageUrl;
+                continue;
+            }
+
+            var remote = System.Net.WebUtility.HtmlDecode(scene.ImageUrl);
+            if (!remote.StartsWith("http://", StringComparison.OrdinalIgnoreCase) &&
+                !remote.StartsWith("https://", StringComparison.OrdinalIgnoreCase)) continue;
+
+            var urlKey = Convert.ToHexString(SHA1.HashData(Encoding.UTF8.GetBytes(remote)))[..16].ToLowerInvariant();
+            var targetFile = Directory.GetFiles(outputDir, $"img_{urlKey}.*").FirstOrDefault();
+            if (targetFile == null)
+            {
+                try
                 {
-                    if (localPrimaryImage == null) localPrimaryImage = scene.ImageUrl;
+                    var bytes = await httpClient.GetByteArrayAsync(remote, cancellationToken);
+                    var ext = SceneImageService.DetectImageType(bytes);
+                    if (ext == null)
+                    {
+                        _logger.LogWarning("Scene image {Url} is not a JPEG/PNG/WebP picture; skipped", remote);
+                        continue;
+                    }
+                    targetFile = Path.Combine(outputDir, $"img_{urlKey}.{ext}");
+                    await File.WriteAllBytesAsync(targetFile, bytes, cancellationToken);
                 }
-                else if (scene.ImageUrl.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
-                         scene.ImageUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+                catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
                 {
-                    var targetFile = Path.Combine(outputDir, $"scene_{i}.jpg");
-                    if (!File.Exists(targetFile))
-                    {
-                        try
-                        {
-                            var bytes = await httpClient.GetByteArrayAsync(scene.ImageUrl, cancellationToken);
-                            await File.WriteAllBytesAsync(targetFile, bytes, cancellationToken);
-                            scene.ImageUrl = targetFile;
-                            if (localPrimaryImage == null) localPrimaryImage = targetFile;
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.LogWarning(ex, "Could not pre-download scene image {Url}", scene.ImageUrl);
-                        }
-                    }
-                    else
-                    {
-                        scene.ImageUrl = targetFile;
-                        if (localPrimaryImage == null) localPrimaryImage = targetFile;
-                    }
+                    _logger.LogWarning(ex, "Could not pre-download scene image {Url}", remote);
+                    continue;
                 }
             }
+            scene.ImageUrl = targetFile;
+            localPrimaryImage ??= targetFile;
+        }
+
+        // Rule: never render a video without pictures (it would be a black screen)
+        if (localPrimaryImage == null && !NewsStudio.Infrastructure.Common.SimulationMode.IsEnabled(_configuration))
+        {
+            throw new InvalidOperationException(
+                "Dựng video thất bại: không có ảnh nào dùng được cho các cảnh. Video không được dựng khi thiếu ảnh.");
+        }
+
+        // Scenes whose picture is unusable reuse a working one instead of a blank background
+        foreach (var scene in request.Scenes.Where(s => string.IsNullOrWhiteSpace(s.ImageUrl) || !File.Exists(s.ImageUrl)))
+        {
+            if (localPrimaryImage != null) scene.ImageUrl = localPrimaryImage;
         }
 
         progress?.Report(20);

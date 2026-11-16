@@ -87,6 +87,8 @@ public class VideoScenePlanDto
     public string TransitionType { get; set; } = "Fade"; // "Fade", "Slide", "Cut"
     public string CropType { get; set; } = "Center"; // "Center", "Top", "Bottom", "CloseUp"
     public bool IsImageReused { get; set; } = false;
+    /// <summary>"Article" = photo from the article; "WebSearch" = related CC illustration found because the article's images were unavailable.</summary>
+    public string? ImageSource { get; set; }
     public string ScenePurpose { get; set; } = "Fact"; // "Hook", "Fact", "Context", "Analysis", "Conclusion"
 }
 

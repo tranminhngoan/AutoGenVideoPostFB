@@ -41,6 +41,7 @@ public class ArticleImageResponseDto
     public string RightsStatus { get; set; } = "Unknown";
     public string Category { get; set; } = "Panorama";
     public string Status { get; set; } = "Extracted";
+    public string? ErrorMessage { get; set; }
     public bool SelectedForVideo { get; set; } = true;
 }
 

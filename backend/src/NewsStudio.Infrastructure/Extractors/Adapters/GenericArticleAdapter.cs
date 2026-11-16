@@ -147,20 +147,20 @@ public class GenericArticleAdapter : IWebsiteAdapter
             }
         }
 
-        // Fallback: If still no article images found, use verified og:image from official metadata
-        if (result.Images.Count == 0)
+        // The og:image is the article's own lead photo (large, editor-chosen). Use it when the body
+        // gave us fewer than two usable images.
+        if (result.Images.Count < 2)
         {
-            var ogImage = ExtractMeta(doc, "og:image");
-            if (!string.IsNullOrWhiteSpace(ogImage) && !IsAdOrIcon(ogImage))
+            var ogLead = ExtractMeta(doc, "og:image");
+            if (!string.IsNullOrWhiteSpace(ogLead) && !IsAdOrIcon(ogLead))
             {
-                var fullUrl = ResolveUrl(ogImage, uri);
-                result.Images.Add(new ExtractedImageRaw
+                var leadUrl = ResolveUrl(ogLead, uri);
+                var leadPath = leadUrl.Split('?')[0];
+                if (!result.Images.Any(i => i.Url.Split('?')[0] == leadPath) && addedUrls.Add(leadUrl))
                 {
-                    Url = fullUrl,
-                    Caption = result.Title,
-                    AltText = result.Title,
-                    Order = 1
-                });
+                    foreach (var img in result.Images) img.Order++;
+                    result.Images.Insert(0, new ExtractedImageRaw { Url = leadUrl, Caption = result.Title, AltText = result.Title, Order = 1 });
+                }
             }
         }
     }
@@ -181,19 +181,66 @@ public class GenericArticleAdapter : IWebsiteAdapter
         return doc.DocumentNode.SelectSingleNode($"//link[@rel='{rel}']")?.GetAttributeValue("href", null);
     }
 
+    /// <summary>
+    /// Best URL for an &lt;img&gt;: the widest candidate from srcset / data-srcset / a parent
+    /// &lt;picture&gt;'s &lt;source&gt;, otherwise data-src / data-original / src.
+    /// International sites (Guardian, NYT, CNBC…) put the real, high-resolution image in srcset.
+    /// </summary>
     protected static string ResolveImageUrl(HtmlNode imgNode, Uri baseUri)
     {
-        var src = imgNode.GetAttributeValue("data-src", (string?)null);
-        if (string.IsNullOrWhiteSpace(src)) src = imgNode.GetAttributeValue("data-original", (string?)null);
-        if (string.IsNullOrWhiteSpace(src)) src = imgNode.GetAttributeValue("src", (string?)null);
+        var srcsets = new List<string?>
+        {
+            imgNode.GetAttributeValue("data-srcset", (string?)null),
+            imgNode.GetAttributeValue("srcset", (string?)null)
+        };
+        if (imgNode.ParentNode?.Name == "picture")
+        {
+            srcsets.AddRange(imgNode.ParentNode.SelectNodes("./source")?
+                .Select(s => s.GetAttributeValue("srcset", (string?)null) ?? s.GetAttributeValue("data-srcset", (string?)null))
+                ?? Enumerable.Empty<string?>());
+        }
+
+        var best = srcsets
+            .Where(s => !string.IsNullOrWhiteSpace(s))
+            .SelectMany(s => ParseSrcset(s!))
+            .Where(c => c.Width <= 2400)            // no need for print-size originals
+            .OrderByDescending(c => c.Width)
+            .Select(c => c.Url)
+            .FirstOrDefault();
+
+        var src = best
+                  ?? imgNode.GetAttributeValue("data-src", (string?)null)
+                  ?? imgNode.GetAttributeValue("data-original", (string?)null)
+                  ?? imgNode.GetAttributeValue("src", (string?)null);
 
         return ResolveUrl(src, baseUri);
+    }
+
+    private static IEnumerable<(string Url, int Width)> ParseSrcset(string srcset)
+    {
+        // "url 465w, url 930w" (URLs may themselves contain commas only when encoded)
+        foreach (var part in WebUtility.HtmlDecode(srcset).Split(", ", StringSplitOptions.RemoveEmptyEntries))
+        {
+            var bits = part.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (bits.Length == 0) continue;
+            var width = 0;
+            if (bits.Length > 1)
+            {
+                var d = bits[^1];
+                if (d.EndsWith('w')) int.TryParse(d.TrimEnd('w'), out width);
+                else if (d.EndsWith('x') && double.TryParse(d.TrimEnd('x'), System.Globalization.NumberStyles.Any,
+                             System.Globalization.CultureInfo.InvariantCulture, out var x)) width = (int)(x * 600);
+            }
+            yield return (bits[0], width);
+        }
     }
 
     protected static string ResolveUrl(string? url, Uri baseUri)
     {
         if (string.IsNullOrWhiteSpace(url)) return string.Empty;
-        url = url.Trim();
+        // HTML attributes keep entities encoded ("&amp;"). Signed image URLs (e.g. the Guardian's
+        // i.guim.co.uk) are rejected with 401 unless the query string is decoded exactly.
+        url = WebUtility.HtmlDecode(url.Trim());
 
         if (url.StartsWith("//")) return $"{baseUri.Scheme}:{url}";
         if (Uri.TryCreate(url, UriKind.Absolute, out var absUri)) return absUri.ToString();
@@ -211,6 +258,19 @@ public class GenericArticleAdapter : IWebsiteAdapter
                lower.Contains("logo") ||
                lower.Contains("icon") ||
                lower.Contains("avatar") ||
+               // Byline / author photos are not news images (e.g. NYT ".../reader-center/author-…")
+               lower.Contains("/author") ||
+               lower.Contains("author-") ||
+               lower.Contains("author_") ||
+               lower.Contains("byline") ||
+               lower.Contains("headshot") ||
+               lower.Contains("/profile") ||
+               lower.Contains("gravatar") ||
+               lower.Contains("placeholder") ||
+               lower.Contains("spacer") ||
+               lower.Contains("1x1") ||
+               lower.Contains("sprite") ||
+               lower.StartsWith("data:") ||
                lower.Contains("facebook.svg") ||
                lower.Contains("zalo.svg") ||
                lower.EndsWith(".svg") ||

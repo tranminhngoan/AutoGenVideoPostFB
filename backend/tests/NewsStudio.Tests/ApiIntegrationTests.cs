@@ -25,7 +25,7 @@ public class ApiIntegrationTests : IClassFixture<WebApplicationFactory<Program>>
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         var content = await response.Content.ReadAsStringAsync();
-        content.Should().Contain("AI News Studio API");
+        content.Should().Contain("Trạm Tin 24/7 API");
         content.Should().Contain("/swagger");
     }
 
@@ -71,7 +71,7 @@ public class ApiIntegrationTests : IClassFixture<WebApplicationFactory<Program>>
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         var content = await response.Content.ReadAsStringAsync();
-        content.Should().Contain("AI News Studio API");
+        content.Should().Contain("Trạm Tin 24/7 API");
     }
 
     [Fact]

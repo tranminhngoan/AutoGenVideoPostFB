@@ -878,10 +878,16 @@ export const VideoDetailPage: React.FC<VideoDetailPageProps> = ({ projectId, onC
               </div>
 
               {scenes.length > 0 && scenes.every((s) => !s.imageUrl) && (
-                <Alert tone="warning" icon={<AlertTriangle />} title="Bài báo không đủ ảnh phù hợp">
-                  Tất cả cảnh đang dùng nền chữ. Hệ thống không lấy ảnh ngoài bài báo hay ảnh do AI tạo, nên hãy kiểm tra
-                  lại link bài viết nếu cần thêm hình.
+                <Alert tone="warning" icon={<AlertTriangle />} title="Cảnh chưa có ảnh">
+                  Khi dựng video, hệ thống sẽ tải ảnh trong bài; nếu ảnh bị chặn sẽ tự tìm ảnh minh hoạ liên quan
+                  (giấy phép Creative Commons). Video không bao giờ được dựng với nền trống.
                 </Alert>
+              )}
+              {scenes.some((s) => s.imageSource === 'WebSearch') && (
+                <p className="text-xs text-fg-subtle">
+                  Ảnh gốc của bài không tải được nên một số cảnh dùng ảnh minh hoạ liên quan (Creative Commons, cho phép dùng
+                  thương mại). Tác giả và giấy phép xem trong mục Bài viết.
+                </p>
               )}
               {scenes.some((s) => s.isImageReused) && (
                 <p className="text-xs text-fg-subtle">
@@ -925,7 +931,11 @@ export const VideoDetailPage: React.FC<VideoDetailPageProps> = ({ projectId, onC
                           </span>
                           <span className="text-fg-subtle">·</span>
                           <span>{SCENE_PURPOSE[s.scenePurpose] ?? s.scenePurpose}</span>
-                          {s.visualType === 'Image' ? (
+                          {s.visualType === 'Image' && s.imageSource === 'WebSearch' ? (
+                            <Badge tone="info" className="ml-1">
+                              <ImageIcon className="h-3 w-3" /> Ảnh minh hoạ
+                            </Badge>
+                          ) : s.visualType === 'Image' ? (
                             <Badge tone="success" className="ml-1">
                               <ImageIcon className="h-3 w-3" /> Ảnh bài viết
                             </Badge>
