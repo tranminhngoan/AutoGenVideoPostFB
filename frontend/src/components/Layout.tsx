@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import {
   LayoutGrid,
   Flame,
+  CalendarClock,
   Film,
   Newspaper,
   History,
@@ -80,6 +81,7 @@ function SidebarContent({
   const main: NavItem[] = [
     { id: 'dashboard', path: '/', label: 'Tổng quan', icon: LayoutGrid },
     { id: 'trending', path: '/trending', label: 'Tin hot', icon: Flame },
+    { id: 'auto-post', path: '/auto-post', label: 'Tự động đăng', icon: CalendarClock },
     { id: 'videos', path: '/videos', label: 'Video', icon: Film, badge: awaitingCount || undefined },
     { id: 'articles', path: '/articles', label: 'Bài báo', icon: Newspaper },
     { id: 'activity', path: '/activity', label: 'Hoạt động', icon: History },
@@ -210,7 +212,7 @@ export function Layout({
             onClick={() => setMobileOpen(true)}
             className={cn(
               'flex h-full flex-col items-center justify-center gap-0.5 text-[11px]',
-              ['articles', 'activity', 'settings'].includes(active) ? 'font-medium text-fg' : 'text-fg-muted'
+              ['auto-post', 'articles', 'activity', 'settings'].includes(active) ? 'font-medium text-fg' : 'text-fg-muted'
             )}
           >
             <MenuIcon className="h-5 w-5" />

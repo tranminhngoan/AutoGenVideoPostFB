@@ -108,6 +108,7 @@ public static class DependencyInjection
         services.AddScoped<IJobRecoveryService, JobRecoveryService>();
         services.AddScoped<ISystemMetricsService, SystemMetricsService>();
         services.AddScoped<IStorageCleanupService, StorageCleanupService>();
+        services.AddScoped<IAutoPostService, AutoPostService>();
 
         return services;
     }

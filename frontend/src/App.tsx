@@ -9,6 +9,7 @@ import { VideosPage } from './pages/VideosPage';
 import { VideoDetailPage } from './pages/VideoDetailPage';
 import { ActivityPage } from './pages/ActivityPage';
 import { SettingsPage } from './pages/SettingsPage';
+import { AutoPostPage } from './pages/AutoPostPage';
 import { SystemConfig, VideoProject } from './types';
 import { api } from './services/api';
 import { useRoute } from './lib/router';
@@ -16,6 +17,7 @@ import { useRoute } from './lib/router';
 const TITLES: Record<string, string> = {
   dashboard: 'Tổng quan',
   trending: 'Tin đang hot',
+  'auto-post': 'Tự động đăng',
   create: 'Tạo video',
   videos: 'Video',
   articles: 'Bài báo',
@@ -87,6 +89,9 @@ export function App() {
         break;
       case 'trending':
         page = <TrendingPage onCreated={refreshProjects} />;
+        break;
+      case 'auto-post':
+        page = <AutoPostPage />;
         break;
       case 'articles':
         page = <ArticlesPage />;

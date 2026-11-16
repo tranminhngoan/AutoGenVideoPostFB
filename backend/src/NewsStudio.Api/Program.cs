@@ -283,11 +283,15 @@ try
                 "storage-cleanup",
                 s => s.RunStorageCleanupAsync(CancellationToken.None),
                 "*/15 * * * *");
+            recurring.AddOrUpdate<NewsStudio.Application.Interfaces.IAutoPostService>(
+                "auto-post-tick",
+                s => s.TickAsync(CancellationToken.None),
+                "*/2 * * * *");
 
             var jobs = app.Services.GetRequiredService<IBackgroundJobClient>();
             jobs.Enqueue<NewsStudio.Application.Interfaces.IJobRecoveryService>(s => s.RecoverDanglingJobsAsync(CancellationToken.None));
             jobs.Enqueue<NewsStudio.Application.Interfaces.ITrendingNewsService>(s => s.RefreshAsync(CancellationToken.None));
-            Log.Information("Embedded Hangfire worker enabled: trending refresh + storage cleanup scheduled.");
+            Log.Information("Embedded Hangfire worker enabled: trending refresh, storage cleanup and auto-post scheduled.");
         }
         catch (Exception ex)
         {

@@ -99,6 +99,12 @@ public class Worker : BackgroundService
             _serviceProvider.GetRequiredService<Hangfire.IBackgroundJobClient>()
                 .Enqueue<ITrendingNewsService>(service => service.RefreshAsync(CancellationToken.None));
             _logger.LogInformation("Trending news refresh scheduled ({Cron}) and queued once at startup.", cron);
+
+            // "Tự động đăng": checks the daily posting slots every 2 minutes
+            recurring.AddOrUpdate<IAutoPostService>(
+                "auto-post-tick",
+                service => service.TickAsync(CancellationToken.None),
+                "*/2 * * * *");
         }
         catch (Exception ex)
         {

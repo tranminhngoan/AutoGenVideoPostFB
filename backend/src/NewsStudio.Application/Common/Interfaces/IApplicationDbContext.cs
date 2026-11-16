@@ -19,6 +19,8 @@ public interface IApplicationDbContext
     DbSet<SystemSetting> SystemSettings { get; }
     DbSet<AuditLog> AuditLogs { get; }
     DbSet<TrendingArticle> TrendingArticles { get; }
+    DbSet<AutoPostSettings> AutoPostSettings { get; }
+    DbSet<AutoPostRun> AutoPostRuns { get; }
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

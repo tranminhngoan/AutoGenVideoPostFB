@@ -26,10 +26,40 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
     public DbSet<SystemSetting> SystemSettings => Set<SystemSetting>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
     public DbSet<TrendingArticle> TrendingArticles => Set<TrendingArticle>();
+    public DbSet<AutoPostSettings> AutoPostSettings => Set<AutoPostSettings>();
+    public DbSet<AutoPostRun> AutoPostRuns => Set<AutoPostRun>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
+
+        // "Tự động đăng"
+        modelBuilder.Entity<AutoPostSettings>(entity =>
+        {
+            entity.ToTable("AutoPostSettings");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.TimeSlots).HasMaxLength(500).IsRequired();
+            entity.Property(e => e.RegionMode).HasMaxLength(20).IsRequired();
+            entity.Property(e => e.Voice).HasMaxLength(100);
+            entity.Property(e => e.VoiceSpeed).HasMaxLength(20);
+            entity.Property(e => e.AiProvider).HasMaxLength(50);
+        });
+
+        modelBuilder.Entity<AutoPostRun>(entity =>
+        {
+            entity.ToTable("AutoPostRuns");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.SlotKey).HasMaxLength(50).IsRequired();
+            entity.Property(e => e.Status).HasMaxLength(30).IsRequired();
+            entity.Property(e => e.ArticleUrl).HasMaxLength(2000);
+            entity.Property(e => e.ArticleTitle).HasMaxLength(500);
+            entity.Property(e => e.SourceName).HasMaxLength(100);
+            entity.Property(e => e.Region).HasMaxLength(10);
+            entity.Property(e => e.FacebookPostUrl).HasMaxLength(500);
+            entity.HasIndex(e => e.SlotKey).IsUnique();
+            entity.HasIndex(e => e.ScheduledAtUtc);
+            entity.HasIndex(e => e.Status);
+        });
 
         // TrendingArticle Configuration ("Tin đang hot")
         modelBuilder.Entity<TrendingArticle>(entity =>

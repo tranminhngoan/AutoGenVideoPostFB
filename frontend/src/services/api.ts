@@ -91,6 +91,40 @@ export const api = {
     return await res.json();
   },
 
+  // ── Tự động đăng ──
+  async getAutoPost(): Promise<AutoPostOverviewDto> {
+    const res = await fetch(`${API_BASE}/auto-post`);
+    if (!res.ok) throw new Error(await apiError(res, 'Không tải được lịch tự động đăng'));
+    return await res.json();
+  },
+
+  async saveAutoPostSettings(settings: AutoPostSettingsDto): Promise<AutoPostSettingsDto> {
+    const res = await fetch(`${API_BASE}/auto-post/settings`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(settings),
+    });
+    if (!res.ok) throw new Error(await apiError(res, 'Lưu cài đặt tự động đăng thất bại'));
+    return await res.json();
+  },
+
+  async suggestAutoPostSlots(count: number): Promise<string[]> {
+    const res = await fetch(`${API_BASE}/auto-post/suggest-slots?count=${count}`);
+    if (!res.ok) throw new Error(await apiError(res, 'Không gợi ý được khung giờ'));
+    return await res.json();
+  },
+
+  async autoPostRunNow(): Promise<AutoPostRunDto> {
+    const res = await fetch(`${API_BASE}/auto-post/run-now`, { method: 'POST' });
+    if (!res.ok) throw new Error(await apiError(res, 'Không bắt đầu được lượt đăng'));
+    return await res.json();
+  },
+
+  async cancelAutoPostRun(id: string): Promise<void> {
+    const res = await fetch(`${API_BASE}/auto-post/runs/${id}/cancel`, { method: 'POST' });
+    if (!res.ok) throw new Error(await apiError(res, 'Không huỷ được lượt đăng'));
+  },
+
   async refreshTrending(): Promise<TrendingRefreshResultDto> {
     const res = await fetch(`${API_BASE}/trending/refresh`, { method: 'POST' });
     if (!res.ok) throw new Error(await apiError(res, 'Cập nhật tin hot thất bại'));
@@ -834,4 +868,66 @@ export interface VideoMetricDto {
   comments: number;
   watchTimeSeconds: number;
   collectedAtUtc: string;
+}
+
+// ── Tự động đăng ──
+export type AutoPostRegionMode = 'Mixed' | 'VN' | 'World';
+
+export interface AutoPostSettingsDto {
+  enabled: boolean;
+  postsPerDay: number;
+  /** "HH:mm", Vietnam time */
+  timeSlots: string[];
+  regionMode: AutoPostRegionMode;
+  voice?: string | null;
+  voiceSpeed?: string | null;
+  aiProvider?: string | null;
+  targetDurationSeconds: number;
+  facebookAccountId?: string | null;
+  leadMinutes: number;
+}
+
+export type AutoPostRunStatus = 'Producing' | 'WaitingSlot' | 'Publishing' | 'Published' | 'Failed' | 'Skipped';
+
+export interface AutoPostRunDto {
+  id: string;
+  slotKey: string;
+  scheduledAtUtc: string;
+  slotTime: string;
+  slotDate: string;
+  isManual: boolean;
+  status: AutoPostRunStatus;
+  attempts: number;
+  articleUrl?: string | null;
+  articleTitle?: string | null;
+  sourceName?: string | null;
+  region?: 'VN' | 'World' | null;
+  hotScore?: number | null;
+  videoProjectId?: string | null;
+  projectStatus?: string | null;
+  progressPercentage?: number | null;
+  facebookPostUrl?: string | null;
+  startedAtUtc?: string | null;
+  publishedAtUtc?: string | null;
+  message?: string | null;
+}
+
+export interface AutoPostSlotDto {
+  time: string;
+  scheduledAtUtc: string;
+  plannedRegion: 'VN' | 'World';
+  /** 'Upcoming' | 'Missed' | run status */
+  state: string;
+  run?: AutoPostRunDto | null;
+}
+
+export interface AutoPostOverviewDto {
+  settings: AutoPostSettingsDto;
+  today: string;
+  todaySlots: AutoPostSlotDto[];
+  recentRuns: AutoPostRunDto[];
+  publishedToday: number;
+  nextSlotUtc?: string | null;
+  facebookConnected: boolean;
+  warnings: string[];
 }
