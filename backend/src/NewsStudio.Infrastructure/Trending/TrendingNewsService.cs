@@ -581,7 +581,8 @@ public class TrendingNewsService : ITrendingNewsService
         if (topic != NewsTopics.General || keywords.Count > 0)
         {
             bool Matches(TrendingArticle r) =>
-                (topic != NewsTopics.General && topic != NewsTopics.Custom && HasTopic(r.Topics, topic))
+                (topic == NewsTopics.HotTrend && (r.TrendTraffic != null || r.CoverageCount >= NewsTopics.HotTrendMinOutlets))
+                || (topic is not (NewsTopics.General or NewsTopics.Custom or NewsTopics.HotTrend) && HasTopic(r.Topics, topic))
                 || (keywords.Count > 0 && NewsTopics.MatchesKeywords(r.Title, r.Summary, keywords));
             var matchingStories = rows.Where(Matches).Select(r => r.ClusterId ?? r.Id).ToHashSet();
             filtered = filtered.Where(r => matchingStories.Contains(r.ClusterId ?? r.Id));

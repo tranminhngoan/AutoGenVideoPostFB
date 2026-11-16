@@ -56,7 +56,12 @@ public static class DependencyInjection
         services.AddScoped<IVideoProcessingJobExecutor, VideoProcessingJobExecutor>();
 
         // Phase 3: Article & Image Extraction Services
-        services.AddHttpClient<IArticleExtractorService, ArticleExtractorService>();
+        services.AddHttpClient<IArticleExtractorService, ArticleExtractorService>()
+            .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+            {
+                // Some sites (e.g. FXEmpire) send gzip even when it wasn't asked for
+                AutomaticDecompression = System.Net.DecompressionMethods.All
+            });
         services.AddSingleton<IImageClassifierService, ImageClassifierService>();
         services.AddScoped<IArticleService, ArticleService>();
 

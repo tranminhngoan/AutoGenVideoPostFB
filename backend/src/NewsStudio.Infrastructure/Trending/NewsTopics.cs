@@ -9,7 +9,11 @@ namespace NewsStudio.Infrastructure.Trending;
 /// general feeds (home pages). A phrase starting with "=" is matched case-sensitively on the original
 /// text (e.g. "=AI", so the Vietnamese word "ai" = "who" doesn't count).
 /// </param>
-public record NewsTopic(string Key, string Name, string Description, string[] Keywords);
+/// <param name="TitleOnly">
+/// Keywords are looked for in the headline only: for a narrow topic (forex) where a passing mention in
+/// the summary ("... quy đổi theo tỷ giá ...") would pull in unrelated business stories.
+/// </param>
+public record NewsTopic(string Key, string Name, string Description, string[] Keywords, bool TitleOnly = false);
 
 /// <summary>
 /// News topics a Facebook Page can be dedicated to. A story gets a topic when it comes from that
@@ -22,10 +26,18 @@ public static class NewsTopics
     public const string General = "tong-hop";
     /// <summary>Only the page's own keywords decide.</summary>
     public const string Custom = "tu-chon";
+    /// <summary>
+    /// Viral stories: matched to a search that is trending on Google right now (VN / US), or carried by
+    /// many outlets at once. Decided when listing (from the trend + coverage signals), not by keywords.
+    /// </summary>
+    public const string HotTrend = "hot-trend";
+    /// <summary>Outlets covering one story from which it counts as "hot trend" even without a Google trend.</summary>
+    public const int HotTrendMinOutlets = 4;
 
     public static readonly IReadOnlyList<NewsTopic> All = new List<NewsTopic>
     {
         new(General, "Tổng hợp", "Mọi tin hot nhất, không giới hạn chủ đề.", Array.Empty<string>()),
+        new(HotTrend, "Hot trend", "Tin đang được tìm nhiều trên Google (Việt Nam, Mỹ) hoặc được từ 4 báo trở lên cùng đưa, mọi lĩnh vực.", Array.Empty<string>()),
         new("thoi-su", "Thời sự", "Chính sách, xã hội, thiên tai, giao thông trong nước.", new[]
         {
             "chinh phu", "quoc hoi", "thu tuong", "bo truong", "chu tich nuoc", "tong bi thu", "nghi dinh", "nghi quyet",
@@ -46,6 +58,16 @@ public static class NewsTopics
             "loi nhuan", "doanh thu", "thue suat", "thue quan", "thue thu nhap", "stocks", "shares", "stock market", "economy", "inflation", "interest rates",
             "earnings", "tariff", "tariffs", "wall street", "federal reserve", "bitcoin", "crypto"
         }),
+        new("forex", "Forex", "Ngoại hối, tỷ giá, đồng USD, Fed và ngân hàng trung ương, vàng, dầu thế giới.", new[]
+        {
+            "forex", "ngoai hoi", "ngoai te", "ty gia", "dong usd", "dong do la", "do la my", "dong bac xanh", "chi so usd", "dxy",
+            "usd vnd", "eur usd", "gbp usd", "usd jpy", "aud usd", "nzd usd", "usd cad", "usd chf", "usd cny", "xau usd",
+            "dong euro", "dong yen", "yen nhat", "dong bang anh", "nhan dan te", "fed", "cuc du tru lien bang",
+            "ngan hang trung uong", "lai suat dieu hanh", "ecb", "boj", "pboc", "vang the gioi", "gia vang the gioi",
+            "dau tho", "=FX", "=yen", "=Yen", "dollar", "currency", "currencies", "central bank", "federal reserve",
+            "rate cut", "rate cuts", "rate hike", "rate hikes", "treasury yields", "bond yields", "nonfarm", "payrolls",
+            "gold price", "gold prices", "crude oil", "oil prices", "brent", "wti", "sterling", "yuan"
+        }, TitleOnly: true),
         new("bat-dong-san", "Bất động sản", "Nhà đất, căn hộ, dự án, giá nhà.", new[]
         {
             "bat dong san", "nha dat", "can ho", "chung cu", "nha o xa hoi", "gia nha", "dat nen", "so do", "du an nha o",
@@ -128,10 +150,14 @@ public static class NewsTopics
         if (!string.IsNullOrEmpty(feedTopic)) result.Add(feedTopic);
         var text = title + " " + summary;
         var folded = " " + Fold(text) + " ";
+        var foldedTitle = " " + Fold(title) + " ";
         foreach (var topic in All)
         {
             if (topic.Keywords.Length == 0 || result.Contains(topic.Key)) continue;
-            if (ContainsAny(text, folded, topic.Keywords)) result.Add(topic.Key);
+            var hit = topic.TitleOnly
+                ? ContainsAny(title, foldedTitle, topic.Keywords)
+                : ContainsAny(text, folded, topic.Keywords);
+            if (hit) result.Add(topic.Key);
         }
         return result;
     }

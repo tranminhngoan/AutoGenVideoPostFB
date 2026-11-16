@@ -79,12 +79,56 @@ public class GenericArticleAdapter : IWebsiteAdapter
                     result.ContentBody = string.Join("\n\n", bodyTexts);
                 }
             }
+
+            // The first <article>/<main> is sometimes a sidebar teaser (e.g. CafeF): when it gave almost
+            // nothing, use the content-like container that holds the most paragraph text.
+            if (CountWords(result.ContentBody) < 80)
+            {
+                var best = BestContentParagraphs(doc);
+                if (CountWords(best) > CountWords(result.ContentBody)) result.ContentBody = best;
+            }
         }
 
         // 4. Extract Images strictly from within article body or figure tags
         ExtractBodyImages(doc, uri, result);
 
         return result;
+    }
+
+    private static int CountWords(string? text) =>
+        string.IsNullOrWhiteSpace(text) ? 0 : text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Length;
+
+    private static List<string> ParagraphTexts(HtmlNode node) =>
+        (node.SelectNodes(".//p")?.ToList() ?? new List<HtmlNode>())
+            .Where(p => !p.Ancestors("p").Any()) // nested <p>: the outer one already holds its text
+            .Select(p => CleanText(p.InnerText))
+            .Where(t => t.Length > 25 && !t.Contains("Bản quyền") && !t.Contains("Theo dõi"))
+            .Distinct()
+            .ToList();
+
+    /// <summary>
+    /// Paragraphs of the container with the most article text. Among containers holding nearly as much
+    /// (≥ 80%), the innermost wins, so a page-wide wrapper doesn't drag in sidebars and footers.
+    /// </summary>
+    private static string BestContentParagraphs(HtmlDocument doc)
+    {
+        var candidates = doc.DocumentNode.SelectNodes(
+            "//article | //main | //*[@itemprop='articleBody'] | //div[contains(@class, 'content') or contains(@class, 'detail') or contains(@class, 'body')]");
+        if (candidates == null) return string.Empty;
+
+        var scored = candidates
+            .Select(n => (Node: n, Texts: ParagraphTexts(n)))
+            .Select(x => (x.Node, x.Texts, Length: x.Texts.Sum(t => t.Length)))
+            .Where(x => x.Length > 0)
+            .ToList();
+        if (scored.Count == 0) return string.Empty;
+
+        var max = scored.Max(x => x.Length);
+        var pick = scored
+            .Where(x => x.Length >= max * 0.8)
+            .OrderBy(x => x.Node.Descendants().Count())
+            .First();
+        return string.Join("\n\n", pick.Texts);
     }
 
     protected void ExtractBodyImages(HtmlDocument doc, Uri uri, ExtractedArticleRaw result)

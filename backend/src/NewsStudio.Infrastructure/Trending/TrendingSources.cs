@@ -9,7 +9,7 @@ namespace NewsStudio.Infrastructure.Trending;
 public record FeedSource(string Key, string Name, string Url, string Region, string Language, bool Featured = false, bool Readable = true, string? Topic = null);
 
 /// <summary>
-/// Public RSS feeds used for "Tin đang hot". All were verified reachable on 2026-11-15.
+/// Public RSS feeds used for "Tin đang hot". All were verified reachable on 2026-11-15 (forex feeds 2026-11-16).
 /// Extra feeds can be added without code changes via configuration:
 ///   "Trending": { "ExtraFeeds": [ { "Key": "...", "Name": "...", "Url": "...", "Region": "VN", "Language": "vi" } ] }
 /// </summary>
@@ -102,6 +102,17 @@ public static class TrendingSources
         new("dantri", "Dân Trí", "https://dantri.com.vn/rss/giao-duc.rss", "VN", "vi", Topic: "giao-duc"),
         new("guardian", "The Guardian", "https://www.theguardian.com/education/rss", "World", "en", Topic: "giao-duc"),
         new("nyt", "The New York Times", "https://rss.nytimes.com/services/xml/rss/nyt/Education.xml", "World", "en", Topic: "giao-duc"),
+        // forex: dedicated FX / central bank / commodities desks, plus Vietnamese finance sections
+        // whose FX stories (tỷ giá, Fed, vàng thế giới...) are picked by the topic's keywords
+        new("investinglive", "investingLive (ForexLive)", "https://investinglive.com/feed/forex/", "World", "en", Topic: "forex"),
+        new("investinglive", "investingLive (ForexLive)", "https://investinglive.com/feed/centralbank/", "World", "en", Topic: "forex"),
+        new("investinglive", "investingLive (ForexLive)", "https://investinglive.com/feed/commodities/", "World", "en", Topic: "forex"),
+        new("investinglive", "investingLive (ForexLive)", "https://investinglive.com/feed/news/", "World", "en"),
+        new("fxempire", "FXEmpire", "https://www.fxempire.com/api/v1/en/articles/rss/forecasts", "World", "en", Topic: "forex"),
+        new("vneconomy", "VnEconomy", "https://vneconomy.vn/tai-chinh.rss", "VN", "vi", Topic: "kinh-doanh"),
+        new("cafef", "CafeF", "https://cafef.vn/tai-chinh-quoc-te.rss", "VN", "vi"),
+        new("vietstock", "Vietstock", "https://vietstock.vn/773/the-gioi/tai-chinh-quoc-te.rss", "VN", "vi"),
+        new("tuoitre", "Tuổi Trẻ", "https://tuoitre.vn/rss/tai-chinh.rss", "VN", "vi", Topic: "kinh-doanh"),
         // phap-luat
         new("vnexpress", "VnExpress", "https://vnexpress.net/rss/phap-luat.rss", "VN", "vi", Topic: "phap-luat"),
         new("tuoitre", "Tuổi Trẻ", "https://tuoitre.vn/rss/phap-luat.rss", "VN", "vi", Topic: "phap-luat"),

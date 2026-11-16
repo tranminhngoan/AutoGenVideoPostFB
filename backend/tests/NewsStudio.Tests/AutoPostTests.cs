@@ -108,6 +108,34 @@ public class NewsTopicTests
         NewsTopics.Classify("Startup dùng AI để chẩn đoán", null, null).Should().Contain("cong-nghe");
     }
 
+    [Theory]
+    [InlineData("Tỷ giá USD hôm nay tăng mạnh sau phát biểu của Fed")]
+    [InlineData("Euro falls to the lowest since April 2025 as the dollar rallies")]
+    [InlineData("USD/JPY flirts with 160 as Japan warns on the Yen")]
+    [InlineData("Đồng Yên Nhật mất giá, nhân dân tệ chạm đáy")]
+    public void ForexHeadlinesAreForex(string title)
+    {
+        NewsTopics.Classify(title, null, null).Should().Contain("forex");
+    }
+
+    [Fact]
+    public void EverydayVietnameseWordsAreNotForex()
+    {
+        // "đó là" (that is) ≠ "đô la", "bình yên" (peaceful) ≠ yen, "tham gia đầu tư" ≠ "giá dầu"
+        NewsTopics.Classify("Đó là cuộc sống bình yên khi tham gia đầu tư nông nghiệp", null, null)
+            .Should().NotContain("forex");
+        // A passing mention of USD in the summary doesn't make a company story forex news
+        NewsTopics.Classify("Novaland chuyển đổi trái phiếu thành cổ phiếu", "Khoản nợ 4 triệu USD quy đổi theo tỷ giá", null)
+            .Should().NotContain("forex");
+    }
+
+    [Fact]
+    public void HotTrendAndForexCanBeChosen()
+    {
+        NewsTopics.Find(NewsTopics.HotTrend)!.Name.Should().Be("Hot trend");
+        NewsTopics.Find("forex")!.Name.Should().Be("Forex");
+    }
+
     [Fact]
     public void SectionFeedTopicIsKeptEvenWithoutKeywords()
     {

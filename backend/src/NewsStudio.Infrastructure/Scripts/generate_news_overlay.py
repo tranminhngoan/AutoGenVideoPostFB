@@ -37,6 +37,8 @@ THEMES = {
     "xe":           {"top": (40, 44, 54),   "bottom": (12, 14, 20),  "accent": (250, 204, 21)},   # graphite + yellow
     "du-lich":      {"top": (6, 118, 138),  "bottom": (2, 46, 58),   "accent": (45, 212, 191)},   # turquoise
     "khoa-hoc":     {"top": (62, 22, 112),  "bottom": (20, 6, 40),   "accent": (168, 85, 247)},   # purple
+    "hot-trend":    {"top": (150, 14, 30),  "bottom": (30, 4, 8),    "accent": (250, 204, 21)},   # crimson + gold
+    "forex":        {"top": (16, 42, 74),   "bottom": (5, 14, 28),   "accent": (250, 190, 40)},   # trading-desk navy + gold
 }
 
 
@@ -204,7 +206,10 @@ def generate_news_overlay(output_path, title, summary="", publisher="TIN TỨC 2
         lx = SAFE_LEFT + dw + 14
         if lx + lw <= SAFE_RIGHT:
             draw.rounded_rectangle([lx, date_y, lx + lw, date_y + dh], radius=6, fill=pal["accent"])
-            draw.text((lx + 12, date_y + 6 - l_bbox[1]), label, font=font_meta, fill=(255, 255, 255, 255))
+            ar, ag, ab = pal["accent"][:3]
+            light_accent = 0.299 * ar + 0.587 * ag + 0.114 * ab > 165  # gold/yellow tags need dark text
+            draw.text((lx + 12, date_y + 6 - l_bbox[1]), label, font=font_meta,
+                      fill=(24, 20, 10, 255) if light_accent else (255, 255, 255, 255))
 
     # 5. Headline + summary, auto-sized to fill the card inside the safe zone
     box_top = date_y + dh + 30
