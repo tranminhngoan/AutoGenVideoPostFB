@@ -85,6 +85,14 @@ public class DailyDigestApiTests : IClassFixture<WebApplicationFactory<Program>>
     }
 
     [Fact]
+    public async Task QuickConnectNeedsAUserToken()
+    {
+        var res = await _client.PostAsJsonAsync("/api/facebook/connect-from-user-token", new UserTokenConnectRequestDto { UserAccessToken = " " });
+        res.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await res.Content.ReadAsStringAsync()).Should().Contain("mã truy cập người dùng");
+    }
+
+    [Fact]
     public async Task DigestSettingsAreSavedPerPageAndAFailedDigestSaysWhy()
     {
         var page = new FacebookAccount { PageId = "test-digest-" + Guid.NewGuid().ToString("N")[..8], PageName = "Test Bản Tin", EncryptedAccessToken = "x" };

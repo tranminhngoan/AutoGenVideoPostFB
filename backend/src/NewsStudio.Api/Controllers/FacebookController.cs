@@ -73,6 +73,27 @@ public class FacebookController : ControllerBase
     }
 
     /// <summary>
+    /// Kết nối nhanh: dán một mã người dùng (đã gia hạn) → liệt kê mọi Page kèm hạn token riêng của từng Page,
+    /// và kết nối các Page trong PageIds (token Page không hết hạn).
+    /// </summary>
+    [HttpPost("connect-from-user-token")]
+    public async Task<ActionResult<UserTokenPagesResultDto>> ConnectFromUserToken([FromBody] UserTokenConnectRequestDto request, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return Ok(await _facebookService.ConnectFromUserTokenAsync(request, cancellationToken));
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+    }
+
+    /// <summary>
     /// Ngắt kết nối một Facebook Page khỏi hệ thống.
     /// </summary>
     [HttpDelete("pages/{id:guid}")]

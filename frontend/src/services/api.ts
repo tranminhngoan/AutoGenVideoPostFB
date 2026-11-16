@@ -507,6 +507,17 @@ export const api = {
     return await res.json();
   },
 
+  /** Kết nối nhanh: list pages of a user token (pageIds empty) or connect the given pages. */
+  async connectFromUserToken(userAccessToken: string, pageIds: string[] = []): Promise<UserTokenPagesResultDto> {
+    const res = await fetch(`${API_BASE}/facebook/connect-from-user-token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userAccessToken, pageIds }),
+    });
+    if (!res.ok) throw new Error(await apiError(res, 'Không đọc được mã người dùng'));
+    return await res.json();
+  },
+
   async verifyFacebookToken(token: string): Promise<VerifyTokenResultDto> {
     const res = await fetch(`${API_BASE}/facebook/verify`, {
       method: 'POST',
@@ -865,6 +876,22 @@ export interface VerifyTokenResultDto {
   expiresAtUtc?: string;
   scopes?: string[];
   errorMessage?: string;
+}
+
+export interface UserTokenPageDto {
+  pageId: string;
+  pageName: string;
+  alreadyConnected: boolean;
+  neverExpires: boolean;
+  expiresAtUtc?: string | null;
+  connected: boolean;
+}
+
+export interface UserTokenPagesResultDto {
+  pages: UserTokenPageDto[];
+  longLived: boolean;
+  userTokenExpiresAtUtc?: string | null;
+  missingPermissions: string[];
 }
 
 export interface PublishReelRequestDto {

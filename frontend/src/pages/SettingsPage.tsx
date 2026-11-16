@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { CheckCircle2, AlertTriangle, Trash2, KeyRound, RefreshCw, ShieldCheck, Plus, Wrench } from 'lucide-react';
-import { api, AiModelsDto, FacebookAccountDto, SystemMetricsDto } from '../services/api';
+import { api, AiModelsDto, FacebookAccountDto, SystemMetricsDto, UserTokenPagesResultDto } from '../services/api';
 import { SystemConfig } from '../types';
 import {
   Alert,
@@ -401,8 +401,10 @@ function FacebookSection() {
         </CardBody>
       </Card>
 
+      <QuickConnectCard onConnected={load} />
+
       <Card>
-        <CardHeader title="Kết nối trang mới" description="Mỗi Page cần Page Access Token riêng lấy từ Meta for Developers. Thêm lần lượt từng Page." />
+        <CardHeader title="Kết nối thủ công từng Page" description="Cách cũ: dán Page Access Token của từng Page. Nên dùng Kết nối nhanh ở trên để token không hết hạn." />
         <form onSubmit={connect}>
           <CardBody className="space-y-4">
             <Field
@@ -464,6 +466,146 @@ function FacebookSection() {
         </form>
       </Card>
     </div>
+  );
+}
+
+/**
+ * Kết nối nhanh: the user pastes ONE extended user token; the app lists every page they manage with its own
+ * page token (which then never expires) and connects the ticked ones.
+ */
+function QuickConnectCard({ onConnected }: { onConnected: () => Promise<void> | void }) {
+  const toast = useToast();
+  const [token, setToken] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [connecting, setConnecting] = useState(false);
+  const [result, setResult] = useState<UserTokenPagesResultDto | null>(null);
+  const [selected, setSelected] = useState<string[]>([]);
+
+  const readPages = async () => {
+    setLoading(true);
+    setResult(null);
+    try {
+      const r = await api.connectFromUserToken(token.trim());
+      setResult(r);
+      // Pages already in the app are ticked: their old (expiring) tokens get replaced
+      setSelected(r.pages.filter((p) => p.alreadyConnected).map((p) => p.pageId));
+    } catch (err) {
+      toast.error('Không đọc được mã', errorText(err, ''));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const connect = async () => {
+    setConnecting(true);
+    try {
+      const r = await api.connectFromUserToken(token.trim(), selected);
+      setResult(r);
+      const n = r.pages.filter((p) => p.connected).length;
+      toast.success(`Đã kết nối ${n} Page`, r.longLived ? 'Token của các Page này không hết hạn.' : undefined);
+      setToken('');
+      await onConnected();
+      api.syncPageStats().catch(() => undefined); // refresh view counts with the new tokens
+    } catch (err) {
+      toast.error('Kết nối thất bại', errorText(err, ''));
+    } finally {
+      setConnecting(false);
+    }
+  };
+
+  const toggle = (id: string) => setSelected((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
+
+  return (
+    <Card>
+      <CardHeader title="Kết nối nhanh tất cả Page" description="Dán 1 mã duy nhất, app tự lấy token riêng cho từng Page. Token Page sẽ không hết hạn." />
+      <CardBody className="space-y-4">
+        <ol className="list-decimal space-y-1.5 pl-5 text-[13px] text-fg-muted">
+          <li>
+            Mở{' '}
+            <a href="https://developers.facebook.com/tools/explorer" target="_blank" rel="noreferrer" className="text-accent hover:underline">
+              Graph API Explorer
+            </a>
+            . Ô <b className="text-fg">Người dùng hoặc Trang</b> chọn <b className="text-fg">Quay lại mã người dùng</b>. Bấm{' '}
+            <b className="text-fg">Generate Access Token</b>, tick tất cả Page.
+          </li>
+          <li>
+            Bấm nút <b className="text-fg">ⓘ</b> cạnh mã → <b className="text-fg">Mở trong Trình gỡ lỗi</b> → kéo xuống cuối bấm{' '}
+            <b className="text-fg">Gia hạn mã truy cập</b> → copy mã mới.
+          </li>
+          <li>Dán mã đó vào ô dưới, bấm Lấy danh sách Page.</li>
+        </ol>
+
+        <div className="flex gap-2">
+          <div className="flex-1">
+            <Input
+              type="password"
+              autoComplete="off"
+              value={token}
+              onChange={(e) => {
+                setToken(e.target.value);
+                setResult(null);
+              }}
+              placeholder="Dán mã người dùng đã gia hạn (EAA…)"
+              className="font-mono"
+            />
+          </div>
+          <Button onClick={readPages} loading={loading} disabled={!token.trim()} icon={<KeyRound className="h-4 w-4" />}>
+            Lấy danh sách Page
+          </Button>
+        </div>
+
+        {result && (
+          <>
+            {!result.longLived && (
+              <Alert tone="warning" icon={<AlertTriangle />}>
+                Mã này <b>chưa được gia hạn</b>
+                {result.userTokenExpiresAtUtc ? ` (hết hạn lúc ${formatDateTime(result.userTokenExpiresAtUtc)})` : ''}, nên token Page cũng sẽ hết hạn
+                theo. Làm lại bước 2 (Gia hạn mã truy cập) rồi dán mã mới.
+              </Alert>
+            )}
+            {result.missingPermissions.length > 0 && (
+              <Alert tone="warning" icon={<AlertTriangle />}>
+                Mã thiếu quyền <span className="font-mono">{result.missingPermissions.join(', ')}</span>. Thêm quyền ở ô Quyền trong Graph API Explorer
+                rồi làm lại từ bước 1.
+              </Alert>
+            )}
+            <ul className="-mx-5 divide-y divide-line border-y border-line">
+              {result.pages.map((p) => (
+                <li key={p.pageId}>
+                  <label className="flex cursor-pointer items-center gap-3 px-5 py-2.5">
+                    <input
+                      type="checkbox"
+                      checked={selected.includes(p.pageId)}
+                      onChange={() => toggle(p.pageId)}
+                      className="h-4 w-4 shrink-0 cursor-pointer rounded border-line-strong accent-[rgb(var(--accent))]"
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm text-fg">{p.pageName}</span>
+                      <span className="block text-xs text-fg-muted">
+                        {p.connected ? 'Vừa kết nối' : p.alreadyConnected ? 'Đang có trong app, sẽ thay token mới' : 'Chưa có trong app'}
+                      </span>
+                    </span>
+                    {p.neverExpires ? (
+                      <Badge tone="success">Không hết hạn</Badge>
+                    ) : (
+                      <Badge tone="warning">Hết hạn {p.expiresAtUtc ? formatDateTime(p.expiresAtUtc) : ''}</Badge>
+                    )}
+                  </label>
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+      </CardBody>
+      {result && (
+        <div className="flex items-center justify-end gap-3 border-t border-line px-5 py-3.5">
+          <span className="text-xs text-fg-muted">Chỉ các Page được tick mới kết nối vào app.</span>
+          <Button variant="primary" loading={connecting} disabled={selected.length === 0} icon={<Plus className="h-4 w-4" />} onClick={connect}>
+            Kết nối {selected.length} Page
+          </Button>
+        </div>
+      )}
+    </Card>
   );
 }
 

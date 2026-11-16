@@ -23,6 +23,12 @@ public interface IFacebookPublishingService
     Task<VideoMetricDto?> FetchMetricsAsync(Guid facebookPostId, CancellationToken cancellationToken = default);
     Task<List<FacebookPostDto>> GetProjectPostsAsync(Guid videoProjectId, CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Lists the pages of a (preferably extended) user token with their own page tokens' expiry, and connects
+    /// the pages named in <see cref="UserTokenConnectRequestDto.PageIds"/>.
+    /// </summary>
+    Task<UserTokenPagesResultDto> ConnectFromUserTokenAsync(UserTokenConnectRequestDto request, CancellationToken cancellationToken = default);
+
     /// <summary>One post on the page's wall with several pictures (in order) and a text; returns the post id.</summary>
     Task<string> PublishPhotoPostAsync(Guid facebookAccountId, IReadOnlyList<string> imagePaths, string message, CancellationToken cancellationToken = default);
 

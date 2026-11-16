@@ -518,6 +518,106 @@ public class FacebookPublishingService : IFacebookPublishingService
         return (videoId, postId);
     }
 
+    /// <summary>Permissions the app uses: listing pages, posting Reels/Stories/photos, reading views.</summary>
+    public static readonly string[] RequiredPermissions =
+        { "pages_show_list", "pages_read_engagement", "pages_manage_posts", "read_insights" };
+
+    public async Task<UserTokenPagesResultDto> ConnectFromUserTokenAsync(UserTokenConnectRequestDto request, CancellationToken cancellationToken = default)
+    {
+        var userToken = (request.UserAccessToken ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(userToken)) throw new ArgumentException("Hãy dán mã truy cập người dùng.");
+        var baseUrl = $"https://graph.facebook.com/{_graphApiVersion}";
+        var result = new UserTokenPagesResultDto();
+
+        // 1. The user token itself: extended or not, which permissions
+        var (userExpires, scopes, userError) = await DebugTokenAsync(userToken, userToken, cancellationToken);
+        if (userError != null) throw new InvalidOperationException($"Mã không dùng được. {userError}");
+        result.UserTokenExpiresAtUtc = userExpires;
+        result.LongLived = userExpires == null || userExpires > DateTime.UtcNow.AddDays(7);
+        result.MissingPermissions = RequiredPermissions.Where(p => !scopes.Contains(p)).ToList();
+
+        // 2. Every page the user manages, each with its own page token
+        var pages = new List<(string Id, string Name, string Token)>();
+        string? next = $"{baseUrl}/me/accounts?fields=id,name,access_token&limit=100&access_token={Uri.EscapeDataString(userToken)}";
+        while (next != null && pages.Count < 500)
+        {
+            var (ok, body, error) = await GetGraphAsync(next, cancellationToken);
+            if (!ok)
+            {
+                if (error != null && (error.Contains("node type (Page)") || error.Contains("nonexisting field (accounts)")))
+                    throw new InvalidOperationException(
+                        "Đây là mã của một Page, không phải mã người dùng. Trong Graph API Explorer, ô \"Người dùng hoặc Trang\" hãy chọn \"Quay lại mã người dùng\" rồi bấm Generate Access Token.");
+                throw new InvalidOperationException($"Không lấy được danh sách Page. {error}");
+            }
+            if (body.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var p in data.EnumerateArray())
+                {
+                    var id = p.TryGetProperty("id", out var i) ? i.GetString() : null;
+                    var token = p.TryGetProperty("access_token", out var t) ? t.GetString() : null;
+                    if (id != null && token != null)
+                        pages.Add((id, p.TryGetProperty("name", out var n) ? n.GetString() ?? id : id, token));
+                }
+            }
+            next = body.TryGetProperty("paging", out var paging) && paging.TryGetProperty("next", out var nx) ? nx.GetString() : null;
+        }
+        if (pages.Count == 0)
+            throw new InvalidOperationException("Mã này không quản lý Page nào. Khi bấm Generate Access Token, hãy tick chọn các Page trong cửa sổ Facebook.");
+
+        // 3. Expiry of each page token, connect the chosen ones
+        var connectedIds = (await _context.FacebookAccounts.AsNoTracking().Where(a => a.IsActive).Select(a => a.PageId).ToListAsync(cancellationToken))
+            .ToHashSet();
+        var wanted = (request.PageIds ?? new List<string>()).ToHashSet();
+        foreach (var (id, name, token) in pages)
+        {
+            var (expires, _, _) = await DebugTokenAsync(token, userToken, cancellationToken);
+            var item = new UserTokenPageDto
+            {
+                PageId = id,
+                PageName = name,
+                AlreadyConnected = connectedIds.Contains(id),
+                NeverExpires = expires == null,
+                ExpiresAtUtc = expires
+            };
+            if (wanted.Contains(id))
+            {
+                await ConnectPageAsync(new ConnectFacebookPageRequestDto
+                {
+                    PageId = id,
+                    PageName = name,
+                    PageAccessToken = token,
+                    TokenExpiresAtUtc = expires
+                }, cancellationToken);
+                item.Connected = true;
+                item.AlreadyConnected = true;
+            }
+            result.Pages.Add(item);
+        }
+        _logger.LogInformation("Quick connect: {Count} pages listed, {Connected} connected (user token long-lived: {LongLived})",
+            result.Pages.Count, result.Pages.Count(p => p.Connected), result.LongLived);
+        return result;
+    }
+
+    /// <summary>debug_token: expiry (null = never) and granted permissions of <paramref name="inputToken"/>.</summary>
+    private async Task<(DateTime? ExpiresAtUtc, HashSet<string> Scopes, string? Error)> DebugTokenAsync(string inputToken, string accessToken, CancellationToken ct)
+    {
+        var url = $"https://graph.facebook.com/{_graphApiVersion}/debug_token?input_token={Uri.EscapeDataString(inputToken)}&access_token={Uri.EscapeDataString(accessToken)}";
+        var (ok, body, error) = await GetGraphAsync(url, ct);
+        if (!ok || !body.TryGetProperty("data", out var data)) return (null, new HashSet<string>(), error ?? "Meta không trả lời.");
+        if (data.TryGetProperty("is_valid", out var valid) && valid.ValueKind == JsonValueKind.False)
+        {
+            var msg = data.TryGetProperty("error", out var e) && e.TryGetProperty("message", out var m) ? m.GetString() : null;
+            return (null, new HashSet<string>(), $"Meta báo mã không hợp lệ hoặc đã hết hạn. {msg}");
+        }
+        DateTime? expires = data.TryGetProperty("expires_at", out var ex) && ex.TryGetInt64(out var secs) && secs > 0
+            ? DateTimeOffset.FromUnixTimeSeconds(secs).UtcDateTime
+            : null;
+        var scopes = data.TryGetProperty("scopes", out var sc) && sc.ValueKind == JsonValueKind.Array
+            ? sc.EnumerateArray().Select(s => s.GetString() ?? "").ToHashSet()
+            : new HashSet<string>();
+        return (expires, scopes, null);
+    }
+
     private async Task<(string PageId, string Token)> PageTokenAsync(Guid facebookAccountId, CancellationToken ct)
     {
         var account = await _context.FacebookAccounts.AsNoTracking().FirstOrDefaultAsync(a => a.Id == facebookAccountId, ct);

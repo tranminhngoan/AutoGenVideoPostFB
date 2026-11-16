@@ -34,6 +34,37 @@ public class VerifyTokenResultDto
     public string? ErrorMessage { get; set; }
 }
 
+/// <summary>"Kết nối nhanh": one user token → every page the user manages, each with its own page token.</summary>
+public class UserTokenConnectRequestDto
+{
+    public string UserAccessToken { get; set; } = string.Empty;
+    /// <summary>Pages to connect (Facebook page ids). Empty = only list them.</summary>
+    public List<string>? PageIds { get; set; }
+}
+
+public class UserTokenPageDto
+{
+    public string PageId { get; set; } = string.Empty;
+    public string PageName { get; set; } = string.Empty;
+    /// <summary>Already connected in the app (its token will be replaced).</summary>
+    public bool AlreadyConnected { get; set; }
+    /// <summary>The page token never expires (made from an extended user token).</summary>
+    public bool NeverExpires { get; set; }
+    public DateTime? ExpiresAtUtc { get; set; }
+    /// <summary>Connected by this request.</summary>
+    public bool Connected { get; set; }
+}
+
+public class UserTokenPagesResultDto
+{
+    public List<UserTokenPageDto> Pages { get; set; } = new();
+    /// <summary>The pasted user token was extended (long-lived), so the page tokens never expire.</summary>
+    public bool LongLived { get; set; }
+    public DateTime? UserTokenExpiresAtUtc { get; set; }
+    /// <summary>Permissions the app needs that the token doesn't have.</summary>
+    public List<string> MissingPermissions { get; set; } = new();
+}
+
 public class PublishReelRequestDto
 {
     public Guid? FacebookAccountId { get; set; }
