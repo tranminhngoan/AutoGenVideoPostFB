@@ -98,14 +98,19 @@ public class DailyDigestService : IDailyDigestService
             var today = AutoPostService.VietnamDate(now);
             var todayKey = DateKey(today);
 
+            await FailInterruptedRunsAsync(cancellationToken);
+
             foreach (var (page, settings) in await LoadPagesAsync(cancellationToken))
             {
                 if (!settings.Enabled || !settings.DigestEnabled) continue;
                 var time = AutoPostService.ParseSlots(settings.DigestTime).FirstOrDefault() ?? "20:30";
                 var at = AutoPostService.SlotUtc(today, time);
                 if (now < at || now > at + LateWindow) continue;
-                if (await _context.DailyDigestRuns.AnyAsync(r => r.FacebookAccountId == page.Id && r.DigestDate == todayKey && !r.IsPreview, cancellationToken))
-                    continue;
+                var statuses = await _context.DailyDigestRuns
+                    .Where(r => r.FacebookAccountId == page.Id && r.DigestDate == todayKey && !r.IsPreview)
+                    .Select(r => r.Status)
+                    .ToListAsync(cancellationToken);
+                if (!ShouldRunScheduled(statuses)) continue;
 
                 _logger.LogInformation("Daily digest {Date} starting for page {Page}", todayKey, page.PageName);
                 try
@@ -131,11 +136,40 @@ public class DailyDigestService : IDailyDigestService
         }
     }
 
+    /// <summary>
+    /// Today's scheduled digest runs unless one is done or in progress; a failed one is tried once more
+    /// (e.g. interrupted by a restart), but not every 5 minutes for hours when the cause is lasting.
+    /// </summary>
+    public static bool ShouldRunScheduled(IReadOnlyCollection<string> todaysStatuses) =>
+        !todaysStatuses.Any(s => s is Published or Partial or Working)
+        && todaysStatuses.Count(s => s == Failed) < MaxScheduledAttempts;
+
+    public const int MaxScheduledAttempts = 2;
+
+    /// <summary>A run still "Working" long after it started was cut off (server restart / redeploy).</summary>
+    private static readonly TimeSpan InterruptedAfter = TimeSpan.FromMinutes(20);
+
+    private async Task FailInterruptedRunsAsync(CancellationToken ct)
+    {
+        var cutoff = DateTime.UtcNow - InterruptedAfter;
+        var stuck = await _context.DailyDigestRuns
+            .Where(r => r.Status == Working && (r.StartedAtUtc ?? r.CreatedAtUtc) < cutoff)
+            .ToListAsync(ct);
+        foreach (var run in stuck)
+        {
+            run.Status = Failed;
+            run.Message = "Bị gián đoạn giữa chừng (máy chủ khởi động lại). Hệ thống sẽ tự làm lại nếu còn trong khung giờ.";
+            run.UpdatedAtUtc = DateTime.UtcNow;
+        }
+        if (stuck.Count > 0) await _context.SaveChangesAsync(ct);
+    }
+
     public Task<DailyDigestRunDto> PreviewAsync(Guid facebookAccountId, CancellationToken cancellationToken = default) =>
         RunForPageAsync(facebookAccountId, publish: false, cancellationToken);
 
     public async Task<DailyDigestRunDto> PublishNowAsync(Guid facebookAccountId, CancellationToken cancellationToken = default)
     {
+        await FailInterruptedRunsAsync(cancellationToken);
         var todayKey = DateKey(AutoPostService.VietnamDate(DateTime.UtcNow));
         if (await _context.DailyDigestRuns.AnyAsync(r => r.FacebookAccountId == facebookAccountId && r.DigestDate == todayKey && !r.IsPreview
                                                         && (r.Status == Published || r.Status == Partial || r.Status == Working), cancellationToken))
@@ -193,6 +227,8 @@ public class DailyDigestService : IDailyDigestService
 
         var folder = Path.Combine(TempStorage.GetRoot(_configuration), "digests", run.Id.ToString("N"));
         Directory.CreateDirectory(folder);
+        // Never empty: the storage cleanup removes empty folders, and this one stays empty while AI picks stories
+        await File.WriteAllTextAsync(Path.Combine(folder, "run.txt"), $"{page.PageName} {run.DigestDate}", ct);
         run.WorkFolder = folder;
 
         try
@@ -395,6 +431,7 @@ public class DailyDigestService : IDailyDigestService
         }
         if (best == null || best.Value.Bytes.Length < 8_000) return null;
         var path = $"{pathWithoutExtension}.{best.Value.Ext}";
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         await File.WriteAllBytesAsync(path, best.Value.Bytes, ct);
         return path;
     }
@@ -528,6 +565,7 @@ public class DailyDigestService : IDailyDigestService
             title = "Điểm tin nóng",
             items = items.Select(i => new { photo = i.Photo, headline = i.Item.Headline, summary = i.Item.Summary, source = i.Item.SourceName })
         };
+        Directory.CreateDirectory(folder);
         var specPath = Path.Combine(folder, "spec.json");
         await File.WriteAllTextAsync(specPath, JsonSerializer.Serialize(spec), new UTF8Encoding(false), ct);
 
@@ -652,7 +690,8 @@ public class DailyDigestService : IDailyDigestService
             if (!Directory.Exists(root)) return;
             foreach (var dir in Directory.GetDirectories(root))
             {
-                if (DateTime.UtcNow - Directory.GetCreationTimeUtc(dir) > KeepFilesFor)
+                // Last-write time: creation time isn't reliable on every Linux filesystem
+                if (DateTime.UtcNow - Directory.GetLastWriteTimeUtc(dir) > KeepFilesFor)
                     Directory.Delete(dir, true);
             }
         }

@@ -55,6 +55,17 @@ public class DailyDigestRulesTests
     }
 
     [Fact]
+    public void ScheduledDigestRunsOnceAndRetriesAFailureOnlyOnce()
+    {
+        DailyDigestService.ShouldRunScheduled(Array.Empty<string>()).Should().BeTrue();
+        DailyDigestService.ShouldRunScheduled(new[] { "Failed" }).Should().BeTrue("an interrupted or failed digest is tried again");
+        DailyDigestService.ShouldRunScheduled(new[] { "Failed", "Failed" }).Should().BeFalse("not every 5 minutes for hours");
+        DailyDigestService.ShouldRunScheduled(new[] { "Published" }).Should().BeFalse();
+        DailyDigestService.ShouldRunScheduled(new[] { "Failed", "Partial" }).Should().BeFalse();
+        DailyDigestService.ShouldRunScheduled(new[] { "Working" }).Should().BeFalse();
+    }
+
+    [Fact]
     public void StoryOfTheLargestDigestStaysUnderOneMinute()
     {
         (DailyDigestService.CoverSeconds + DailyDigestService.MaxItems * DailyDigestService.ItemSeconds).Should().BeLessThan(60);
