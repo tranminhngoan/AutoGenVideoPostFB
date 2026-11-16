@@ -340,6 +340,9 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                     b.Property<Guid?>("FacebookAccountId")
                         .HasColumnType("uuid");
 
+                    b.Property<bool>("InstagramEnabled")
+                        .HasColumnType("boolean");
+
                     b.Property<int>("LeadMinutes")
                         .HasColumnType("integer");
 
@@ -481,6 +484,12 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                     b.Property<string>("ErrorMessage")
                         .HasColumnType("text");
 
+                    b.Property<string>("InstagramAccountId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("InstagramUsername")
+                        .HasColumnType("text");
+
                     b.Property<bool>("IsActive")
                         .HasColumnType("boolean");
 
@@ -543,6 +552,18 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                     b.Property<string>("FirstCommentId")
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)");
+
+                    b.Property<string>("InstagramError")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<string>("InstagramMediaId")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("InstagramPermalink")
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)");
 
                     b.Property<DateTime?>("PublishedAtUtc")
                         .HasColumnType("timestamp with time zone");

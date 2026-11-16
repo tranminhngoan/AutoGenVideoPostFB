@@ -281,6 +281,9 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
             entity.Property(e => e.Status).HasMaxLength(50);
             entity.Property(e => e.FirstCommentId).HasMaxLength(100);
             entity.Property(e => e.FirstCommentError).HasMaxLength(1000);
+            entity.Property(e => e.InstagramMediaId).HasMaxLength(100);
+            entity.Property(e => e.InstagramPermalink).HasMaxLength(300);
+            entity.Property(e => e.InstagramError).HasMaxLength(1000);
 
             entity.HasOne(e => e.VideoProject)
                   .WithMany(p => p.FacebookPosts)

@@ -32,6 +32,8 @@ public class AutoPostSettingsDto
     public int BreakingPerDay { get; set; } = 2;
     /// <summary>Prefer the kinds of stories that got the most views on this page.</summary>
     public bool AutoTune { get; set; } = true;
+    /// <summary>Also post every Reel on the Instagram account linked to the page.</summary>
+    public bool InstagramEnabled { get; set; } = true;
 }
 
 public class AutoPostRunDto
@@ -86,6 +88,8 @@ public class AutoPostPageDto
     /// <summary>Connection status of the page token ("Active", "Expired", …).</summary>
     public string TokenStatus { get; set; } = "Active";
     public DateTime? TokenExpiresAtUtc { get; set; }
+    /// <summary>Instagram account linked to the page (null = none found).</summary>
+    public string? InstagramUsername { get; set; }
     public AutoPostSettingsDto Settings { get; set; } = new();
     public string TopicName { get; set; } = string.Empty;
     public List<AutoPostSlotDto> TodaySlots { get; set; } = new();

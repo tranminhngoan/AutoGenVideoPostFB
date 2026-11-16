@@ -637,6 +637,16 @@ function PageDetail({
               </div>
             )}
             <Checkbox
+              checked={form.instagramEnabled}
+              onChange={(v) => update({ instagramEnabled: v })}
+              label={page.instagramUsername ? `Đăng cùng lúc lên Instagram @${page.instagramUsername}` : 'Đăng cùng lúc lên Instagram'}
+              description={
+                page.instagramUsername
+                  ? 'Mỗi Reels đăng lên Page cũng được đăng lên Instagram đã liên kết, cùng caption.'
+                  : 'Page này chưa liên kết Instagram chuyên nghiệp. Liên kết trong Cài đặt của Page trên Facebook, rồi mở Cài đặt → Facebook trong app để cập nhật.'
+              }
+            />
+            <Checkbox
               checked={form.autoTune}
               onChange={(v) => update({ autoTune: v })}
               label="Tự học từ lượt xem"

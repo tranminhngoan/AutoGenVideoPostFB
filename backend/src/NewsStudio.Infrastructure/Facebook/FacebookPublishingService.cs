@@ -140,7 +140,8 @@ public class FacebookPublishingService : IFacebookPublishingService
             MaskedToken = _tokenProtection.MaskToken(_tokenProtection.DecryptToken(a.EncryptedAccessToken)),
             TokenExpiresAtUtc = a.TokenExpiresAtUtc,
             Status = a.Status,
-            CreatedAtUtc = a.CreatedAtUtc
+            CreatedAtUtc = a.CreatedAtUtc,
+            InstagramUsername = a.InstagramUsername
         }).ToList();
     }
 
@@ -441,6 +442,27 @@ public class FacebookPublishingService : IFacebookPublishingService
             await _context.SaveChangesAsync(CancellationToken.None);
         }
 
+        // 6c. The same Reel on the Instagram account linked to the page (the Facebook Reel is already live:
+        //     a failure is only recorded).
+        if (request?.PostToInstagram == true && !_simulate)
+        {
+            try
+            {
+                var ig = await ResolveInstagramAsync(account, rawPageToken, cancellationToken)
+                         ?? throw new InvalidOperationException("Page chưa liên kết tài khoản Instagram chuyên nghiệp (Cài đặt Page → Tài khoản được liên kết → Instagram).");
+                var (mediaId, permalink) = await PublishInstagramReelAsync(ig, rawPageToken, videoFilePath, caption, cancellationToken);
+                postRecord.InstagramMediaId = mediaId;
+                postRecord.InstagramPermalink = permalink;
+                _logger.LogInformation("Reel of project {ProjectId} also posted to Instagram: {Permalink}", videoProjectId, permalink);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogWarning("Instagram post for project {ProjectId} failed: {Message}", videoProjectId, ex.Message);
+                postRecord.InstagramError = ex.Message.Length > 1000 ? ex.Message[..1000] : ex.Message;
+            }
+            await _context.SaveChangesAsync(CancellationToken.None);
+        }
+
         // 7. CLEAN UP EPHEMERAL ASSETS (STRICT MASTER PLAN REQUIREMENT)
         var cleanedUp = false;
         if (request?.AutoCleanupAssets != false)
@@ -467,8 +489,129 @@ public class FacebookPublishingService : IFacebookPublishingService
             PublishedAtUtc = postRecord.PublishedAtUtc,
             EphemeralAssetsCleanedUp = cleanedUp,
             FirstCommentId = postRecord.FirstCommentId,
-            FirstCommentError = postRecord.FirstCommentError
+            FirstCommentError = postRecord.FirstCommentError,
+            InstagramMediaId = postRecord.InstagramMediaId,
+            InstagramPermalink = postRecord.InstagramPermalink,
+            InstagramError = postRecord.InstagramError
         };
+    }
+
+    // ---------------------------------------------------------------- Instagram
+
+    /// <summary>
+    /// The Instagram professional account linked to the page (id), refreshed from Meta and remembered on the
+    /// account; null when the page has none.
+    /// </summary>
+    private async Task<string?> ResolveInstagramAsync(FacebookAccount account, string pageToken, CancellationToken ct)
+    {
+        var ig = await ReadInstagramAsync(account.PageId, pageToken, ct);
+        if (ig != null && (account.InstagramAccountId != ig.Value.Id || account.InstagramUsername != ig.Value.Username))
+        {
+            account.InstagramAccountId = ig.Value.Id;
+            account.InstagramUsername = ig.Value.Username;
+            await _context.SaveChangesAsync(ct);
+        }
+        return ig?.Id;
+    }
+
+    private async Task<(string Id, string? Username)?> ReadInstagramAsync(string pageId, string pageToken, CancellationToken ct)
+    {
+        var (ok, body, error) = await GetGraphAsync(
+            $"https://graph.facebook.com/{_graphApiVersion}/{pageId}?fields=instagram_business_account%7Bid,username%7D&access_token={Uri.EscapeDataString(pageToken)}", ct);
+        if (!ok) throw new InvalidOperationException($"Không đọc được Instagram của Page. {error}");
+        if (!body.TryGetProperty("instagram_business_account", out var ig) || !ig.TryGetProperty("id", out var id)) return null;
+        return (id.GetString()!, ig.TryGetProperty("username", out var u) ? u.GetString() : null);
+    }
+
+    public async Task<List<FacebookAccountDto>> RefreshInstagramAsync(CancellationToken cancellationToken = default)
+    {
+        var accounts = await _context.FacebookAccounts.Where(a => a.IsActive).ToListAsync(cancellationToken);
+        foreach (var account in accounts)
+        {
+            try
+            {
+                var ig = await ReadInstagramAsync(account.PageId, _tokenProtection.DecryptToken(account.EncryptedAccessToken), cancellationToken);
+                account.InstagramAccountId = ig?.Id;
+                account.InstagramUsername = ig?.Username;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // Token can't read it (expired / no instagram_basic / unreadable): keep what we knew
+                _logger.LogInformation("Instagram of page {Page} not readable: {Message}", account.PageName, ex.Message);
+            }
+        }
+        await _context.SaveChangesAsync(cancellationToken);
+        return await GetConnectedPagesAsync(cancellationToken);
+    }
+
+    /// <summary>Instagram limits captions to 2,200 characters.</summary>
+    public static string InstagramCaption(string caption) =>
+        caption.Length <= 2200 ? caption : caption[..2199] + "…";
+
+    /// <summary>
+    /// Posts a local MP4 as an Instagram Reel: resumable upload container → binary upload → wait until
+    /// Instagram has processed it → publish. Returns the media id and its permalink.
+    /// </summary>
+    private async Task<(string MediaId, string? Permalink)> PublishInstagramReelAsync(string igUserId, string token, string videoPath, string caption, CancellationToken ct)
+    {
+        var baseUrl = $"https://graph.facebook.com/{_graphApiVersion}";
+
+        // 1. Container
+        using var create = await _httpClient.PostAsync($"{baseUrl}/{igUserId}/media", new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["media_type"] = "REELS",
+            ["upload_type"] = "resumable",
+            ["caption"] = InstagramCaption(caption),
+            ["share_to_feed"] = "true",
+            ["access_token"] = token
+        }), ct);
+        if (!create.IsSuccessStatusCode) throw new InvalidOperationException($"Instagram không nhận video. {await ReadGraphErrorAsync(create, ct)}");
+        var created = await create.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: ct);
+        var containerId = created.GetProperty("id").GetString()!;
+        var uploadUri = created.TryGetProperty("uri", out var u) ? u.GetString() : null;
+        if (string.IsNullOrWhiteSpace(uploadUri)) throw new InvalidOperationException("Instagram không trả về địa chỉ tải video lên.");
+
+        // 2. Binary upload (same rupload protocol as Facebook Reels)
+        var size = new FileInfo(videoPath).Length;
+        await using (var stream = File.OpenRead(videoPath))
+        using (var upload = new HttpRequestMessage(HttpMethod.Post, uploadUri))
+        {
+            upload.Headers.Authorization = new AuthenticationHeaderValue("OAuth", token);
+            upload.Headers.TryAddWithoutValidation("offset", "0");
+            upload.Headers.TryAddWithoutValidation("file_size", size.ToString());
+            upload.Content = new StreamContent(stream);
+            upload.Content.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
+            using var res = await _httpClient.SendAsync(upload, ct);
+            if (!res.IsSuccessStatusCode) throw new InvalidOperationException($"Tải video lên Instagram thất bại. {await ReadGraphErrorAsync(res, ct)}");
+        }
+
+        // 3. Wait for Instagram to process the video (usually under a minute)
+        var deadline = DateTime.UtcNow.AddMinutes(5);
+        while (true)
+        {
+            await Task.Delay(TimeSpan.FromSeconds(6), ct);
+            var (ok, body, error) = await GetGraphAsync($"{baseUrl}/{containerId}?fields=status_code,status&access_token={Uri.EscapeDataString(token)}", ct);
+            var status = ok && body.TryGetProperty("status_code", out var sc) ? sc.GetString() : null;
+            if (status == "FINISHED") break;
+            if (status is "ERROR" or "EXPIRED")
+                throw new InvalidOperationException($"Instagram xử lý video lỗi: {(body.TryGetProperty("status", out var st) ? st.GetString() : status)}");
+            if (DateTime.UtcNow > deadline)
+                throw new InvalidOperationException($"Instagram xử lý video quá lâu (trạng thái: {status ?? error ?? "không rõ"}).");
+        }
+
+        // 4. Publish
+        using var publish = await _httpClient.PostAsync($"{baseUrl}/{igUserId}/media_publish", new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["creation_id"] = containerId,
+            ["access_token"] = token
+        }), ct);
+        if (!publish.IsSuccessStatusCode) throw new InvalidOperationException($"Đăng Reels lên Instagram thất bại. {await ReadGraphErrorAsync(publish, ct)}");
+        var published = await publish.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: ct);
+        var mediaId = published.GetProperty("id").GetString()!;
+
+        var (linkOk, linkBody, _) = await GetGraphAsync($"{baseUrl}/{mediaId}?fields=permalink&access_token={Uri.EscapeDataString(token)}", ct);
+        var permalink = linkOk && linkBody.TryGetProperty("permalink", out var pl) ? pl.GetString() : null;
+        return (mediaId, permalink);
     }
 
     /// <summary>Comments as the page under a Reel (on the video, or on its post when the video refuses).</summary>
@@ -559,7 +702,8 @@ public class FacebookPublishingService : IFacebookPublishingService
 
     /// <summary>Permissions the app uses: listing pages, posting Reels/Stories/photos, reading views.</summary>
     public static readonly string[] RequiredPermissions =
-        { "pages_show_list", "pages_read_engagement", "pages_manage_posts", "pages_manage_engagement", "read_insights" };
+        { "pages_show_list", "pages_read_engagement", "pages_manage_posts", "pages_manage_engagement", "read_insights",
+          "instagram_basic", "instagram_content_publish" };
 
     public async Task<UserTokenPagesResultDto> ConnectFromUserTokenAsync(UserTokenConnectRequestDto request, CancellationToken cancellationToken = default)
     {
@@ -610,13 +754,23 @@ public class FacebookPublishingService : IFacebookPublishingService
         foreach (var (id, name, token) in pages)
         {
             var (expires, _, _) = await DebugTokenAsync(token, userToken, cancellationToken);
+            (string Id, string? Username)? instagram = null;
+            try
+            {
+                instagram = await ReadInstagramAsync(id, token, cancellationToken);
+            }
+            catch (InvalidOperationException ex)
+            {
+                _logger.LogInformation("Quick connect: Instagram of page {Page} not readable: {Message}", name, ex.Message);
+            }
             var item = new UserTokenPageDto
             {
                 PageId = id,
                 PageName = name,
                 AlreadyConnected = connectedIds.Contains(id),
                 NeverExpires = expires == null,
-                ExpiresAtUtc = expires
+                ExpiresAtUtc = expires,
+                InstagramUsername = instagram == null ? null : instagram.Value.Username ?? instagram.Value.Id
             };
             if (wanted.Contains(id))
             {
@@ -627,6 +781,13 @@ public class FacebookPublishingService : IFacebookPublishingService
                     PageAccessToken = token,
                     TokenExpiresAtUtc = expires
                 }, cancellationToken);
+                var saved = await _context.FacebookAccounts.FirstOrDefaultAsync(a => a.PageId == id, cancellationToken);
+                if (saved != null)
+                {
+                    saved.InstagramAccountId = instagram?.Id;
+                    saved.InstagramUsername = instagram?.Username;
+                    await _context.SaveChangesAsync(cancellationToken);
+                }
                 item.Connected = true;
                 item.AlreadyConnected = true;
             }
@@ -993,6 +1154,8 @@ public class FacebookPublishingService : IFacebookPublishingService
                 ErrorMessage = p.ErrorMessage,
                 FirstCommentId = p.FirstCommentId,
                 FirstCommentError = p.FirstCommentError,
+                InstagramPermalink = p.InstagramPermalink,
+                InstagramError = p.InstagramError,
                 LatestMetric = latestMetric != null ? new VideoMetricDto
                 {
                     Id = latestMetric.Id,

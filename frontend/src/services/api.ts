@@ -520,6 +520,13 @@ export const api = {
     return await res.json();
   },
 
+  /** Reads again which Instagram account is linked to each connected page. */
+  async refreshInstagram(): Promise<FacebookAccountDto[]> {
+    const res = await fetch(`${API_BASE}/facebook/pages/instagram/refresh`, { method: 'POST' });
+    if (!res.ok) throw new Error(await apiError(res, 'Không đọc được Instagram của các Page'));
+    return await res.json();
+  },
+
   /** Kết nối nhanh: list pages of a user token (pageIds empty) or connect the given pages. */
   async connectFromUserToken(userAccessToken: string, pageIds: string[] = []): Promise<UserTokenPagesResultDto> {
     const res = await fetch(`${API_BASE}/facebook/connect-from-user-token`, {
@@ -873,6 +880,7 @@ export interface FacebookAccountDto {
   tokenExpiresAtUtc?: string;
   status: string;
   createdAtUtc: string;
+  instagramUsername?: string | null;
 }
 
 export interface ConnectFacebookPageRequestDto {
@@ -898,6 +906,7 @@ export interface UserTokenPageDto {
   neverExpires: boolean;
   expiresAtUtc?: string | null;
   connected: boolean;
+  instagramUsername?: string | null;
 }
 
 export interface UserTokenPagesResultDto {
@@ -914,6 +923,8 @@ export interface PublishReelRequestDto {
   autoCleanupAssets?: boolean;
   /** The page's own first comment under the Reel */
   firstComment?: string;
+  /** Also post the Reel on the page's linked Instagram */
+  postToInstagram?: boolean;
 }
 
 export interface PublishReelResultDto {
@@ -927,6 +938,9 @@ export interface PublishReelResultDto {
   ephemeralAssetsCleanedUp: boolean;
   firstCommentId?: string | null;
   firstCommentError?: string | null;
+  instagramMediaId?: string | null;
+  instagramPermalink?: string | null;
+  instagramError?: string | null;
 }
 
 export interface FacebookPostDto {
@@ -944,6 +958,8 @@ export interface FacebookPostDto {
   latestMetric?: VideoMetricDto;
   firstCommentId?: string | null;
   firstCommentError?: string | null;
+  instagramPermalink?: string | null;
+  instagramError?: string | null;
 }
 
 export interface VideoMetricDto {
@@ -997,6 +1013,8 @@ export interface AutoPostSettingsDto {
   breakingPerDay: number;
   /** Prefer the kinds of stories that got the most views */
   autoTune: boolean;
+  /** Also post every Reel on the page's linked Instagram */
+  instagramEnabled: boolean;
 }
 
 export interface EditorialPassDto {
@@ -1103,6 +1121,7 @@ export interface AutoPostPageDto {
   facebookAccountId: string;
   pageId: string;
   pageName: string;
+  instagramUsername?: string | null;
   tokenStatus: string;
   tokenExpiresAtUtc?: string | null;
   settings: AutoPostSettingsDto;

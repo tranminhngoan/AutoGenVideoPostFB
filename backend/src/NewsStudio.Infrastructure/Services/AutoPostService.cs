@@ -223,7 +223,8 @@ public class AutoPostService : IAutoPostService
         WeeklyDigestEnabled = s.WeeklyDigestEnabled,
         BreakingEnabled = s.BreakingEnabled,
         BreakingPerDay = s.BreakingPerDay,
-        AutoTune = s.AutoTune
+        AutoTune = s.AutoTune,
+        InstagramEnabled = s.InstagramEnabled
     };
 
     public async Task<AutoPostSettingsDto> UpdateSettingsAsync(Guid facebookAccountId, AutoPostSettingsDto dto, CancellationToken cancellationToken = default)
@@ -259,6 +260,7 @@ public class AutoPostService : IAutoPostService
         settings.BreakingEnabled = dto.BreakingEnabled;
         settings.BreakingPerDay = Math.Clamp(dto.BreakingPerDay, 0, MaxBreakingPerDay);
         settings.AutoTune = dto.AutoTune;
+        settings.InstagramEnabled = dto.InstagramEnabled;
         settings.UpdatedAtUtc = DateTime.UtcNow;
         await _context.SaveChangesAsync(cancellationToken);
 
@@ -344,6 +346,7 @@ public class AutoPostService : IAutoPostService
                 PageName = page.PageName,
                 TokenStatus = page.Status,
                 TokenExpiresAtUtc = page.TokenExpiresAtUtc,
+                InstagramUsername = page.InstagramUsername,
                 Settings = ToDto(settings),
                 TopicName = NewsTopics.NameOf(settings.Topic),
                 TodaySlots = todaySlots,
@@ -942,11 +945,16 @@ public class AutoPostService : IAutoPostService
         }
 
         // Each page posts with its own token: the request names the page explicitly
+        var postToInstagram = await _context.AutoPostSettings.AsNoTracking()
+            .Where(s => s.FacebookAccountId == run.FacebookAccountId)
+            .Select(s => s.InstagramEnabled)
+            .FirstOrDefaultAsync(ct);
         var result = await _facebook.PublishReelAsync(projectId, new PublishReelRequestDto
         {
             FacebookAccountId = run.FacebookAccountId,
             CustomCaption = pass?.Caption,
-            FirstComment = pass?.FirstComment
+            FirstComment = pass?.FirstComment,
+            PostToInstagram = postToInstagram
         }, ct);
         if (string.Equals(result.UploadStatus, "Published", StringComparison.OrdinalIgnoreCase))
         {
@@ -956,6 +964,8 @@ public class AutoPostService : IAutoPostService
             run.Message = "Đã đăng lên Facebook."
                           + (result.FirstCommentId != null ? " Đã bình luận đầu tiên." : "")
                           + (result.FirstCommentError != null ? $" Chưa bình luận được: {Shorten(result.FirstCommentError, 200)}" : "")
+                          + (result.InstagramMediaId != null ? " Đã đăng cả Instagram." : "")
+                          + (result.InstagramError != null ? $" Instagram lỗi: {Shorten(result.InstagramError, 200)}" : "")
                           + (passNote ?? "");
             _logger.LogInformation("Auto-post {Slot} published: {Url}", run.SlotKey, result.PostUrl);
         }

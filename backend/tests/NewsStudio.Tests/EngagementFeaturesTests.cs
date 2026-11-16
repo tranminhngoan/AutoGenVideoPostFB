@@ -53,6 +53,18 @@ public class EditorialPassRulesTests
     }
 }
 
+public class InstagramRulesTests
+{
+    [Fact]
+    public void LongCaptionsAreCutToInstagramsLimit()
+    {
+        NewsStudio.Infrastructure.Facebook.FacebookPublishingService.InstagramCaption("ngắn").Should().Be("ngắn");
+        var cut = NewsStudio.Infrastructure.Facebook.FacebookPublishingService.InstagramCaption(new string('a', 3000));
+        cut.Length.Should().Be(2200);
+        cut.Should().EndWith("…");
+    }
+}
+
 public class BreakingNewsRulesTests
 {
     private static readonly DateTime Noon = new(2026, 11, 16, 5, 0, 0, DateTimeKind.Utc); // 12:00 in Vietnam
@@ -176,13 +188,22 @@ public class EngagementApiTests : IClassFixture<WebApplicationFactory<Program>>
             settings.WeeklyDigestEnabled.Should().BeTrue();
             settings.AutoTune.Should().BeTrue();
 
+            settings.InstagramEnabled.Should().BeTrue();
+
             settings.BreakingPerDay = 9; // capped
             settings.AutoTune = false;
             settings.WeeklyDigestEnabled = false;
+            settings.InstagramEnabled = false;
             var saved = await (await _client.PutAsJsonAsync($"/api/auto-post/pages/{page.Id}/settings", settings)).Content.ReadFromJsonAsync<AutoPostSettingsDto>();
             saved!.BreakingPerDay.Should().Be(AutoPostService.MaxBreakingPerDay);
             saved.AutoTune.Should().BeFalse();
             saved.WeeklyDigestEnabled.Should().BeFalse();
+            saved.InstagramEnabled.Should().BeFalse();
+
+            // A page whose token can't be read keeps working: refreshing Instagram links never fails the list
+            var refreshed = await _client.PostAsync("/api/facebook/pages/instagram/refresh", null);
+            refreshed.StatusCode.Should().Be(HttpStatusCode.OK);
+            (await refreshed.Content.ReadFromJsonAsync<List<FacebookAccountDto>>())!.Should().Contain(p => p.Id == page.Id && p.InstagramUsername == null);
 
             var insights = await _client.GetFromJsonAsync<PageInsightsDto>($"/api/auto-post/pages/{page.Id}/insights");
             insights!.Samples.Should().Be(0);

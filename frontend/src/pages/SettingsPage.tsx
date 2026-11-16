@@ -287,7 +287,8 @@ function FacebookSection() {
   const load = async () => setPages(await api.getFacebookPages());
 
   useEffect(() => {
-    load();
+    // Read the linked Instagram accounts again (falls back to the stored list)
+    api.refreshInstagram().then(setPages).catch(() => load());
   }, []);
 
   const verify = async () => {
@@ -380,6 +381,8 @@ function FacebookSection() {
                     </div>
                     <div className="mt-0.5 truncate text-xs text-fg-muted">
                       ID {p.pageId} · Token <span className="font-mono">{p.maskedToken || '••••'}</span>
+                      {' · '}
+                      {p.instagramUsername ? `Instagram @${p.instagramUsername}` : 'Chưa liên kết Instagram'}
                       {p.tokenExpiresAtUtc && ` · Hết hạn ${formatDateTime(p.tokenExpiresAtUtc)}`}
                     </div>
                   </div>
@@ -583,6 +586,7 @@ function QuickConnectCard({ onConnected }: { onConnected: () => Promise<void> | 
                       <span className="block truncate text-sm text-fg">{p.pageName}</span>
                       <span className="block text-xs text-fg-muted">
                         {p.connected ? 'Vừa kết nối' : p.alreadyConnected ? 'Đang có trong app, sẽ thay token mới' : 'Chưa có trong app'}
+                        {p.instagramUsername ? ` · Instagram @${p.instagramUsername}` : ''}
                       </span>
                     </span>
                     {p.neverExpires ? (

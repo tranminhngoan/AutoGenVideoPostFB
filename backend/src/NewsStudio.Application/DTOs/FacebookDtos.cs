@@ -14,6 +14,8 @@ public class FacebookAccountDto
     public DateTime? TokenExpiresAtUtc { get; set; }
     public string Status { get; set; } = "Active";
     public DateTime CreatedAtUtc { get; set; }
+    /// <summary>Instagram account linked to the page, if any.</summary>
+    public string? InstagramUsername { get; set; }
 }
 
 public class ConnectFacebookPageRequestDto
@@ -53,6 +55,8 @@ public class UserTokenPageDto
     public DateTime? ExpiresAtUtc { get; set; }
     /// <summary>Connected by this request.</summary>
     public bool Connected { get; set; }
+    /// <summary>Instagram account linked to the page, if any.</summary>
+    public string? InstagramUsername { get; set; }
 }
 
 public class UserTokenPagesResultDto
@@ -73,6 +77,8 @@ public class PublishReelRequestDto
     public bool AutoCleanupAssets { get; set; } = true;
     /// <summary>The page's own first comment under the Reel (e.g. a question + link to the article). Empty = none.</summary>
     public string? FirstComment { get; set; }
+    /// <summary>Also post the Reel on the Instagram account linked to the page.</summary>
+    public bool PostToInstagram { get; set; }
 }
 
 public class PublishReelResultDto
@@ -87,6 +93,9 @@ public class PublishReelResultDto
     public bool EphemeralAssetsCleanedUp { get; set; }
     public string? FirstCommentId { get; set; }
     public string? FirstCommentError { get; set; }
+    public string? InstagramMediaId { get; set; }
+    public string? InstagramPermalink { get; set; }
+    public string? InstagramError { get; set; }
 }
 
 public class FacebookPostDto
@@ -105,6 +114,8 @@ public class FacebookPostDto
     public VideoMetricDto? LatestMetric { get; set; }
     public string? FirstCommentId { get; set; }
     public string? FirstCommentError { get; set; }
+    public string? InstagramPermalink { get; set; }
+    public string? InstagramError { get; set; }
 }
 
 public class VideoMetricDto

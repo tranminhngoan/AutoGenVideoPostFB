@@ -57,6 +57,9 @@ public class AutoPostSettings : BaseEntity
 
     /// <summary>Learn from this page's views: prefer the kinds of stories that got the most views.</summary>
     public bool AutoTune { get; set; } = true;
+
+    /// <summary>Also post every Reel on the Instagram account linked to the page.</summary>
+    public bool InstagramEnabled { get; set; } = true;
 }
 
 /// <summary>

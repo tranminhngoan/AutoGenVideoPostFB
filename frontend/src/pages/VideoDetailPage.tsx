@@ -125,6 +125,7 @@ export const VideoDetailPage: React.FC<VideoDetailPageProps> = ({ projectId, onC
   const [publishCaption, setPublishCaption] = useState('');
   const [autoCleanup, setAutoCleanup] = useState(true);
   const [firstComment, setFirstComment] = useState('');
+  const [postToInstagram, setPostToInstagram] = useState(true);
   const [editorial, setEditorial] = useState<EditorialPassDto | null>(null);
   const [checking, setChecking] = useState(false);
 
@@ -210,6 +211,7 @@ export const VideoDetailPage: React.FC<VideoDetailPageProps> = ({ projectId, onC
   const isRejected = review?.decision === 'Rejected';
   const hasFatal = review?.seriousViolationsFound || (review?.assessment?.hasFatalViolations ?? false);
   const publishedPost = fbPosts.find((p) => p.uploadStatus === 'Published');
+  const selectedPage = pages.find((p) => p.pageId === selectedPageId);
   const totalSeconds = scenes.length > 0 ? scenes[scenes.length - 1].endTimeSeconds : 0;
   const poster = scenes.find((s) => s.imageUrl)?.imageUrl ?? undefined;
   const score = review?.internalQualityScore;
@@ -362,10 +364,13 @@ export const VideoDetailPage: React.FC<VideoDetailPageProps> = ({ projectId, onC
         customCaption: publishCaption,
         autoCleanupAssets: autoCleanup,
         firstComment: firstComment.trim() || undefined,
+        postToInstagram: postToInstagram && !!selectedPage?.instagramUsername,
       });
       setShowPublish(false);
       toast.success('Đã đăng lên Facebook', result.firstCommentId ? 'Đã bình luận đầu tiên.' : `Mã video: ${result.facebookVideoId}`);
       if (result.firstCommentError) toast.error('Chưa bình luận được', result.firstCommentError);
+      if (result.instagramError) toast.error('Chưa đăng được Instagram', result.instagramError);
+      else if (result.instagramMediaId) toast.success('Đã đăng cả Instagram');
       await loadData(true);
       setTab('publish');
       onChanged?.();
@@ -1196,6 +1201,17 @@ export const VideoDetailPage: React.FC<VideoDetailPageProps> = ({ projectId, onC
                           )}
                         </div>
                       </div>
+                      {(publishedPost.instagramPermalink || publishedPost.instagramError) && (
+                        <p className={cn('mt-3 border-t border-line pt-3 text-[13px]', publishedPost.instagramPermalink ? 'text-fg-muted' : 'text-danger')}>
+                          {publishedPost.instagramPermalink ? (
+                            <a href={publishedPost.instagramPermalink} target="_blank" rel="noreferrer" className="text-accent hover:underline">
+                              Đã đăng cả Instagram, mở bài
+                            </a>
+                          ) : (
+                            `Chưa đăng được Instagram: ${publishedPost.instagramError}`
+                          )}
+                        </p>
+                      )}
                       {(publishedPost.firstCommentId || publishedPost.firstCommentError) && (
                         <p className={cn('mt-3 border-t border-line pt-3 text-[13px]', publishedPost.firstCommentId ? 'text-fg-muted' : 'text-danger')}>
                           {publishedPost.firstCommentId ? 'Đã bình luận đầu tiên dưới bài.' : `Chưa bình luận được: ${publishedPost.firstCommentError}`}
@@ -1391,6 +1407,14 @@ export const VideoDetailPage: React.FC<VideoDetailPageProps> = ({ projectId, onC
           <Field label="Nội dung bài đăng" hint={`${publishCaption.length} ký tự`}>
             <Textarea rows={6} value={publishCaption} onChange={(e) => setPublishCaption(e.target.value)} />
           </Field>
+          {selectedPage?.instagramUsername && (
+            <Checkbox
+              checked={postToInstagram}
+              onChange={setPostToInstagram}
+              label={`Đăng cùng lúc lên Instagram @${selectedPage.instagramUsername}`}
+              description="Cùng video và caption, đăng dạng Reels trên Instagram đã liên kết với Page."
+            />
+          )}
           <Field label="Bình luận đầu tiên" optional hint="Page tự bình luận ngay sau khi đăng: câu hỏi mở + link bài gốc, giúp bài có tương tác sớm.">
             <Textarea rows={3} value={firstComment} onChange={(e) => setFirstComment(e.target.value)} placeholder="Để trống nếu không muốn bình luận" />
           </Field>

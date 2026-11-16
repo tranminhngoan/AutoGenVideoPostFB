@@ -93,6 +93,11 @@ public class FacebookController : ControllerBase
         }
     }
 
+    /// <summary>Đọc lại tài khoản Instagram liên kết với từng Page.</summary>
+    [HttpPost("pages/instagram/refresh")]
+    public async Task<ActionResult<List<FacebookAccountDto>>> RefreshInstagram(CancellationToken cancellationToken)
+        => Ok(await _facebookService.RefreshInstagramAsync(cancellationToken));
+
     /// <summary>
     /// Ngắt kết nối một Facebook Page khỏi hệ thống.
     /// </summary>
