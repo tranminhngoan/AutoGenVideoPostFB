@@ -81,8 +81,27 @@ public class GeminiTtsService : ITtsService
         _logger.LogInformation("Gemini TTS: project {ProjectId}, model {Model}, voice {Voice}, {Chars} chars",
             request.ProjectId, model, voiceName, text.Length);
 
-        // 1. Synthesize
-        var pcm = await RequestSpeechAsync(apiKey, model, voiceName, BuildPrompt(text), cancellationToken);
+        // 1. Synthesize — paid per call, so identical narration (same model + voice + text) is reused:
+        //    re-rendering a video (new images, failed render, etc.) doesn't pay for the voice again.
+        var prompt = BuildPrompt(text);
+        var cacheDir = Path.Combine(TempStorage.GetRoot(_configuration), "tts-cache");
+        Directory.CreateDirectory(cacheDir);
+        var cacheKey = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+            Encoding.UTF8.GetBytes($"{model}|{voiceName}|{prompt}")))[..32].ToLowerInvariant();
+        var cachePath = Path.Combine(cacheDir, cacheKey + ".pcm");
+
+        byte[] pcm;
+        if (File.Exists(cachePath))
+        {
+            pcm = await File.ReadAllBytesAsync(cachePath, cancellationToken);
+            _logger.LogInformation("Gemini TTS: reused cached narration for project {ProjectId} (no API call)", request.ProjectId);
+        }
+        else
+        {
+            pcm = await RequestSpeechAsync(apiKey, model, voiceName, prompt, cancellationToken);
+            try { await File.WriteAllBytesAsync(cachePath, pcm, cancellationToken); }
+            catch (IOException ex) { _logger.LogWarning("Could not cache TTS audio: {Message}", ex.Message); }
+        }
         await WriteWavAsync(rawWavPath, pcm, cancellationToken);
         var rawSeconds = pcm.Length / (double)(SampleRate * 2);
 
