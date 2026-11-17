@@ -656,6 +656,81 @@ export const api = {
     const res = await fetch(`${API_BASE}/system/jobs/recover`, { method: 'POST' });
     if (!res.ok) throw new Error('Khôi phục job thất bại');
     return await res.json();
+  },
+
+  // ── AI Film Factory APIs ──
+  async getFilmPages(): Promise<FilmPageDto[]> {
+    const res = await fetch(`${API_BASE}/film-factory/pages`);
+    if (!res.ok) throw new Error(await apiError(res, 'Không thể tải danh sách Film Page'));
+    return await res.json();
+  },
+
+  async updateFilmPage(id: string, data: Partial<UpdateFilmPageRequestDto>): Promise<FilmPageDto> {
+    const res = await fetch(`${API_BASE}/film-factory/pages/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) throw new Error(await apiError(res, 'Cập nhật Film Page thất bại'));
+    return await res.json();
+  },
+
+  async getFilmProjects(pageId?: string): Promise<FilmProjectDto[]> {
+    const url = pageId ? `${API_BASE}/film-factory/projects?pageId=${pageId}` : `${API_BASE}/film-factory/projects`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(await apiError(res, 'Không thể tải danh sách dự án phim'));
+    return await res.json();
+  },
+
+  async getFilmProjectDetail(id: string): Promise<FilmProjectDetailDto> {
+    const res = await fetch(`${API_BASE}/film-factory/projects/${id}`);
+    if (!res.ok) throw new Error(await apiError(res, 'Không thể tải chi tiết dự án phim'));
+    return await res.json();
+  },
+
+  async createFilmProject(request: CreateFilmProjectRequestDto): Promise<FilmProjectDto> {
+    const res = await fetch(`${API_BASE}/film-factory/projects`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(request),
+    });
+    if (!res.ok) throw new Error(await apiError(res, 'Tạo dự án phim thất bại'));
+    return await res.json();
+  },
+
+  async produceFilmProject(id: string): Promise<{ message: string; projectId: string }> {
+    const res = await fetch(`${API_BASE}/film-factory/projects/${id}/produce`, {
+      method: 'POST',
+    });
+    if (!res.ok) throw new Error(await apiError(res, 'Kích hoạt sản xuất phim thất bại'));
+    return await res.json();
+  },
+
+  async deleteFilmProject(id: string): Promise<void> {
+    const res = await fetch(`${API_BASE}/film-factory/projects/${id}`, {
+      method: 'DELETE',
+    });
+    if (!res.ok) throw new Error(await apiError(res, 'Xóa dự án phim thất bại'));
+  },
+
+  async getFilmCostSummary(id: string): Promise<FilmCostSummaryDto> {
+    const res = await fetch(`${API_BASE}/film-factory/projects/${id}/cost`);
+    if (!res.ok) throw new Error(await apiError(res, 'Không thể tải thống kê chi phí phim'));
+    return await res.json();
+  },
+
+  async getFilmEpisodeDetail(id: string): Promise<FilmEpisodeDetailDto> {
+    const res = await fetch(`${API_BASE}/film-factory/episodes/${id}`);
+    if (!res.ok) throw new Error(await apiError(res, 'Không thể tải chi tiết tập phim'));
+    return await res.json();
+  },
+
+  async renderFilmEpisode(id: string): Promise<{ message: string; videoPath: string }> {
+    const res = await fetch(`${API_BASE}/film-factory/episodes/${id}/render`, {
+      method: 'POST',
+    });
+    if (!res.ok) throw new Error(await apiError(res, 'Dựng tập phim thất bại'));
+    return await res.json();
   }
 };
 
@@ -1322,4 +1397,203 @@ export interface AiUsageReportDto {
   byDay: { date: string; costUsd: number }[];
   videos: number;
   costPerVideo: number;
+}
+
+// ── AI Film Factory DTOs ──
+export interface FilmPageDto {
+  id: string;
+  pageNumber: number;
+  name: string;
+  description: string;
+  avatarUrl?: string | null;
+  coverUrl?: string | null;
+  primaryGenre: string;
+  visualArtStyle: string;
+  brandColorHex: string;
+  defaultVoice: string;
+  language: string;
+  targetAudience: string;
+  aspectRatio: string;
+  linkedFacebookAccountId?: string | null;
+  linkedFacebookPageName?: string | null;
+  totalProjectsCount: number;
+  totalEpisodesCompleted: number;
+  totalCostSpentUsd: number;
+  isActive: boolean;
+}
+
+export interface UpdateFilmPageRequestDto {
+  name: string;
+  description: string;
+  avatarUrl?: string | null;
+  coverUrl?: string | null;
+  primaryGenre: string;
+  visualArtStyle: string;
+  brandColorHex: string;
+  defaultVoice: string;
+  language: string;
+  targetAudience: string;
+  aspectRatio: string;
+  linkedFacebookAccountId?: string | null;
+  isActive: boolean;
+}
+
+export interface CreateFilmProjectRequestDto {
+  filmPageId: string;
+  title: string;
+  logline: string;
+  genre?: string;
+  visualArtStyle?: string;
+  aspectRatio?: string;
+  budgetLimitUsd?: number;
+  autoProduceAll?: boolean;
+}
+
+export interface FilmProjectDto {
+  id: string;
+  filmPageId: string;
+  filmPageName: string;
+  title: string;
+  logline: string;
+  genre: string;
+  visualArtStyle: string;
+  aspectRatio: string;
+  status: string;
+  errorMessage?: string | null;
+  totalBudgetLimitUsd: number;
+  totalActualCostUsd: number;
+  targetEpisodes: number;
+  completedEpisodesCount: number;
+  targetDurationPerEpisodeSeconds: number;
+  createdAtUtc: string;
+  updatedAtUtc?: string | null;
+}
+
+export interface FilmStoryBibleDto {
+  id: string;
+  filmProjectId: string;
+  logline: string;
+  genre: string;
+  worldRules: string;
+  timePeriod: string;
+  geographicSetting: string;
+  mainConflict: string;
+  keyMysteriesAndTwists: string;
+  climaxResolution: string;
+  overallArcOutline: string;
+  episodesSummaryJson: string;
+}
+
+export interface FilmCharacterDto {
+  id: string;
+  filmProjectId: string;
+  characterId: string;
+  name: string;
+  role: string;
+  age: number;
+  gender: string;
+  physicalAppearance: string;
+  hairstyle: string;
+  defaultCostume: string;
+  personality: string;
+  emotionalTrait: string;
+  voiceModel: string;
+  consistencyPrompt: string;
+  frontReferenceImageUrl?: string | null;
+  sideReferenceImageUrl?: string | null;
+  fullBodyReferenceImageUrl?: string | null;
+}
+
+export interface FilmLocationDto {
+  id: string;
+  filmProjectId: string;
+  locationId: string;
+  name: string;
+  architectureStyle: string;
+  lightingMood: string;
+  timeOfDay: string;
+  keyProps: string;
+  referenceImageUrl?: string | null;
+}
+
+export interface FilmEpisodeDto {
+  id: string;
+  filmProjectId: string;
+  episodeNumber: number;
+  title: string;
+  synopsis: string;
+  openingHook: string;
+  endingCliffhanger: string;
+  targetDurationSeconds: number;
+  actualDurationSeconds: number;
+  status: string;
+  outputVideoPath?: string | null;
+  thumbnailPath?: string | null;
+  estimatedCostUsd: number;
+  actualCostUsd: number;
+  qualityScore: number;
+  errorMessage?: string | null;
+  scenesCount: number;
+  shotsCount: number;
+}
+
+export interface FilmShotDto {
+  id: string;
+  filmSceneId: string;
+  filmEpisodeId: string;
+  shotNumber: number;
+  shotType: string;
+  cameraMovement: string;
+  visualMethod: string;
+  visualPrompt: string;
+  speakerCharacterId?: string | null;
+  dialogueText?: string | null;
+  actingInstructions?: string | null;
+  emotionalTone?: string | null;
+  durationSeconds: number;
+  provider: string;
+  actualCostUsd: number;
+  renderStatus: string;
+  renderedShotVideoPath?: string | null;
+  rawImagePath?: string | null;
+}
+
+export interface FilmSceneDto {
+  id: string;
+  filmEpisodeId: string;
+  sceneNumber: number;
+  locationId: string;
+  locationName: string;
+  scenePurpose: string;
+  timeOfDay: string;
+  narrativeSummary: string;
+  estimatedDurationSeconds: number;
+  shots: FilmShotDto[];
+}
+
+export interface FilmEpisodeDetailDto extends FilmEpisodeDto {
+  scenes: FilmSceneDto[];
+}
+
+export interface FilmCostSummaryDto {
+  totalBudgetLimitUsd: number;
+  totalSpentUsd: number;
+  remainingBudgetUsd: number;
+  budgetStatus: string;
+  scriptCostUsd: number;
+  visualCostUsd: number;
+  voiceCostUsd: number;
+  renderCostUsd: number;
+  totalAiVideoShots: number;
+  totalMotionImageShots: number;
+  totalFreeApiCalls: number;
+  totalPaidApiCalls: number;
+}
+
+export interface FilmProjectDetailDto extends FilmProjectDto {
+  storyBible?: FilmStoryBibleDto | null;
+  characters: FilmCharacterDto[];
+  locations: FilmLocationDto[];
+  episodes: FilmEpisodeDto[];
+  costSummary: FilmCostSummaryDto;
 }

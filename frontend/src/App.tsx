@@ -10,6 +10,7 @@ import { VideoDetailPage } from './pages/VideoDetailPage';
 import { ActivityPage } from './pages/ActivityPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { AutoPostPage } from './pages/AutoPostPage';
+import { FilmFactoryPage } from './pages/FilmFactoryPage';
 import { SystemConfig, VideoProject } from './types';
 import { api } from './services/api';
 import { useRoute } from './lib/router';
@@ -23,6 +24,7 @@ const TITLES: Record<string, string> = {
   articles: 'Bài báo',
   activity: 'Hoạt động',
   settings: 'Cài đặt',
+  'film-factory': 'AI Film Factory',
 };
 
 export function App() {
@@ -101,6 +103,9 @@ export function App() {
         break;
       case 'settings':
         page = <SettingsPage section={second} config={config} apiHealthy={apiHealthy} />;
+        break;
+      case 'film-factory':
+        page = <FilmFactoryPage />;
         break;
       default:
         page = <DashboardPage projects={projects} onCreated={refreshProjects} apiHealthy={apiHealthy} />;

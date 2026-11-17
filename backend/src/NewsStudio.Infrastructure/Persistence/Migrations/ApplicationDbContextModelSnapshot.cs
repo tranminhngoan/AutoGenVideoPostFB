@@ -688,6 +688,776 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                     b.ToTable("FacebookPosts", (string)null);
                 });
 
+            modelBuilder.Entity("NewsStudio.Domain.Entities.FilmCharacter", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Age")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("CharacterId")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("ConsistencyPrompt")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("DefaultCostume")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("EmotionalTrait")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("FilmProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("FrontReferenceImageUrl")
+                        .HasColumnType("text");
+
+                    b.Property<string>("FullBodyReferenceImageUrl")
+                        .HasColumnType("text");
+
+                    b.Property<string>("Gender")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Hairstyle")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("Personality")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("PhysicalAppearance")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Role")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<string>("SideReferenceImageUrl")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("VoiceModel")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("FilmProjectId", "CharacterId");
+
+                    b.ToTable("FilmCharacters", (string)null);
+                });
+
+            modelBuilder.Entity("NewsStudio.Domain.Entities.FilmCharacterReference", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Angle")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("FilmCharacterId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ImageUrl")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("LocalFilePath")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("FilmCharacterId");
+
+                    b.ToTable("FilmCharacterReferences", (string)null);
+                });
+
+            modelBuilder.Entity("NewsStudio.Domain.Entities.FilmContinuityRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("EpisodeNumber")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("FilmProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("IsResolved")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("KeyDetailsJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("PotentialConflicts")
+                        .HasColumnType("text");
+
+                    b.Property<int>("SceneNumber")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("FilmProjectId", "EpisodeNumber", "SceneNumber");
+
+                    b.ToTable("FilmContinuityRecords", (string)null);
+                });
+
+            modelBuilder.Entity("NewsStudio.Domain.Entities.FilmCostRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<decimal>("CostUsd")
+                        .HasPrecision(10, 4)
+                        .HasColumnType("numeric(10,4)");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("FilmEpisodeId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("FilmProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("FilmShotId")
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("IsFreeTier")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Note")
+                        .HasColumnType("text");
+
+                    b.Property<string>("Provider")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<long>("QuantityUnits")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("ServiceType")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<DateTime?>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CreatedAtUtc");
+
+                    b.HasIndex("FilmEpisodeId");
+
+                    b.HasIndex("FilmProjectId");
+
+                    b.HasIndex("FilmShotId");
+
+                    b.ToTable("FilmCostRecords", (string)null);
+                });
+
+            modelBuilder.Entity("NewsStudio.Domain.Entities.FilmEpisode", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<decimal>("ActualCostUsd")
+                        .HasPrecision(10, 4)
+                        .HasColumnType("numeric(10,4)");
+
+                    b.Property<double>("ActualDurationSeconds")
+                        .HasColumnType("double precision");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("EndingCliffhanger")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("EpisodeNumber")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("ErrorMessage")
+                        .HasColumnType("text");
+
+                    b.Property<decimal>("EstimatedCostUsd")
+                        .HasPrecision(10, 4)
+                        .HasColumnType("numeric(10,4)");
+
+                    b.Property<Guid>("FilmProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("OpeningHook")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("OutputVideoPath")
+                        .HasColumnType("text");
+
+                    b.Property<double>("QualityScore")
+                        .HasColumnType("double precision");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<string>("Synopsis")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("TargetDurationSeconds")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("ThumbnailPath")
+                        .HasColumnType("text");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)");
+
+                    b.Property<DateTime?>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("FilmProjectId", "EpisodeNumber");
+
+                    b.ToTable("FilmEpisodes", (string)null);
+                });
+
+            modelBuilder.Entity("NewsStudio.Domain.Entities.FilmLocation", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ArchitectureStyle")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("FilmProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("KeyProps")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("LightingMood")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("LocationId")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("ReferenceImageUrl")
+                        .HasColumnType("text");
+
+                    b.Property<string>("TimeOfDay")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("FilmProjectId", "LocationId");
+
+                    b.ToTable("FilmLocations", (string)null);
+                });
+
+            modelBuilder.Entity("NewsStudio.Domain.Entities.FilmPage", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("AspectRatio")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("AvatarUrl")
+                        .HasColumnType("text");
+
+                    b.Property<string>("BrandColorHex")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("CoverUrl")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("DefaultVoice")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Description")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Language")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid?>("LinkedFacebookAccountId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<int>("PageNumber")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("PrimaryGenre")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("PublishingConfigJson")
+                        .HasColumnType("text");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<string>("TargetAudience")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("VisualArtStyle")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("LinkedFacebookAccountId");
+
+                    b.HasIndex("PageNumber")
+                        .IsUnique();
+
+                    b.ToTable("FilmPages", (string)null);
+                });
+
+            modelBuilder.Entity("NewsStudio.Domain.Entities.FilmProject", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("AspectRatio")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ErrorMessage")
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("FilmPageId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Genre")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("Logline")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<int>("TargetDurationPerEpisodeSeconds")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("TargetEpisodes")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)");
+
+                    b.Property<decimal>("TotalActualCostUsd")
+                        .HasPrecision(10, 4)
+                        .HasColumnType("numeric(10,4)");
+
+                    b.Property<decimal>("TotalBudgetLimitUsd")
+                        .HasPrecision(10, 4)
+                        .HasColumnType("numeric(10,4)");
+
+                    b.Property<DateTime?>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("VisualArtStyle")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("VisualRatioAiVideo")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("VisualRatioMotionGraphics")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("VisualRatioMotionImage")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CreatedAtUtc");
+
+                    b.HasIndex("FilmPageId");
+
+                    b.HasIndex("Status");
+
+                    b.ToTable("FilmProjects", (string)null);
+                });
+
+            modelBuilder.Entity("NewsStudio.Domain.Entities.FilmPublishingRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ErrorMessage")
+                        .HasColumnType("text");
+
+                    b.Property<string>("ExternalPostId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("ExternalVideoId")
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("FilmEpisodeId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("FilmPageId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Platform")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<string>("PostUrl")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("PublishedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<DateTime?>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("FilmPageId");
+
+                    b.HasIndex("FilmEpisodeId", "FilmPageId");
+
+                    b.ToTable("FilmPublishingRecords", (string)null);
+                });
+
+            modelBuilder.Entity("NewsStudio.Domain.Entities.FilmScene", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("CharactersPresentJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<double>("EstimatedDurationSeconds")
+                        .HasColumnType("double precision");
+
+                    b.Property<Guid>("FilmEpisodeId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("LocationId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("LocationName")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("NarrativeSummary")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("SceneNumber")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("ScenePurpose")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("TimeOfDay")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("FilmEpisodeId", "SceneNumber");
+
+                    b.ToTable("FilmScenes", (string)null);
+                });
+
+            modelBuilder.Entity("NewsStudio.Domain.Entities.FilmShot", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ActingInstructions")
+                        .HasColumnType("text");
+
+                    b.Property<decimal>("ActualCostUsd")
+                        .HasPrecision(10, 4)
+                        .HasColumnType("numeric(10,4)");
+
+                    b.Property<string>("AudioBgmPath")
+                        .HasColumnType("text");
+
+                    b.Property<string>("AudioSfxPath")
+                        .HasColumnType("text");
+
+                    b.Property<string>("AudioVoicePath")
+                        .HasColumnType("text");
+
+                    b.Property<string>("CameraMovement")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<string>("CharacterIdsPresent")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("DialogueText")
+                        .HasColumnType("text");
+
+                    b.Property<double>("DurationSeconds")
+                        .HasColumnType("double precision");
+
+                    b.Property<string>("EmotionalTone")
+                        .HasColumnType("text");
+
+                    b.Property<string>("ErrorMessage")
+                        .HasColumnType("text");
+
+                    b.Property<decimal>("EstimatedCostUsd")
+                        .HasPrecision(10, 4)
+                        .HasColumnType("numeric(10,4)");
+
+                    b.Property<Guid>("FilmEpisodeId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("FilmSceneId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("NegativePrompt")
+                        .HasColumnType("text");
+
+                    b.Property<string>("Provider")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<string>("RawImagePath")
+                        .HasColumnType("text");
+
+                    b.Property<string>("RenderStatus")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<string>("RenderedShotVideoPath")
+                        .HasColumnType("text");
+
+                    b.Property<int>("ShotNumber")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("ShotType")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<string>("SpeakerCharacterId")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("VisualMethod")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<string>("VisualPrompt")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("FilmEpisodeId");
+
+                    b.HasIndex("FilmSceneId", "ShotNumber");
+
+                    b.ToTable("FilmShots", (string)null);
+                });
+
+            modelBuilder.Entity("NewsStudio.Domain.Entities.FilmStoryBible", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ClimaxResolution")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("EpisodesSummaryJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("FilmProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Genre")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("GeographicSetting")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("KeyMysteriesAndTwists")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Logline")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("MainConflict")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("OverallArcOutline")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("TimePeriod")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("WorldRules")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("FilmProjectId")
+                        .IsUnique();
+
+                    b.ToTable("FilmStoryBibles", (string)null);
+                });
+
             modelBuilder.Entity("NewsStudio.Domain.Entities.InstagramMetric", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1397,6 +2167,165 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                     b.Navigation("VideoProject");
                 });
 
+            modelBuilder.Entity("NewsStudio.Domain.Entities.FilmCharacter", b =>
+                {
+                    b.HasOne("NewsStudio.Domain.Entities.FilmProject", "FilmProject")
+                        .WithMany("Characters")
+                        .HasForeignKey("FilmProjectId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("FilmProject");
+                });
+
+            modelBuilder.Entity("NewsStudio.Domain.Entities.FilmCharacterReference", b =>
+                {
+                    b.HasOne("NewsStudio.Domain.Entities.FilmCharacter", "FilmCharacter")
+                        .WithMany("References")
+                        .HasForeignKey("FilmCharacterId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("FilmCharacter");
+                });
+
+            modelBuilder.Entity("NewsStudio.Domain.Entities.FilmContinuityRecord", b =>
+                {
+                    b.HasOne("NewsStudio.Domain.Entities.FilmProject", "FilmProject")
+                        .WithMany("ContinuityRecords")
+                        .HasForeignKey("FilmProjectId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("FilmProject");
+                });
+
+            modelBuilder.Entity("NewsStudio.Domain.Entities.FilmCostRecord", b =>
+                {
+                    b.HasOne("NewsStudio.Domain.Entities.FilmEpisode", "FilmEpisode")
+                        .WithMany()
+                        .HasForeignKey("FilmEpisodeId");
+
+                    b.HasOne("NewsStudio.Domain.Entities.FilmProject", "FilmProject")
+                        .WithMany("CostRecords")
+                        .HasForeignKey("FilmProjectId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("NewsStudio.Domain.Entities.FilmShot", "FilmShot")
+                        .WithMany()
+                        .HasForeignKey("FilmShotId");
+
+                    b.Navigation("FilmEpisode");
+
+                    b.Navigation("FilmProject");
+
+                    b.Navigation("FilmShot");
+                });
+
+            modelBuilder.Entity("NewsStudio.Domain.Entities.FilmEpisode", b =>
+                {
+                    b.HasOne("NewsStudio.Domain.Entities.FilmProject", "FilmProject")
+                        .WithMany("Episodes")
+                        .HasForeignKey("FilmProjectId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("FilmProject");
+                });
+
+            modelBuilder.Entity("NewsStudio.Domain.Entities.FilmLocation", b =>
+                {
+                    b.HasOne("NewsStudio.Domain.Entities.FilmProject", "FilmProject")
+                        .WithMany("Locations")
+                        .HasForeignKey("FilmProjectId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("FilmProject");
+                });
+
+            modelBuilder.Entity("NewsStudio.Domain.Entities.FilmPage", b =>
+                {
+                    b.HasOne("NewsStudio.Domain.Entities.FacebookAccount", "LinkedFacebookAccount")
+                        .WithMany()
+                        .HasForeignKey("LinkedFacebookAccountId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.Navigation("LinkedFacebookAccount");
+                });
+
+            modelBuilder.Entity("NewsStudio.Domain.Entities.FilmProject", b =>
+                {
+                    b.HasOne("NewsStudio.Domain.Entities.FilmPage", "FilmPage")
+                        .WithMany("Projects")
+                        .HasForeignKey("FilmPageId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("FilmPage");
+                });
+
+            modelBuilder.Entity("NewsStudio.Domain.Entities.FilmPublishingRecord", b =>
+                {
+                    b.HasOne("NewsStudio.Domain.Entities.FilmEpisode", "FilmEpisode")
+                        .WithMany()
+                        .HasForeignKey("FilmEpisodeId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("NewsStudio.Domain.Entities.FilmPage", "FilmPage")
+                        .WithMany()
+                        .HasForeignKey("FilmPageId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("FilmEpisode");
+
+                    b.Navigation("FilmPage");
+                });
+
+            modelBuilder.Entity("NewsStudio.Domain.Entities.FilmScene", b =>
+                {
+                    b.HasOne("NewsStudio.Domain.Entities.FilmEpisode", "FilmEpisode")
+                        .WithMany("Scenes")
+                        .HasForeignKey("FilmEpisodeId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("FilmEpisode");
+                });
+
+            modelBuilder.Entity("NewsStudio.Domain.Entities.FilmShot", b =>
+                {
+                    b.HasOne("NewsStudio.Domain.Entities.FilmEpisode", "FilmEpisode")
+                        .WithMany("Shots")
+                        .HasForeignKey("FilmEpisodeId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("NewsStudio.Domain.Entities.FilmScene", "FilmScene")
+                        .WithMany("Shots")
+                        .HasForeignKey("FilmSceneId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("FilmEpisode");
+
+                    b.Navigation("FilmScene");
+                });
+
+            modelBuilder.Entity("NewsStudio.Domain.Entities.FilmStoryBible", b =>
+                {
+                    b.HasOne("NewsStudio.Domain.Entities.FilmProject", "FilmProject")
+                        .WithOne("StoryBible")
+                        .HasForeignKey("NewsStudio.Domain.Entities.FilmStoryBible", "FilmProjectId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("FilmProject");
+                });
+
             modelBuilder.Entity("NewsStudio.Domain.Entities.InstagramMetric", b =>
                 {
                     b.HasOne("NewsStudio.Domain.Entities.FacebookPost", "FacebookPost")
@@ -1513,6 +2442,43 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                     b.Navigation("InstagramMetrics");
 
                     b.Navigation("Metrics");
+                });
+
+            modelBuilder.Entity("NewsStudio.Domain.Entities.FilmCharacter", b =>
+                {
+                    b.Navigation("References");
+                });
+
+            modelBuilder.Entity("NewsStudio.Domain.Entities.FilmEpisode", b =>
+                {
+                    b.Navigation("Scenes");
+
+                    b.Navigation("Shots");
+                });
+
+            modelBuilder.Entity("NewsStudio.Domain.Entities.FilmPage", b =>
+                {
+                    b.Navigation("Projects");
+                });
+
+            modelBuilder.Entity("NewsStudio.Domain.Entities.FilmProject", b =>
+                {
+                    b.Navigation("Characters");
+
+                    b.Navigation("ContinuityRecords");
+
+                    b.Navigation("CostRecords");
+
+                    b.Navigation("Episodes");
+
+                    b.Navigation("Locations");
+
+                    b.Navigation("StoryBible");
+                });
+
+            modelBuilder.Entity("NewsStudio.Domain.Entities.FilmScene", b =>
+                {
+                    b.Navigation("Shots");
                 });
 
             modelBuilder.Entity("NewsStudio.Domain.Entities.VideoProject", b =>

@@ -32,6 +32,20 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
     public DbSet<InstagramMetric> InstagramMetrics => Set<InstagramMetric>();
     public DbSet<AiUsage> AiUsages => Set<AiUsage>();
 
+    // AI Film Factory DbSets
+    public DbSet<FilmPage> FilmPages => Set<FilmPage>();
+    public DbSet<FilmProject> FilmProjects => Set<FilmProject>();
+    public DbSet<FilmStoryBible> FilmStoryBibles => Set<FilmStoryBible>();
+    public DbSet<FilmCharacter> FilmCharacters => Set<FilmCharacter>();
+    public DbSet<FilmCharacterReference> FilmCharacterReferences => Set<FilmCharacterReference>();
+    public DbSet<FilmLocation> FilmLocations => Set<FilmLocation>();
+    public DbSet<FilmContinuityRecord> FilmContinuityRecords => Set<FilmContinuityRecord>();
+    public DbSet<FilmEpisode> FilmEpisodes => Set<FilmEpisode>();
+    public DbSet<FilmScene> FilmScenes => Set<FilmScene>();
+    public DbSet<FilmShot> FilmShots => Set<FilmShot>();
+    public DbSet<FilmCostRecord> FilmCostRecords => Set<FilmCostRecord>();
+    public DbSet<FilmPublishingRecord> FilmPublishingRecords => Set<FilmPublishingRecord>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
@@ -377,6 +391,182 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
 
             entity.HasIndex(e => new { e.EntityName, e.EntityId });
             entity.HasIndex(e => e.CreatedAtUtc);
+        });
+
+        // ── AI FILM FACTORY CONFIGURATIONS ──
+        modelBuilder.Entity<FilmPage>(entity =>
+        {
+            entity.ToTable("FilmPages");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Name).HasMaxLength(200).IsRequired();
+            entity.Property(e => e.PrimaryGenre).HasMaxLength(100);
+            entity.Property(e => e.VisualArtStyle).HasMaxLength(100);
+            entity.Property(e => e.Status).HasMaxLength(50);
+            entity.HasIndex(e => e.PageNumber).IsUnique();
+            entity.HasOne(e => e.LinkedFacebookAccount)
+                  .WithMany()
+                  .HasForeignKey(e => e.LinkedFacebookAccountId)
+                  .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        modelBuilder.Entity<FilmProject>(entity =>
+        {
+            entity.ToTable("FilmProjects");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Title).HasMaxLength(300).IsRequired();
+            entity.Property(e => e.Genre).HasMaxLength(100);
+            entity.Property(e => e.Status).HasMaxLength(50);
+            entity.Property(e => e.TotalBudgetLimitUsd).HasPrecision(10, 4);
+            entity.Property(e => e.TotalActualCostUsd).HasPrecision(10, 4);
+            entity.HasIndex(e => e.FilmPageId);
+            entity.HasIndex(e => e.Status);
+            entity.HasIndex(e => e.CreatedAtUtc);
+            entity.HasOne(e => e.FilmPage)
+                  .WithMany(p => p.Projects)
+                  .HasForeignKey(e => e.FilmPageId)
+                  .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<FilmStoryBible>(entity =>
+        {
+            entity.ToTable("FilmStoryBibles");
+            entity.HasKey(e => e.Id);
+            entity.HasIndex(e => e.FilmProjectId).IsUnique();
+            entity.HasOne(e => e.FilmProject)
+                  .WithOne(p => p.StoryBible)
+                  .HasForeignKey<FilmStoryBible>(e => e.FilmProjectId)
+                  .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<FilmCharacter>(entity =>
+        {
+            entity.ToTable("FilmCharacters");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.CharacterId).HasMaxLength(100).IsRequired();
+            entity.Property(e => e.Name).HasMaxLength(200).IsRequired();
+            entity.Property(e => e.Role).HasMaxLength(50);
+            entity.HasIndex(e => new { e.FilmProjectId, e.CharacterId });
+            entity.HasOne(e => e.FilmProject)
+                  .WithMany(p => p.Characters)
+                  .HasForeignKey(e => e.FilmProjectId)
+                  .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<FilmCharacterReference>(entity =>
+        {
+            entity.ToTable("FilmCharacterReferences");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Angle).HasMaxLength(50);
+            entity.HasIndex(e => e.FilmCharacterId);
+            entity.HasOne(e => e.FilmCharacter)
+                  .WithMany(c => c.References)
+                  .HasForeignKey(e => e.FilmCharacterId)
+                  .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<FilmLocation>(entity =>
+        {
+            entity.ToTable("FilmLocations");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.LocationId).HasMaxLength(100).IsRequired();
+            entity.Property(e => e.Name).HasMaxLength(200).IsRequired();
+            entity.HasIndex(e => new { e.FilmProjectId, e.LocationId });
+            entity.HasOne(e => e.FilmProject)
+                  .WithMany(p => p.Locations)
+                  .HasForeignKey(e => e.FilmProjectId)
+                  .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<FilmContinuityRecord>(entity =>
+        {
+            entity.ToTable("FilmContinuityRecords");
+            entity.HasKey(e => e.Id);
+            entity.HasIndex(e => new { e.FilmProjectId, e.EpisodeNumber, e.SceneNumber });
+            entity.HasOne(e => e.FilmProject)
+                  .WithMany(p => p.ContinuityRecords)
+                  .HasForeignKey(e => e.FilmProjectId)
+                  .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<FilmEpisode>(entity =>
+        {
+            entity.ToTable("FilmEpisodes");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Title).HasMaxLength(300).IsRequired();
+            entity.Property(e => e.Status).HasMaxLength(50);
+            entity.Property(e => e.EstimatedCostUsd).HasPrecision(10, 4);
+            entity.Property(e => e.ActualCostUsd).HasPrecision(10, 4);
+            entity.HasIndex(e => new { e.FilmProjectId, e.EpisodeNumber });
+            entity.HasOne(e => e.FilmProject)
+                  .WithMany(p => p.Episodes)
+                  .HasForeignKey(e => e.FilmProjectId)
+                  .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<FilmScene>(entity =>
+        {
+            entity.ToTable("FilmScenes");
+            entity.HasKey(e => e.Id);
+            entity.HasIndex(e => new { e.FilmEpisodeId, e.SceneNumber });
+            entity.HasOne(e => e.FilmEpisode)
+                  .WithMany(ep => ep.Scenes)
+                  .HasForeignKey(e => e.FilmEpisodeId)
+                  .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<FilmShot>(entity =>
+        {
+            entity.ToTable("FilmShots");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.ShotType).HasMaxLength(50);
+            entity.Property(e => e.CameraMovement).HasMaxLength(50);
+            entity.Property(e => e.VisualMethod).HasMaxLength(50);
+            entity.Property(e => e.Provider).HasMaxLength(50);
+            entity.Property(e => e.RenderStatus).HasMaxLength(50);
+            entity.Property(e => e.EstimatedCostUsd).HasPrecision(10, 4);
+            entity.Property(e => e.ActualCostUsd).HasPrecision(10, 4);
+            entity.HasIndex(e => new { e.FilmSceneId, e.ShotNumber });
+            entity.HasIndex(e => e.FilmEpisodeId);
+            entity.HasOne(e => e.FilmScene)
+                  .WithMany(sc => sc.Shots)
+                  .HasForeignKey(e => e.FilmSceneId)
+                  .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(e => e.FilmEpisode)
+                  .WithMany(ep => ep.Shots)
+                  .HasForeignKey(e => e.FilmEpisodeId)
+                  .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<FilmCostRecord>(entity =>
+        {
+            entity.ToTable("FilmCostRecords");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Provider).HasMaxLength(50);
+            entity.Property(e => e.ServiceType).HasMaxLength(50);
+            entity.Property(e => e.CostUsd).HasPrecision(10, 4);
+            entity.HasIndex(e => e.FilmProjectId);
+            entity.HasIndex(e => e.CreatedAtUtc);
+            entity.HasOne(e => e.FilmProject)
+                  .WithMany(p => p.CostRecords)
+                  .HasForeignKey(e => e.FilmProjectId)
+                  .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<FilmPublishingRecord>(entity =>
+        {
+            entity.ToTable("FilmPublishingRecords");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Platform).HasMaxLength(50);
+            entity.Property(e => e.Status).HasMaxLength(50);
+            entity.HasIndex(e => new { e.FilmEpisodeId, e.FilmPageId });
+            entity.HasOne(e => e.FilmEpisode)
+                  .WithMany()
+                  .HasForeignKey(e => e.FilmEpisodeId)
+                  .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(e => e.FilmPage)
+                  .WithMany()
+                  .HasForeignKey(e => e.FilmPageId)
+                  .OnDelete(DeleteBehavior.Cascade);
         });
     }
 

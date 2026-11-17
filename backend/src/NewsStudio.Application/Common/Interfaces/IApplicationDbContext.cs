@@ -25,5 +25,19 @@ public interface IApplicationDbContext
     DbSet<InstagramMetric> InstagramMetrics { get; }
     DbSet<AiUsage> AiUsages { get; }
 
+    // AI Film Factory Entities
+    DbSet<FilmPage> FilmPages { get; }
+    DbSet<FilmProject> FilmProjects { get; }
+    DbSet<FilmStoryBible> FilmStoryBibles { get; }
+    DbSet<FilmCharacter> FilmCharacters { get; }
+    DbSet<FilmCharacterReference> FilmCharacterReferences { get; }
+    DbSet<FilmLocation> FilmLocations { get; }
+    DbSet<FilmContinuityRecord> FilmContinuityRecords { get; }
+    DbSet<FilmEpisode> FilmEpisodes { get; }
+    DbSet<FilmScene> FilmScenes { get; }
+    DbSet<FilmShot> FilmShots { get; }
+    DbSet<FilmCostRecord> FilmCostRecords { get; }
+    DbSet<FilmPublishingRecord> FilmPublishingRecords { get; }
+
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

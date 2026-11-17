@@ -14,6 +14,7 @@ using NewsStudio.Infrastructure.Rendering;
 using NewsStudio.Infrastructure.Review;
 using NewsStudio.Infrastructure.Facebook;
 using NewsStudio.Infrastructure.Services;
+using NewsStudio.Infrastructure.FilmFactory;
 
 namespace NewsStudio.Infrastructure;
 
@@ -130,6 +131,13 @@ public static class DependencyInjection
             {
                 AutomaticDecompression = System.Net.DecompressionMethods.All
             });
+
+        // AI Film Factory Subsystem
+        services.AddScoped<IFilmCostController, FilmCostController>();
+        services.AddScoped<IFilmFactoryService, FilmFactoryService>();
+        services.AddScoped<IFilmShowrunnerService, FilmShowrunnerService>();
+        services.AddScoped<IFilmRendererService, FilmRendererService>();
+        services.AddScoped<IFilmProductionCoordinator, FilmProductionCoordinator>();
 
         return services;
     }

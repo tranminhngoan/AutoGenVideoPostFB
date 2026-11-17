@@ -4,6 +4,7 @@ import {
   Flame,
   CalendarClock,
   Film,
+  Clapperboard,
   Newspaper,
   History,
   Settings,
@@ -86,6 +87,9 @@ function SidebarContent({
     { id: 'articles', path: '/articles', label: 'Bài báo', icon: Newspaper },
     { id: 'activity', path: '/activity', label: 'Hoạt động', icon: History },
   ];
+  const filmFactory: NavItem[] = [
+    { id: 'film-factory', path: '/film-factory', label: 'AI Film Factory', icon: Clapperboard },
+  ];
   const secondary: NavItem[] = [{ id: 'settings', path: '/settings', label: 'Cài đặt', icon: Settings }];
 
   const renderItem = (item: NavItem) => {
@@ -137,6 +141,10 @@ function SidebarContent({
 
       <nav className="mt-5 flex-1 space-y-0.5 overflow-y-auto px-3">
         {main.map(renderItem)}
+        <div className="!mt-5 mb-1.5 px-2.5 text-xs font-semibold uppercase tracking-wider text-indigo-400">
+          AI Film Factory
+        </div>
+        {filmFactory.map(renderItem)}
         <div className="!mt-5 mb-1.5 px-2.5 text-xs font-medium text-fg-subtle">Hệ thống</div>
         {secondary.map(renderItem)}
       </nav>
