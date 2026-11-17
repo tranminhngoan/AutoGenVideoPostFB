@@ -16,6 +16,9 @@ public class VideoScript : BaseEntity
     public string Conclusion { get; set; } = string.Empty;
     public string SourceAttribution { get; set; } = string.Empty;
 
+    /// <summary>Subjects (A–E), key claims with their article sentence, chart data, check results (JSON of FactSheetDto).</summary>
+    public string? FactSheetJson { get; set; }
+
     public string AiProvider { get; set; } = "Gemini";
     public string ModelName { get; set; } = "gemini-1.5-flash";
     public int TokenUsage { get; set; }

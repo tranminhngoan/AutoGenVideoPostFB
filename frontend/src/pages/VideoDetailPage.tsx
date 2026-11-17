@@ -36,6 +36,7 @@ import {
   EditorialPassDto,
 } from '../services/api';
 import { VideoProject } from '../types';
+import { FactCheckPanel } from '../components/FactCheckPanel';
 import {
   Alert,
   Badge,
@@ -79,7 +80,7 @@ import {
 } from '../lib/format';
 import { AI_PROVIDERS, AiProvider, SPEEDS, VOICES, durationLabel, getPrefs } from '../lib/prefs';
 
-type TabId = 'script' | 'scenes' | 'qc' | 'audio' | 'publish' | 'files';
+type TabId = 'script' | 'scenes' | 'qc' | 'facts' | 'audio' | 'publish' | 'files';
 
 interface VideoDetailPageProps {
   projectId: string;
@@ -786,6 +787,7 @@ export const VideoDetailPage: React.FC<VideoDetailPageProps> = ({ projectId, onC
               { id: 'script', label: 'Kịch bản' },
               { id: 'scenes', label: 'Phân cảnh', count: scenes.length || undefined },
               { id: 'qc', label: 'Kiểm định', count: score },
+              { id: 'facts', label: 'Kiểm chứng & nguồn' },
               { id: 'audio', label: 'Giọng đọc' },
               { id: 'publish', label: 'Đăng Facebook' },
               { id: 'files', label: 'File tạm', count: assets.length || undefined },
@@ -1159,6 +1161,8 @@ export const VideoDetailPage: React.FC<VideoDetailPageProps> = ({ projectId, onC
           )}
 
           {/* PUBLISH */}
+          {tab === 'facts' && <FactCheckPanel projectId={projectId} />}
+
           {tab === 'publish' && (
             <div className="space-y-4">
               {publishedPost ? (

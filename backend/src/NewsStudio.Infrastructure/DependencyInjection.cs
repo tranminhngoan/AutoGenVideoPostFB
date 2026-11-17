@@ -65,6 +65,9 @@ public static class DependencyInjection
         services.AddSingleton<IImageClassifierService, ImageClassifierService>();
         services.AddScoped<IArticleService, ArticleService>();
 
+        // Real AI spend + monthly budget
+        services.AddSingleton<AiUsageMeter>();
+
         // Phase 4: AI Editor & Script Planner Services
         services.AddHttpClient<GeminiAiEditorService>();
         services.AddHttpClient<ClaudeAiEditorService>();
@@ -94,6 +97,8 @@ public static class DependencyInjection
         services.AddScoped<IVideoAssetService, VideoAssetService>();
         services.AddScoped<IVideoRendererService, FFmpegRendererService>();
         // Downloads/validates scene pictures; falls back to related CC images (Openverse) — never a black video
+        // Subject pictures from Wikidata / Wikimedia Commons (free, licensed, identity from the Wikidata item)
+        services.AddHttpClient<CommonsImageFinder>(c => c.Timeout = TimeSpan.FromSeconds(20));
         services.AddHttpClient<SceneImageService>()
             .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
             {
@@ -117,6 +122,7 @@ public static class DependencyInjection
         services.AddScoped<IAutoPostService, AutoPostService>();
         // AI editorial pass before posting (headline vs article, caption, first comment) + learning from views
         services.AddScoped<IEditorialAssistantService, EditorialAssistantService>();
+        services.AddScoped<IContentGateService, ContentGateService>();
         services.AddScoped<IPageInsightsService, PageInsightsService>();
         // Daily "Điểm tin nóng" digest (pictures of the day's hottest stories → wall post + Story)
         services.AddHttpClient<IDailyDigestService, DailyDigestService>()

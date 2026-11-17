@@ -35,6 +35,11 @@ public class VideoProject : BaseEntity
     /// <summary>News topic of that page (see NewsTopics) — picks the video's colour theme.</summary>
     public string? Topic { get; set; }
 
+    /// <summary>Publication gate: PENDING, APPROVED (may be auto-posted), REVIEW_REQUIRED, REJECTED.</summary>
+    public string GateStatus { get; set; } = "PENDING";
+    /// <summary>Reasons of the gate decision (JSON of QualityGateDto).</summary>
+    public string? GateJson { get; set; }
+
     /// <summary>Latest AI editorial pass (JSON of EditorialPassDto): headline vs article check, caption, first comment.</summary>
     public string? EditorialPassJson { get; set; }
 

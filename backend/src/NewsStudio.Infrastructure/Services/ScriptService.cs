@@ -69,8 +69,12 @@ public class ScriptService : IScriptService
         var providerName = options?.AiProvider ?? project.AiProvider ?? "Gemini";
         var editor = _aiFactory.GetEditorService(providerName);
 
+        // The page's own writing tone (brand kit); default: neutral news tone
+        var toneKey = project.FacebookAccountId == null ? null : await _context.AutoPostSettings.AsNoTracking()
+            .Where(s => s.FacebookAccountId == project.FacebookAccountId).Select(s => s.WritingTone).FirstOrDefaultAsync(cancellationToken);
         var promptInput = new EditorialScriptPromptInput
         {
+            Tone = toneKey != null && toneKey != "neutral" && AutoPostService.WritingTones.TryGetValue(toneKey, out var tone) ? tone : null,
             ProjectId = projectId,
             ArticleTitle = article.Title,
             Publisher = article.Publisher,
@@ -114,6 +118,7 @@ public class ScriptService : IScriptService
         scriptEntity.Analysis = scriptResult.Analysis;
         scriptEntity.Conclusion = scriptResult.Conclusion;
         scriptEntity.SourceAttribution = scriptResult.SourceAttribution;
+        scriptEntity.FactSheetJson = scriptResult.FactSheetJson;
         scriptEntity.AiProvider = scriptResult.AiProvider;
         scriptEntity.ModelName = scriptResult.ModelName;
         scriptEntity.TokenUsage = scriptResult.TokenUsage;

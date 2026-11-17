@@ -18,6 +18,7 @@ public class VideoProductionService : IVideoProductionService
     private readonly ILogger<VideoProductionService> _logger;
     private readonly TimeSpan _assetTtl;
     private readonly IConfiguration _configuration;
+    private readonly NewsStudio.Infrastructure.Ai.AiUsageMeter _meter;
 
     public VideoProductionService(
         IApplicationDbContext context,
@@ -25,10 +26,12 @@ public class VideoProductionService : IVideoProductionService
         IVideoRendererService rendererService,
         IVideoAssetService assetService,
         SceneImageService sceneImages,
+        NewsStudio.Infrastructure.Ai.AiUsageMeter meter,
         IConfiguration configuration,
         ILogger<VideoProductionService> logger)
     {
         _sceneImages = sceneImages;
+        _meter = meter;
         _context = context;
         _ttsFactory = ttsFactory;
         _rendererService = rendererService;
@@ -81,6 +84,12 @@ public class VideoProductionService : IVideoProductionService
             var selectedVoice = !string.IsNullOrWhiteSpace(voice)
                 ? voice
                 : project.Voice ?? _configuration["Tts:DefaultVoice"] ?? "gemini:Kore";
+            // Monthly AI budget reached and set to "switch to the free voice": Edge voice until next month
+            if (GeminiTtsService.IsGeminiVoice(selectedVoice) && await _meter.ShouldUseFreeVoiceAsync(cancellationToken))
+            {
+                _logger.LogWarning("AI budget reached: project {ProjectId} uses the free Edge voice", projectId);
+                selectedVoice = _configuration["Tts:FreeVoice"] ?? "vi-VN-HoaiMyNeural";
+            }
             var selectedSpeed = !string.IsNullOrWhiteSpace(speed) ? speed : project.VoiceSpeed ?? "+0%";
             // The voice id decides the engine: "gemini:*" → Gemini TTS, otherwise Edge-TTS.
             var tts = GeminiTtsService.IsGeminiVoice(selectedVoice)
@@ -146,12 +155,28 @@ public class VideoProductionService : IVideoProductionService
                         ? s.SelectedArticleImage.LocalTempPath
                         : s.SelectedArticleImage?.OriginalImageUrl,
                     ImageCaption = s.ImageCaption ?? s.SelectedArticleImage?.Caption,
+                    ImageCredit = ImageCredit(s.SelectedArticleImage, project.Publisher),
+                    SubjectName = s.SelectedArticleImage is { SubjectType: "A", VerificationStatus: "VERIFIED" } img ? img.SubjectName : null,
                     VisualType = s.SelectedArticleImageId.HasValue ? "Image" : "Typography",
                     MotionType = s.MotionType,
                     TransitionType = s.TransitionType,
                     ScenePurpose = s.ScenePurpose
                 }).ToList()
             };
+
+            // Brand kit: the page's logo
+            if (project.FacebookAccountId != null)
+            {
+                var logo = await _context.AutoPostSettings.AsNoTracking()
+                    .Where(s => s.FacebookAccountId == project.FacebookAccountId).Select(s => s.BrandLogo).FirstOrDefaultAsync(cancellationToken);
+                if (logo is { Length: > 0 })
+                {
+                    var logoPath = Path.Combine(NewsStudio.Infrastructure.Common.TempStorage.GetRoot(_configuration), projectId.ToString(), "brand_logo.png");
+                    Directory.CreateDirectory(Path.GetDirectoryName(logoPath)!);
+                    await File.WriteAllBytesAsync(logoPath, logo, cancellationToken);
+                    renderRequest.LogoPath = logoPath;
+                }
+            }
 
             renderResult = await _rendererService.RenderVerticalReelAsync(renderRequest, null, cancellationToken);
 
@@ -187,6 +212,20 @@ public class VideoProductionService : IVideoProductionService
             VideoUrl = $"/api/video-projects/{projectId}/video",
             AudioUrl = $"/api/video-projects/{projectId}/audio",
             SubtitleUrl = $"/api/video-projects/{projectId}/subtitles"
+        };
+    }
+
+    /// <summary>Credit line printed on a picture, from its provenance.</summary>
+    public static string? ImageCredit(NewsStudio.Domain.Entities.ArticleImage? image, string? publisher)
+    {
+        if (image == null) return null;
+        return image.ImageType switch
+        {
+            NewsStudio.Infrastructure.Common.ImageKinds.Infographic => null, // the chart names its source itself
+            NewsStudio.Infrastructure.Common.ImageKinds.AiIllustration => "Ảnh minh hoạ tạo bằng AI",
+            NewsStudio.Infrastructure.Common.ImageKinds.Licensed when image.SourceName == "Wikimedia Commons" => $"Ảnh: {image.AltText}",
+            NewsStudio.Infrastructure.Common.ImageKinds.Licensed => $"Ảnh minh hoạ · {image.LicenseType}",
+            _ => $"Ảnh: {(string.IsNullOrWhiteSpace(image.SourceName) ? (string.IsNullOrWhiteSpace(publisher) ? "báo gốc" : publisher) : image.SourceName)}"
         };
     }
 

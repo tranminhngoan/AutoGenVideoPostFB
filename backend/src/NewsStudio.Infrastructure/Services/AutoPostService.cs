@@ -59,6 +59,7 @@ public class AutoPostService : IAutoPostService
     private readonly IFacebookPublishingService _facebook;
     private readonly IEditorialAssistantService _editorial;
     private readonly IPageInsightsService _insights;
+    private readonly NewsStudio.Infrastructure.Ai.AiUsageMeter _meter;
     private readonly IConfiguration _configuration;
     private readonly ILogger<AutoPostService> _logger;
 
@@ -70,9 +71,11 @@ public class AutoPostService : IAutoPostService
         IFacebookPublishingService facebook,
         IEditorialAssistantService editorial,
         IPageInsightsService insights,
+        NewsStudio.Infrastructure.Ai.AiUsageMeter meter,
         IConfiguration configuration,
         ILogger<AutoPostService> logger)
     {
+        _meter = meter;
         _editorial = editorial;
         _insights = insights;
         _context = context;
@@ -224,7 +227,18 @@ public class AutoPostService : IAutoPostService
         BreakingEnabled = s.BreakingEnabled,
         BreakingPerDay = s.BreakingPerDay,
         AutoTune = s.AutoTune,
-        InstagramEnabled = s.InstagramEnabled
+        InstagramEnabled = s.InstagramEnabled,
+        WritingTone = s.WritingTone,
+        HasLogo = s.BrandLogo is { Length: > 0 }
+    };
+
+    /// <summary>Writing tones a page can choose (key → instruction given to the AI writer).</summary>
+    public static readonly IReadOnlyDictionary<string, string> WritingTones = new Dictionary<string, string>
+    {
+        ["neutral"] = "trung tính, khách quan như bản tin truyền hình",
+        ["youthful"] = "trẻ trung, gần gũi, câu ngắn, dễ nghe (vẫn nghiêm túc, không dùng tiếng lóng)",
+        ["expert"] = "phân tích, chuyên sâu: nêu rõ bối cảnh và ý nghĩa của các con số",
+        ["brief"] = "cực kỳ ngắn gọn, đi thẳng vào sự việc, ưu tiên video ngắn"
     };
 
     public async Task<AutoPostSettingsDto> UpdateSettingsAsync(Guid facebookAccountId, AutoPostSettingsDto dto, CancellationToken cancellationToken = default)
@@ -261,6 +275,7 @@ public class AutoPostService : IAutoPostService
         settings.BreakingPerDay = Math.Clamp(dto.BreakingPerDay, 0, MaxBreakingPerDay);
         settings.AutoTune = dto.AutoTune;
         settings.InstagramEnabled = dto.InstagramEnabled;
+        settings.WritingTone = WritingTones.ContainsKey(dto.WritingTone ?? "") ? dto.WritingTone! : "neutral";
         settings.UpdatedAtUtc = DateTime.UtcNow;
         await _context.SaveChangesAsync(cancellationToken);
 
@@ -516,6 +531,12 @@ public class AutoPostService : IAutoPostService
             // 2. Start due slots of every enabled page, earliest first, while the shared video queue has room
             var producing = active.Count(r => r.Status == Producing);
             if (producing >= MaxConcurrentVideos) return;
+            // Monthly AI budget reached and set to "pause": nothing new until next month
+            if (await _meter.ShouldPauseAsync(cancellationToken))
+            {
+                _logger.LogWarning("AI budget reached: auto-post paused until next month");
+                return;
+            }
 
             var today = VietnamDate(now);
             var due = new List<(DateTime At, string Key, PageSchedule Schedule, int Index)>();
@@ -596,7 +617,7 @@ public class AutoPostService : IAutoPostService
 
         var project = await _context.VideoProjects.AsNoTracking()
             .Where(p => p.Id == run.VideoProjectId)
-            .Select(p => new { p.Status, p.ErrorMessage })
+            .Select(p => new { p.Status, p.ErrorMessage, p.GateStatus, p.GateJson })
             .FirstOrDefaultAsync(ct);
         if (project == null)
         {
@@ -610,6 +631,12 @@ public class AutoPostService : IAutoPostService
             case Producing:
                 switch (project.Status)
                 {
+                    case VideoProjectStatus.AwaitingApproval when project.GateStatus is QualityGateStatus.ReviewRequired or QualityGateStatus.Rejected:
+                        // Only videos that passed every check are posted automatically; this one waits for a
+                        // person on the Video page, and the slot takes another story.
+                        await RetryOrFailAsync(run, schedule!.Settings, now,
+                            $"Video cần người duyệt trước khi đăng (đang chờ ở trang Video): {GateReasons(project.GateJson)}", ct);
+                        break;
                     case VideoProjectStatus.AwaitingApproval:
                         if (now >= run.ScheduledAtUtc)
                         {
@@ -924,12 +951,15 @@ public class AutoPostService : IAutoPostService
             return;
         }
 
-        // AI editorial pass: the headline must match the article; professional caption + first comment
+        // AI editorial pass: the headline must match the article; professional caption + first comment.
+        // Normally done at the "Kiểm chứng" step before the voice-over — reused here (no second AI call).
         EditorialPassDto? pass = null;
         string? passNote = null;
         try
         {
-            pass = await _editorial.RunAsync(projectId, ct);
+            var stored = await _context.VideoProjects.AsNoTracking().Where(p => p.Id == projectId).Select(p => p.EditorialPassJson).FirstOrDefaultAsync(ct);
+            pass = string.IsNullOrWhiteSpace(stored) ? null : System.Text.Json.JsonSerializer.Deserialize<EditorialPassDto>(stored);
+            pass ??= await _editorial.RunAsync(projectId, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -977,6 +1007,20 @@ public class AutoPostService : IAutoPostService
     }
 
     // ---------------------------------------------------------------- small helpers
+
+    private static string GateReasons(string? gateJson)
+    {
+        if (string.IsNullOrWhiteSpace(gateJson)) return "chưa qua kiểm chứng.";
+        try
+        {
+            var gate = System.Text.Json.JsonSerializer.Deserialize<QualityGateDto>(gateJson);
+            return gate == null || gate.Reasons.Count == 0 ? "chưa qua kiểm chứng." : Shorten(string.Join(" ", gate.Reasons), 300);
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return "chưa qua kiểm chứng.";
+        }
+    }
 
     private static string StepLabel(VideoProjectStatus status) => status switch
     {

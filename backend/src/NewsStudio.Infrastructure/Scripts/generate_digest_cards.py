@@ -19,7 +19,9 @@ import sys
 from PIL import Image, ImageDraw, ImageFilter
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from generate_news_overlay import BOLD_FONTS, REGULAR_FONTS, _fit_brand, _font, _palette, _wrap  # noqa: E402
+from generate_news_overlay import BOLD_FONTS, REGULAR_FONTS, _fit_brand, _font, _palette, _wrap, paste_logo  # noqa: E402
+
+LOGO = {"path": ""}  # page logo (brand kit), set from the spec
 
 POST = {"w": 1080, "h": 1350, "photo_h": 720, "margin": 64, "top_safe": 48, "bottom_safe": 1350 - 40}
 # Stories: Facebook draws the progress bar + page name at the top and the reply box at the bottom
@@ -52,9 +54,10 @@ def _brand_pill(draw, pal, brand, x0, y, max_w):
     draw.rounded_rectangle([x0, y, x0 + w, y + logo_h], radius=32, fill=pal["pill"], outline=(255, 255, 255, 220), width=2)
     cx, cy = x0 + 10, y + 10
     draw.ellipse([cx, cy, cx + icon_d, cy + icon_d], fill=(255, 255, 255, 255))
-    for i, lw in enumerate((22, 22, 14)):  # newspaper mark
-        ly = cy + 13 + i * 8
-        draw.rounded_rectangle([cx + 11, ly, cx + 11 + lw, ly + 4], radius=2, fill=pal["pill"])
+    if not (LOGO["path"] and paste_logo(draw._image, LOGO["path"], cx, cy, icon_d)):
+        for i, lw in enumerate((22, 22, 14)):  # newspaper mark
+            ly = cy + 13 + i * 8
+            draw.rounded_rectangle([cx + 11, ly, cx + 11 + lw, ly + 4], radius=2, fill=pal["pill"])
     draw.text((cx + icon_d + 14, y + (logo_h - (bbox[3] - bbox[1])) // 2 - bbox[1]), text, font=font, fill=(255, 255, 255, 255))
     return logo_h
 
@@ -215,6 +218,7 @@ def main(spec_path):
     with open(spec_path, encoding="utf-8") as f:
         spec = json.load(f)
     out_dir = spec["out_dir"]
+    LOGO["path"] = spec.get("logo") or ""
     os.makedirs(out_dir, exist_ok=True)
     total = len(spec["items"])
     result = {"post": [], "story": []}

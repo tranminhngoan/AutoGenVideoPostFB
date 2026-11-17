@@ -23,6 +23,7 @@ public interface IApplicationDbContext
     DbSet<AutoPostRun> AutoPostRuns { get; }
     DbSet<DailyDigestRun> DailyDigestRuns { get; }
     DbSet<InstagramMetric> InstagramMetrics { get; }
+    DbSet<AiUsage> AiUsages { get; }
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

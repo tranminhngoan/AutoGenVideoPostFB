@@ -205,6 +205,7 @@ public class VideoProjectService : IVideoProjectService
             VoiceSpeed = project.VoiceSpeed,
             FacebookAccountId = project.FacebookAccountId,
             Topic = project.Topic,
+            GateStatus = project.GateStatus,
             SceneCount = project.Scenes?.Count ?? 0,
             Scenes = project.Scenes?.OrderBy(s => s.SceneNumber).Select(s => new VideoSceneResponseDto
             {

@@ -75,7 +75,7 @@ public class EditorialAssistantService : IEditorialAssistantService
         sb.AppendLine();
         sb.AppendLine("Trả về đúng định dạng: {\"consistent\": true, \"issues\": [], \"caption\": \"...\", \"hashtags\": [\"#...\"], \"first_comment\": \"...\"}");
 
-        var json = await _gemini.GenerateJsonAsync(SystemPrompt, sb.ToString(), cancellationToken);
+        var json = await _gemini.GenerateJsonAsync(SystemPrompt, sb.ToString(), cancellationToken, "editorial", videoProjectId);
         var pass = Parse(json, project.Script.SourceAttribution, project.SourceUrl, hasArticle: articleText.Length > 0);
 
         project.EditorialPassJson = JsonSerializer.Serialize(pass);

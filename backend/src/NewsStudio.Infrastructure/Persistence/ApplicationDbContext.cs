@@ -30,6 +30,7 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
     public DbSet<AutoPostRun> AutoPostRuns => Set<AutoPostRun>();
     public DbSet<DailyDigestRun> DailyDigestRuns => Set<DailyDigestRun>();
     public DbSet<InstagramMetric> InstagramMetrics => Set<InstagramMetric>();
+    public DbSet<AiUsage> AiUsages => Set<AiUsage>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -48,7 +49,31 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
             entity.Property(e => e.Topic).HasMaxLength(50).IsRequired();
             entity.Property(e => e.TopicKeywords).HasMaxLength(1000);
             entity.Property(e => e.DigestTime).HasMaxLength(5).IsRequired();
+            entity.Property(e => e.WritingTone).HasMaxLength(20).IsRequired();
             entity.HasIndex(e => e.FacebookAccountId);
+        });
+
+        modelBuilder.Entity<VideoProject>().Property(e => e.GateStatus).HasMaxLength(20).IsRequired();
+        modelBuilder.Entity<ArticleImage>(entity =>
+        {
+            entity.Property(e => e.ImageType).HasMaxLength(20);
+            entity.Property(e => e.SourceName).HasMaxLength(200);
+            entity.Property(e => e.SourcePageUrl).HasMaxLength(2000);
+            entity.Property(e => e.LicenseType).HasMaxLength(100);
+            entity.Property(e => e.LicenseEvidence).HasMaxLength(2000);
+            entity.Property(e => e.SubjectName).HasMaxLength(300);
+            entity.Property(e => e.SubjectType).HasMaxLength(2);
+            entity.Property(e => e.VerificationStatus).HasMaxLength(20);
+        });
+
+        modelBuilder.Entity<AiUsage>(entity =>
+        {
+            entity.ToTable("AiUsages");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Kind).HasMaxLength(30).IsRequired();
+            entity.Property(e => e.Model).HasMaxLength(100).IsRequired();
+            entity.Property(e => e.CostUsd).HasPrecision(12, 6);
+            entity.HasIndex(e => e.CreatedAtUtc);
         });
 
         modelBuilder.Entity<InstagramMetric>(entity =>

@@ -30,6 +30,7 @@ import {
 import { useConfirm, useToast } from '../components/feedback';
 import { DailyDigestCard } from '../components/DailyDigestCard';
 import { PageInsightsCard } from '../components/PageInsightsCard';
+import { BrandKitFields } from '../components/BrandKitFields';
 import { AutoPostPageCard, AutoPostTotals, PageAvatar, RegionBadge, RunDetails, StateBadge, isActiveRun } from '../components/AutoPostWidgets';
 import { href, navigate, useRoute } from '../lib/router';
 import { errorText } from '../lib/format';
@@ -651,6 +652,17 @@ function PageDetail({
               onChange={(v) => update({ autoTune: v })}
               label="Tự học từ lượt xem"
               description="Khi chọn tin, ưu tiên loại tin và khu vực (Việt Nam / quốc tế) mà người xem Page này xem nhiều nhất. Chỉ áp dụng khi đã có đủ số liệu."
+            />
+          </div>
+
+          <div className="space-y-3 border-t border-line pt-5">
+            <p className="text-sm font-medium text-fg">Nhận diện Page</p>
+            <BrandKitFields
+              pageId={page.facebookAccountId}
+              tone={form.writingTone ?? 'neutral'}
+              hasLogo={!!page.settings.hasLogo}
+              onToneChange={(v) => update({ writingTone: v })}
+              onLogoChanged={() => onChanged()}
             />
           </div>
 

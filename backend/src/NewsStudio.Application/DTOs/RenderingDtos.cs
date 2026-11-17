@@ -36,6 +36,8 @@ public class TtsSynthesisResult
 public class VideoRenderRequest
 {
     public Guid ProjectId { get; set; }
+    /// <summary>Page logo file (brand kit), drawn in the brand pill; null = default icon.</summary>
+    public string? LogoPath { get; set; }
     public string Title { get; set; } = string.Empty;
     /// <summary>Short lead shown under the headline on the green card (the script's hook).</summary>
     public string? Summary { get; set; }

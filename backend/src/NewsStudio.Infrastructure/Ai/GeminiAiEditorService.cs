@@ -14,6 +14,7 @@ public class GeminiAiEditorService : IAIEditorService
 {
     private readonly HttpClient _httpClient;
     private readonly IConfiguration _configuration;
+    private readonly AiUsageMeter _meter;
     private readonly ILogger<GeminiAiEditorService> _logger;
 
     public AiProviderType ProviderType => AiProviderType.Gemini;
@@ -21,8 +22,10 @@ public class GeminiAiEditorService : IAIEditorService
     public GeminiAiEditorService(
         HttpClient httpClient,
         IConfiguration configuration,
+        AiUsageMeter meter,
         ILogger<GeminiAiEditorService> logger)
     {
+        _meter = meter;
         _httpClient = httpClient;
         _configuration = configuration;
         _logger = logger;
@@ -77,7 +80,8 @@ public class GeminiAiEditorService : IAIEditorService
             input.CanonicalUrl,
             input.ContentBody,
             input.AvailableImages.Count,
-            input.TargetDurationSeconds);
+            input.TargetDurationSeconds,
+            input.Tone);
 
         var requestBody = new
         {
@@ -111,6 +115,8 @@ public class GeminiAiEditorService : IAIEditorService
             .GetProperty("text")
             .GetString() ?? "{}";
 
+        await _meter.RecordAsync("script", model, usedKey.IsFree,
+            jsonDoc.RootElement.TryGetProperty("usageMetadata", out var meta) ? meta.Clone() : null, projectId: input.ProjectId);
         int totalTokens = 0;
         if (jsonDoc.RootElement.TryGetProperty("usageMetadata", out var usage) &&
             usage.TryGetProperty("totalTokenCount", out var totalTokenCount))
@@ -174,7 +180,7 @@ public class GeminiAiEditorService : IAIEditorService
     /// One JSON-mode Gemini call (system + user prompt) returning the model's raw JSON text.
     /// Throws when no key is configured or Google refuses — never a made-up answer.
     /// </summary>
-    public async Task<string> GenerateJsonAsync(string systemPrompt, string userPrompt, CancellationToken cancellationToken = default)
+    public async Task<string> GenerateJsonAsync(string systemPrompt, string userPrompt, CancellationToken cancellationToken = default, string kind = "ai", Guid? projectId = null)
     {
         if (!GeminiKeys.HasAny(_configuration))
             throw new InvalidOperationException("Chưa cấu hình Gemini API key (Ai__Gemini__FreeApiKey hoặc Ai__Gemini__ApiKey).");
@@ -191,6 +197,8 @@ public class GeminiAiEditorService : IAIEditorService
         {
             var doc = await response.Content.ReadFromJsonAsync<JsonDocument>(cancellationToken: cancellationToken)
                       ?? throw new InvalidOperationException("Gemini trả về rỗng.");
+            await _meter.RecordAsync(kind, model, usedKey.IsFree,
+                doc.RootElement.TryGetProperty("usageMetadata", out var usage) ? usage.Clone() : null, projectId: projectId);
             var parts = doc.RootElement.GetProperty("candidates")[0].GetProperty("content").GetProperty("parts");
             // Thinking models may put thoughts in earlier parts; the answer is the last text part
             string? text = null;
@@ -306,6 +314,7 @@ public class GeminiAiEditorService : IAIEditorService
                 Analysis = analysis,
                 Conclusion = conclusion,
                 SourceAttribution = attribution,
+                FactSheetJson = JsonSerializer.Serialize(FactCheck.ParseFactSheet(root)),
                 WordCount = words,
                 EstimatedReadingSeconds = estimatedSeconds
             };

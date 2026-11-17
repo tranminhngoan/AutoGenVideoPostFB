@@ -3,6 +3,8 @@ import { Plus, RefreshCw, Search, Film, ChevronRight } from 'lucide-react';
 import { VideoProject } from '../types';
 import { Button, ButtonLink, Card, EmptyState, IconButton, Input, PageHeader, Skeleton, Tabs } from '../components/ui';
 import { StatusBadge, ReelThumb, projectThumb } from '../components/VideoBits';
+import { GATE } from '../components/FactCheckPanel';
+import { Badge as GateTag } from '../components/ui';
 import { href, navigate, useRoute } from '../lib/router';
 import { domainOf, formatClock, statusMeta, timeAgo } from '../lib/format';
 
@@ -165,14 +167,18 @@ export const VideosPage: React.FC<VideosPageProps> = ({ projects, onRefresh }) =
                           {p.publisher || domainOf(p.sourceUrl)}
                           <span className="md:hidden"> · {timeAgo(p.updatedAtUtc ?? p.createdAtUtc)}</span>
                         </div>
-                        <div className="mt-1.5 md:hidden">
+                        <div className="mt-1.5 flex flex-wrap gap-1.5 md:hidden">
                           <StatusBadge status={p.status} />
+                          <GateBadge status={p.gateStatus} />
                         </div>
                       </div>
                     </div>
                   </td>
                   <td className="hidden px-3 py-3 md:table-cell">
-                    <StatusBadge status={p.status} />
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <StatusBadge status={p.status} />
+                      <GateBadge status={p.gateStatus} />
+                    </div>
                   </td>
                   <td className="hidden px-3 py-3 text-right tabular text-fg-muted md:table-cell">
                     {formatClock(p.actualDurationSeconds ?? p.targetDurationSeconds)}
@@ -205,3 +211,10 @@ export const VideosPage: React.FC<VideosPageProps> = ({ projects, onRefresh }) =
     </div>
   );
 };
+
+/** Only the gate states that need attention are shown (approved / unchecked stay quiet). */
+function GateBadge({ status }: { status?: string }) {
+  if (status !== 'REVIEW_REQUIRED' && status !== 'REJECTED') return null;
+  const g = GATE[status];
+  return <GateTag tone={g.tone}>{g.label}</GateTag>;
+}

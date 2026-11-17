@@ -17,6 +17,7 @@ public class VideoProcessingJobExecutor : IVideoProcessingJobExecutor
     private readonly IArticleService _articleService;
     private readonly IScriptService _scriptService;
     private readonly IVideoProductionService _productionService;
+    private readonly IContentGateService _gate;
     private readonly ILogger<VideoProcessingJobExecutor> _logger;
     private readonly bool _simulate;
 
@@ -25,9 +26,11 @@ public class VideoProcessingJobExecutor : IVideoProcessingJobExecutor
         IArticleService articleService,
         IScriptService scriptService,
         IVideoProductionService productionService,
+        IContentGateService gate,
         IConfiguration configuration,
         ILogger<VideoProcessingJobExecutor> logger)
     {
+        _gate = gate;
         _context = context;
         _articleService = articleService;
         _scriptService = scriptService;
@@ -155,6 +158,18 @@ public class VideoProcessingJobExecutor : IVideoProcessingJobExecutor
                     _scriptService.PlanScenesForProjectAsync(project.Id, cancellationToken));
             }
             await Task.Delay(300, cancellationToken);
+
+            // Step 4b: "Kiểm chứng" BEFORE the paid voice-over — a script that contradicts the article
+            //          stops here (nothing is spent on reading it aloud)
+            if (project.ArticleId != null)
+            {
+                await RunStepAsync("Kiểm chứng", async () =>
+                {
+                    var report = await _gate.CheckAsync(project.Id, runEditorial: true, cancellationToken);
+                    if (report.Gate.Status == NewsStudio.Application.DTOs.QualityGateStatus.Rejected)
+                        throw new InvalidOperationException("Kịch bản chưa khớp bài gốc nên không dựng: " + string.Join("; ", report.Gate.Reasons));
+                });
+            }
 
             // Step 5 & 6: Generating Audio (TTS) & Rendering Video (FFmpeg 9:16)
             await AdvanceStepAsync(project, jobRecord, VideoProjectStatus.GeneratingAudio, "Synthesizing Vietnamese voice-over audio", 85, cancellationToken);

@@ -126,6 +126,8 @@ public class FFmpegRendererService : IVideoRendererService
                 var topicLabel = (request.TopicLabel ?? string.Empty).Replace("\"", "\\\"");
 
                 var overlayArgs = $"\"{overlayScript}\" --output \"{overlayPath}\" --title \"{cleanTitle}\" --summary \"{cleanSummary}\" --publisher \"{cleanPub}\" --date \"{dateStr}\" --logo \"{brand}\" --theme \"{theme}\" --topic-label \"{topicLabel}\"";
+                if (!string.IsNullOrWhiteSpace(request.LogoPath) && File.Exists(request.LogoPath))
+                    overlayArgs += $" --logo-image \"{request.LogoPath}\"";
                 _logger.LogInformation("Generating news overlay at {Path} via Python script", overlayPath);
                 await RunProcessAsync(pythonExe, overlayArgs, cancellationToken);
             }
@@ -135,8 +137,14 @@ public class FFmpegRendererService : IVideoRendererService
             }
         }
 
+        // 1b. Scene plates (picture + blurred backdrop + credit + name tag), made once instead of blurring
+        //     every frame: faster render, and lets every scene get a slow zoom and a cross-fade.
+        var plates = await ComposePlatesAsync(request, outputDir, cancellationToken);
+
         // 2. Build FFmpeg command and filter graph
-        var ffmpegArgs = BuildFfmpegArguments(request, outputVideoPath, overlayPath, localPrimaryImage, out var totalDuration);
+        var ffmpegArgs = plates != null
+            ? BuildPlateArguments(request, plates, outputVideoPath, overlayPath, out var totalDuration)
+            : BuildFfmpegArguments(request, outputVideoPath, overlayPath, localPrimaryImage, out totalDuration);
         await File.WriteAllTextAsync(filterScriptPath, ffmpegArgs, Encoding.UTF8, cancellationToken);
 
         progress?.Report(35);
@@ -337,6 +345,100 @@ public class FFmpegRendererService : IVideoRendererService
 
         await proc.WaitForExitAsync(cancellationToken);
         return proc.ExitCode == 0;
+    }
+
+    /// <summary>One plate per scene; null when Python isn't available (the classic filter graph is used).</summary>
+    private async Task<List<string>?> ComposePlatesAsync(VideoRenderRequest request, string outputDir, CancellationToken ct)
+    {
+        var python = FindPythonExecutable();
+        var script = FindScriptPath("compose_scene_plates.py");
+        if (python == null || script == null || request.Scenes.Count == 0) return null;
+        if (request.Scenes.Any(s => string.IsNullOrWhiteSpace(s.ImageUrl) || !File.Exists(s.ImageUrl))) return null;
+
+        var theme = System.Text.RegularExpressions.Regex.IsMatch(request.Theme ?? "", "^[a-z-]{1,30}$") ? request.Theme : "tong-hop";
+        var keys = new Dictionary<string, string>();
+        var plates = new List<string>();
+        var items = new List<object>();
+        foreach (var scene in request.Scenes)
+        {
+            var key = $"{scene.ImageUrl}|{scene.ImageCredit}|{scene.SubjectName}";
+            if (!keys.TryGetValue(key, out var path))
+            {
+                path = Path.Combine(outputDir, $"plate_{keys.Count:00}.jpg");
+                keys[key] = path;
+                items.Add(new { image = scene.ImageUrl, output = path, credit = scene.ImageCredit ?? "", name = scene.SubjectName ?? "" });
+            }
+            plates.Add(path);
+        }
+        var specPath = Path.Combine(outputDir, "plates.json");
+        await File.WriteAllTextAsync(specPath, System.Text.Json.JsonSerializer.Serialize(new { theme, plates = items }), new UTF8Encoding(false), ct);
+
+        var psi = new ProcessStartInfo { FileName = python, UseShellExecute = false, CreateNoWindow = true, RedirectStandardError = true, RedirectStandardOutput = true };
+        psi.ArgumentList.Add(script);
+        psi.ArgumentList.Add(specPath);
+        psi.Environment["PYTHONIOENCODING"] = "utf-8";
+        using var proc = Process.Start(psi);
+        if (proc == null) return null;
+        var err = proc.StandardError.ReadToEndAsync(ct);
+        await proc.WaitForExitAsync(ct);
+        if (proc.ExitCode != 0 || plates.Any(p => !File.Exists(p)))
+        {
+            _logger.LogWarning("Scene plates failed ({Error}); using the classic render", await err);
+            return null;
+        }
+        return plates;
+    }
+
+    /// <summary>Seconds of cross-fade between two scenes.</summary>
+    public const double Transition = 0.4;
+
+    /// <summary>
+    /// Plates → each with a slow zoom (supersampled, no jitter) → cross-fades exactly on the narration's scene
+    /// boundaries → news card on top → audio. Scene k starts at the sum of the previous scenes' lengths; each
+    /// clip but the last is <see cref="Transition"/> longer so the fade doesn't shorten the video.
+    /// </summary>
+    private static string BuildPlateArguments(VideoRenderRequest request, List<string> plates, string outputPath, string overlayPath, out double totalDuration)
+    {
+        static string F(double v) => v.ToString("0.###", CultureInfo.InvariantCulture);
+        totalDuration = request.AudioDurationSeconds > 0 ? request.AudioDurationSeconds : request.Scenes.Max(s => s.EndTimeSeconds);
+        var hasOverlay = !string.IsNullOrWhiteSpace(overlayPath) && File.Exists(overlayPath);
+        var hasAudio = !string.IsNullOrWhiteSpace(request.AudioFilePath) && File.Exists(request.AudioFilePath);
+        var n = request.Scenes.Count;
+        var durations = request.Scenes.Select(s => Math.Max(s.EndTimeSeconds - s.StartTimeSeconds, 1.0)).ToList();
+        // The last scene runs to the end of the narration
+        durations[n - 1] = Math.Max(1.0, totalDuration - durations.Take(n - 1).Sum());
+
+        var args = new StringBuilder();
+        for (var i = 0; i < n; i++)
+        {
+            var clip = durations[i] + (i < n - 1 ? Transition : 0);
+            args.Append($"-loop 1 -framerate 30 -t {F(clip)} -i \"{plates[i]}\" ");
+        }
+        args.Append(hasOverlay ? $"-i \"{overlayPath}\" " : "-f lavfi -i color=c=0x00000000:s=1080x1920:r=30 ");
+        args.Append(hasAudio ? $"-i \"{request.AudioFilePath}\" " : "-f lavfi -i anullsrc=r=44100:cl=stereo ");
+
+        var filter = new StringBuilder();
+        for (var i = 0; i < n; i++)
+        {
+            // Alternate zoom in / zoom out so consecutive scenes don't move the same way
+            var zoom = i % 2 == 0 ? "min(1+0.0012*on,1.05)" : "max(1.05-0.0012*on,1)";
+            filter.Append($"[{i}:v]scale=1620:-1,zoompan=z='{zoom}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=1080x1920:fps=30,setsar=1,format=yuv420p[v{i}];");
+        }
+        var last = "v0";
+        double offset = 0;
+        for (var i = 1; i < n; i++)
+        {
+            offset += durations[i - 1];
+            filter.Append($"[{last}][v{i}]xfade=transition=fade:duration={F(Transition)}:offset={F(offset)}[x{i}];");
+            last = $"x{i}";
+        }
+        filter.Append($"[{last}][{n}:v]overlay=0:0[v]");
+
+        args.Append($"-filter_complex \"{filter}\" -map \"[v]\" -map {n + 1}:a ");
+        args.Append($"-t {totalDuration.ToString("F1", CultureInfo.InvariantCulture)} ");
+        args.Append("-c:v libx264 -preset veryfast -pix_fmt yuv420p -c:a aac -b:a 192k -movflags +faststart ");
+        args.Append($"-y \"{outputPath}\"");
+        return args.ToString();
     }
 
     private static string BuildFfmpegArguments(

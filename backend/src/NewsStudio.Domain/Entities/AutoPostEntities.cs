@@ -60,6 +60,12 @@ public class AutoPostSettings : BaseEntity
 
     /// <summary>Also post every Reel on the Instagram account linked to the page.</summary>
     public bool InstagramEnabled { get; set; } = true;
+
+    // ── Brand kit of the page ──
+    /// <summary>Writing tone of the page's scripts: neutral, youthful, expert, brief.</summary>
+    public string WritingTone { get; set; } = "neutral";
+    /// <summary>Page logo (PNG/JPEG, small) shown in the brand pill of videos and digests.</summary>
+    public byte[]? BrandLogo { get; set; }
 }
 
 /// <summary>
@@ -137,4 +143,17 @@ public class AutoPostRun : BaseEntity
 
     /// <summary>Latest progress / error note in Vietnamese, shown in the UI.</summary>
     public string? Message { get; set; }
+}
+
+/// <summary>One AI call and what it cost (from Gemini's token counts). Free-key calls cost 0.</summary>
+public class AiUsage : BaseEntity
+{
+    /// <summary>script, editorial, digest, tts, …</summary>
+    public string Kind { get; set; } = string.Empty;
+    public string Model { get; set; } = string.Empty;
+    public bool FreeKey { get; set; }
+    public long InputTokens { get; set; }
+    public long OutputTokens { get; set; }
+    public decimal CostUsd { get; set; }
+    public Guid? VideoProjectId { get; set; }
 }

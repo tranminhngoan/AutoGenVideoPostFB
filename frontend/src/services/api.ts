@@ -154,6 +154,50 @@ export const api = {
     return await res.json();
   },
 
+  async getFactCheck(projectId: string): Promise<FactCheckReportDto> {
+    const res = await fetch(`${API_BASE}/video-projects/${projectId}/fact-check`);
+    if (!res.ok) throw new Error(await apiError(res, 'Không tải được kết quả kiểm chứng'));
+    return await res.json();
+  },
+
+  async runFactCheck(projectId: string, ai: boolean): Promise<FactCheckReportDto> {
+    const res = await fetch(`${API_BASE}/video-projects/${projectId}/fact-check?ai=${ai}`, { method: 'POST' });
+    if (!res.ok) throw new Error(await apiError(res, 'Không kiểm chứng được'));
+    return await res.json();
+  },
+
+  async getAiUsage(): Promise<AiUsageReportDto> {
+    const res = await fetch(`${API_BASE}/ai-usage`);
+    if (!res.ok) throw new Error(await apiError(res, 'Không tải được chi phí AI'));
+    return await res.json();
+  },
+
+  async setAiBudget(budget: AiBudgetSettingsDto): Promise<AiBudgetSettingsDto> {
+    const res = await fetch(`${API_BASE}/ai-usage/budget`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(budget),
+    });
+    if (!res.ok) throw new Error(await apiError(res, 'Không lưu được ngân sách AI'));
+    return await res.json();
+  },
+
+  pageLogoUrl(facebookAccountId: string, version = 0): string {
+    return `${API_BASE}/auto-post/pages/${facebookAccountId}/logo?v=${version}`;
+  },
+
+  async uploadPageLogo(facebookAccountId: string, file: File): Promise<void> {
+    const form = new FormData();
+    form.append('file', file);
+    const res = await fetch(`${API_BASE}/auto-post/pages/${facebookAccountId}/logo`, { method: 'PUT', body: form });
+    if (!res.ok) throw new Error(await apiError(res, 'Không tải logo lên được'));
+  },
+
+  async deletePageLogo(facebookAccountId: string): Promise<void> {
+    const res = await fetch(`${API_BASE}/auto-post/pages/${facebookAccountId}/logo`, { method: 'DELETE' });
+    if (!res.ok) throw new Error(await apiError(res, 'Không xoá được logo'));
+  },
+
   async getPageInsights(facebookAccountId: string): Promise<PageInsightsDto> {
     const res = await fetch(`${API_BASE}/auto-post/pages/${facebookAccountId}/insights`);
     if (!res.ok) throw new Error(await apiError(res, 'Không tải được số liệu học được'));
@@ -1018,6 +1062,10 @@ export interface AutoPostSettingsDto {
   autoTune: boolean;
   /** Also post every Reel on the page's linked Instagram */
   instagramEnabled: boolean;
+  /** neutral | youthful | expert | brief */
+  writingTone: string;
+  /** A logo was uploaded (read-only) */
+  hasLogo?: boolean;
 }
 
 export interface EditorialPassDto {
@@ -1223,4 +1271,55 @@ export interface PageStatsSyncResultDto {
   postsChecked: number;
   postsUpdated: number;
   errors: string[];
+}
+
+// ── Kiểm chứng & nguồn gốc ──
+export type GateStatus = 'PENDING' | 'APPROVED' | 'REVIEW_REQUIRED' | 'REJECTED';
+
+export interface FactCheckReportDto {
+  gate: { status: GateStatus; reasons: string[]; checkedAtUtc?: string | null };
+  factSheet?: {
+    entities: { name: string; category: string; kind?: string | null }[];
+    claims: { fact: string; quote?: string | null; certainty: string; quoteFound: boolean }[];
+    chart?: { title: string; unit?: string | null; source?: string | null; points: { label: string; value: number }[] } | null;
+    imageQueries: string[];
+    numbersNotInArticle: string[];
+    checkedAtUtc?: string | null;
+  } | null;
+  editorialPass?: EditorialPassDto | null;
+  images: {
+    imageId: string;
+    url?: string | null;
+    imageType?: string | null;
+    sourceName?: string | null;
+    sourcePageUrl?: string | null;
+    licenseType?: string | null;
+    licenseEvidence?: string | null;
+    subjectName?: string | null;
+    subjectType?: string | null;
+    verificationStatus?: string | null;
+    confidence?: number | null;
+    caption?: string | null;
+    scenes: number[];
+  }[];
+  articleId?: string | null;
+  articleUrl?: string | null;
+  articlePublisher?: string | null;
+  articlePublishedAtUtc?: string | null;
+}
+
+// ── Chi phí AI ──
+export interface AiBudgetSettingsDto {
+  monthlyUsd: number;
+  /** warn | edge | pause */
+  mode: string;
+}
+
+export interface AiUsageReportDto {
+  budget: AiBudgetSettingsDto & { spentUsd: number; overBudget: boolean };
+  projectedUsd: number;
+  byKind: { kind: string; calls: number; freeCalls: number; costUsd: number }[];
+  byDay: { date: string; costUsd: number }[];
+  videos: number;
+  costPerVideo: number;
 }

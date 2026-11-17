@@ -38,6 +38,8 @@ public class VideoProjectResponseDto
     public Guid? FacebookAccountId { get; set; }
     public string? PageName { get; set; }
     public string? Topic { get; set; }
+    /// <summary>Publication gate: PENDING, APPROVED, REVIEW_REQUIRED, REJECTED.</summary>
+    public string GateStatus { get; set; } = "PENDING";
 
     public int SceneCount { get; set; }
     public List<VideoSceneResponseDto> Scenes { get; set; } = new();

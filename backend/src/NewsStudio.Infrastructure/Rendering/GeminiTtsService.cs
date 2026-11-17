@@ -32,13 +32,17 @@ public class GeminiTtsService : ITtsService
 
     public TtsProviderType ProviderType => TtsProviderType.GoogleTts;
 
+    private readonly NewsStudio.Infrastructure.Ai.AiUsageMeter _meter;
+
     public GeminiTtsService(
         HttpClient httpClient,
         IConfiguration configuration,
         ISubtitleGeneratorService subtitleGenerator,
         GeminiAiEditorService gemini,
+        NewsStudio.Infrastructure.Ai.AiUsageMeter meter,
         ILogger<GeminiTtsService> logger)
     {
+        _meter = meter;
         _httpClient = httpClient;
         _httpClient.Timeout = TimeSpan.FromMinutes(5); // ~2 minutes of audio can take a while to synthesize
         _configuration = configuration;
@@ -160,10 +164,11 @@ public class GeminiTtsService : ITtsService
         {
             var key = keys[i];
             var hasNext = i < keys.Count - 1;
-            var (pcm, status, reason) = await SendSpeechRequestAsync(key.Value, model, voiceName, prompt, ct);
+            var (pcm, status, reason, usage) = await SendSpeechRequestAsync(key.Value, model, voiceName, prompt, ct);
             if (pcm != null)
             {
                 _logger.LogInformation("Gemini TTS used the {KeyType} key ({Model})", key.Label, model);
+                await _meter.RecordAsync("tts", model, key.IsFree, usage, speech: true);
                 return pcm;
             }
 
@@ -198,7 +203,7 @@ public class GeminiTtsService : ITtsService
     }
 
     /// <summary>One TTS call. Returns the PCM audio, or null plus Google's status/reason on failure.</summary>
-    private async Task<(byte[]? Pcm, System.Net.HttpStatusCode Status, string Reason)> SendSpeechRequestAsync(
+    private async Task<(byte[]? Pcm, System.Net.HttpStatusCode Status, string Reason, JsonElement? Usage)> SendSpeechRequestAsync(
         string apiKey, string model, string voiceName, string prompt, CancellationToken ct)
     {
         var url = $"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={apiKey}";
@@ -219,7 +224,7 @@ public class GeminiTtsService : ITtsService
         var json = await response.Content.ReadAsStringAsync(ct);
         if (!response.IsSuccessStatusCode)
         {
-            return (null, response.StatusCode, ExtractError(json));
+            return (null, response.StatusCode, ExtractError(json), null);
         }
 
         using var doc = JsonDocument.Parse(json);
@@ -236,7 +241,9 @@ public class GeminiTtsService : ITtsService
                     audio.Write(bytes);
                 }
             }
-            if (audio.Length > 0) return (audio.ToArray(), response.StatusCode, string.Empty);
+            if (audio.Length > 0)
+                return (audio.ToArray(), response.StatusCode, string.Empty,
+                    doc.RootElement.TryGetProperty("usageMetadata", out var usage) ? usage.Clone() : null);
         }
 
         throw new InvalidOperationException("Gemini không trả về dữ liệu âm thanh. Thử lại hoặc chọn giọng khác.");

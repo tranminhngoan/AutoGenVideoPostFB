@@ -1,6 +1,18 @@
 namespace NewsStudio.Infrastructure.Common;
 
 /// <summary>Values of <c>ArticleImage.Status</c>.</summary>
+/// <summary>What a picture is (ArticleImage.ImageType): shown as a credit on the video and in the review page.</summary>
+public static class ImageKinds
+{
+    /// <summary>Photo published with the news article (shown with the outlet's name).</summary>
+    public const string Real = "REAL";
+    /// <summary>Freely licensed picture (Wikimedia Commons, Openverse CC) with author and licence.</summary>
+    public const string Licensed = "LICENSED";
+    public const string AiIllustration = "AI_ILLUSTRATION";
+    /// <summary>Chart/graphic drawn by the app from the article's own numbers.</summary>
+    public const string Infographic = "INFOGRAPHIC";
+}
+
 public static class ImageStatus
 {
     public const string Extracted = "Extracted";

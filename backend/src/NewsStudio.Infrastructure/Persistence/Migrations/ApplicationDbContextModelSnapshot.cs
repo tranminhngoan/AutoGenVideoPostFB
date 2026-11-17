@@ -22,6 +22,51 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("NewsStudio.Domain.Entities.AiUsage", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<decimal>("CostUsd")
+                        .HasPrecision(12, 6)
+                        .HasColumnType("numeric(12,6)");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("FreeKey")
+                        .HasColumnType("boolean");
+
+                    b.Property<long>("InputTokens")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
+
+                    b.Property<string>("Model")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<long>("OutputTokens")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime?>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("VideoProjectId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CreatedAtUtc");
+
+                    b.ToTable("AiUsages", (string)null);
+                });
+
             modelBuilder.Entity("NewsStudio.Domain.Entities.Article", b =>
                 {
                     b.Property<Guid>("Id")
@@ -112,6 +157,9 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                         .HasMaxLength(50)
                         .HasColumnType("character varying(50)");
 
+                    b.Property<double?>("Confidence")
+                        .HasColumnType("double precision");
+
                     b.Property<DateTime>("CreatedAtUtc")
                         .HasColumnType("timestamp with time zone");
 
@@ -123,6 +171,18 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
 
                     b.Property<string>("ImageHash")
                         .HasColumnType("text");
+
+                    b.Property<string>("ImageType")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<string>("LicenseEvidence")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<string>("LicenseType")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
 
                     b.Property<string>("LocalTempPath")
                         .HasColumnType("text");
@@ -137,13 +197,33 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                         .HasMaxLength(50)
                         .HasColumnType("character varying(50)");
 
+                    b.Property<string>("SourceName")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("SourcePageUrl")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
                     b.Property<string>("Status")
                         .IsRequired()
                         .HasMaxLength(50)
                         .HasColumnType("character varying(50)");
 
+                    b.Property<string>("SubjectName")
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)");
+
+                    b.Property<string>("SubjectType")
+                        .HasMaxLength(2)
+                        .HasColumnType("character varying(2)");
+
                     b.Property<DateTime?>("UpdatedAtUtc")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("VerificationStatus")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
 
                     b.Property<int?>("Width")
                         .HasColumnType("integer");
@@ -314,6 +394,9 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                     b.Property<bool>("AutoTune")
                         .HasColumnType("boolean");
 
+                    b.Property<byte[]>("BrandLogo")
+                        .HasColumnType("bytea");
+
                     b.Property<bool>("BreakingEnabled")
                         .HasColumnType("boolean");
 
@@ -384,6 +467,11 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
 
                     b.Property<bool>("WeeklyDigestEnabled")
                         .HasColumnType("boolean");
+
+                    b.Property<string>("WritingTone")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
 
                     b.HasKey("Id");
 
@@ -1002,6 +1090,14 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                     b.Property<int>("Fps")
                         .HasColumnType("integer");
 
+                    b.Property<string>("GateJson")
+                        .HasColumnType("text");
+
+                    b.Property<string>("GateStatus")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
                     b.Property<string>("OutputVideoPath")
                         .HasColumnType("text");
 
@@ -1221,6 +1317,9 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
 
                     b.Property<decimal?>("EstimatedCostUsd")
                         .HasColumnType("numeric");
+
+                    b.Property<string>("FactSheetJson")
+                        .HasColumnType("text");
 
                     b.Property<string>("Hook")
                         .IsRequired()

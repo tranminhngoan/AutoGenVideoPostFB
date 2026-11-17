@@ -34,6 +34,10 @@ public class AutoPostSettingsDto
     public bool AutoTune { get; set; } = true;
     /// <summary>Also post every Reel on the Instagram account linked to the page.</summary>
     public bool InstagramEnabled { get; set; } = true;
+    /// <summary>Writing tone of the page's scripts: neutral, youthful, expert, brief.</summary>
+    public string WritingTone { get; set; } = "neutral";
+    /// <summary>A logo was uploaded (read-only; upload with PUT /api/auto-post/pages/{id}/logo).</summary>
+    public bool HasLogo { get; set; }
 }
 
 public class AutoPostRunDto

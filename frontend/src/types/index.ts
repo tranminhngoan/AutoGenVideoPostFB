@@ -69,6 +69,8 @@ export interface VideoProject {
   sceneCount: number;
   scenes: VideoScene[];
   jobs?: ProjectJob[];
+  /** Publication gate: PENDING, APPROVED, REVIEW_REQUIRED, REJECTED */
+  gateStatus?: 'PENDING' | 'APPROVED' | 'REVIEW_REQUIRED' | 'REJECTED';
 }
 
 export interface SystemConfig {

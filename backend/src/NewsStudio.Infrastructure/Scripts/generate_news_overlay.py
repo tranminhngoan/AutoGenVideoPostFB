@@ -1,6 +1,6 @@
 import os
 import argparse
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Canvas and "safe zone" for Facebook Reels / phones.
@@ -146,8 +146,21 @@ def _fit_brand(draw, brand, max_text_w):
     return font, brand + "…"
 
 
+def paste_logo(img, path, cx0, cy0, d):
+    """Page logo (brand kit) inside the round icon of the brand pill; False when it can't be read."""
+    try:
+        with Image.open(path) as logo:
+            logo = ImageOps.fit(logo.convert("RGBA"), (d, d), Image.LANCZOS)
+    except Exception:
+        return False
+    mask = Image.new("L", (d, d), 0)
+    ImageDraw.Draw(mask).ellipse([0, 0, d - 1, d - 1], fill=255)
+    img.paste(logo, (cx0, cy0), Image.composite(logo.getchannel("A"), mask, mask))
+    return True
+
+
 def generate_news_overlay(output_path, title, summary="", publisher="TIN TỨC 24H", date_str="", logo_text="Trạm Tin 24/7",
-                          theme="tong-hop", topic_label=""):
+                          theme="tong-hop", topic_label="", logo_image=""):
     img = Image.new("RGBA", (WIDTH, HEIGHT), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
     pal = _palette(theme)
@@ -183,7 +196,8 @@ def generate_news_overlay(output_path, title, summary="", publisher="TIN TỨC 2
     draw.rounded_rectangle([x0, logo_y, x0 + logo_w, logo_y + logo_h], radius=32, fill=pal["pill"], outline=(255, 255, 255, 220), width=2)
     cx0, cy0 = x0 + 10, logo_y + 10
     draw.ellipse([cx0, cy0, cx0 + icon_d, cy0 + icon_d], fill=(255, 255, 255, 255))
-    draw.polygon([(cx0 + 17, cy0 + 12), (cx0 + 17, cy0 + 32), (cx0 + 33, cy0 + 22)], fill=pal["pill"])
+    if not (logo_image and paste_logo(img, logo_image, cx0, cy0, icon_d)):
+        draw.polygon([(cx0 + 17, cy0 + 12), (cx0 + 17, cy0 + 32), (cx0 + 33, cy0 + 22)], fill=pal["pill"])
     text_h = t_bbox[3] - t_bbox[1]
     draw.text((cx0 + icon_d + 14, logo_y + (logo_h - text_h) // 2 - t_bbox[1]), brand, font=font_logo, fill=(255, 255, 255, 255))
 
@@ -244,6 +258,7 @@ if __name__ == "__main__":
     parser.add_argument("--logo", default="Trạm Tin 24/7")
     parser.add_argument("--theme", default="tong-hop")
     parser.add_argument("--topic-label", default="")
+    parser.add_argument("--logo-image", default="")
     args = parser.parse_args()
 
     generate_news_overlay(
@@ -255,4 +270,5 @@ if __name__ == "__main__":
         logo_text=args.logo,
         theme=args.theme,
         topic_label=args.topic_label,
+        logo_image=args.logo_image,
     )

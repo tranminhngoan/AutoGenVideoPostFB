@@ -71,6 +71,7 @@ public class DailyDigestService : IDailyDigestService
     private readonly ITrendingNewsService _trending;
     private readonly IArticleExtractorService _extractor;
     private readonly GeminiAiEditorService _gemini;
+    private readonly AiUsageMeter _meter;
     private readonly IVideoRendererService _renderer;
     private readonly IFacebookPublishingService _facebook;
     private readonly HttpClient _http;
@@ -82,6 +83,7 @@ public class DailyDigestService : IDailyDigestService
         ITrendingNewsService trending,
         IArticleExtractorService extractor,
         GeminiAiEditorService gemini,
+        AiUsageMeter meter,
         IVideoRendererService renderer,
         IFacebookPublishingService facebook,
         HttpClient http,
@@ -92,6 +94,7 @@ public class DailyDigestService : IDailyDigestService
         _trending = trending;
         _extractor = extractor;
         _gemini = gemini;
+        _meter = meter;
         _renderer = renderer;
         _facebook = facebook;
         _http = http;
@@ -112,6 +115,7 @@ public class DailyDigestService : IDailyDigestService
             var todayKey = DateKey(today);
 
             await FailInterruptedRunsAsync(cancellationToken);
+            if (await _meter.ShouldPauseAsync(cancellationToken)) return; // monthly AI budget reached
 
             foreach (var (page, settings) in await LoadPagesAsync(cancellationToken))
             {
@@ -255,7 +259,7 @@ public class DailyDigestService : IDailyDigestService
             run.Message = "Đang vẽ ảnh bản tin.";
             await _context.SaveChangesAsync(ct);
             var theme = NewsTopics.Find(settings.Topic)?.Key ?? NewsTopics.General;
-            var (postImages, storyImages) = await RenderCardsAsync(page.PageName, theme, today, kind, items, folder, ct);
+            var (postImages, storyImages) = await RenderCardsAsync(page.Id, page.PageName, theme, today, kind, items, folder, ct);
             run.Caption = BuildCaption(theme, today, items.Select(i => i.Item).ToList(), kind);
 
             if (!publish)
@@ -351,7 +355,7 @@ public class DailyDigestService : IDailyDigestService
 
         // 2. AI picks the most striking, distinct events (a few extra in case some have no usable picture)
         var topicName = NewsTopics.NameOf(settings.Topic);
-        var picksJson = await _gemini.GenerateJsonAsync(weekly ? WeeklyPickSystemPrompt : PickSystemPrompt, BuildPickPrompt(topicName, keywords, pool, count + 4), ct);
+        var picksJson = await _gemini.GenerateJsonAsync(weekly ? WeeklyPickSystemPrompt : PickSystemPrompt, BuildPickPrompt(topicName, keywords, pool, count + 4), ct, "digest");
         var picks = ParsePicks(picksJson, pool.Count);
         if (picks.Count == 0) throw new InvalidOperationException("AI không chọn được tin nào. Thử lại sau.");
 
@@ -374,7 +378,7 @@ public class DailyDigestService : IDailyDigestService
             throw new InvalidOperationException($"Chỉ có {chosen.Count} tin nóng có ảnh dùng được, chưa đủ để làm bản tin (cần ít nhất {MinItems}).");
 
         // 4. AI writes a short headline + summary for each, from the article text only
-        var writtenJson = await _gemini.GenerateJsonAsync(WriteSystemPrompt, BuildWritePrompt(topicName, chosen.Select(c => c.Candidate).ToList()), ct);
+        var writtenJson = await _gemini.GenerateJsonAsync(WriteSystemPrompt, BuildWritePrompt(topicName, chosen.Select(c => c.Candidate).ToList()), ct, "digest");
         var written = ParseWritten(writtenJson);
 
         var result = new List<(DailyDigestItemDto, string)>();
@@ -612,15 +616,26 @@ public class DailyDigestService : IDailyDigestService
     // ---------------------------------------------------------------- pictures + text
 
     private async Task<(List<string> Post, List<string> Story)> RenderCardsAsync(
-        string pageName, string theme, DateTime vietnamDate, string kind, List<(DailyDigestItemDto Item, string Photo)> items, string folder, CancellationToken ct)
+        Guid pageId, string pageName, string theme, DateTime vietnamDate, string kind, List<(DailyDigestItemDto Item, string Photo)> items, string folder, CancellationToken ct)
     {
         var python = FFmpegRendererService.FindPythonExecutable()
                      ?? throw new InvalidOperationException("Không tìm thấy Python trên máy chủ để vẽ ảnh bản tin.");
         var script = FFmpegRendererService.FindScriptPath("generate_digest_cards.py")
                      ?? throw new InvalidOperationException("Thiếu script vẽ ảnh bản tin (generate_digest_cards.py).");
 
+        // Brand kit: the page's logo
+        var logoBytes = await _context.AutoPostSettings.AsNoTracking()
+            .Where(s => s.FacebookAccountId == pageId)
+            .Select(s => s.BrandLogo).FirstOrDefaultAsync(ct);
+        string? logoPath = null;
+        if (logoBytes is { Length: > 0 })
+        {
+            logoPath = Path.Combine(folder, "brand_logo.png");
+            await File.WriteAllBytesAsync(logoPath, logoBytes, ct);
+        }
         var spec = new
         {
+            logo = logoPath,
             out_dir = folder,
             brand = pageName,
             theme,

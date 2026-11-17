@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { ArrowRight, Link2, ChevronRight, AlertTriangle, Clock3, Inbox, Flame } from 'lucide-react';
 import { api, AutoPostOverviewDto, SystemMetricsDto, SystemCostSummaryDto, TrendingArticleDto } from '../services/api';
 import { AutoPostPageCard, AutoPostTotals, isActiveRun } from '../components/AutoPostWidgets';
+import { AiCostCard } from '../components/AiCostCard';
 import { PageViewStats } from '../components/PageViewStats';
 import { VideoProject } from '../types';
 import {
@@ -206,6 +207,8 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ projects, onCreate
 
       {/* Reels views of every Facebook Page */}
       <PageViewStats />
+
+      <AiCostCard />
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <div className="min-w-0 space-y-6 lg:col-span-2">

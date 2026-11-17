@@ -15,7 +15,8 @@ public class EditorialScriptPromptInput
     public string ContentBody { get; set; } = string.Empty;
     public List<ArticleImageInputDto> AvailableImages { get; set; } = new();
     public int TargetDurationSeconds { get; set; } = 105; // upper bound; actual length follows the article
-    public string Tone { get; set; } = "Chính luận sắc bén, súc tích, khách quan";
+    /// <summary>Writing tone of the page (null = default).</summary>
+    public string? Tone { get; set; }
     public string Mode { get; set; } = "ArticleImageOnly";
 }
 
@@ -41,6 +42,8 @@ public class EditorialScriptResult
     public string Analysis { get; set; } = string.Empty;
     public string Conclusion { get; set; } = string.Empty;
     public string SourceAttribution { get; set; } = string.Empty;
+    /// <summary>Subjects, claims and chart written with the script (JSON of FactSheetDto, before checks).</summary>
+    public string? FactSheetJson { get; set; }
     public int EstimatedReadingSeconds { get; set; } = 60;
     public int WordCount { get; set; }
 
@@ -81,6 +84,10 @@ public class VideoScenePlanDto
     public Guid? ArticleImageId { get => SelectedArticleImageId; set => SelectedArticleImageId = value; }
     public string? ImageUrl { get; set; }
     public string? ImageCaption { get; set; }
+    /// <summary>Credit shown on the picture ("Ảnh: VnExpress", "Ảnh: … / Wikimedia Commons · CC BY-SA 4.0").</summary>
+    public string? ImageCredit { get; set; }
+    /// <summary>Name tag for a verified person shown in the picture (lower third).</summary>
+    public string? SubjectName { get; set; }
     public string VisualType { get; set; } = "Image"; // "Image", "Typography"
 
     public string MotionType { get; set; } = "ZoomIn"; // "ZoomIn", "ZoomOut", "PanLeft", "PanRight", "KenBurns"
