@@ -156,6 +156,23 @@ public class FilmFactoryController : ControllerBase
         var filePath = ResolveEpisodeVideoPath(ep);
         if (string.IsNullOrWhiteSpace(filePath) || !System.IO.File.Exists(filePath))
         {
+            // Tự động render/ghép lại tập phim theo yêu cầu nếu container bị reset
+            try
+            {
+                var generatedPath = await _rendererService.AssembleEpisodeAsync(id, ct);
+                if (System.IO.File.Exists(generatedPath))
+                {
+                    filePath = generatedPath;
+                }
+            }
+            catch
+            {
+                // Fallback nếu chưa thể tự dựng
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(filePath) || !System.IO.File.Exists(filePath))
+        {
             return NotFound(new { message = "Chưa có file video hoàn chỉnh cho tập phim này hoặc file đang được xử lý." });
         }
 
@@ -170,6 +187,21 @@ public class FilmFactoryController : ControllerBase
         if (ep == null) return NotFound(new { message = "Không tìm thấy tập phim." });
 
         var filePath = ResolveEpisodeVideoPath(ep);
+        if (string.IsNullOrWhiteSpace(filePath) || !System.IO.File.Exists(filePath))
+        {
+            try
+            {
+                var generatedPath = await _rendererService.AssembleEpisodeAsync(id, ct);
+                if (System.IO.File.Exists(generatedPath))
+                {
+                    filePath = generatedPath;
+                }
+            }
+            catch
+            {
+            }
+        }
+
         if (string.IsNullOrWhiteSpace(filePath) || !System.IO.File.Exists(filePath))
         {
             return NotFound(new { message = "Chưa có file video hoàn chỉnh để tải về." });

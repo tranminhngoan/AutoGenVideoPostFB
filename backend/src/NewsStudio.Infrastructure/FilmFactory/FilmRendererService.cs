@@ -191,8 +191,13 @@ public class FilmRendererService : IFilmRendererService
         if (!success || !File.Exists(outputVideoPath))
         {
             // Fallback concat copy
-            var fallbackArgs = $"-y -f concat -safe 0 -i \"{concatListPath}\" -c copy \"{outputVideoPath}\"";
+            var fallbackArgs = $"-y -f concat -safe 0 -i \"{concatListPath}\" -c copy -movflags +faststart \"{outputVideoPath}\"";
             await ExecuteProcessAsync(_ffmpegPath, fallbackArgs, ct);
+        }
+
+        if (!File.Exists(outputVideoPath) || new FileInfo(outputVideoPath).Length < 1000)
+        {
+            throw new InvalidOperationException($"FFmpeg ghép video tập phim thất bại. File đích không tồn tại hoặc rỗng: {outputVideoPath}");
         }
 
         // 4. Đo đạc thời lượng thực tế
@@ -256,7 +261,7 @@ public class FilmRendererService : IFilmRendererService
             colorFilter = "color=c=0x111827:s=1080x1920:d=1,drawbox=y=ih*0.3:color=0x6366f1@0.2:width=iw:height=ih*0.5:t=fill";
         }
 
-        var args = $"-y -f lavfi -i \"{colorFilter}\" -frames:v 1 -q:v 2 \"{imagePath}\"";
+        var args = $"-y -f lavfi -i \"{colorFilter}\" -update 1 -frames:v 1 -q:v 2 \"{imagePath}\"";
         await ExecuteProcessAsync(_ffmpegPath, args, ct);
 
         if (!File.Exists(imagePath))
@@ -319,6 +324,15 @@ public class FilmRendererService : IFilmRendererService
         }
 
         await ExecuteProcessAsync(_ffmpegPath, args, ct);
+
+        if (!File.Exists(outputPath))
+        {
+            _logger.LogWarning("Ken Burns render failed for shot, using basic scale fallback: {Path}", outputPath);
+            var fallbackArgs = !string.IsNullOrWhiteSpace(audioPath) && File.Exists(audioPath)
+                ? $"-y -loop 1 -t {duration:F2} -i \"{imagePath}\" -i \"{audioPath}\" -vf \"scale={width}:{height},format=yuv420p\" -c:v libx264 -preset ultrafast -c:a aac -b:a 128k -t {duration:F2} -shortest \"{outputPath}\""
+                : $"-y -loop 1 -t {duration:F2} -i \"{imagePath}\" -f lavfi -i anullsrc=channel_layout=stereo:sample_rate=44100 -vf \"scale={width}:{height},format=yuv420p\" -c:v libx264 -preset ultrafast -c:a aac -b:a 128k -t {duration:F2} -shortest \"{outputPath}\"";
+            await ExecuteProcessAsync(_ffmpegPath, fallbackArgs, ct);
+        }
     }
 
     private static byte[] CreatePlaceholderJpeg(int width, int height)

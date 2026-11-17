@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
@@ -369,7 +370,7 @@ public class FacebookPublishingService : IFacebookPublishingService
 
         try
         {
-            // Try Real Meta Graph API call
+            // Try Real Meta Graph API Reels upload first
             var (realVideoId, realPostId) = await ExecuteMetaReelsPublishAsync(
                 account.PageId,
                 rawPageToken,
@@ -380,18 +381,34 @@ public class FacebookPublishingService : IFacebookPublishingService
             fbVideoId = realVideoId;
             fbPostId = realPostId;
         }
-        catch (Exception ex) when (!_simulate)
+        catch (Exception reelsEx) when (!_simulate)
         {
-            // Real failure: record it honestly and send the project back to the approval queue.
-            _logger.LogError(ex, "Meta Reels upload failed for project {ProjectId}", videoProjectId);
-            postRecord.UploadStatus = "Failed";
-            postRecord.Status = "Failed";
-            postRecord.ErrorMessage = ex.Message.Length > 1000 ? ex.Message[..1000] : ex.Message;
-            postRecord.UpdatedAtUtc = DateTime.UtcNow;
-            project.Status = VideoProjectStatus.AwaitingApproval;
-            project.UpdatedAtUtc = DateTime.UtcNow;
-            await _context.SaveChangesAsync(CancellationToken.None);
-            throw new InvalidOperationException($"Đăng lên Facebook thất bại: {ex.Message}", ex);
+            _logger.LogWarning(reelsEx, "Meta Reels endpoint upload failed for project {ProjectId}. Trying standard video endpoint fallback...", videoProjectId);
+            try
+            {
+                var (stdVideoId, stdPostId) = await ExecuteMetaStandardVideoPublishAsync(
+                    account.PageId,
+                    rawPageToken,
+                    videoFilePath,
+                    caption,
+                    cancellationToken);
+
+                fbVideoId = stdVideoId;
+                fbPostId = stdPostId;
+            }
+            catch (Exception ex)
+            {
+                // Both attempts failed: record it honestly and send the project back to the approval queue.
+                _logger.LogError(ex, "Meta upload failed (both Reels and standard) for project {ProjectId}", videoProjectId);
+                postRecord.UploadStatus = "Failed";
+                postRecord.Status = "Failed";
+                postRecord.ErrorMessage = ex.Message.Length > 1000 ? ex.Message[..1000] : ex.Message;
+                postRecord.UpdatedAtUtc = DateTime.UtcNow;
+                project.Status = VideoProjectStatus.AwaitingApproval;
+                project.UpdatedAtUtc = DateTime.UtcNow;
+                await _context.SaveChangesAsync(CancellationToken.None);
+                throw new InvalidOperationException($"Đăng lên Facebook thất bại: {reelsEx.Message}", reelsEx);
+            }
         }
         catch (Exception ex)
         {
@@ -741,21 +758,48 @@ public class FacebookPublishingService : IFacebookPublishingService
         var videoId = startData.GetProperty("video_id").GetString()!;
         var uploadUrl = startData.GetProperty("upload_url").GetString()!;
 
-        // Step 2: Transfer binary video (rupload.facebook.com requires Offset and file_size headers)
+        // Step 2: Transfer binary video (rupload.facebook.com requires lowercase offset and file_size headers)
         var fileInfo = new FileInfo(videoFilePath);
-        using var fileStream = File.OpenRead(videoFilePath);
-        using var request = new HttpRequestMessage(HttpMethod.Post, uploadUrl);
-        request.Headers.Authorization = new AuthenticationHeaderValue("OAuth", pageToken);
-        request.Headers.TryAddWithoutValidation("Offset", "0");
-        request.Headers.TryAddWithoutValidation("file_size", fileInfo.Length.ToString());
-        request.Content = new StreamContent(fileStream);
-        request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
+        var fileSizeStr = fileInfo.Length.ToString(CultureInfo.InvariantCulture);
 
-        var transferRes = await _httpClient.SendAsync(request, cancellationToken);
-        if (!transferRes.IsSuccessStatusCode)
+        using var handler = new HttpClientHandler { AllowAutoRedirect = false };
+        using var transferClient = new HttpClient(handler) { Timeout = TimeSpan.FromMinutes(10) };
+
+        var currentUploadUrl = uploadUrl;
+        HttpResponseMessage? transferRes = null;
+        const int maxRedirects = 5;
+
+        for (int redirectCount = 0; redirectCount <= maxRedirects; redirectCount++)
         {
-            var errBody = await transferRes.Content.ReadAsStringAsync(cancellationToken);
-            _logger.LogError("Meta Graph API error on video transfer: {StatusCode} - {Body}", transferRes.StatusCode, errBody);
+            using var fileStream = File.OpenRead(videoFilePath);
+            using var request = new HttpRequestMessage(HttpMethod.Post, currentUploadUrl);
+            request.Headers.Authorization = new AuthenticationHeaderValue("OAuth", pageToken);
+            request.Headers.TryAddWithoutValidation("offset", "0");
+            request.Headers.TryAddWithoutValidation("file_size", fileSizeStr);
+            request.Content = new StreamContent(fileStream);
+            request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
+            request.Content.Headers.ContentLength = fileInfo.Length;
+
+            transferRes = await transferClient.SendAsync(request, cancellationToken);
+
+            if ((int)transferRes.StatusCode is 301 or 302 or 307 or 308 && transferRes.Headers.Location != null)
+            {
+                var nextUri = transferRes.Headers.Location;
+                if (!nextUri.IsAbsoluteUri)
+                {
+                    nextUri = new Uri(new Uri(currentUploadUrl), nextUri);
+                }
+                currentUploadUrl = nextUri.ToString();
+                transferRes.Dispose();
+                continue;
+            }
+            break;
+        }
+
+        if (transferRes == null || !transferRes.IsSuccessStatusCode)
+        {
+            var errBody = transferRes != null ? await transferRes.Content.ReadAsStringAsync(cancellationToken) : "Không nhận được phản hồi";
+            _logger.LogError("Meta Graph API error on video transfer: {StatusCode} - {Body}", transferRes?.StatusCode, errBody);
             throw new InvalidOperationException($"Lỗi Meta Graph API (Tải file video lên): {errBody}");
         }
 
@@ -776,6 +820,38 @@ public class FacebookPublishingService : IFacebookPublishingService
             throw new InvalidOperationException($"Lỗi Meta Graph API (Xuất bản Reels): {errBody}");
         }
 
+        var postId = $"{pageId}_{videoId}";
+        return (videoId, postId);
+    }
+
+    private async Task<(string VideoId, string PostId)> ExecuteMetaStandardVideoPublishAsync(
+        string pageId,
+        string pageToken,
+        string videoFilePath,
+        string caption,
+        CancellationToken cancellationToken)
+    {
+        var url = $"https://graph.facebook.com/{_graphApiVersion}/{pageId}/videos";
+        using var form = new MultipartFormDataContent();
+        form.Add(new StringContent(pageToken), "access_token");
+        form.Add(new StringContent(caption ?? string.Empty), "description");
+
+        var fileInfo = new FileInfo(videoFilePath);
+        using var fileStream = File.OpenRead(videoFilePath);
+        using var streamContent = new StreamContent(fileStream);
+        streamContent.Headers.ContentType = new MediaTypeHeaderValue("video/mp4");
+        form.Add(streamContent, "source", Path.GetFileName(videoFilePath));
+
+        var response = await _httpClient.PostAsync(url, form, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            var errBody = await response.Content.ReadAsStringAsync(cancellationToken);
+            _logger.LogError("Meta Graph API error on standard video upload: {StatusCode} - {Body}", response.StatusCode, errBody);
+            throw new InvalidOperationException($"Lỗi Meta Graph API (Đăng video thông thường): {errBody}");
+        }
+
+        var resData = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: cancellationToken);
+        var videoId = resData.GetProperty("id").GetString()!;
         var postId = $"{pageId}_{videoId}";
         return (videoId, postId);
     }
@@ -1072,28 +1148,19 @@ public class FacebookPublishingService : IFacebookPublishingService
         var baseUrl = $"https://graph.facebook.com/{_graphApiVersion}";
         try
         {
-            // 1. Reels insights
-            var reels = await GetGraphAsync($"{baseUrl}/{videoId}/video_insights?metric=fb_reels_total_plays,blue_reels_play_count,post_impressions_unique,post_video_avg_time_watched,post_video_social_actions&access_token={token}", ct);
+            // 1. Reels insights (v21+ valid metrics: fb_reels_total_plays, post_impressions_unique, post_video_avg_time_watched)
+            var reels = await GetGraphAsync($"{baseUrl}/{videoId}/video_insights?metric=fb_reels_total_plays,post_impressions_unique,post_video_avg_time_watched&access_token={token}", ct);
             if (reels.Ok)
             {
                 var values = InsightValues(reels.Body);
-                if (values.ContainsKey("fb_reels_total_plays") || values.ContainsKey("blue_reels_play_count"))
+                if (values.ContainsKey("fb_reels_total_plays"))
                 {
-                    stats.Views = Math.Max(Number(values, "fb_reels_total_plays"), Number(values, "blue_reels_play_count"));
+                    stats.Views = Number(values, "fb_reels_total_plays");
                     gotViews = true;
                 }
                 stats.Reach = Number(values, "post_impressions_unique");
                 var avgMs = Number(values, "post_video_avg_time_watched");
                 if (avgMs > 0) stats.AvgWatchSeconds = Math.Round(avgMs / 1000.0, 1);
-                if (values.TryGetValue("post_video_social_actions", out var social) && social.ValueKind == JsonValueKind.Object)
-                {
-                    foreach (var prop in social.EnumerateObject())
-                    {
-                        if (!prop.Value.TryGetInt64(out var n)) continue;
-                        if (prop.Name.Contains("comment", StringComparison.OrdinalIgnoreCase)) stats.Comments = Math.Max(stats.Comments, n);
-                        if (prop.Name.Contains("share", StringComparison.OrdinalIgnoreCase)) stats.Shares = Math.Max(stats.Shares, n);
-                    }
-                }
             }
             else
             {
@@ -1159,13 +1226,21 @@ public class FacebookPublishingService : IFacebookPublishingService
 
         if (!gotViews)
         {
-            var permission = insightsError != null
-                && (insightsError.Contains("permission", StringComparison.OrdinalIgnoreCase)
-                    || insightsError.Contains("read_insights", StringComparison.OrdinalIgnoreCase)
-                    || insightsError.Contains("(#10)") || insightsError.Contains("(#200)"));
-            stats.Error = permission
-                ? "Token của Page chưa có quyền xem thống kê (read_insights). Hãy tạo lại Page Access Token có thêm quyền read_insights và pages_read_engagement rồi kết nối lại Page. Chi tiết: " + insightsError
-                : insightsError ?? "Meta không trả về lượt xem cho video này.";
+            if (stats.Likes > 0 || stats.Comments > 0 || stats.Shares > 0)
+            {
+                stats.Views = 0;
+                stats.Error = null;
+            }
+            else
+            {
+                var permission = insightsError != null
+                    && (insightsError.Contains("permission", StringComparison.OrdinalIgnoreCase)
+                        || insightsError.Contains("read_insights", StringComparison.OrdinalIgnoreCase)
+                        || insightsError.Contains("(#10)") || insightsError.Contains("(#200)"));
+                stats.Error = permission
+                    ? "Token của Page chưa có quyền xem thống kê (read_insights). Hãy tạo lại Page Access Token có thêm quyền read_insights và pages_read_engagement rồi kết nối lại Page. Chi tiết: " + insightsError
+                    : (insightsError ?? "Meta chưa cập nhật lượt xem cho video này. Thử lại sau ít phút.");
+            }
         }
         return stats;
     }
