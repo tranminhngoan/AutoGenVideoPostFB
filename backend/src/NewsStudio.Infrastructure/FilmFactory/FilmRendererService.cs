@@ -115,6 +115,11 @@ public class FilmRendererService : IFilmRendererService
 
         await RenderShotVideoWithFfmpegAsync(imagePath, audioPath, shotVideoPath, duration, width, height, shot.CameraMovement, ct);
 
+        if (!File.Exists(shotVideoPath) || new FileInfo(shotVideoPath).Length < 1000)
+        {
+            throw new InvalidOperationException($"Không thể tạo video cho Shot {shot.Id}. File video không tồn tại hoặc dung lượng rỗng.");
+        }
+
         shot.RenderedShotVideoPath = shotVideoPath;
         shot.RenderStatus = "Completed";
         shot.UpdatedAtUtc = DateTime.UtcNow;
@@ -171,16 +176,16 @@ public class FilmRendererService : IFilmRendererService
             throw new InvalidOperationException("Tập phim không có shot nào để dựng.");
         }
 
-        // 2. Tạo file danh sách Concat cho FFmpeg
+        // 2. Tạo file danh sách Concat cho FFmpeg (bắt buộc dùng UTF8 không BOM để FFmpeg demuxer không bị lỗi 'unknown keyword')
         var concatListPath = Path.Combine(episodeDir, $"concat_ep_{episode.Id}.txt");
         var sb = new StringBuilder();
         foreach (var file in shotFiles)
         {
-            // Escape path cho FFmpeg concat demuxer
-            var escaped = file.Replace("\\", "/");
+            // Escape path cho FFmpeg concat demuxer (hỗ trợ cả Linux và Windows, escape dấu nháy đơn)
+            var escaped = file.Replace("\\", "/").Replace("'", "'\\''");
             sb.AppendLine($"file '{escaped}'");
         }
-        await File.WriteAllTextAsync(concatListPath, sb.ToString(), Encoding.UTF8, ct);
+        await File.WriteAllTextAsync(concatListPath, sb.ToString(), new UTF8Encoding(false), ct);
 
         // 3. Ghép nối các file video shot thành video tập phim 5 phút
         if (File.Exists(outputVideoPath)) File.Delete(outputVideoPath);
@@ -352,7 +357,7 @@ public class FilmRendererService : IFilmRendererService
         };
     }
 
-    private static async Task<bool> ExecuteProcessAsync(string exe, string args, CancellationToken ct)
+    private async Task<bool> ExecuteProcessAsync(string exe, string args, CancellationToken ct)
     {
         try
         {
@@ -373,12 +378,18 @@ public class FilmRendererService : IFilmRendererService
             var stdoutTask = proc.StandardOutput.ReadToEndAsync(ct);
 
             await proc.WaitForExitAsync(ct);
-            await Task.WhenAll(stderrTask, stdoutTask);
+            var (stderr, stdout) = (await stderrTask, await stdoutTask);
+
+            if (proc.ExitCode != 0)
+            {
+                _logger.LogWarning("FFmpeg/Process {Exe} exited with code {Code}. Stderr: {Err}", exe, proc.ExitCode, stderr);
+            }
 
             return proc.ExitCode == 0;
         }
-        catch
+        catch (Exception ex)
         {
+            _logger.LogError(ex, "Failed to execute process {Exe} with args {Args}", exe, args);
             return false;
         }
     }
