@@ -168,6 +168,11 @@ public class VideoProcessingJobExecutor : IVideoProcessingJobExecutor
                     var report = await _gate.CheckAsync(project.Id, runEditorial: true, cancellationToken);
                     if (report.Gate.Status == NewsStudio.Application.DTOs.QualityGateStatus.Rejected)
                         throw new InvalidOperationException("Kịch bản chưa khớp bài gốc nên không dựng: " + string.Join("; ", report.Gate.Reasons));
+                    // An automatic post that would need a person's review won't be posted anyway: stop before
+                    // paying for the voice-over, so the slot takes another story right away.
+                    if (report.Gate.Status == NewsStudio.Application.DTOs.QualityGateStatus.ReviewRequired
+                        && await _context.AutoPostRuns.AnyAsync(r => r.VideoProjectId == project.Id, cancellationToken))
+                        throw new InvalidOperationException("Cần người duyệt nên không dựng video tự đăng: " + string.Join("; ", report.Gate.Reasons));
                 });
             }
 
