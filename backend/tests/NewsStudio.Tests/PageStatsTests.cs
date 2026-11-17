@@ -47,7 +47,7 @@ public class PageStatsApiTests : IClassFixture<WebApplicationFactory<Program>>
     [Fact]
     public async Task ViewsAreSummedPerPageAndSplitByDay()
     {
-        var page = new FacebookAccount { PageId = "test-stats-" + Guid.NewGuid().ToString("N")[..8], PageName = "Test Thống Kê", EncryptedAccessToken = "x" };
+        var page = new FacebookAccount { PageId = "test-stats-" + Guid.NewGuid().ToString("N")[..8], PageName = "Test Thống Kê", EncryptedAccessToken = "x", InstagramUsername = "test.thongke" };
         var project = new VideoProject { Title = "Video thử thống kê", SourceUrl = "https://example.com/" + Guid.NewGuid().ToString("N") };
         // Snapshots in the middle of Vietnam days, so the day each falls on is unambiguous
         var todayNoonUtc = FacebookPublishingService.VietnamDayStartUtc(DateTime.UtcNow).AddHours(12);
@@ -67,7 +67,8 @@ public class PageStatsApiTests : IClassFixture<WebApplicationFactory<Program>>
                 FacebookPostId = "1_123456789",
                 Status = "Published",
                 UploadStatus = "Published",
-                PublishedAtUtc = todayNoonUtc.AddDays(-3)
+                PublishedAtUtc = todayNoonUtc.AddDays(-3),
+                InstagramMediaId = "1789000000000"
             };
             db.FacebookPosts.Add(post);
             await db.SaveChangesAsync();
@@ -76,6 +77,9 @@ public class PageStatsApiTests : IClassFixture<WebApplicationFactory<Program>>
                 new VideoMetric { FacebookPostId = post.Id, Status = "Recorded", Views = 100, Reach = 80, CollectedAtUtc = todayNoonUtc.AddDays(-2) },
                 new VideoMetric { FacebookPostId = post.Id, Status = "Recorded", Views = 250, Reach = 190, CollectedAtUtc = todayNoonUtc.AddDays(-1) },
                 new VideoMetric { FacebookPostId = post.Id, Status = "Recorded", Views = 400, Reach = 300, Engagement = 12, CollectedAtUtc = todayNoonUtc });
+            db.InstagramMetrics.AddRange(
+                new InstagramMetric { FacebookPostId = post.Id, Views = 30, Likes = 2, CollectedAtUtc = todayNoonUtc.AddDays(-1) },
+                new InstagramMetric { FacebookPostId = post.Id, Views = 75, Likes = 5, Comments = 1, CollectedAtUtc = todayNoonUtc });
             await db.SaveChangesAsync();
         }
 
@@ -96,6 +100,16 @@ public class PageStatsApiTests : IClassFixture<WebApplicationFactory<Program>>
             p.TopVideo.Title.Should().Be("Video thử thống kê");
             p.TopVideo.PostUrl.Should().Be("https://www.facebook.com/reel/123456789");
             stats.Totals.TotalViews.Should().BeGreaterThanOrEqualTo(400);
+
+            // Instagram copy of the Reel: its own numbers and day-by-day gains
+            p.InstagramUsername.Should().Be("test.thongke");
+            p.InstagramVideos.Should().Be(1);
+            p.InstagramViews.Should().Be(75);
+            p.InstagramViewsToday.Should().Be(45);
+            p.InstagramViews7Days.Should().Be(75);
+            p.InstagramLikes.Should().Be(5);
+            p.InstagramDailyViews.TakeLast(2).Should().Equal(30, 45);
+            stats.Totals.InstagramViews.Should().BeGreaterThanOrEqualTo(75);
         }
         finally
         {
@@ -104,6 +118,7 @@ public class PageStatsApiTests : IClassFixture<WebApplicationFactory<Program>>
             var posts = await db.FacebookPosts.Where(x => x.FacebookAccountId == page.Id).ToListAsync();
             var postIds = posts.Select(x => x.Id).ToList();
             db.VideoMetrics.RemoveRange(await db.VideoMetrics.Where(m => postIds.Contains(m.FacebookPostId)).ToListAsync());
+            db.InstagramMetrics.RemoveRange(await db.InstagramMetrics.Where(m => postIds.Contains(m.FacebookPostId)).ToListAsync());
             db.FacebookPosts.RemoveRange(posts);
             db.VideoProjects.RemoveRange(await db.VideoProjects.Where(x => x.Id == project.Id).ToListAsync());
             db.FacebookAccounts.RemoveRange(await db.FacebookAccounts.Where(a => a.Id == page.Id).ToListAsync());

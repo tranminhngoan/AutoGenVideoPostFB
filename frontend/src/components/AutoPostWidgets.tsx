@@ -101,7 +101,7 @@ export function AutoPostPageCard({ page, onOpen }: { page: AutoPostPageDto; onOp
   const current = page.currentRun;
   const next = vnTime(page.nextSlotUtc);
   return (
-    <Card className="flex flex-col p-4">
+    <Card className="flex min-w-0 flex-col p-4">
       <div className="flex items-start gap-3">
         <PageAvatar name={page.pageName} enabled={s.enabled} />
         <div className="min-w-0 flex-1">

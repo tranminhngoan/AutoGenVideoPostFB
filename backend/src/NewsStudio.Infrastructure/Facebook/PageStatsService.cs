@@ -37,6 +37,8 @@ public class PageStatsService : IPageStatsService
     {
         public DateTime? LastSyncUtc { get; set; }
         public string? Error { get; set; }
+        public DateTime? InstagramLastSyncUtc { get; set; }
+        public string? InstagramError { get; set; }
     }
 
     /// <summary>How long a Reel's numbers stay fresh enough: new videos change fast, old ones slowly.</summary>
@@ -79,8 +81,6 @@ public class PageStatsService : IPageStatsService
                 .OrderBy(p => p.LastRead ?? DateTime.MinValue) // never-read and stalest first
                 .Take(MaxPostsPerSync)
                 .ToList();
-            if (due.Count == 0) return result;
-
             var state = await ReadStateAsync(cancellationToken);
             foreach (var page in due.GroupBy(p => p.PageId))
             {
@@ -107,8 +107,51 @@ public class PageStatsService : IPageStatsService
                 s.Error = updated > 0 && error != null ? null : error;
                 if (error != null) result.Errors.Add(error);
             }
-            await SaveStateAsync(state, cancellationToken);
-            _logger.LogInformation("Facebook stats sync: {Updated}/{Checked} Reels updated", result.PostsUpdated, result.PostsChecked);
+            // Instagram Reels (posted together with the Facebook Reel), same refresh rhythm
+            var igPosts = await _context.FacebookPosts.AsNoTracking()
+                .Where(p => p.Status == "Published" && p.FacebookAccountId != null && p.InstagramMediaId != null
+                            && p.PublishedAtUtc != null && p.PublishedAtUtc >= since && p.FacebookAccount!.IsActive)
+                .Select(p => new
+                {
+                    p.Id,
+                    PageId = p.FacebookAccountId!.Value,
+                    PublishedAtUtc = p.PublishedAtUtc!.Value,
+                    LastRead = p.InstagramMetrics.Max(m => (DateTime?)m.CollectedAtUtc)
+                })
+                .ToListAsync(cancellationToken);
+            var igDue = igPosts
+                .Where(p => p.LastRead == null
+                            || now - p.LastRead.Value >= (force ? TimeSpan.FromMinutes(15) : RefreshInterval(now - p.PublishedAtUtc)))
+                .OrderBy(p => p.LastRead ?? DateTime.MinValue)
+                .Take(MaxPostsPerSync)
+                .ToList();
+            foreach (var page in igDue.GroupBy(p => p.PageId))
+            {
+                string? error = null;
+                var updated = 0;
+                foreach (var post in page)
+                {
+                    result.PostsChecked++;
+                    try
+                    {
+                        await _facebook.FetchInstagramMetricsAsync(post.Id, cancellationToken);
+                        updated++;
+                    }
+                    catch (InvalidOperationException ex)
+                    {
+                        error = ex.Message;
+                        if (ex.Message.Contains("instagram_manage_insights", StringComparison.Ordinal)) break;
+                    }
+                }
+                result.PostsUpdated += updated;
+                var s = state.TryGetValue(page.Key, out var existing) ? existing : state[page.Key] = new PageSyncState();
+                if (updated > 0) s.InstagramLastSyncUtc = DateTime.UtcNow;
+                s.InstagramError = updated > 0 && error != null ? null : error;
+                if (error != null) result.Errors.Add(error);
+            }
+
+            if (result.PostsChecked > 0) await SaveStateAsync(state, cancellationToken);
+            _logger.LogInformation("Stats sync: {Updated}/{Checked} Reels updated (Facebook + Instagram)", result.PostsUpdated, result.PostsChecked);
         }
         finally
         {
@@ -143,7 +186,9 @@ public class PageStatsService : IPageStatsService
                 Title = p.VideoProject != null ? p.VideoProject.Title : null,
                 p.FacebookVideoId,
                 p.PublishedAtUtc,
-                Metrics = p.Metrics.Select(m => new { m.Status, m.CollectedAtUtc, m.Views, m.Reach, m.Engagement, m.Comments, m.Shares }).ToList()
+                p.InstagramMediaId,
+                Metrics = p.Metrics.Select(m => new { m.Status, m.CollectedAtUtc, m.Views, m.Reach, m.Engagement, m.Comments, m.Shares }).ToList(),
+                Instagram = p.InstagramMetrics.Select(m => new { m.CollectedAtUtc, m.Views, m.Likes, m.Comments }).ToList()
             })
             .ToListAsync(cancellationToken);
         var state = await ReadStateAsync(cancellationToken);
@@ -172,7 +217,10 @@ public class PageStatsService : IPageStatsService
                 Videos = pagePosts.Count,
                 DailyViews = new List<long>(new long[days]),
                 LastSyncedUtc = sync?.LastSyncUtc,
-                SyncError = sync?.Error
+                SyncError = sync?.Error,
+                InstagramUsername = account.InstagramUsername,
+                InstagramDailyViews = new List<long>(new long[days]),
+                InstagramSyncError = sync?.InstagramError
             };
 
             long bestViews = -1;
@@ -221,12 +269,37 @@ public class PageStatsService : IPageStatsService
             }
             dto.AverageViewsPerVideo = dto.VideosWithStats > 0 ? dto.TotalViews / dto.VideosWithStats : 0;
 
+            // Instagram: same day-by-day gains from its own snapshots
+            foreach (var post in pagePosts.Where(p => p.InstagramMediaId != null))
+            {
+                dto.InstagramVideos++;
+                if (post.Instagram.Count == 0) continue;
+                dto.InstagramViews += post.Instagram.Max(m => m.Views);
+                dto.InstagramLikes += post.Instagram.Max(m => m.Likes);
+                dto.InstagramComments += post.Instagram.Max(m => m.Comments);
+                long previous = 0;
+                foreach (var day in post.Instagram.GroupBy(m => DateOnly.FromDateTime(m.CollectedAtUtc.AddHours(7))).OrderBy(g => g.Key))
+                {
+                    var value = Math.Max(previous, day.Max(m => m.Views));
+                    var gained = value - previous;
+                    previous = value;
+                    if (gained <= 0) continue;
+                    if (dateIndex.TryGetValue(day.Key, out var i)) dto.InstagramDailyViews[i] += gained;
+                    if (day.Key == today) dto.InstagramViewsToday += gained;
+                    if (day.Key > today.AddDays(-7)) dto.InstagramViews7Days += gained;
+                }
+            }
+
             for (var i = 0; i < days; i++) overview.DailyViews[i] += dto.DailyViews[i];
             overview.Totals.Videos += dto.Videos;
             overview.Totals.TotalViews += dto.TotalViews;
             overview.Totals.ViewsToday += dto.ViewsToday;
             overview.Totals.Views7Days += dto.Views7Days;
             overview.Totals.ViewsPrevious7Days += dto.ViewsPrevious7Days;
+            overview.Totals.InstagramVideos += dto.InstagramVideos;
+            overview.Totals.InstagramViews += dto.InstagramViews;
+            overview.Totals.InstagramViewsToday += dto.InstagramViewsToday;
+            overview.Totals.InstagramViews7Days += dto.InstagramViews7Days;
             overview.Pages.Add(dto);
         }
 

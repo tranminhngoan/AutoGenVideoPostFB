@@ -20,6 +20,12 @@ public class PageStatsTotalsDto
     public long ViewsToday { get; set; }
     public long Views7Days { get; set; }
     public long ViewsPrevious7Days { get; set; }
+
+    /// <summary>Instagram Reels (all pages): videos, lifetime views, today, last 7 days.</summary>
+    public int InstagramVideos { get; set; }
+    public long InstagramViews { get; set; }
+    public long InstagramViewsToday { get; set; }
+    public long InstagramViews7Days { get; set; }
 }
 
 public class PageViewStatsDto
@@ -49,6 +55,19 @@ public class PageViewStatsDto
     public DateTime? LastSyncedUtc { get; set; }
     /// <summary>Why the numbers couldn't be read from Facebook (e.g. the token lacks read_insights).</summary>
     public string? SyncError { get; set; }
+
+    /// <summary>Instagram account linked to the page and its Reels' numbers.</summary>
+    public string? InstagramUsername { get; set; }
+    public int InstagramVideos { get; set; }
+    public long InstagramViews { get; set; }
+    public long InstagramViewsToday { get; set; }
+    public long InstagramViews7Days { get; set; }
+    public long InstagramLikes { get; set; }
+    public long InstagramComments { get; set; }
+    /// <summary>Views gained per day on Instagram, aligned to the overview's dates.</summary>
+    public List<long> InstagramDailyViews { get; set; } = new();
+    /// <summary>Why the Instagram numbers couldn't be read (e.g. the token lacks instagram_manage_insights).</summary>
+    public string? InstagramSyncError { get; set; }
 }
 
 public class PageTopVideoDto

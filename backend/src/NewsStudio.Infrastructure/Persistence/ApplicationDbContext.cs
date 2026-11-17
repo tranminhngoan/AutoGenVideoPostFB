@@ -29,6 +29,7 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
     public DbSet<AutoPostSettings> AutoPostSettings => Set<AutoPostSettings>();
     public DbSet<AutoPostRun> AutoPostRuns => Set<AutoPostRun>();
     public DbSet<DailyDigestRun> DailyDigestRuns => Set<DailyDigestRun>();
+    public DbSet<InstagramMetric> InstagramMetrics => Set<InstagramMetric>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -48,6 +49,17 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
             entity.Property(e => e.TopicKeywords).HasMaxLength(1000);
             entity.Property(e => e.DigestTime).HasMaxLength(5).IsRequired();
             entity.HasIndex(e => e.FacebookAccountId);
+        });
+
+        modelBuilder.Entity<InstagramMetric>(entity =>
+        {
+            entity.ToTable("InstagramMetrics");
+            entity.HasKey(e => e.Id);
+            entity.HasOne(e => e.FacebookPost)
+                  .WithMany(p => p.InstagramMetrics)
+                  .HasForeignKey(e => e.FacebookPostId)
+                  .OnDelete(DeleteBehavior.Cascade);
+            entity.HasIndex(e => new { e.FacebookPostId, e.CollectedAtUtc });
         });
 
         modelBuilder.Entity<DailyDigestRun>(entity =>

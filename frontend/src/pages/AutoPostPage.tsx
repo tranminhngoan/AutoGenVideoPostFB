@@ -236,8 +236,8 @@ function AllPages({ data, onCancel }: { data: AutoPostOverviewDto; onCancel: (ru
             <ol className="divide-y divide-line">
               {timeline.map(({ page, slot }) => (
                 <li key={`${page.facebookAccountId}-${slot.time}-${slot.run?.id ?? ''}`} className="flex flex-col gap-2 py-3 sm:flex-row sm:items-start sm:gap-4">
-                  <div className="flex w-44 shrink-0 items-center gap-2">
-                    <span className="font-mono text-base font-semibold text-fg">{slot.time}</span>
+                  <div className="flex min-w-0 shrink-0 items-center gap-2 sm:w-44">
+                    <span className="whitespace-nowrap font-mono text-base font-semibold text-fg">{slot.time}</span>
                     <a href={href(`/auto-post?page=${page.facebookAccountId}`)} className="min-w-0 truncate text-xs text-fg-muted hover:text-fg hover:underline">
                       {page.pageName}
                     </a>
@@ -435,8 +435,8 @@ function PageDetail({
             <ol className="divide-y divide-line">
               {page.todaySlots.map((slot) => (
                 <li key={`${slot.time}-${slot.run?.id ?? ''}`} className="flex flex-col gap-2 py-3 sm:flex-row sm:items-start sm:gap-4">
-                  <div className="flex w-36 shrink-0 items-center gap-2 sm:flex-col sm:items-start sm:gap-1">
-                    <span className="font-mono text-lg font-semibold leading-none text-fg">{slot.time}</span>
+                  <div className="flex shrink-0 items-center gap-2 sm:w-36 sm:flex-col sm:items-start sm:gap-1">
+                    <span className="whitespace-nowrap font-mono text-lg font-semibold leading-none text-fg">{slot.time}</span>
                     <RegionBadge region={slot.plannedRegion} />
                   </div>
                   {slot.run ? (
@@ -592,7 +592,7 @@ function PageDetail({
                     type="time"
                     value={form.digestTime}
                     onChange={(e) => update({ digestTime: e.target.value })}
-                    className="h-9 w-32 rounded-md border border-line-strong bg-surface px-3 font-mono text-sm text-fg focus:border-accent focus:ring-[3px] focus:ring-accent/15"
+                    className="h-9 w-40 rounded-md border border-line-strong bg-surface px-3 font-mono text-sm text-fg focus:border-accent focus:ring-[3px] focus:ring-accent/15"
                   />
                 </Field>
                 <Field label="Số tin trong bản tin" hint="Story dài khoảng 4 + 6 giây mỗi tin (tối đa 60 giây).">

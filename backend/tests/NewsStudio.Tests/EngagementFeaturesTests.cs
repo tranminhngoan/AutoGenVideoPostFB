@@ -63,6 +63,18 @@ public class InstagramRulesTests
         cut.Length.Should().Be(2200);
         cut.Should().EndWith("…");
     }
+
+    [Fact]
+    public void InstagramInsightsAreReadInBothShapes()
+    {
+        using var doc = System.Text.Json.JsonDocument.Parse(
+            "{\"data\": [{\"name\": \"views\", \"values\": [{\"value\": 1234}]}, " +
+            "{\"name\": \"likes\", \"total_value\": {\"value\": 56}}, {\"name\": \"reach\", \"values\": []}]}");
+        var values = NewsStudio.Infrastructure.Facebook.FacebookPublishingService.InstagramInsightValues(doc.RootElement);
+        values["views"].Should().Be(1234);
+        values["likes"].Should().Be(56);
+        values.Should().NotContainKey("reach");
+    }
 }
 
 public class BreakingNewsRulesTests

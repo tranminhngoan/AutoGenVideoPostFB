@@ -1204,9 +1204,17 @@ export const VideoDetailPage: React.FC<VideoDetailPageProps> = ({ projectId, onC
                       {(publishedPost.instagramPermalink || publishedPost.instagramError) && (
                         <p className={cn('mt-3 border-t border-line pt-3 text-[13px]', publishedPost.instagramPermalink ? 'text-fg-muted' : 'text-danger')}>
                           {publishedPost.instagramPermalink ? (
-                            <a href={publishedPost.instagramPermalink} target="_blank" rel="noreferrer" className="text-accent hover:underline">
-                              Đã đăng cả Instagram, mở bài
-                            </a>
+                            <>
+                              <a href={publishedPost.instagramPermalink} target="_blank" rel="noreferrer" className="text-accent hover:underline">
+                                Đã đăng cả Instagram, mở bài
+                              </a>
+                              {publishedPost.instagramViews != null && (
+                                <span className="ml-1.5 tabular-nums">
+                                  · {formatNumber(publishedPost.instagramViews)} lượt xem · {formatNumber(publishedPost.instagramLikes ?? 0)} thích ·{' '}
+                                  {formatNumber(publishedPost.instagramComments ?? 0)} bình luận
+                                </span>
+                              )}
+                            </>
                           ) : (
                             `Chưa đăng được Instagram: ${publishedPost.instagramError}`
                           )}

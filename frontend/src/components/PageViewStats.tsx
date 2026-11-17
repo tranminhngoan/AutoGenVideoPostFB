@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { AlertTriangle, ArrowDownRight, ArrowUpRight, ExternalLink, RefreshCw } from 'lucide-react';
 import { api, PageStatsOverviewDto, PageViewStatsDto } from '../services/api';
-import { Button, Card, CardHeader, Skeleton, cn } from './ui';
+import { Button, Card, CardHeader, Segmented, Skeleton, cn } from './ui';
 import { PageAvatar } from './AutoPostWidgets';
 import { useToast } from './feedback';
 import { formatNumber, timeAgo, errorText } from '../lib/format';
@@ -105,12 +105,38 @@ function SyncWarning({ error }: { error?: string | null }) {
   );
 }
 
+type Platform = 'facebook' | 'instagram';
+
+/** The numbers of one page on the chosen platform. */
+function figuresOf(page: PageViewStatsDto, platform: Platform) {
+  return platform === 'instagram'
+    ? {
+        total: page.instagramViews,
+        days7: page.instagramViews7Days,
+        today: page.instagramViewsToday,
+        videos: page.instagramVideos,
+        average: page.instagramVideos ? Math.round(page.instagramViews / page.instagramVideos) : 0,
+        daily: page.instagramDailyViews,
+        error: page.instagramSyncError,
+      }
+    : {
+        total: page.totalViews,
+        days7: page.views7Days,
+        today: page.viewsToday,
+        videos: page.videos,
+        average: page.averageViewsPerVideo,
+        daily: page.dailyViews,
+        error: page.syncError,
+      };
+}
+
 /** Phones: one compact card per page instead of the wide table. */
-function PageCardMobile({ page, dates }: { page: PageViewStatsDto; dates: string[] }) {
+function PageCardMobile({ page, dates, platform }: { page: PageViewStatsDto; dates: string[]; platform: Platform }) {
+  const f = figuresOf(page, platform);
   const figures = [
-    { label: 'Tổng', value: page.totalViews },
-    { label: '7 ngày', value: page.views7Days },
-    { label: 'Hôm nay', value: page.viewsToday },
+    { label: 'Tổng', value: f.total },
+    { label: '7 ngày', value: f.days7 },
+    { label: 'Hôm nay', value: f.today },
   ];
   return (
     <li className="border-t border-line px-5 py-3">
@@ -118,13 +144,13 @@ function PageCardMobile({ page, dates }: { page: PageViewStatsDto; dates: string
         <PageAvatar name={page.pageName} enabled={page.isActive} className="h-8 w-8" />
         <div className="min-w-0 flex-1">
           <p className="truncate text-[13px] font-medium text-fg">{page.pageName}</p>
-          <p className="text-xs text-fg-subtle">
-            {page.topicName ?? 'Chưa đặt chủ đề'} · {page.videos} video
+          <p className="truncate text-xs text-fg-subtle">
+            {platform === 'instagram' ? `@${page.instagramUsername ?? '—'}` : page.topicName ?? 'Chưa đặt chủ đề'} · {f.videos} video
           </p>
         </div>
-        <Sparkline dates={dates} values={page.dailyViews} />
+        <Sparkline dates={dates} values={f.daily} />
       </div>
-      <SyncWarning error={page.syncError} />
+      <SyncWarning error={f.error} />
       <dl className="mt-2 grid grid-cols-3 gap-2">
         {figures.map((f) => (
           <div key={f.label}>
@@ -133,7 +159,11 @@ function PageCardMobile({ page, dates }: { page: PageViewStatsDto; dates: string
           </div>
         ))}
       </dl>
-      {page.topVideo && (
+      {platform === 'instagram' ? (
+        <p className="mt-1.5 text-xs text-fg-muted">
+          {formatNumber(page.instagramLikes)} lượt thích · {formatNumber(page.instagramComments)} bình luận
+        </p>
+      ) : page.topVideo && (
         <p className="mt-1.5 truncate text-xs text-fg-muted">
           Nhiều lượt xem nhất:{' '}
           <a href={href(`/videos/${page.topVideo.videoProjectId}`)} className="text-fg hover:underline">
@@ -146,7 +176,8 @@ function PageCardMobile({ page, dates }: { page: PageViewStatsDto; dates: string
   );
 }
 
-function PageRow({ page, dates }: { page: PageViewStatsDto; dates: string[] }) {
+function PageRow({ page, dates, platform }: { page: PageViewStatsDto; dates: string[]; platform: Platform }) {
+  const f = figuresOf(page, platform);
   return (
     <tr className="border-t border-line align-top">
       <td className="py-3 pl-5 pr-3">
@@ -157,21 +188,25 @@ function PageRow({ page, dates }: { page: PageViewStatsDto; dates: string[] }) {
               {page.pageName}
             </p>
             <p className="text-xs text-fg-subtle">
-              {page.topicName ?? 'Chưa đặt chủ đề'} · {page.videos} video
+              {platform === 'instagram' ? `@${page.instagramUsername ?? '—'}` : page.topicName ?? 'Chưa đặt chủ đề'} · {f.videos} video
             </p>
           </div>
         </div>
-        <SyncWarning error={page.syncError} />
+        <SyncWarning error={f.error} />
       </td>
-      <td className="px-3 py-3 text-right font-semibold tabular-nums text-fg">{formatNumber(page.totalViews)}</td>
-      <td className="px-3 py-3 text-right tabular-nums text-fg">{formatNumber(page.views7Days)}</td>
-      <td className="px-3 py-3 text-right tabular-nums text-fg">{formatNumber(page.viewsToday)}</td>
-      <td className="px-3 py-3 text-right tabular-nums text-fg-muted">{formatNumber(page.averageViewsPerVideo)}</td>
+      <td className="px-3 py-3 text-right font-semibold tabular-nums text-fg">{formatNumber(f.total)}</td>
+      <td className="px-3 py-3 text-right tabular-nums text-fg">{formatNumber(f.days7)}</td>
+      <td className="px-3 py-3 text-right tabular-nums text-fg">{formatNumber(f.today)}</td>
+      <td className="px-3 py-3 text-right tabular-nums text-fg-muted">{formatNumber(f.average)}</td>
       <td className="px-3 py-3">
-        <Sparkline dates={dates} values={page.dailyViews} />
+        <Sparkline dates={dates} values={f.daily} />
       </td>
       <td className="py-3 pl-3 pr-5">
-        {page.topVideo ? (
+        {platform === 'instagram' ? (
+          <span className="text-xs text-fg-muted">
+            {formatNumber(page.instagramLikes)} lượt thích · {formatNumber(page.instagramComments)} bình luận
+          </span>
+        ) : page.topVideo ? (
           <div className="max-w-[240px]">
             <a href={href(`/videos/${page.topVideo.videoProjectId}`)} className="line-clamp-2 text-fg hover:underline">
               {page.topVideo.title}
@@ -199,6 +234,7 @@ export function PageViewStats() {
   const [stats, setStats] = useState<PageStatsOverviewDto | null>(null);
   const [failed, setFailed] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [platform, setPlatform] = useState<Platform>('facebook');
 
   const load = () =>
     api
@@ -233,14 +269,30 @@ export function PageViewStats() {
   if (failed && !stats) return null;
 
   const t = stats?.totals;
+  const hasInstagram = (t?.instagramVideos ?? 0) > 0;
+  const ig = hasInstagram && platform === 'instagram';
   const withStats = stats?.pages.reduce((n, p) => n + p.videosWithStats, 0) ?? 0;
-  const tiles = t
-    ? [
-        { label: 'Tổng lượt xem', value: formatNumber(t.totalViews), hint: `${formatNumber(t.videos)} video đã đăng` },
-        { label: 'Hôm nay', value: formatNumber(t.viewsToday) },
-        { label: '7 ngày qua', value: formatNumber(t.views7Days), hint: <Change now={t.views7Days} before={t.viewsPrevious7Days} /> },
-        { label: 'TB mỗi video', value: formatNumber(withStats ? Math.round(t.totalViews / withStats) : 0) },
-      ]
+  const tiles = !t
+    ? []
+    : ig
+      ? [
+          { label: 'Tổng lượt xem Instagram', value: formatNumber(t.instagramViews), hint: `${formatNumber(t.instagramVideos)} Reels đã đăng` },
+          { label: 'Hôm nay', value: formatNumber(t.instagramViewsToday) },
+          { label: '7 ngày qua', value: formatNumber(t.instagramViews7Days) },
+          { label: 'TB mỗi video', value: formatNumber(t.instagramVideos ? Math.round(t.instagramViews / t.instagramVideos) : 0) },
+        ]
+      : [
+          { label: 'Tổng lượt xem', value: formatNumber(t.totalViews), hint: `${formatNumber(t.videos)} video đã đăng` },
+          { label: 'Hôm nay', value: formatNumber(t.viewsToday) },
+          { label: '7 ngày qua', value: formatNumber(t.views7Days), hint: <Change now={t.views7Days} before={t.viewsPrevious7Days} /> },
+          { label: 'TB mỗi video', value: formatNumber(withStats ? Math.round(t.totalViews / withStats) : 0) },
+        ];
+  const shownPlatform: Platform = ig ? 'instagram' : 'facebook';
+  const shownPages = stats ? (ig ? stats.pages.filter((p) => p.instagramVideos > 0 || p.instagramUsername) : stats.pages) : [];
+  const dailyTotal = stats
+    ? ig
+      ? stats.dates.map((_, i) => shownPages.reduce((n, p) => n + (p.instagramDailyViews[i] ?? 0), 0))
+      : stats.dailyViews
     : [];
 
   return (
@@ -249,7 +301,7 @@ export function PageViewStats() {
         title="Lượt xem theo Page"
         description={
           <>
-            Lượt xem Reels (tính cả xem lại) lấy từ Facebook, tự cập nhật mỗi 30 phút
+            Lượt xem Reels (tính cả xem lại) lấy từ Facebook{hasInstagram ? ' và Instagram' : ''}, tự cập nhật mỗi 30 phút
             {stats?.lastSyncUtc ? ` · lần gần nhất ${timeAgo(stats.lastSyncUtc).toLowerCase()}` : ''}.
           </>
         }
@@ -271,6 +323,19 @@ export function PageViewStats() {
         </p>
       ) : (
         <>
+          {hasInstagram && (
+            <div className="mx-5 mt-4">
+              <Segmented
+                size="sm"
+                value={platform}
+                onChange={setPlatform}
+                options={[
+                  { value: 'facebook', label: 'Facebook' },
+                  { value: 'instagram', label: 'Instagram' },
+                ]}
+              />
+            </div>
+          )}
           <div className="mx-5 mt-4 grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-line bg-line lg:grid-cols-4">
             {tiles.map((tile) => (
               <div key={tile.label} className="bg-surface px-4 py-3">
@@ -282,13 +347,15 @@ export function PageViewStats() {
           </div>
 
           <div className="px-5 pt-5">
-            <p className="mb-3 text-[13px] font-medium text-fg">Lượt xem mỗi ngày · tất cả Page · {stats.days} ngày</p>
-            <DailyViewsChart dates={stats.dates} values={stats.dailyViews} />
+            <p className="mb-3 text-[13px] font-medium text-fg">
+              Lượt xem mỗi ngày{ig ? ' trên Instagram' : ''} · tất cả Page · {stats.days} ngày
+            </p>
+            <DailyViewsChart dates={stats.dates} values={dailyTotal} />
           </div>
 
           <ul className="mt-4 md:hidden">
-            {stats.pages.map((p) => (
-              <PageCardMobile key={p.facebookAccountId} page={p} dates={stats.dates} />
+            {shownPages.map((p) => (
+              <PageCardMobile key={p.facebookAccountId} page={p} dates={stats.dates} platform={shownPlatform} />
             ))}
           </ul>
 
@@ -302,12 +369,12 @@ export function PageViewStats() {
                   <th className="px-3 py-2 text-right font-medium">Hôm nay</th>
                   <th className="px-3 py-2 text-right font-medium">TB / video</th>
                   <th className="px-3 py-2 text-left font-medium">{stats.days} ngày</th>
-                  <th className="py-2 pl-3 pr-5 text-left font-medium">Video nhiều lượt xem nhất</th>
+                  <th className="py-2 pl-3 pr-5 text-left font-medium">{ig ? 'Tương tác' : 'Video nhiều lượt xem nhất'}</th>
                 </tr>
               </thead>
               <tbody>
-                {stats.pages.map((p) => (
-                  <PageRow key={p.facebookAccountId} page={p} dates={stats.dates} />
+                {shownPages.map((p) => (
+                  <PageRow key={p.facebookAccountId} page={p} dates={stats.dates} platform={shownPlatform} />
                 ))}
               </tbody>
             </table>

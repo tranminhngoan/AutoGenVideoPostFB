@@ -116,6 +116,10 @@ public class FacebookPostDto
     public string? FirstCommentError { get; set; }
     public string? InstagramPermalink { get; set; }
     public string? InstagramError { get; set; }
+    /// <summary>Latest Instagram numbers of this Reel (null = not read yet).</summary>
+    public long? InstagramViews { get; set; }
+    public long? InstagramLikes { get; set; }
+    public long? InstagramComments { get; set; }
 }
 
 public class VideoMetricDto

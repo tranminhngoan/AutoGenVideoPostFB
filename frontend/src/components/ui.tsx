@@ -140,12 +140,12 @@ export function CardHeader({
   className?: string;
 }) {
   return (
-    <div className={cn('flex items-start justify-between gap-4 px-5 pt-4', className)}>
-      <div className="min-w-0">
+    <div className={cn('flex flex-wrap items-start justify-between gap-x-4 gap-y-3 px-5 pt-4', className)}>
+      <div className="min-w-0 flex-1 basis-56">
         <h2 className="text-[15px] font-semibold text-fg">{title}</h2>
         {description && <p className="mt-0.5 text-[13px] text-fg-muted">{description}</p>}
       </div>
-      {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
+      {actions && <div className="flex max-w-full flex-wrap items-center gap-2">{actions}</div>}
     </div>
   );
 }

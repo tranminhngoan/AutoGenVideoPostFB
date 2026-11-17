@@ -600,6 +600,49 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                     b.ToTable("FacebookPosts", (string)null);
                 });
 
+            modelBuilder.Entity("NewsStudio.Domain.Entities.InstagramMetric", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CollectedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<long>("Comments")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("FacebookPostId")
+                        .HasColumnType("uuid");
+
+                    b.Property<long>("Likes")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("Reach")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("Saved")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("Shares")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime?>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<long>("Views")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("FacebookPostId", "CollectedAtUtc");
+
+                    b.ToTable("InstagramMetrics", (string)null);
+                });
+
             modelBuilder.Entity("NewsStudio.Domain.Entities.ProcessingJob", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1255,6 +1298,17 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                     b.Navigation("VideoProject");
                 });
 
+            modelBuilder.Entity("NewsStudio.Domain.Entities.InstagramMetric", b =>
+                {
+                    b.HasOne("NewsStudio.Domain.Entities.FacebookPost", "FacebookPost")
+                        .WithMany("InstagramMetrics")
+                        .HasForeignKey("FacebookPostId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("FacebookPost");
+                });
+
             modelBuilder.Entity("NewsStudio.Domain.Entities.ProcessingJob", b =>
                 {
                     b.HasOne("NewsStudio.Domain.Entities.VideoProject", "VideoProject")
@@ -1357,6 +1411,8 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("NewsStudio.Domain.Entities.FacebookPost", b =>
                 {
+                    b.Navigation("InstagramMetrics");
+
                     b.Navigation("Metrics");
                 });
 

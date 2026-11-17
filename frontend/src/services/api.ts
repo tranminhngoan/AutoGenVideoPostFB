@@ -960,6 +960,9 @@ export interface FacebookPostDto {
   firstCommentError?: string | null;
   instagramPermalink?: string | null;
   instagramError?: string | null;
+  instagramViews?: number | null;
+  instagramLikes?: number | null;
+  instagramComments?: number | null;
 }
 
 export interface VideoMetricDto {
@@ -1185,6 +1188,15 @@ export interface PageViewStatsDto {
   topVideo?: PageTopVideoDto | null;
   lastSyncedUtc?: string | null;
   syncError?: string | null;
+  instagramUsername?: string | null;
+  instagramVideos: number;
+  instagramViews: number;
+  instagramViewsToday: number;
+  instagramViews7Days: number;
+  instagramLikes: number;
+  instagramComments: number;
+  instagramDailyViews: number[];
+  instagramSyncError?: string | null;
 }
 
 export interface PageStatsOverviewDto {
@@ -1192,7 +1204,17 @@ export interface PageStatsOverviewDto {
   /** Vietnam dates (yyyy-MM-dd), oldest first */
   dates: string[];
   dailyViews: number[];
-  totals: { videos: number; totalViews: number; viewsToday: number; views7Days: number; viewsPrevious7Days: number };
+  totals: {
+    videos: number;
+    totalViews: number;
+    viewsToday: number;
+    views7Days: number;
+    viewsPrevious7Days: number;
+    instagramVideos: number;
+    instagramViews: number;
+    instagramViewsToday: number;
+    instagramViews7Days: number;
+  };
   pages: PageViewStatsDto[];
   lastSyncUtc?: string | null;
 }

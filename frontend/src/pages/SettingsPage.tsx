@@ -371,22 +371,22 @@ function FacebookSection() {
           ) : (
             <ul className="-mx-5 divide-y divide-line border-y border-line">
               {pages.map((p) => (
-                <li key={p.id} className="flex items-center justify-between gap-3 px-5 py-3">
+                <li key={p.id} className="flex flex-col gap-2 px-5 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
-                      <span className="truncate text-sm font-medium text-fg">{p.pageName}</span>
+                      <span className="min-w-0 truncate text-sm font-medium text-fg">{p.pageName}</span>
                       <Badge tone={p.isActive ? 'success' : 'neutral'} dot>
                         {p.isActive ? 'Hoạt động' : 'Tạm ngắt'}
                       </Badge>
                     </div>
-                    <div className="mt-0.5 truncate text-xs text-fg-muted">
+                    <div className="mt-0.5 text-xs text-fg-muted sm:truncate">
                       ID {p.pageId} · Token <span className="font-mono">{p.maskedToken || '••••'}</span>
                       {' · '}
                       {p.instagramUsername ? `Instagram @${p.instagramUsername}` : 'Chưa liên kết Instagram'}
                       {p.tokenExpiresAtUtc && ` · Hết hạn ${formatDateTime(p.tokenExpiresAtUtc)}`}
                     </div>
                   </div>
-                  <div className="flex shrink-0 items-center gap-1">
+                  <div className="-ml-2.5 flex shrink-0 items-center gap-1 sm:ml-0">
                     <a
                       href={href(`/auto-post?page=${p.id}`)}
                       className="inline-flex h-8 items-center rounded-md px-2.5 text-[13px] text-fg-muted hover:bg-muted hover:text-fg"
@@ -415,8 +415,8 @@ function FacebookSection() {
               htmlFor="fb-token"
               hint="Token được mã hoá trước khi lưu và không bao giờ hiển thị lại đầy đủ."
             >
-              <div className="flex gap-2">
-                <div className="flex-1">
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <div className="min-w-0 flex-1">
                   <Input
                     id="fb-token"
                     type="password"
@@ -538,8 +538,8 @@ function QuickConnectCard({ onConnected }: { onConnected: () => Promise<void> | 
           <li>Dán mã đó vào ô dưới, bấm Lấy danh sách Page.</li>
         </ol>
 
-        <div className="flex gap-2">
-          <div className="flex-1">
+        <div className="flex flex-col gap-2 sm:flex-row">
+          <div className="min-w-0 flex-1">
             <Input
               type="password"
               autoComplete="off"
@@ -602,7 +602,7 @@ function QuickConnectCard({ onConnected }: { onConnected: () => Promise<void> | 
         )}
       </CardBody>
       {result && (
-        <div className="flex items-center justify-end gap-3 border-t border-line px-5 py-3.5">
+        <div className="flex flex-wrap items-center justify-end gap-3 border-t border-line px-5 py-3.5">
           <span className="text-xs text-fg-muted">Chỉ các Page được tick mới kết nối vào app.</span>
           <Button variant="primary" loading={connecting} disabled={selected.length === 0} icon={<Plus className="h-4 w-4" />} onClick={connect}>
             Kết nối {selected.length} Page

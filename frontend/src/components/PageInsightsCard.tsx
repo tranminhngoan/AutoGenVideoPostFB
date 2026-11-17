@@ -51,7 +51,7 @@ function HoursChart({ hours }: { hours: InsightBucketDto[] }) {
       <div className="mt-1 flex h-4 gap-[2px]">
         {range.map((hr) => (
           <span key={hr} className="relative flex-1">
-            {hr % 3 === 0 && <span className="absolute left-1/2 -translate-x-1/2 text-[11px] text-fg-subtle">{hr}h</span>}
+            {hr % 3 === 0 && <span className="absolute left-1/2 -translate-x-1/2 whitespace-nowrap text-[11px] text-fg-subtle">{hr}h</span>}
           </span>
         ))}
       </div>

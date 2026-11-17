@@ -144,7 +144,7 @@ export const TrendingPage: React.FC<TrendingPageProps> = ({ onCreated }) => {
             { id: 'World', label: 'Quốc tế' },
           ]}
         />
-        <div className="flex items-center gap-2 md:pb-1.5">
+        <div className="flex flex-wrap items-center gap-2 md:flex-nowrap md:pb-1.5">
           <Segmented size="sm" value={hours} onChange={setHours} options={WINDOWS} />
           {topics.length > 0 && (
             <Select size="sm" value={topic} onChange={(e) => setTopic(e.target.value)} className="w-36 shrink-0" aria-label="Chủ đề">

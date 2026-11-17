@@ -116,6 +116,11 @@ public class FacebookPublishingService : IFacebookPublishingService
             {
                 return $"Meta báo lỗi: {msg.GetString()}";
             }
+            // rupload.facebook.com answers {"debug_info": {"type": ..., "message": ...}}
+            if (body.TryGetProperty("debug_info", out var dbg) && dbg.TryGetProperty("message", out var dmsg))
+            {
+                return $"Meta báo lỗi: {dmsg.GetString()}";
+            }
         }
         catch
         {
@@ -450,7 +455,19 @@ public class FacebookPublishingService : IFacebookPublishingService
             {
                 var ig = await ResolveInstagramAsync(account, rawPageToken, cancellationToken)
                          ?? throw new InvalidOperationException("Page chưa liên kết tài khoản Instagram chuyên nghiệp (Cài đặt Page → Tài khoản được liên kết → Instagram).");
-                var (mediaId, permalink) = await PublishInstagramReelAsync(ig, rawPageToken, videoFilePath, caption, cancellationToken);
+                (string MediaId, string? Permalink) published;
+                try
+                {
+                    published = await PublishInstagramReelAsync(ig, rawPageToken, videoFilePath, caption, cancellationToken);
+                }
+                catch (InvalidOperationException first) when (!first.Message.Contains("permission", StringComparison.OrdinalIgnoreCase))
+                {
+                    // Uploads / processing sometimes fail once on Meta's side: one fresh attempt
+                    _logger.LogInformation("Instagram attempt 1 failed ({Message}); retrying once", first.Message);
+                    await Task.Delay(TimeSpan.FromSeconds(10), cancellationToken);
+                    published = await PublishInstagramReelAsync(ig, rawPageToken, videoFilePath, caption, cancellationToken);
+                }
+                var (mediaId, permalink) = published;
                 postRecord.InstagramMediaId = mediaId;
                 postRecord.InstagramPermalink = permalink;
                 _logger.LogInformation("Reel of project {ProjectId} also posted to Instagram: {Permalink}", videoProjectId, permalink);
@@ -521,6 +538,69 @@ public class FacebookPublishingService : IFacebookPublishingService
         if (!ok) throw new InvalidOperationException($"Không đọc được Instagram của Page. {error}");
         if (!body.TryGetProperty("instagram_business_account", out var ig) || !ig.TryGetProperty("id", out var id)) return null;
         return (id.GetString()!, ig.TryGetProperty("username", out var u) ? u.GetString() : null);
+    }
+
+    public async Task FetchInstagramMetricsAsync(Guid facebookPostId, CancellationToken cancellationToken = default)
+    {
+        var post = await _context.FacebookPosts
+            .Include(p => p.FacebookAccount)
+            .Include(p => p.InstagramMetrics)
+            .FirstOrDefaultAsync(p => p.Id == facebookPostId, cancellationToken)
+            ?? throw new KeyNotFoundException("Không tìm thấy bài đăng.");
+        if (string.IsNullOrWhiteSpace(post.InstagramMediaId) || post.FacebookAccount == null)
+            throw new InvalidOperationException("Bài này chưa được đăng lên Instagram.");
+
+        var token = _tokenProtection.DecryptToken(post.FacebookAccount.EncryptedAccessToken);
+        var baseUrl = $"https://graph.facebook.com/{_graphApiVersion}/{post.InstagramMediaId}";
+        var (ok, body, error) = await GetGraphAsync($"{baseUrl}/insights?metric=views,reach,likes,comments,shares,saved&access_token={Uri.EscapeDataString(token)}", cancellationToken);
+        if (!ok)
+        {
+            var permission = error != null && (error.Contains("permission", StringComparison.OrdinalIgnoreCase) || error.Contains("(#10)") || error.Contains("(#200)"));
+            throw new InvalidOperationException(permission
+                ? $"Token của Page chưa có quyền xem thống kê Instagram (instagram_manage_insights). Làm lại Kết nối nhanh, nhớ tick quyền này. {error}"
+                : $"Không lấy được số liệu Instagram. {error}");
+        }
+        var values = InstagramInsightValues(body);
+
+        // One snapshot per (Vietnam) day; lifetime counters only go up
+        var now = DateTime.UtcNow;
+        var dayStart = VietnamDayStartUtc(now);
+        var metric = post.InstagramMetrics.Where(m => m.CollectedAtUtc >= dayStart).OrderByDescending(m => m.CollectedAtUtc).FirstOrDefault();
+        if (metric == null)
+        {
+            metric = new InstagramMetric { FacebookPostId = post.Id };
+            _context.InstagramMetrics.Add(metric);
+        }
+        var previous = post.InstagramMetrics.Where(m => m != metric).OrderByDescending(m => m.CollectedAtUtc).FirstOrDefault();
+        long Up(string key, long? before) => Math.Max(values.GetValueOrDefault(key), before ?? 0);
+        metric.Views = Up("views", previous?.Views);
+        metric.Reach = Up("reach", previous?.Reach);
+        metric.Likes = Up("likes", previous?.Likes);
+        metric.Comments = Up("comments", previous?.Comments);
+        metric.Shares = Up("shares", previous?.Shares);
+        metric.Saved = Up("saved", previous?.Saved);
+        metric.CollectedAtUtc = now;
+        await _context.SaveChangesAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// Instagram insights → metric name → number. Handles both shapes Meta uses:
+    /// <c>values[0].value</c> and <c>total_value.value</c>.
+    /// </summary>
+    public static Dictionary<string, long> InstagramInsightValues(JsonElement body)
+    {
+        var result = new Dictionary<string, long>(StringComparer.Ordinal);
+        if (!body.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array) return result;
+        foreach (var item in data.EnumerateArray())
+        {
+            if (!item.TryGetProperty("name", out var n) || n.GetString() is not { } name) continue;
+            JsonElement v = default;
+            var found = item.TryGetProperty("values", out var vals) && vals.ValueKind == JsonValueKind.Array && vals.GetArrayLength() > 0
+                        && vals[0].TryGetProperty("value", out v)
+                        || item.TryGetProperty("total_value", out var tv) && tv.TryGetProperty("value", out v);
+            if (found && v.ValueKind == JsonValueKind.Number && v.TryGetInt64(out var number)) result[name] = number;
+        }
+        return result;
     }
 
     public async Task<List<FacebookAccountDto>> RefreshInstagramAsync(CancellationToken cancellationToken = default)
@@ -703,7 +783,7 @@ public class FacebookPublishingService : IFacebookPublishingService
     /// <summary>Permissions the app uses: listing pages, posting Reels/Stories/photos, reading views.</summary>
     public static readonly string[] RequiredPermissions =
         { "pages_show_list", "pages_read_engagement", "pages_manage_posts", "pages_manage_engagement", "read_insights",
-          "instagram_basic", "instagram_content_publish" };
+          "instagram_basic", "instagram_content_publish", "instagram_manage_insights" };
 
     public async Task<UserTokenPagesResultDto> ConnectFromUserTokenAsync(UserTokenConnectRequestDto request, CancellationToken cancellationToken = default)
     {
@@ -1132,6 +1212,7 @@ public class FacebookPublishingService : IFacebookPublishingService
         var posts = await _context.FacebookPosts
             .Include(p => p.FacebookAccount)
             .Include(p => p.Metrics)
+            .Include(p => p.InstagramMetrics)
             .Where(p => p.VideoProjectId == videoProjectId)
             .OrderByDescending(p => p.CreatedAtUtc)
             .ToListAsync(cancellationToken);
@@ -1156,6 +1237,9 @@ public class FacebookPublishingService : IFacebookPublishingService
                 FirstCommentError = p.FirstCommentError,
                 InstagramPermalink = p.InstagramPermalink,
                 InstagramError = p.InstagramError,
+                InstagramViews = p.InstagramMetrics.Count > 0 ? p.InstagramMetrics.Max(m => m.Views) : null,
+                InstagramLikes = p.InstagramMetrics.Count > 0 ? p.InstagramMetrics.Max(m => m.Likes) : null,
+                InstagramComments = p.InstagramMetrics.Count > 0 ? p.InstagramMetrics.Max(m => m.Comments) : null,
                 LatestMetric = latestMetric != null ? new VideoMetricDto
                 {
                     Id = latestMetric.Id,

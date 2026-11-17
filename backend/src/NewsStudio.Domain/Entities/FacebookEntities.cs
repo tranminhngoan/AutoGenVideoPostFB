@@ -47,7 +47,26 @@ public class FacebookPost : BaseEntity
     public string? InstagramMediaId { get; set; }
     public string? InstagramPermalink { get; set; }
     public string? InstagramError { get; set; }
+    public ICollection<InstagramMetric> InstagramMetrics { get; set; } = new List<InstagramMetric>();
 
     // Navigation
     public ICollection<VideoMetric> Metrics { get; set; } = new List<VideoMetric>();
+}
+
+/// <summary>
+/// Lifetime numbers of a Reel on Instagram, one snapshot per (Vietnam) day per post: later reads the same day
+/// update it, so day-by-day gains can be computed like for Facebook.
+/// </summary>
+public class InstagramMetric : BaseEntity
+{
+    public Guid FacebookPostId { get; set; }
+    public FacebookPost? FacebookPost { get; set; }
+
+    public long Views { get; set; }
+    public long Reach { get; set; }
+    public long Likes { get; set; }
+    public long Comments { get; set; }
+    public long Shares { get; set; }
+    public long Saved { get; set; }
+    public DateTime CollectedAtUtc { get; set; }
 }

@@ -29,6 +29,9 @@ public interface IFacebookPublishingService
     /// </summary>
     Task<UserTokenPagesResultDto> ConnectFromUserTokenAsync(UserTokenConnectRequestDto request, CancellationToken cancellationToken = default);
 
+    /// <summary>Reads the Instagram Reel's numbers of a post and stores today's snapshot.</summary>
+    Task FetchInstagramMetricsAsync(Guid facebookPostId, CancellationToken cancellationToken = default);
+
     /// <summary>Reads again which Instagram account is linked to every connected page; returns the pages.</summary>
     Task<List<FacebookAccountDto>> RefreshInstagramAsync(CancellationToken cancellationToken = default);
 
