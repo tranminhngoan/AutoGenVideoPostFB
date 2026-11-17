@@ -1,8 +1,11 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Configuration;
 using NewsStudio.Application.DTOs;
 using NewsStudio.Application.Interfaces;
 
@@ -15,15 +18,18 @@ public class FilmFactoryController : ControllerBase
     private readonly IFilmFactoryService _filmFactoryService;
     private readonly IFilmProductionCoordinator _productionCoordinator;
     private readonly IFilmRendererService _rendererService;
+    private readonly IConfiguration _configuration;
 
     public FilmFactoryController(
         IFilmFactoryService filmFactoryService,
         IFilmProductionCoordinator productionCoordinator,
-        IFilmRendererService rendererService)
+        IFilmRendererService rendererService,
+        IConfiguration configuration)
     {
         _filmFactoryService = filmFactoryService;
         _productionCoordinator = productionCoordinator;
         _rendererService = rendererService;
+        _configuration = configuration;
     }
 
     [HttpGet("pages")]
@@ -136,5 +142,59 @@ public class FilmFactoryController : ControllerBase
         {
             return StatusCode(500, new { message = $"Dựng tập phim thất bại: {ex.Message}" });
         }
+    }
+
+    [HttpGet("episodes/{id:guid}/video")]
+    [HttpHead("episodes/{id:guid}/video")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> StreamEpisodeVideo(Guid id, CancellationToken ct)
+    {
+        var ep = await _filmFactoryService.GetEpisodeDetailAsync(id, ct);
+        if (ep == null) return NotFound(new { message = "Không tìm thấy tập phim." });
+
+        var filePath = ResolveEpisodeVideoPath(ep);
+        if (string.IsNullOrWhiteSpace(filePath) || !System.IO.File.Exists(filePath))
+        {
+            return NotFound(new { message = "Chưa có file video hoàn chỉnh cho tập phim này hoặc file đang được xử lý." });
+        }
+
+        var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read);
+        return File(stream, "video/mp4", enableRangeProcessing: true);
+    }
+
+    [HttpGet("episodes/{id:guid}/download")]
+    public async Task<IActionResult> DownloadEpisodeVideo(Guid id, CancellationToken ct)
+    {
+        var ep = await _filmFactoryService.GetEpisodeDetailAsync(id, ct);
+        if (ep == null) return NotFound(new { message = "Không tìm thấy tập phim." });
+
+        var filePath = ResolveEpisodeVideoPath(ep);
+        if (string.IsNullOrWhiteSpace(filePath) || !System.IO.File.Exists(filePath))
+        {
+            return NotFound(new { message = "Chưa có file video hoàn chỉnh để tải về." });
+        }
+
+        var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read);
+        var cleanTitle = string.Join("_", (ep.Title ?? $"Tap_{ep.EpisodeNumber}").Split(Path.GetInvalidFileNameChars())).Replace(" ", "_");
+        var fileName = $"Tap_{ep.EpisodeNumber}_{cleanTitle}.mp4";
+        return File(stream, "video/mp4", fileName, enableRangeProcessing: true);
+    }
+
+    private string? ResolveEpisodeVideoPath(FilmEpisodeDto ep)
+    {
+        if (!string.IsNullOrWhiteSpace(ep.OutputVideoPath) && System.IO.File.Exists(ep.OutputVideoPath))
+        {
+            return ep.OutputVideoPath;
+        }
+
+        var tempRoot = NewsStudio.Infrastructure.Common.TempStorage.GetRoot(_configuration);
+        var candidate = Path.Combine(tempRoot, "film_factory", "episodes", $"episode_{ep.EpisodeNumber}_{ep.Id}.mp4");
+        if (System.IO.File.Exists(candidate))
+        {
+            return candidate;
+        }
+
+        return null;
     }
 }

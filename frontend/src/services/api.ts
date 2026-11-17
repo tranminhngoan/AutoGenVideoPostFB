@@ -731,6 +731,14 @@ export const api = {
     });
     if (!res.ok) throw new Error(await apiError(res, 'Dựng tập phim thất bại'));
     return await res.json();
+  },
+
+  getFilmEpisodeVideoUrl(episodeId: string): string {
+    return `${API_BASE}/film-factory/episodes/${episodeId}/video`;
+  },
+
+  getFilmEpisodeDownloadUrl(episodeId: string): string {
+    return `${API_BASE}/film-factory/episodes/${episodeId}/download`;
   }
 };
 
