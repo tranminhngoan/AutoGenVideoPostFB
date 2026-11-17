@@ -4,6 +4,7 @@ import { api, NewsTopicDto, TrendingArticleDto, TrendingOverviewDto } from '../s
 import { Badge, Button, ButtonLink, Card, EmptyState, IconButton, Input, PageHeader, Segmented, Select, Skeleton, Tabs, Thumb, cn } from '../components/ui';
 import { useToast } from '../components/feedback';
 import { createVideoFromUrl } from '../lib/actions';
+import { PagePickerModal } from '../components/PagePickerModal';
 import { href, navigate } from '../lib/router';
 import { errorText, timeAgo } from '../lib/format';
 
@@ -83,10 +84,15 @@ export const TrendingPage: React.FC<TrendingPageProps> = ({ onCreated }) => {
     }
   };
 
-  const quickCreate = async (item: TrendingArticleDto) => {
+  // "Tạo video" first asks which page the video is for (its name and colours go on the video)
+  const [pickFor, setPickFor] = useState<TrendingArticleDto | null>(null);
+  const quickCreate = (item: TrendingArticleDto) => setPickFor(item);
+
+  const createFor = async (item: TrendingArticleDto, facebookAccountId: string) => {
     setCreatingId(item.id);
     try {
-      const project = await createVideoFromUrl({ url: item.url });
+      const project = await createVideoFromUrl({ url: item.url, facebookAccountId });
+      setPickFor(null);
       toast.success('Đã bắt đầu tạo video', item.language !== 'vi' ? 'Bài tiếng nước ngoài — AI sẽ viết kịch bản bằng tiếng Việt.' : undefined);
       onCreated();
       navigate(`/videos/${project.id}`);
@@ -106,6 +112,14 @@ export const TrendingPage: React.FC<TrendingPageProps> = ({ onCreated }) => {
 
   return (
     <div>
+      <PagePickerModal
+        open={pickFor !== null}
+        storyTitle={pickFor?.title}
+        storyTopics={pickFor?.topics}
+        creating={pickFor !== null && creatingId === pickFor.id}
+        onClose={() => setPickFor(null)}
+        onConfirm={(pageId) => pickFor && createFor(pickFor, pageId)}
+      />
       <PageHeader
         title="Tin đang hot"
         description={

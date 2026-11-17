@@ -21,6 +21,7 @@ import {
 import { StatusBadge, ReelThumb, projectThumb } from '../components/VideoBits';
 import { useToast } from '../components/feedback';
 import { createVideoFromUrl } from '../lib/actions';
+import { PagePickerModal } from '../components/PagePickerModal';
 import { href, navigate } from '../lib/router';
 import { formatUsd, formatNumber, timeAgo, isValidUrl, errorText, domainOf, statusMeta } from '../lib/format';
 
@@ -88,15 +89,22 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ projects, onCreate
     return () => clearInterval(t);
   }, []);
 
-  const handleQuickCreate = async (e: React.FormEvent) => {
+  // The pasted link first asks which page the video is for
+  const [picking, setPicking] = useState(false);
+  const handleQuickCreate = (e: React.FormEvent) => {
     e.preventDefault();
     if (!isValidUrl(url)) {
       toast.error('Link chưa hợp lệ', 'Hãy dán đường dẫn đầy đủ, bắt đầu bằng https://');
       return;
     }
+    setPicking(true);
+  };
+
+  const createFor = async (facebookAccountId: string) => {
     setCreating(true);
     try {
-      const project = await createVideoFromUrl({ url });
+      const project = await createVideoFromUrl({ url, facebookAccountId });
+      setPicking(false);
       toast.success('Đã bắt đầu tạo video', 'Hệ thống đang đọc bài và viết kịch bản.');
       onCreated();
       navigate(`/videos/${project.id}`);
@@ -209,6 +217,8 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ projects, onCreate
       <PageViewStats />
 
       <AiCostCard />
+
+      <PagePickerModal open={picking} creating={creating} onClose={() => setPicking(false)} onConfirm={createFor} />
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <div className="min-w-0 space-y-6 lg:col-span-2">
