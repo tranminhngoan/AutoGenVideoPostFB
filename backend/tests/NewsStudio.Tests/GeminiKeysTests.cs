@@ -77,4 +77,49 @@ public class GeminiKeysTests
         var only = Assert.Single(GeminiKeys.InOrder(Config("free-key", " "), model));
         Assert.True(only.IsFree);
     }
+
+    private static IConfiguration MultiConfig(string paid, params string[] free)
+    {
+        var values = new Dictionary<string, string?> { ["Ai:Gemini:ApiKey"] = paid, ["Ai:Gemini:FreeApiKey"] = free[0] };
+        for (var i = 1; i < free.Length; i++) values[$"Ai:Gemini:FreeApiKey{i + 1}"] = free[i];
+        return new ConfigurationBuilder().AddInMemoryCollection(values).Build();
+    }
+
+    [Fact]
+    public void AllFreeKeysAreTriedBeforeThePaidKey()
+    {
+        var keys = GeminiKeys.InOrder(MultiConfig("paid", "free-a", "free-b", "free-c", "free-d"), Model());
+
+        Assert.Equal(new[] { "free-a", "free-b", "free-c", "free-d", "paid" }, keys.Select(k => k.Value));
+        Assert.Equal(new[] { "free", "free #2", "free #3", "free #4", "paid" }, keys.Select(k => k.Label));
+    }
+
+    [Fact]
+    public void SeveralFreeKeysInOneSettingAreSplit()
+    {
+        var keys = GeminiKeys.InOrder(Config("free-a, free-b;free-c", "paid"), Model());
+
+        Assert.Equal(new[] { "free-a", "free-b", "free-c", "paid" }, keys.Select(k => k.Value));
+    }
+
+    [Fact]
+    public void OnlyTheRefusedFreeKeyRests()
+    {
+        var model = Model();
+        var config = MultiConfig("paid", "free-a", "free-b", "free-c");
+        var first = GeminiKeys.InOrder(config, model)[0];
+        GeminiKeys.MarkFreeRefused(first, model, HttpStatusCode.TooManyRequests, "Quota exceeded: PerDay");
+
+        Assert.Equal(new[] { "free-b", "free-c", "paid" }, GeminiKeys.InOrder(config, model).Select(k => k.Value));
+        // Other models are unaffected (Google's quotas are per model)
+        Assert.Equal(4, GeminiKeys.InOrder(config, Model()).Count);
+    }
+
+    [Fact]
+    public void PaidKeyRepeatedAsFreeIsNotUsedTwice()
+    {
+        var keys = GeminiKeys.InOrder(MultiConfig("paid", "free-a", "paid"), Model());
+
+        Assert.Equal(new[] { "free-a", "paid" }, keys.Select(k => k.Value));
+    }
 }

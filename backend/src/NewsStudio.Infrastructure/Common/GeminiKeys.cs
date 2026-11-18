@@ -8,26 +8,60 @@ namespace NewsStudio.Infrastructure.Common;
 /// <summary>
 /// Gemini API keys, used "free first, paid after":
 /// <list type="bullet">
-/// <item><c>Ai:Gemini:FreeApiKey</c> / <c>GEMINI_FREE_API_KEY</c> — key from a Google project WITHOUT billing (free tier, small quota).</item>
+/// <item><c>Ai:Gemini:FreeApiKey</c> / <c>GEMINI_FREE_API_KEY</c> — key from a Google project WITHOUT billing (free tier, small quota).
+/// More free keys: <c>Ai:Gemini:FreeApiKey2</c>…<c>FreeApiKey9</c> / <c>GEMINI_FREE_API_KEY_2</c>…<c>_9</c>, or several keys in
+/// one setting separated by commas.</item>
 /// <item><c>Ai:Gemini:ApiKey</c> / <c>GEMINI_API_KEY</c> — key from the project with billing (charged per call).</item>
 /// </list>
-/// Every call tries the free key first; when Google refuses it (daily/minute quota used up, model not on the
-/// free tier, key revoked) the same request is sent with the paid key. A free key that ran out "rests" until
-/// its quota resets so later calls don't waste a round-trip on it.
+/// Every call tries the free keys first, one after another; when Google refuses one (daily/minute quota used
+/// up, model not on the free tier, key revoked) the same request goes to the next free key, and only when
+/// all of them are refused to the paid key. A free key that ran out "rests" until its quota resets so later
+/// calls don't waste a round-trip on it.
 /// </summary>
 public static class GeminiKeys
 {
-    public sealed record Key(string Value, bool IsFree)
+    public const int MaxFreeKeys = 9;
+
+    public sealed record Key(string Value, bool IsFree, int Slot = 1)
     {
-        public string Label => IsFree ? "free" : "paid";
+        public string Label => IsFree ? (Slot > 1 ? $"free #{Slot}" : "free") : "paid";
+
+        /// <summary>Identifies the key in the rest table without keeping the secret itself as the lookup key.</summary>
+        internal string Id => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes(Value)))[..16];
     }
 
-    /// <summary>model (or "*" for the whole key) → time until which the free key is skipped.</summary>
+    /// <summary>"keyId|model" (or "keyId|*" for the whole key) → time until which that free key is skipped.</summary>
     private static readonly ConcurrentDictionary<string, DateTimeOffset> FreeRestUntil = new();
 
     public static string? Paid(IConfiguration configuration) => Read(configuration, "Ai:Gemini:ApiKey", "GEMINI_API_KEY");
 
-    public static string? Free(IConfiguration configuration) => Read(configuration, "Ai:Gemini:FreeApiKey", "GEMINI_FREE_API_KEY");
+    /// <summary>The first free key (or null).</summary>
+    public static string? Free(IConfiguration configuration) => FreeKeys(configuration).FirstOrDefault();
+
+    /// <summary>
+    /// All free keys, in the order they are tried. When the main setting is present but blank (test host),
+    /// the extra keys are only read from configuration, never from the machine's environment variables.
+    /// </summary>
+    public static List<string> FreeKeys(IConfiguration configuration)
+    {
+        var mainBlank = configuration["Ai:Gemini:FreeApiKey"] is { } m && string.IsNullOrWhiteSpace(m);
+        var values = new List<string?> { Read(configuration, "Ai:Gemini:FreeApiKey", "GEMINI_FREE_API_KEY") };
+        for (var i = 2; i <= MaxFreeKeys; i++)
+        {
+            values.Add(mainBlank
+                ? NonEmpty(configuration[$"Ai:Gemini:FreeApiKey{i}"])
+                : Read(configuration, $"Ai:Gemini:FreeApiKey{i}", $"GEMINI_FREE_API_KEY_{i}"));
+        }
+        var paid = Paid(configuration);
+        return values
+            .Where(v => v != null)
+            .SelectMany(v => v!.Split(new[] { ',', ';', '\n', '\r', ' ' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            .Where(v => v != paid)
+            .Distinct()
+            .Take(MaxFreeKeys)
+            .ToList();
+    }
 
     /// <summary>
     /// A setting that is present but blank means "no key" and does NOT fall back to the machine-wide variable —
@@ -39,21 +73,20 @@ public static class GeminiKeys
         return configured != null ? NonEmpty(configured) : NonEmpty(Environment.GetEnvironmentVariable(environmentVariable));
     }
 
-    public static bool HasAny(IConfiguration configuration) => Paid(configuration) != null || Free(configuration) != null;
+    public static bool HasAny(IConfiguration configuration) => Paid(configuration) != null || FreeKeys(configuration).Count > 0;
 
     /// <summary>Key for read-only calls such as listing models (paid project sees every model).</summary>
     public static string? ForListing(IConfiguration configuration) => Paid(configuration) ?? Free(configuration);
 
-    /// <summary>Keys to try, in order, for one request to <paramref name="model"/>.</summary>
+    /// <summary>Keys to try, in order, for one request to <paramref name="model"/>: free keys that aren't resting, then the paid key.</summary>
     public static List<Key> InOrder(IConfiguration configuration, string model)
     {
-        var free = Free(configuration);
+        var free = FreeKeys(configuration).Select((v, i) => new Key(v, true, i + 1)).ToList();
         var paid = Paid(configuration);
-        var keys = new List<Key>();
-        if (free != null && free != paid && !IsResting(model)) keys.Add(new Key(free, true));
+        var keys = free.Where(k => !IsResting(k, model)).ToList();
         if (paid != null) keys.Add(new Key(paid, false));
-        // Only a free key configured: always try it — Google's own error then explains the limit.
-        if (keys.Count == 0 && free != null) keys.Add(new Key(free, true));
+        // Only free keys configured and all resting: still try the first — Google's own error then explains the limit.
+        if (keys.Count == 0 && free.Count > 0) keys.Add(free[0]);
         return keys;
     }
 
@@ -61,7 +94,22 @@ public static class GeminiKeys
     /// Records that the free key was refused for <paramref name="model"/> so it is skipped for a while.
     /// Server errors (5xx) and timeouts don't rest the key — they are not quota problems.
     /// </summary>
-    public static void MarkFreeRefused(string model, HttpStatusCode status, string reason)
+    public static void MarkFreeRefused(Key key, string model, HttpStatusCode status, string reason)
+    {
+        if (key.IsFree) MarkRefused(key.Id, model, status, reason);
+    }
+
+    /// <summary>
+    /// Older form without the key: the rest applies to every free key (fine with a single free key).
+    /// Prefer the overload taking the <see cref="Key"/>, which rests only the key Google refused.
+    /// </summary>
+    public static void MarkFreeRefused(string model, HttpStatusCode status, string reason) =>
+        MarkRefused(LegacyId, model, status, reason);
+
+    /// <summary>Rest entries recorded without knowing the key apply to every free key.</summary>
+    private const string LegacyId = "any";
+
+    private static void MarkRefused(string keyId, string model, HttpStatusCode status, string reason)
     {
         var now = DateTimeOffset.UtcNow;
         var code = (int)status;
@@ -69,7 +117,7 @@ public static class GeminiKeys
 
         if (code is 401 or 403)
         {
-            FreeRestUntil["*"] = now.AddHours(1); // key invalid / project blocked
+            FreeRestUntil[$"{keyId}|*"] = now.AddHours(1); // key invalid / project blocked
             return;
         }
 
@@ -82,14 +130,15 @@ public static class GeminiKeys
         {
             until = now.AddMinutes(30); // e.g. model not offered on the free tier
         }
-        FreeRestUntil[model] = until;
+        FreeRestUntil[$"{keyId}|{model}"] = until;
     }
 
-    private static bool IsResting(string model)
+    private static bool IsResting(Key key, string model)
     {
         var now = DateTimeOffset.UtcNow;
-        return (FreeRestUntil.TryGetValue(model, out var m) && m > now)
-               || (FreeRestUntil.TryGetValue("*", out var all) && all > now);
+        bool Rest(string id) => (FreeRestUntil.TryGetValue($"{id}|{model}", out var m) && m > now)
+                                || (FreeRestUntil.TryGetValue($"{id}|*", out var all) && all > now);
+        return Rest(key.Id) || Rest(LegacyId);
     }
 
     /// <summary>"retry in 37.5s" / "retryDelay": "37s" → 37.5 s.</summary>

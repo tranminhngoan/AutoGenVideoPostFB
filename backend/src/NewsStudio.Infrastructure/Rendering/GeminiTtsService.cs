@@ -216,10 +216,11 @@ public class GeminiTtsService : ITtsService
                 return pcm;
             }
 
-            if (key.IsFree) GeminiKeys.MarkFreeRefused(model, status, reason);
+            if (key.IsFree) GeminiKeys.MarkFreeRefused(key, model, status, reason);
             if (key.IsFree && hasNext)
             {
-                _logger.LogInformation("Gemini TTS free key refused (HTTP {Status}); using paid key. {Reason}", (int)status, reason);
+                _logger.LogInformation("Gemini TTS {KeyType} key refused (HTTP {Status}); trying the {Next} key. {Reason}",
+                    key.Label, (int)status, keys[i + 1].Label, reason);
                 continue;
             }
             var error = BuildSpeechError(model, status, reason, key.IsFree);

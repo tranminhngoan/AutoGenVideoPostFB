@@ -157,12 +157,12 @@ public class GeminiAiEditorService : IAIEditorService
             var reason = await ReadGoogleErrorAsync(response, cancellationToken);
             if (usedKey.IsFree && i < keys.Count - 1)
             {
-                GeminiKeys.MarkFreeRefused(model, response.StatusCode, reason);
-                _logger.LogInformation("Gemini free key refused (HTTP {Status}) for {Model}; using paid key. {Reason}",
-                    (int)response.StatusCode, model, reason);
+                GeminiKeys.MarkFreeRefused(usedKey, model, response.StatusCode, reason);
+                _logger.LogInformation("Gemini {KeyType} key refused (HTTP {Status}) for {Model}; trying the {Next} key. {Reason}",
+                    usedKey.Label, (int)response.StatusCode, model, keys[i + 1].Label, reason);
                 continue;
             }
-            if (usedKey.IsFree) GeminiKeys.MarkFreeRefused(model, response.StatusCode, reason);
+            if (usedKey.IsFree) GeminiKeys.MarkFreeRefused(usedKey, model, response.StatusCode, reason);
 
             var hint = response.StatusCode == System.Net.HttpStatusCode.NotFound
                 ? $" Model \"{model}\" không dùng được với API key này — xem danh sách model khả dụng trong Cài đặt rồi đặt lại Ai:Gemini:Model."
