@@ -102,12 +102,56 @@ public static class FactCheck
         return missing;
     }
 
+    /// <summary>
+    /// Numbers of the article. Besides each number as written, a number with several separators also gives
+    /// its pieces and its decimal reading — "1.228,34 điểm" (Vietnamese decimal comma) is spoken as
+    /// "1.228 phẩy 34", a date "17.11" as "ngày 17 tháng 11".
+    /// </summary>
     public static HashSet<string> NumberVariants(string text)
     {
         var set = new HashSet<string>(StringComparer.Ordinal);
         foreach (Match m in NumberPattern.Matches(text))
+        {
             foreach (var v in Variants(m.Value)) set.Add(v);
+            var parts = m.Value.Split('.', ',');
+            if (parts.Length < 2) continue;
+            foreach (var part in parts)
+                foreach (var v in Variants(part)) set.Add(v);
+            // Mixed separators: the last one is the decimal mark ("1.228,34" → 1228.34, "1,228.34" → 1228.34)
+            var lastSep = m.Value.LastIndexOfAny(new[] { '.', ',' });
+            var whole = m.Value[..lastSep].Replace(".", "").Replace(",", "").TrimStart('0');
+            var dec = m.Value[(lastSep + 1)..].TrimEnd('0');
+            if (whole.Length > 0) set.Add(whole);
+            if (whole.Length > 0 && dec.Length > 0) set.Add($"{whole}.{dec}");
+        }
         return set;
+    }
+
+    private static readonly Regex MonthName = new(
+        @"\b(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|June?|July?|Aug(?:ust)?|Sept?(?:ember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\b",
+        RegexOptions.Compiled);
+
+    private static readonly string[] MonthPrefixes = { "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
+
+    /// <summary>
+    /// What the script's numbers are checked against: headline, lead and body, plus the publication date
+    /// (day, month, year — the script may say "hôm nay 17/11") and English month names as numbers
+    /// ("November" → 11, which a Vietnamese script says "tháng 11").
+    /// </summary>
+    public static string ReferenceText(string? title, string? description, string body, DateTime? publishedUtc)
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine(title).AppendLine(description).AppendLine(body);
+        if (publishedUtc is { } p)
+        {
+            var vn = p.AddHours(7);
+            sb.AppendLine($" {vn.Day} {vn.Month} {vn.Year} {p.Day} {p.Month} ");
+        }
+        var months = MonthName.Matches($"{title} {description} {body}")
+            .Select(m => Array.FindIndex(MonthPrefixes, x => m.Value.StartsWith(x, StringComparison.Ordinal)) + 1)
+            .Where(n => n > 0).Distinct();
+        foreach (var n in months) sb.Append(' ').Append(n);
+        return sb.ToString();
     }
 
     /// <summary>"1.000" / "1,000" → "1000"; "3,5" / "3.5" → "3.5" — both readings are kept when ambiguous.</summary>

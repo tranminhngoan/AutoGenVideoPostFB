@@ -1,4 +1,5 @@
 using System.Globalization;
+using Hangfire;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
@@ -40,7 +41,11 @@ public class AutoPostService : IAutoPostService
     public const string Failed = "Failed";
     public const string Skipped = "Skipped";
 
-    private const int MaxAttempts = 2;
+    /// <summary>
+    /// Stories tried per slot. A story the checks turn down (script doesn't match the article, no usable
+    /// picture, article unreadable) stops before the voice-over, so trying another costs only a short script call.
+    /// </summary>
+    private const int MaxAttempts = 4;
     /// <summary>A slot can still start this late (queue busy, or the server was restarting at the slot time).</summary>
     private static readonly TimeSpan LateWindow = TimeSpan.FromMinutes(90);
     /// <summary>A replacement story is only tried while the slot is less than this far in the past.</summary>
@@ -62,6 +67,7 @@ public class AutoPostService : IAutoPostService
     private readonly NewsStudio.Infrastructure.Ai.AiUsageMeter _meter;
     private readonly IConfiguration _configuration;
     private readonly ILogger<AutoPostService> _logger;
+    private readonly Hangfire.IBackgroundJobClient _jobs;
 
     public AutoPostService(
         IApplicationDbContext context,
@@ -73,8 +79,10 @@ public class AutoPostService : IAutoPostService
         IPageInsightsService insights,
         NewsStudio.Infrastructure.Ai.AiUsageMeter meter,
         IConfiguration configuration,
-        ILogger<AutoPostService> logger)
+        ILogger<AutoPostService> logger,
+        Hangfire.IBackgroundJobClient jobs)
     {
+        _jobs = jobs;
         _meter = meter;
         _editorial = editorial;
         _insights = insights;
@@ -638,6 +646,7 @@ public class AutoPostService : IAutoPostService
                             $"Video cần người duyệt trước khi đăng (đang chờ ở trang Video): {GateReasons(project.GateJson)}", ct);
                         break;
                     case VideoProjectStatus.AwaitingApproval:
+                        if (await RebuildIfVideoLostAsync(run, now, ct)) break;
                         if (now >= run.ScheduledAtUtc)
                         {
                             await PublishAsync(run, ct);
@@ -679,6 +688,7 @@ public class AutoPostService : IAutoPostService
                         : "Video không còn ở trạng thái chờ đăng (đã bị sửa hoặc làm lại).";
                     break;
                 }
+                if (await RebuildIfVideoLostAsync(run, now, ct)) break;
                 if (now >= run.ScheduledAtUtc) await PublishAsync(run, ct);
                 break;
 
@@ -687,6 +697,36 @@ public class AutoPostService : IAutoPostService
                 if (now - (run.UpdatedAtUtc ?? run.CreatedAtUtc) > PublishingStuckAfter) await PublishAsync(run, ct);
                 break;
         }
+    }
+
+    /// <summary>
+    /// Videos live in the server's temporary storage, which a redeploy/restart of the server wipes (and the
+    /// cleanup job empties after a while). A finished video whose file is gone is rendered again from its
+    /// script, scenes and pictures (kept in the database) instead of failing the slot.
+    /// Returns true when a rebuild was started (the run waits for it).
+    /// </summary>
+    private async Task<bool> RebuildIfVideoLostAsync(AutoPostRun run, DateTime now, CancellationToken ct)
+    {
+        if (SimulationMode.IsEnabled(_configuration)) return false;
+        var projectId = run.VideoProjectId!.Value;
+        var paths = await _context.VideoAssets.AsNoTracking()
+            .Where(a => a.VideoProjectId == projectId && (a.AssetType == "FinalVideo" || a.AssetType == "Video") && !a.IsCleanedUp)
+            .Select(a => a.LocalTempPath)
+            .ToListAsync(ct);
+        var output = await _context.VideoProjects.AsNoTracking().Where(p => p.Id == projectId).Select(p => p.OutputVideoPath).FirstOrDefaultAsync(ct);
+        if (output != null) paths.Add(output);
+        if (paths.Any(p => !string.IsNullOrWhiteSpace(p) && File.Exists(p))) return false;
+
+        _logger.LogWarning("Auto-post {Slot}: video file of {ProjectId} is gone (server restarted?); rendering it again", run.SlotKey, projectId);
+        var project = await _context.VideoProjects.FirstAsync(p => p.Id == projectId, ct);
+        project.Status = VideoProjectStatus.GeneratingAudio; // the run waits in "Producing" until the render is done
+        project.UpdatedAtUtc = now;
+        run.Status = Producing;
+        run.StartedAtUtc = now;
+        run.Message = "File video bị mất do máy chủ khởi động lại — đang dựng lại từ kịch bản đã có.";
+        await _context.SaveChangesAsync(ct);
+        _jobs.Enqueue<IVideoProductionService>(s => s.ProduceVideoAsync(projectId, null, null, null, CancellationToken.None));
+        return true;
     }
 
     private async Task RetryOrFailAsync(AutoPostRun run, AutoPostSettings settings, DateTime now, string reason, CancellationToken ct)

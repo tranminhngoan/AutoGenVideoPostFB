@@ -36,7 +36,11 @@ public class ContentGateService : IContentGateService
             .Include(p => p.Scenes).ThenInclude(s => s.SelectedArticleImage)
             .FirstOrDefaultAsync(p => p.Id == videoProjectId, cancellationToken)
             ?? throw new KeyNotFoundException("Không tìm thấy video.");
-        var articleText = project.Article?.ContentBody ?? string.Empty;
+        var articleBody = project.Article?.ContentBody ?? string.Empty;
+        // Numbers may also come from the headline, the lead or the publication date
+        var articleText = project.Article == null
+            ? string.Empty
+            : FactCheck.ReferenceText(project.Article.Title, project.Article.Description, articleBody, project.Article.PublishedAtUtc);
 
         // 1. Free checks (numbers, source sentences, chart)
         FactSheetDto? sheet = null;
@@ -76,7 +80,7 @@ public class ContentGateService : IContentGateService
         var pictureProblems = PictureProblems(project, sheet);
 
         // 4. Gate
-        var gate = QualityGate.Evaluate(sheet, pass, articleText.Length, pictureProblems);
+        var gate = QualityGate.Evaluate(sheet, pass, articleBody.Length, pictureProblems);
         project.GateStatus = gate.Status;
         project.GateJson = JsonSerializer.Serialize(gate);
         await _context.SaveChangesAsync(cancellationToken);
