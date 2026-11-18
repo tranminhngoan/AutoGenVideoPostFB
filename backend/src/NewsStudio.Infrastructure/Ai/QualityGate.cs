@@ -7,7 +7,8 @@ namespace NewsStudio.Infrastructure.Ai;
 /// <list type="bullet">
 /// <item><b>REJECTED</b> — the AI editor found the headline/text says something the article doesn't.</item>
 /// <item><b>REVIEW_REQUIRED</b> — numbers that aren't in the article, claims without a source sentence,
-/// unreadable article, picture problems: a person must look before it goes out.</item>
+/// unreadable article, picture problems, a story outside the page's topic: a person must look before it goes out
+/// (an automatic post takes another story instead).</item>
 /// <item><b>APPROVED</b> — passed every automatic check (an internal standard, not Meta's).</item>
 /// </list>
 /// </summary>
@@ -43,6 +44,8 @@ public static class QualityGate
         }
         if (pass == null)
             gate.Reasons.Add("AI chưa đối chiếu tiêu đề và nội dung với bài gốc.");
+        else if (!pass.OnTopic)
+            gate.Reasons.Add($"Tin không đúng chủ đề của Page: {pass.OffTopicReason ?? "nội dung chính thuộc lĩnh vực khác."}");
         if (pictureProblems != null) gate.Reasons.AddRange(pictureProblems);
 
         gate.Status = gate.Reasons.Count == 0 ? QualityGateStatus.Approved : QualityGateStatus.ReviewRequired;

@@ -44,7 +44,11 @@ public class EditorialAssistantService : IEditorialAssistantService
         "không viết hoa toàn bộ, không quá 2 emoji. Không ghi nguồn và hashtag trong caption (hệ thống tự thêm).\n" +
         "3) HASHTAGS: 3–4 hashtag tiếng Việt không dấu, viết liền, đúng chủ đề tin (ví dụ #TinNong #KinhTe).\n" +
         "4) FIRST_COMMENT: một câu hỏi mở về chính sự việc để người đọc nêu ý kiến (tối đa 25 chữ), trung lập, " +
-        "không phải dạng \"bình luận 1 nếu…\", không link.";
+        "không phải dạng \"bình luận 1 nếu…\", không link.\n" +
+        "5) ĐÚNG CHỦ ĐỀ: nếu có dòng \"Chủ đề trang\" kèm mô tả, đặt \"on_topic\": false khi NỘI DUNG CHÍNH của bài gốc không thuộc chủ đề đó — " +
+        "kể cả khi bài có nhắc một từ liên quan (ví dụ tin chiến sự có chữ \"Euro\" là tiền tệ, tin tàu biển \"dài hơn 3 sân bóng đá\", " +
+        "tin pháp luật có chữ \"ai\" thì không phải tin thể thao / công nghệ). Ghi lý do ngắn vào \"off_topic_reason\". " +
+        "Không có dòng chủ đề hoặc chủ đề là \"Tổng hợp\" thì luôn on_topic: true.";
 
     public async Task<EditorialPassDto> RunAsync(Guid videoProjectId, CancellationToken cancellationToken = default)
     {
@@ -61,7 +65,12 @@ public class EditorialAssistantService : IEditorialAssistantService
         if (articleText.Length > ArticleChars) articleText = articleText[..ArticleChars];
 
         var sb = new StringBuilder();
-        sb.AppendLine($"Chủ đề trang: {NewsTopics.NameOf(project.Topic ?? NewsTopics.General)}");
+        // Narrow topics carry their description so the AI can judge whether the story belongs on this page
+        var topic = NewsTopics.Find(project.Topic ?? NewsTopics.General);
+        var narrowTopic = topic != null && topic.Key is not (NewsTopics.General or NewsTopics.HotTrend or NewsTopics.Custom);
+        sb.AppendLine(narrowTopic
+            ? $"Chủ đề trang: {topic!.Name} — {topic.Description}"
+            : $"Chủ đề trang: {NewsTopics.NameOf(project.Topic ?? NewsTopics.General)}");
         sb.AppendLine("=== VIDEO ===");
         sb.AppendLine($"Tiêu đề: {project.Title}");
         sb.AppendLine($"Câu mở đầu: {project.Script.Hook}");
@@ -73,10 +82,11 @@ public class EditorialAssistantService : IEditorialAssistantService
         sb.AppendLine($"Nguồn: {project.Publisher}");
         sb.AppendLine($"Nội dung: {(articleText.Length > 0 ? articleText : "(không đọc được nội dung bài gốc)")}");
         sb.AppendLine();
-        sb.AppendLine("Trả về đúng định dạng: {\"consistent\": true, \"issues\": [], \"caption\": \"...\", \"hashtags\": [\"#...\"], \"first_comment\": \"...\"}");
+        sb.AppendLine("Trả về đúng định dạng: {\"consistent\": true, \"issues\": [], \"caption\": \"...\", \"hashtags\": [\"#...\"], \"first_comment\": \"...\", \"on_topic\": true, \"off_topic_reason\": \"\"}");
 
         var json = await _gemini.GenerateJsonAsync(SystemPrompt, sb.ToString(), cancellationToken, "editorial", videoProjectId);
         var pass = Parse(json, project.Script.SourceAttribution, project.SourceUrl, hasArticle: articleText.Length > 0);
+        if (!narrowTopic) { pass.OnTopic = true; pass.OffTopicReason = null; }
 
         project.EditorialPassJson = JsonSerializer.Serialize(pass);
         await _context.SaveChangesAsync(cancellationToken);
@@ -123,12 +133,16 @@ public class EditorialAssistantService : IEditorialAssistantService
             ? question
             : (question.Length > 0 ? question + "\n\n" : "") + $"📰 Đọc chi tiết: {sourceUrl}";
 
+        var onTopic = !(root.TryGetProperty("on_topic", out var t) && t.ValueKind == JsonValueKind.False);
+
         return new EditorialPassDto
         {
             Consistent = consistent,
             Issues = consistent ? new List<string>() : issues,
             Caption = string.Join("\n\n", parts),
             FirstComment = comment,
+            OnTopic = onTopic,
+            OffTopicReason = onTopic ? null : (Str("off_topic_reason") is { Length: > 0 } why ? why : "Nội dung chính không thuộc chủ đề của Page."),
             CheckedAtUtc = DateTime.UtcNow
         };
     }

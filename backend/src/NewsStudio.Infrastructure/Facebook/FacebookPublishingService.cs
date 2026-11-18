@@ -30,6 +30,7 @@ public class FacebookPublishingService : IFacebookPublishingService
     private readonly ILogger<FacebookPublishingService> _logger;
     private readonly string _graphApiVersion;
     private readonly bool _simulate;
+    private readonly IConfiguration _configuration;
 
     public FacebookPublishingService(
         IApplicationDbContext context,
@@ -44,6 +45,7 @@ public class FacebookPublishingService : IFacebookPublishingService
         _assetService = assetService;
         _httpClient = httpClient;
         _logger = logger;
+        _configuration = configuration;
         _graphApiVersion = configuration["Facebook:GraphApiVersion"] ?? "v21.0";
         _simulate = SimulationMode.IsEnabled(configuration);
     }
@@ -472,15 +474,18 @@ public class FacebookPublishingService : IFacebookPublishingService
             {
                 var ig = await ResolveInstagramAsync(account, rawPageToken, cancellationToken)
                          ?? throw new InvalidOperationException("Page chưa liên kết tài khoản Instagram chuyên nghiệp (Cài đặt Page → Tài khoản được liên kết → Instagram).");
+                // Instagram fetching the video from our public link is the most reliable way; uploading the
+                // file to rupload ("Request processing failed" more often than not) is the second attempt.
+                var publicVideoUrl = PublicVideoUrl(videoProjectId);
                 (string MediaId, string? Permalink) published;
                 try
                 {
-                    published = await PublishInstagramReelAsync(ig, rawPageToken, videoFilePath, caption, cancellationToken);
+                    published = await PublishInstagramReelAsync(ig, rawPageToken, videoFilePath, caption, cancellationToken, publicVideoUrl);
                 }
                 catch (InvalidOperationException first) when (!first.Message.Contains("permission", StringComparison.OrdinalIgnoreCase))
                 {
-                    // Uploads / processing sometimes fail once on Meta's side: one fresh attempt
-                    _logger.LogInformation("Instagram attempt 1 failed ({Message}); retrying once", first.Message);
+                    _logger.LogInformation("Instagram attempt 1 ({Method}) failed ({Message}); retrying by file upload",
+                        publicVideoUrl != null ? "video link" : "file upload", first.Message);
                     await Task.Delay(TimeSpan.FromSeconds(10), cancellationToken);
                     published = await PublishInstagramReelAsync(ig, rawPageToken, videoFilePath, caption, cancellationToken);
                 }
@@ -646,41 +651,46 @@ public class FacebookPublishingService : IFacebookPublishingService
         caption.Length <= 2200 ? caption : caption[..2199] + "…";
 
     /// <summary>
-    /// Posts a local MP4 as an Instagram Reel: resumable upload container → binary upload → wait until
-    /// Instagram has processed it → publish. Returns the media id and its permalink.
+    /// The video's public link on this server (<c>/api/video-projects/{id}/video</c>), for Instagram to fetch;
+    /// null when the server's public address isn't known (local runs).
     /// </summary>
-    private async Task<(string MediaId, string? Permalink)> PublishInstagramReelAsync(string igUserId, string token, string videoPath, string caption, CancellationToken ct)
+    private string? PublicVideoUrl(Guid videoProjectId)
+    {
+        var configured = _configuration["App:PublicBaseUrl"];
+        var domain = Environment.GetEnvironmentVariable("RAILWAY_PUBLIC_DOMAIN");
+        var baseUrl = !string.IsNullOrWhiteSpace(configured) ? configured.TrimEnd('/')
+            : !string.IsNullOrWhiteSpace(domain) ? $"https://{domain.Trim().TrimEnd('/')}"
+            : null;
+        return baseUrl == null ? null : $"{baseUrl}/api/video-projects/{videoProjectId}/video";
+    }
+
+    /// <summary>
+    /// Posts a local MP4 as an Instagram Reel → wait until Instagram has processed it → publish. With
+    /// <paramref name="videoUrl"/> Instagram fetches the video from that link; otherwise the file is sent with
+    /// a resumable upload. Returns the media id and its permalink.
+    /// </summary>
+    private async Task<(string MediaId, string? Permalink)> PublishInstagramReelAsync(string igUserId, string token, string videoPath, string caption, CancellationToken ct,
+        string? videoUrl = null)
     {
         var baseUrl = $"https://graph.facebook.com/{_graphApiVersion}";
 
         // 1. Container
-        using var create = await _httpClient.PostAsync($"{baseUrl}/{igUserId}/media", new FormUrlEncodedContent(new Dictionary<string, string>
+        var fields = new Dictionary<string, string>
         {
             ["media_type"] = "REELS",
-            ["upload_type"] = "resumable",
             ["caption"] = InstagramCaption(caption),
             ["share_to_feed"] = "true",
             ["access_token"] = token
-        }), ct);
+        };
+        if (videoUrl != null) fields["video_url"] = videoUrl;
+        else fields["upload_type"] = "resumable";
+        using var create = await _httpClient.PostAsync($"{baseUrl}/{igUserId}/media", new FormUrlEncodedContent(fields), ct);
         if (!create.IsSuccessStatusCode) throw new InvalidOperationException($"Instagram không nhận video. {await ReadGraphErrorAsync(create, ct)}");
         var created = await create.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: ct);
         var containerId = created.GetProperty("id").GetString()!;
-        var uploadUri = created.TryGetProperty("uri", out var u) ? u.GetString() : null;
-        if (string.IsNullOrWhiteSpace(uploadUri)) throw new InvalidOperationException("Instagram không trả về địa chỉ tải video lên.");
 
-        // 2. Binary upload (same rupload protocol as Facebook Reels)
-        var size = new FileInfo(videoPath).Length;
-        await using (var stream = File.OpenRead(videoPath))
-        using (var upload = new HttpRequestMessage(HttpMethod.Post, uploadUri))
-        {
-            upload.Headers.Authorization = new AuthenticationHeaderValue("OAuth", token);
-            upload.Headers.TryAddWithoutValidation("offset", "0");
-            upload.Headers.TryAddWithoutValidation("file_size", size.ToString());
-            upload.Content = new StreamContent(stream);
-            upload.Content.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
-            using var res = await _httpClient.SendAsync(upload, ct);
-            if (!res.IsSuccessStatusCode) throw new InvalidOperationException($"Tải video lên Instagram thất bại. {await ReadGraphErrorAsync(res, ct)}");
-        }
+        // 2. Binary upload (same rupload protocol as Facebook Reels) — not needed when Instagram fetches the link
+        if (videoUrl == null) await UploadInstagramVideoAsync(created, token, videoPath, ct);
 
         // 3. Wait for Instagram to process the video (usually under a minute)
         var deadline = DateTime.UtcNow.AddMinutes(5);
@@ -709,6 +719,24 @@ public class FacebookPublishingService : IFacebookPublishingService
         var (linkOk, linkBody, _) = await GetGraphAsync($"{baseUrl}/{mediaId}?fields=permalink&access_token={Uri.EscapeDataString(token)}", ct);
         var permalink = linkOk && linkBody.TryGetProperty("permalink", out var pl) ? pl.GetString() : null;
         return (mediaId, permalink);
+    }
+
+    private async Task UploadInstagramVideoAsync(JsonElement created, string token, string videoPath, CancellationToken ct)
+    {
+        var uploadUri = created.TryGetProperty("uri", out var u) ? u.GetString() : null;
+        if (string.IsNullOrWhiteSpace(uploadUri)) throw new InvalidOperationException("Instagram không trả về địa chỉ tải video lên.");
+        var size = new FileInfo(videoPath).Length;
+        await using (var stream = File.OpenRead(videoPath))
+        using (var upload = new HttpRequestMessage(HttpMethod.Post, uploadUri))
+        {
+            upload.Headers.Authorization = new AuthenticationHeaderValue("OAuth", token);
+            upload.Headers.TryAddWithoutValidation("offset", "0");
+            upload.Headers.TryAddWithoutValidation("file_size", size.ToString());
+            upload.Content = new StreamContent(stream);
+            upload.Content.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
+            using var res = await _httpClient.SendAsync(upload, ct);
+            if (!res.IsSuccessStatusCode) throw new InvalidOperationException($"Tải video lên Instagram thất bại. {await ReadGraphErrorAsync(res, ct)}");
+        }
     }
 
     /// <summary>Comments as the page under a Reel (on the video, or on its post when the video refuses).</summary>

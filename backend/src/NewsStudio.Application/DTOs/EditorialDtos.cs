@@ -14,6 +14,13 @@ public class EditorialPassDto
     public string Caption { get; set; } = string.Empty;
     /// <summary>First comment: an open question about the story + link to the article.</summary>
     public string FirstComment { get; set; } = string.Empty;
+    /// <summary>
+    /// False when the story's main subject is not the page's topic (a war story on a sports page that only
+    /// mentions "Euro"). Always true for pages without a narrow topic.
+    /// </summary>
+    public bool OnTopic { get; set; } = true;
+    /// <summary>Why the story is off topic, in Vietnamese.</summary>
+    public string? OffTopicReason { get; set; }
     public DateTime CheckedAtUtc { get; set; }
 }
 

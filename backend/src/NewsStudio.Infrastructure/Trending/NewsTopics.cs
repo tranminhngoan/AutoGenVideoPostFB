@@ -7,13 +7,18 @@ namespace NewsStudio.Infrastructure.Trending;
 /// <param name="Keywords">
 /// Lower-case, accent-free phrases matched on whole words in the title + summary of stories from
 /// general feeds (home pages). A phrase starting with "=" is matched case-sensitively on the original
-/// text (e.g. "=AI", so the Vietnamese word "ai" = "who" doesn't count).
+/// text (e.g. "=AI", so the Vietnamese word "ai" = "who" doesn't count). A phrase starting with "~" is a
+/// regular expression on the folded text (e.g. "~euro 20\d\d" — the tournament, not the currency).
+/// </param>
+/// <param name="Exclude">
+/// Regular expressions on the folded text whose matches are ignored before looking for keywords, for
+/// phrases that use a topic word about something else ("dài hơn 3 sân bóng đá", "dự án sân golf").
 /// </param>
 /// <param name="TitleOnly">
 /// Keywords are looked for in the headline only: for a narrow topic (forex) where a passing mention in
 /// the summary ("... quy đổi theo tỷ giá ...") would pull in unrelated business stories.
 /// </param>
-public record NewsTopic(string Key, string Name, string Description, string[] Keywords, bool TitleOnly = false);
+public record NewsTopic(string Key, string Name, string Description, string[] Keywords, bool TitleOnly = false, string[]? Exclude = null);
 
 /// <summary>
 /// News topics a Facebook Page can be dedicated to. A story gets a topic when it comes from that
@@ -82,10 +87,17 @@ public static class NewsTopics
         }),
         new("the-thao", "Thể thao", "Bóng đá, tennis, đội tuyển, các giải đấu.", new[]
         {
-            "bong da", "doi tuyen", "tuyen viet nam", "v league", "sea games", "asiad", "world cup", "euro", "ngoai hang anh",
-            "premier league", "champions league", "la liga", "hlv", "cau thu", "ban thang", "tennis", "quan vot",
-            "olympic", "vo dich", "football", "soccer", "nba", "f1", "formula 1", "golf", "boxing", "man utd",
+            // "euro" alone is mostly the currency ("1,7 tỷ Euro"); the tournament is "EURO" or "Euro 2028".
+            // "olympic" alone is also "Olympic Toán", "Olympic dọn phòng": only the Games count.
+            "bong da", "doi tuyen", "tuyen viet nam", "v league", "sea games", "asiad", "world cup", "=EURO", "vck euro",
+            "~euro 20\\d\\d", "ngoai hang anh", "premier league", "champions league", "la liga", "hlv", "cau thu", "ban thang",
+            "tennis", "quan vot", "the van hoi", "olympic games", "~olympic (?:20\\d\\d|paris|tokyo|mua he|mua dong)", "=Olympics",
+            "vo dich", "football", "soccer", "nba", "f1", "formula 1", "golf", "boxing", "man utd",
             "man city", "arsenal", "liverpool", "chelsea", "real madrid", "barcelona", "messi", "ronaldo"
+        }, Exclude: new[]
+        {
+            // size comparisons and real estate, not sport
+            @" (?:\d+|mot|hai|ba|bon|nam|sau|bay|tam|chin|muoi|vai|nhieu|bang|hon) san bong da", @" san golf", @" ca do bong da"
         }),
         new("giai-tri", "Giải trí", "Sao Việt, phim ảnh, âm nhạc, hoa hậu, showbiz.", new[]
         {
@@ -155,19 +167,70 @@ public static class NewsTopics
         {
             if (topic.Keywords.Length == 0 || result.Contains(topic.Key)) continue;
             var hit = topic.TitleOnly
-                ? ContainsAny(title, foldedTitle, topic.Keywords)
-                : ContainsAny(text, folded, topic.Keywords);
+                ? ContainsAny(title, WithoutExcluded(foldedTitle, topic.Exclude), topic.Keywords)
+                : ContainsAny(text, WithoutExcluded(folded, topic.Exclude), topic.Keywords);
             if (hit) result.Add(topic.Key);
         }
         return result;
     }
 
-    /// <summary>True when the text contains one of the editor's keywords (accents and case ignored).</summary>
+    /// <summary>
+    /// True when the text contains one of the editor's keywords, as whole words:
+    /// <list type="bullet">
+    /// <item>an all-capitals keyword ("AI", "FX", "XAUUSD") must appear in capitals — "AI" is not "ai" (= who);</item>
+    /// <item>a keyword typed with Vietnamese accents must match its accents ("vàng" ≠ "vắng"), case ignored;</item>
+    /// <item>a keyword typed without accents matches with or without them.</item>
+    /// </list>
+    /// </summary>
     public static bool MatchesKeywords(string title, string? summary, IReadOnlyCollection<string> keywords)
     {
         if (keywords.Count == 0) return false;
         var text = title + " " + summary;
-        return ContainsAny(text, " " + Fold(text) + " ", keywords.Select(k => Fold(k).Trim()).Where(k => k.Length > 0));
+        var folded = " " + Fold(text) + " ";
+        foreach (var raw in keywords)
+        {
+            var k = raw.Trim();
+            if (k.Length == 0) continue;
+            var plain = Fold(k);
+            if (plain.Length == 0) continue;
+            bool hit;
+            if (k.Length <= 8 && k.Any(char.IsLetter) && k.All(ch => char.IsUpper(ch) || char.IsDigit(ch)))
+                hit = Regex.IsMatch(text, $@"(?<![\p{{L}}\p{{N}}]){Regex.Escape(k)}(?![\p{{L}}\p{{N}}])");
+            else if (!string.Equals(plain, Regex.Replace(k.ToLowerInvariant(), @"[^\p{L}\p{N}]+", " ").Trim(), StringComparison.Ordinal))
+                hit = AccentedPhraseIn(text, k);
+            else
+                hit = folded.Contains(" " + plain + " ", StringComparison.Ordinal);
+            if (hit) return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Whole-word phrase match where each word must have the keyword's accents, unless the text wrote that
+    /// word without any accent ("BONG DA" for "bóng đá"): "vàng" matches "Vàng" and "VANG", never "vắng".
+    /// </summary>
+    private static bool AccentedPhraseIn(string text, string keyword)
+    {
+        static string[] Words(string s) => Regex.Split(s.Normalize(NormalizationForm.FormC).ToLowerInvariant(), @"[^\p{L}\p{N}]+")
+            .Where(w => w.Length > 0).ToArray();
+        var words = Words(text);
+        var key = Words(keyword);
+        if (key.Length == 0) return false;
+        static bool Same(string word, string k) => word == k || (Fold(word) == word && Fold(k) == word);
+        for (var i = 0; i + key.Length <= words.Length; i++)
+        {
+            var all = true;
+            for (var j = 0; j < key.Length && all; j++) all = Same(words[i + j], key[j]);
+            if (all) return true;
+        }
+        return false;
+    }
+
+    private static string WithoutExcluded(string folded, string[]? exclude)
+    {
+        if (exclude == null) return folded;
+        foreach (var pattern in exclude) folded = Regex.Replace(folded, pattern, " ");
+        return folded;
     }
 
     public static List<string> ParseKeywords(string? value) => (value ?? string.Empty)
@@ -185,6 +248,10 @@ public static class NewsTopics
             if (k.StartsWith('='))
             {
                 if (Regex.IsMatch(original, $@"(?<![\p{{L}}\p{{N}}]){Regex.Escape(k[1..])}(?![\p{{L}}\p{{N}}])")) return true;
+            }
+            else if (k.StartsWith('~'))
+            {
+                if (Regex.IsMatch(foldedPadded, $@" {k[1..]} ")) return true;
             }
             else if (foldedPadded.Contains(" " + k + " ", StringComparison.Ordinal))
             {
