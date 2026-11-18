@@ -164,7 +164,19 @@ public class FFmpegRendererService : IVideoRendererService
             _logger.LogInformation("Executing FFmpeg at {Path} with arguments: {Args}", ffmpegPath, ffmpegArgs);
             try
             {
-                await ExecuteFfmpegProcessAsync(ffmpegPath, ffmpegArgs, progress, cancellationToken);
+                try
+                {
+                    await ExecuteFfmpegProcessAsync(ffmpegPath, ffmpegArgs, progress, cancellationToken);
+                }
+                catch (Exception ex) when (plates != null && ex is not OperationCanceledException)
+                {
+                    // The zoom + cross-fade render is the heavy one; the classic single-picture render needs far
+                    // less memory, so a video still comes out instead of the whole job failing.
+                    _logger.LogWarning("Scene-plate render failed for project {ProjectId}; retrying with the classic render. {Message}",
+                        request.ProjectId, ex.Message.Length > 300 ? ex.Message[^300..] : ex.Message);
+                    ffmpegArgs = BuildFfmpegArguments(request, outputVideoPath, overlayPath, localPrimaryImage, out totalDuration);
+                    await ExecuteFfmpegProcessAsync(ffmpegPath, ffmpegArgs, progress, cancellationToken);
+                }
             }
             catch (Exception ex) when (!simulate && ex is not OperationCanceledException)
             {
@@ -234,7 +246,7 @@ public class FFmpegRendererService : IVideoRendererService
         filter.Append($"concat=n={imagePaths.Count}:v=1:a=0[v]");
 
         args.Append($"-filter_complex \"{filter}\" -map \"[v]\" -map {imagePaths.Count}:a ")
-            .Append("-c:v libx264 -preset veryfast -crf 22 -pix_fmt yuv420p -r 30 -g 60 -keyint_min 60 -sc_threshold 0 ")
+            .Append("-c:v libx264 -preset veryfast -threads 2 -crf 22 -pix_fmt yuv420p -r 30 -g 60 -keyint_min 60 -sc_threshold 0 ")
             .Append("-c:a aac -b:a 128k -ar 48000 -ac 2 -shortest -movflags +faststart ")
             .Append($"\"{outputPath}\"");
 
@@ -408,7 +420,9 @@ public class FFmpegRendererService : IVideoRendererService
         // The last scene runs to the end of the narration
         durations[n - 1] = Math.Max(1.0, totalDuration - durations.Take(n - 1).Sum());
 
-        var args = new StringBuilder();
+        // Few threads: x264 and the filter graph otherwise start one per CPU core of the host, which runs a
+        // small Railway container out of memory ("Error while opening encoder for output stream").
+        var args = new StringBuilder("-filter_complex_threads 2 ");
         for (var i = 0; i < n; i++)
         {
             var clip = durations[i] + (i < n - 1 ? Transition : 0);
@@ -422,7 +436,7 @@ public class FFmpegRendererService : IVideoRendererService
         {
             // Alternate zoom in / zoom out so consecutive scenes don't move the same way
             var zoom = i % 2 == 0 ? "min(1+0.0012*on,1.05)" : "max(1.05-0.0012*on,1)";
-            filter.Append($"[{i}:v]scale=1620:-1,zoompan=z='{zoom}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=1080x1920:fps=30,setsar=1,format=yuv420p[v{i}];");
+            filter.Append($"[{i}:v]scale=1350:-1,zoompan=z='{zoom}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=1080x1920:fps=30,setsar=1,format=yuv420p[v{i}];");
         }
         var last = "v0";
         double offset = 0;
@@ -436,7 +450,7 @@ public class FFmpegRendererService : IVideoRendererService
 
         args.Append($"-filter_complex \"{filter}\" -map \"[v]\" -map {n + 1}:a ");
         args.Append($"-t {totalDuration.ToString("F1", CultureInfo.InvariantCulture)} ");
-        args.Append("-c:v libx264 -preset veryfast -pix_fmt yuv420p -c:a aac -b:a 192k -movflags +faststart ");
+        args.Append("-c:v libx264 -preset veryfast -threads 2 -pix_fmt yuv420p -c:a aac -b:a 192k -movflags +faststart ");
         args.Append($"-y \"{outputPath}\"");
         return args.ToString();
     }
@@ -574,7 +588,7 @@ public class FFmpegRendererService : IVideoRendererService
         }
 
         args.Append($"-t {totalDuration.ToString("F1", CultureInfo.InvariantCulture)} ");
-        args.Append("-c:v libx264 -preset veryfast -pix_fmt yuv420p -c:a aac -b:a 192k -movflags +faststart ");
+        args.Append("-c:v libx264 -preset veryfast -threads 2 -pix_fmt yuv420p -c:a aac -b:a 192k -movflags +faststart ");
         args.Append($"-y \"{outputPath}\"");
 
         return args.ToString().Trim();
