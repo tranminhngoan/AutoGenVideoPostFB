@@ -76,8 +76,7 @@ public static class GeminiKeys
         DateTimeOffset until;
         if (code == 429)
         {
-            var daily = Regex.IsMatch(reason, @"per[\s_-]?day|PerDay|daily", RegexOptions.IgnoreCase);
-            until = daily ? NextPacificMidnight(now) : now.Add(ParseRetryDelay(reason) ?? TimeSpan.FromMinutes(1));
+            until = IsDailyQuota(reason) ? NextPacificMidnight(now) : now.Add(ParseRetryDelay(reason) ?? TimeSpan.FromMinutes(1));
         }
         else
         {
@@ -103,8 +102,15 @@ public static class GeminiKeys
             : null;
     }
 
+    /// <summary>
+    /// A 429 that won't clear within minutes: the per-day quota ("PerDay" metric), or Google asking to retry
+    /// hours later ("retry in 7h12m…").
+    /// </summary>
+    public static bool IsDailyQuota(string reason) =>
+        Regex.IsMatch(reason, @"per[\s_-]?day|PerDay|daily|retry in \d+h", RegexOptions.IgnoreCase);
+
     /// <summary>Gemini daily quotas reset at midnight Pacific time.</summary>
-    private static DateTimeOffset NextPacificMidnight(DateTimeOffset now)
+    public static DateTimeOffset NextPacificMidnight(DateTimeOffset now)
     {
         TimeZoneInfo? zone = null;
         foreach (var id in new[] { "America/Los_Angeles", "Pacific Standard Time" })

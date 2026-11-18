@@ -21,8 +21,17 @@ public class GeminiTtsService : ITtsService
     public const string VoicePrefix = "gemini:";
     private const int SampleRate = 24000; // Gemini TTS returns 16-bit mono PCM @ 24 kHz
 
-    private static string? _resolvedModel;
+    private static List<string>? _resolvedModels;
     private static readonly SemaphoreSlim ModelLock = new(1, 1);
+
+    /// <summary>
+    /// TTS models whose daily quota is used up on every key (free and paid), until the quota resets.
+    /// Google counts quotas per model, so the next TTS model still works with the same voices.
+    /// </summary>
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, DateTimeOffset> ModelExhaustedUntil = new();
+
+    /// <summary>The model can't be used now (daily quota on every key, or not offered) — try the next one.</summary>
+    private sealed class TtsModelUnavailableException(string message) : InvalidOperationException(message);
 
     private readonly HttpClient _httpClient;
     private readonly IConfiguration _configuration;
@@ -65,7 +74,7 @@ public class GeminiTtsService : ITtsService
         }
 
         var voiceName = IsGeminiVoice(request.Voice) ? request.Voice[VoicePrefix.Length..] : "Kore";
-        var model = await ResolveModelAsync(cancellationToken);
+        var models = await ResolveModelsAsync(cancellationToken);
         var text = request.Text.Trim();
         var tempo = ParseTempo(request.Speed);
 
@@ -81,28 +90,29 @@ public class GeminiTtsService : ITtsService
         var srtFilePath = Path.Combine(subtitleDir, "subtitles.srt");
         var vttFilePath = Path.Combine(subtitleDir, "subtitles.vtt");
 
-        _logger.LogInformation("Gemini TTS: project {ProjectId}, model {Model}, voice {Voice}, {Chars} chars",
-            request.ProjectId, model, voiceName, text.Length);
+        _logger.LogInformation("Gemini TTS: project {ProjectId}, models {Models}, voice {Voice}, {Chars} chars",
+            request.ProjectId, string.Join(", ", models), voiceName, text.Length);
 
         // 1. Synthesize — paid per call, so identical narration (same model + voice + text) is reused:
         //    re-rendering a video (new images, failed render, etc.) doesn't pay for the voice again.
         var prompt = BuildPrompt(text);
         var cacheDir = Path.Combine(TempStorage.GetRoot(_configuration), "tts-cache");
         Directory.CreateDirectory(cacheDir);
-        var cacheKey = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
-            Encoding.UTF8.GetBytes($"{model}|{voiceName}|{prompt}")))[..32].ToLowerInvariant();
-        var cachePath = Path.Combine(cacheDir, cacheKey + ".pcm");
+        string CachePath(string m) => Path.Combine(cacheDir, Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+            Encoding.UTF8.GetBytes($"{m}|{voiceName}|{prompt}")))[..32].ToLowerInvariant() + ".pcm");
 
         byte[] pcm;
-        if (File.Exists(cachePath))
+        var cached = models.Select(CachePath).FirstOrDefault(File.Exists);
+        if (cached != null)
         {
-            pcm = await File.ReadAllBytesAsync(cachePath, cancellationToken);
+            pcm = await File.ReadAllBytesAsync(cached, cancellationToken);
             _logger.LogInformation("Gemini TTS: reused cached narration for project {ProjectId} (no API call)", request.ProjectId);
         }
         else
         {
-            pcm = await RequestSpeechAsync(model, voiceName, prompt, cancellationToken);
-            try { await File.WriteAllBytesAsync(cachePath, pcm, cancellationToken); }
+            var (speech, model) = await RequestSpeechAnyModelAsync(models, voiceName, prompt, cancellationToken);
+            pcm = speech;
+            try { await File.WriteAllBytesAsync(CachePath(model), pcm, cancellationToken); }
             catch (IOException ex) { _logger.LogWarning("Could not cache TTS audio: {Message}", ex.Message); }
         }
         await WriteWavAsync(rawWavPath, pcm, cancellationToken);
@@ -156,6 +166,40 @@ public class GeminiTtsService : ITtsService
         return string.IsNullOrWhiteSpace(style) ? text : $"{style.Trim()}: {text}";
     }
 
+    /// <summary>
+    /// Tries the TTS models in order. For each model the free key goes first, then the paid key. A model
+    /// whose daily quota is used up on every key is skipped until the quota resets (Pacific midnight), so a
+    /// video never waits hours while another TTS model (same voices) still has quota.
+    /// </summary>
+    private async Task<(byte[] Pcm, string Model)> RequestSpeechAnyModelAsync(
+        IReadOnlyList<string> models, string voiceName, string prompt, CancellationToken ct)
+    {
+        foreach (var model in models)
+        {
+            if (ModelExhaustedUntil.TryGetValue(model, out var until) && until > DateTimeOffset.UtcNow) continue;
+            try
+            {
+                return (await RequestSpeechAsync(model, voiceName, prompt, ct), model);
+            }
+            catch (TtsModelUnavailableException ex)
+            {
+                ModelExhaustedUntil[model] = GeminiKeys.NextPacificMidnight(DateTimeOffset.UtcNow);
+                _logger.LogWarning("Gemini TTS model {Model} unavailable until the daily reset; trying the next model. {Reason}", model, ex.Message);
+            }
+        }
+        throw AllModelsExhaustedError(models);
+    }
+
+    private static InvalidOperationException AllModelsExhaustedError(IReadOnlyList<string> models)
+    {
+        var reset = models.Select(m => ModelExhaustedUntil.TryGetValue(m, out var u) ? u : DateTimeOffset.UtcNow)
+            .DefaultIfEmpty(DateTimeOffset.UtcNow).Min().ToOffset(TimeSpan.FromHours(7));
+        return new InvalidOperationException(
+            $"Hôm nay Google đã hết lượt đọc giọng Gemini ở cả key miễn phí và key trả phí (đã thử: {string.Join(", ", models)}). " +
+            $"Lượt mới mở lại khoảng {reset:HH:mm} (giờ Việt Nam). Trong lúc chờ, hãy chọn giọng Hoài My hoặc Nam Minh. " +
+            "Lưu ý: Xưởng phim dùng chung key và lượt đọc giọng với video tin tức.");
+    }
+
     /// <summary>Free key first (see <see cref="GeminiKeys"/>); falls through to the paid key when the free one is refused.</summary>
     private async Task<byte[]> RequestSpeechAsync(string model, string voiceName, string prompt, CancellationToken ct)
     {
@@ -178,7 +222,11 @@ public class GeminiTtsService : ITtsService
                 _logger.LogInformation("Gemini TTS free key refused (HTTP {Status}); using paid key. {Reason}", (int)status, reason);
                 continue;
             }
-            throw BuildSpeechError(model, status, reason, key.IsFree);
+            var error = BuildSpeechError(model, status, reason, key.IsFree);
+            // Out of today's quota on the last key, or the model isn't offered: the next TTS model may still work
+            if (((int)status == 429 && GeminiKeys.IsDailyQuota(reason)) || (int)status == 404)
+                throw new TtsModelUnavailableException(error.Message);
+            throw error;
         }
     }
 
@@ -250,38 +298,60 @@ public class GeminiTtsService : ITtsService
     }
 
     /// <summary>
-    /// Uses Tts:Gemini:Model when set; otherwise picks the newest non-preview Flash TTS model this key
-    /// can use (live list from Google), so a retired model name can't silently break narration.
+    /// TTS models to try, best first: Tts:Gemini:Model when set, then the TTS models this key can use
+    /// (live list from Google) — newest stable Flash first, then preview / lite Flash, Pro last (dearer).
+    /// Later ones are only used when the earlier ones are out of today's quota.
     /// </summary>
-    private async Task<string> ResolveModelAsync(CancellationToken ct)
+    private async Task<List<string>> ResolveModelsAsync(CancellationToken ct)
     {
-        var configured = _configuration["Tts:Gemini:Model"];
-        if (!string.IsNullOrWhiteSpace(configured)) return configured;
-        if (_resolvedModel != null) return _resolvedModel;
+        var configured = _configuration["Tts:Gemini:Model"]?.Trim();
+        var auto = _resolvedModels;
+        if (auto == null)
+        {
+            await ModelLock.WaitAsync(ct);
+            try
+            {
+                auto = _resolvedModels;
+                if (auto == null)
+                {
+                    var listed = await _gemini.ListAvailableModelsAsync(ct) ?? new List<AiModelInfoDto>();
+                    auto = OrderTtsModels(listed.Select(m => m.Id));
+                    if (auto.Count > 0)
+                    {
+                        _resolvedModels = auto;
+                        _logger.LogInformation("Gemini TTS models auto-selected: {Models}", string.Join(", ", auto));
+                    }
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException && !string.IsNullOrWhiteSpace(configured))
+            {
+                _logger.LogWarning("Listing Gemini TTS models failed: {Message}", ex.Message);
+                auto = new List<string>();
+            }
+            finally
+            {
+                ModelLock.Release();
+            }
+        }
 
-        await ModelLock.WaitAsync(ct);
-        try
-        {
-            if (_resolvedModel != null) return _resolvedModel;
-            var models = await _gemini.ListAvailableModelsAsync(ct) ?? new List<AiModelInfoDto>();
-            var tts = models
-                .Select(m => m.Id)
-                .Where(id => id.Contains("tts", StringComparison.OrdinalIgnoreCase)
-                             && id.Contains("flash", StringComparison.OrdinalIgnoreCase))
-                .OrderBy(id => id.Contains("preview", StringComparison.OrdinalIgnoreCase)) // stable first
-                .ThenBy(id => id.Contains("lite", StringComparison.OrdinalIgnoreCase))     // full quality first
-                .ThenByDescending(VersionOf)
-                .FirstOrDefault();
-            _resolvedModel = tts ?? throw new InvalidOperationException(
-                "API key Gemini này không có model đọc giọng (TTS) nào. Đặt Tts:Gemini:Model hoặc chọn giọng Edge.");
-            _logger.LogInformation("Gemini TTS model auto-selected: {Model}", _resolvedModel);
-            return _resolvedModel;
-        }
-        finally
-        {
-            ModelLock.Release();
-        }
+        var all = new List<string>();
+        if (!string.IsNullOrWhiteSpace(configured)) all.Add(configured);
+        all.AddRange(auto.Where(m => !all.Contains(m, StringComparer.OrdinalIgnoreCase)));
+        if (all.Count == 0)
+            throw new InvalidOperationException(
+                "API key Gemini này không có model đọc giọng (TTS) nào. Đặt Tts:Gemini:Model hoặc chọn giọng Hoài My / Nam Minh.");
+        return all;
     }
+
+    /// <summary>Gemini TTS model ids, best first: Flash before Pro, stable before preview, full before lite, newest first.</summary>
+    public static List<string> OrderTtsModels(IEnumerable<string> ids) => ids
+        .Where(id => id.Contains("tts", StringComparison.OrdinalIgnoreCase))
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .OrderBy(id => !id.Contains("flash", StringComparison.OrdinalIgnoreCase))  // Flash (cheap) first, Pro last
+        .ThenBy(id => id.Contains("preview", StringComparison.OrdinalIgnoreCase))  // stable first
+        .ThenBy(id => id.Contains("lite", StringComparison.OrdinalIgnoreCase))     // full quality first
+        .ThenByDescending(VersionOf)
+        .ToList();
 
     private static double VersionOf(string id)
     {
