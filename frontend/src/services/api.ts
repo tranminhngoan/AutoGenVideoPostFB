@@ -725,7 +725,7 @@ export const api = {
     return await res.json();
   },
 
-  async renderFilmEpisode(id: string): Promise<{ message: string; videoPath: string }> {
+  async renderFilmEpisode(id: string): Promise<{ message: string; episodeId: string }> {
     const res = await fetch(`${API_BASE}/film-factory/episodes/${id}/render`, {
       method: 'POST',
     });

@@ -191,6 +191,10 @@ public class FilmEpisode : BaseEntity
     public string? OutputVideoPath { get; set; }
     public string? ThumbnailPath { get; set; }
 
+    /// <summary>GPU batch this episode's frames/clips are being made in (backend-specific reference).</summary>
+    public string? GpuBatchRef { get; set; }
+    public DateTime? GpuSubmittedAtUtc { get; set; }
+
     public decimal EstimatedCostUsd { get; set; } = 0.0m;
     public decimal ActualCostUsd { get; set; } = 0.0m;
     public double QualityScore { get; set; } = 0.0; // 0 - 100
@@ -249,6 +253,13 @@ public class FilmShot : BaseEntity
     public string? EmotionalTone { get; set; }
 
     public double DurationSeconds { get; set; } = 5.0; // 3 - 8s
+
+    /// <summary>True when this shot is a real motion clip (image → video on the GPU worker) instead of a moving still.</summary>
+    public bool UseMotion { get; set; }
+    /// <summary>English description of the movement for the image-to-video model.</summary>
+    public string? MotionPrompt { get; set; }
+    /// <summary>The generated motion clip (local file) once the GPU batch has delivered it.</summary>
+    public string? MotionVideoPath { get; set; }
 
     // Đường dẫn tài nguyên thành phần
     public string? AudioVoicePath { get; set; }

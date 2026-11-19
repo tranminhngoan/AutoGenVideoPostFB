@@ -38,6 +38,25 @@ import {
 } from '../services/api';
 import { useToast } from '../components/feedback';
 
+const BUSY_EPISODE_STATUSES = ['Queued', 'Scripting', 'VisualAssetsGenerating', 'VoiceGenerating', 'GpuQueued', 'GpuRendering', 'GpuDone', 'FilmEditing', 'QualityCheck'];
+const BUSY_PROJECT_STATUSES = ['ShowrunnerPlanning', 'BibleReady'];
+
+const EPISODE_STATUS_LABELS: Record<string, string> = {
+  Pending: 'Chưa viết kịch bản',
+  ScriptReady: 'Đã có kịch bản',
+  Queued: 'Đang chờ dựng…',
+  Scripting: 'Đang viết kịch bản…',
+  VisualAssetsGenerating: 'Đang vẽ khung hình…',
+  VoiceGenerating: 'Đang lồng tiếng…',
+  GpuQueued: 'Chờ máy GPU…',
+  GpuRendering: 'GPU đang vẽ ảnh & clip…',
+  GpuDone: 'GPU xong, đang ghép…',
+  FilmEditing: 'Đang dựng video…',
+  QualityCheck: 'Đang kiểm tra…',
+  Completed: 'Hoàn tất',
+  Failed: 'Lỗi',
+};
+
 export function FilmFactoryPage() {
   const toast = useToast();
 
@@ -135,6 +154,25 @@ export function FilmFactoryPage() {
     }
   }, [selectedProjectId]);
 
+  // Poll while the server is writing or rendering something for this project
+  const projectBusy =
+    !!selectedProject &&
+    (BUSY_PROJECT_STATUSES.includes(selectedProject.status) ||
+      selectedProject.episodes.some((e) => BUSY_EPISODE_STATUSES.includes(e.status)));
+  useEffect(() => {
+    if (!selectedProjectId || !projectBusy) return;
+    const timer = window.setInterval(async () => {
+      try {
+        const data = await api.getFilmProjectDetail(selectedProjectId);
+        setSelectedProject(data);
+        setCostSummary(data.costSummary);
+      } catch {
+        // keep the last known state; the next tick retries
+      }
+    }, 8000);
+    return () => window.clearInterval(timer);
+  }, [selectedProjectId, projectBusy]);
+
   // Handle Create Project
   const handleCreateProject = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -173,18 +211,14 @@ export function FilmFactoryPage() {
     }
   };
 
-  // Render Episode
+  // Render Episode — runs in the background on the server (several minutes); the page polls for progress.
   const handleRenderEpisode = async (episodeId: string) => {
     try {
       setRenderingEpisodeId(episodeId);
       const res = await api.renderFilmEpisode(episodeId);
-      toast.success('Dựng tập phim thành công!');
+      toast.success(`${res.message} Quá trình mất vài phút, trang sẽ tự cập nhật.`);
       if (selectedProjectId) {
         await loadProjectDetail(selectedProjectId);
-      }
-      const ep = await api.getFilmEpisodeDetail(episodeId);
-      if (ep) {
-        setPreviewVideoEpisode(ep);
       }
     } catch (err: any) {
       toast.error(err.message || 'Dựng tập phim thất bại');
@@ -633,14 +667,29 @@ export function FilmFactoryPage() {
                           'rounded-full px-2 py-0.5 text-[11px] font-medium',
                           ep.status === 'Completed'
                             ? 'bg-emerald-500/10 text-emerald-400'
-                            : 'bg-amber-500/10 text-amber-400'
+                            : ep.status === 'Failed'
+                              ? 'bg-red-500/10 text-red-400'
+                              : 'bg-amber-500/10 text-amber-400'
                         )}
                       >
-                        {ep.status}
+                        {EPISODE_STATUS_LABELS[ep.status] ?? ep.status}
                       </span>
                     </div>
 
                     <p className="text-xs text-fg-muted line-clamp-2">{ep.synopsis}</p>
+
+                    {ep.errorMessage ? (
+                      <div
+                        className={cn(
+                          'rounded border p-2 text-[11px] whitespace-pre-wrap break-words',
+                          ep.status === 'Failed'
+                            ? 'border-red-500/30 bg-red-500/10 text-red-400'
+                            : 'border-amber-500/30 bg-amber-500/10 text-amber-400'
+                        )}
+                      >
+                        {ep.errorMessage}
+                      </div>
+                    ) : null}
 
                     <div className="rounded bg-muted/60 p-2 text-[11px] space-y-1">
                       <div className="text-fg-subtle">
@@ -664,7 +713,7 @@ export function FilmFactoryPage() {
                             Bấm để xem thử video tập {ep.episodeNumber}
                           </span>
                           <span className="text-[10px] text-slate-400">
-                            Thời lượng: ~{Math.round(ep.actualDurationSeconds || ep.targetDurationSeconds)}s · Đạt chuẩn: {ep.qualityScore || 95}/100
+                            Thời lượng: ~{Math.round(ep.actualDurationSeconds || ep.targetDurationSeconds)}s · QA: {Math.round(ep.qualityScore)}/100
                           </span>
                         </div>
                         <div className="p-2.5 bg-slate-900 border-t border-slate-800 flex items-center justify-between text-xs">
@@ -719,7 +768,7 @@ export function FilmFactoryPage() {
                           size="sm"
                           variant="secondary"
                           icon={<Play className="h-3 w-3" />}
-                          loading={renderingEpisodeId === ep.id}
+                          loading={renderingEpisodeId === ep.id || BUSY_EPISODE_STATUSES.includes(ep.status)}
                           onClick={() => handleRenderEpisode(ep.id)}
                         >
                           {ep.outputVideoPath || ep.status === 'Completed' ? `Dựng lại E${ep.episodeNumber}` : `Dựng tập E${ep.episodeNumber}`}
@@ -1090,7 +1139,7 @@ export function FilmFactoryPage() {
                 <p className="text-fg-subtle line-clamp-2 max-w-xl">{previewVideoEpisode.synopsis}</p>
                 <div className="text-[11px] text-emerald-400 font-medium pt-0.5 flex items-center gap-1.5">
                   <CheckCircle2 className="h-3.5 w-3.5" />
-                  Đạt chuẩn chất lượng ({previewVideoEpisode.qualityScore || 95}/100) · 1080×1920 30FPS H.264 / AAC
+                  Kiểm tra chất lượng: {Math.round(previewVideoEpisode.qualityScore)}/100 · {Math.round(previewVideoEpisode.actualDurationSeconds)}s · 30FPS H.264 / AAC
                 </div>
               </div>
 

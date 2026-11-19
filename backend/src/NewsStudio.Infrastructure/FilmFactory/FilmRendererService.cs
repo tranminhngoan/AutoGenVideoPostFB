@@ -1,9 +1,12 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Security.Cryptography;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
@@ -13,398 +16,544 @@ using NewsStudio.Application.Common.Interfaces;
 using NewsStudio.Application.DTOs;
 using NewsStudio.Application.Interfaces;
 using NewsStudio.Domain.Entities;
+using NewsStudio.Infrastructure.Ai;
+using NewsStudio.Infrastructure.Common;
 using NewsStudio.Infrastructure.Rendering;
 
 namespace NewsStudio.Infrastructure.FilmFactory;
 
+/// <summary>
+/// Turns a written episode into an MP4:
+///  1. one AI still frame per distinct frame prompt (characters keep their face via reference portraits),
+///  2. one Gemini voice line per shot (each character has its own voice),
+///  3. each shot = frame + camera move (Ken Burns) + its line, all encoded with identical parameters,
+///  4. shots joined, then checked (has picture, has audible sound, right length).
+/// Any failure stops the render with the real reason — no placeholder pictures, no silent tracks.
+/// </summary>
 public class FilmRendererService : IFilmRendererService
 {
+    private const int Fps = 30;
+    private const double GapAfterLine = 0.25;
+
     private readonly IApplicationDbContext _context;
-    private readonly EdgeTtsService _edgeTts;
+    private readonly GeminiTtsService _tts;
+    private readonly FilmGeminiClient _gemini;
+    private readonly IFilmCostController _costController;
+    private readonly AiUsageMeter _meter;
+    private readonly IFilmGpuBackend _gpu;
     private readonly IConfiguration _configuration;
     private readonly ILogger<FilmRendererService> _logger;
-    private readonly string _ffmpegPath;
+    private readonly string _ffmpeg;
+    private readonly string _ffprobe;
 
     public FilmRendererService(
         IApplicationDbContext context,
-        EdgeTtsService edgeTts,
+        GeminiTtsService tts,
+        FilmGeminiClient gemini,
+        IFilmCostController costController,
+        AiUsageMeter meter,
+        IFilmGpuBackend gpu,
         IConfiguration configuration,
         ILogger<FilmRendererService> logger)
     {
         _context = context;
-        _edgeTts = edgeTts;
+        _tts = tts;
+        _gemini = gemini;
+        _costController = costController;
+        _meter = meter;
+        _gpu = gpu;
         _configuration = configuration;
         _logger = logger;
-        _ffmpegPath = FindFfmpegExecutable();
+        (_ffmpeg, _ffprobe) = FindFfmpeg(configuration);
     }
+
+    private string Root => Path.Combine(TempStorage.GetRoot(_configuration), "film_factory");
+
+    // ─────────────────────────────── Public API ───────────────────────────────
 
     public async Task<string> RenderShotAsync(Guid shotId, CancellationToken ct = default)
     {
-        var shot = await _context.FilmShots
-            .Include(s => s.FilmScene)
-            .Include(s => s.FilmEpisode)
-                .ThenInclude(e => e!.FilmProject)
-                    .ThenInclude(p => p!.Characters)
-            .FirstOrDefaultAsync(s => s.Id == shotId, ct)
-            ?? throw new ArgumentException("Không tìm thấy Shot.");
+        var shot = await _context.FilmShots.FirstOrDefaultAsync(s => s.Id == shotId, ct)
+                   ?? throw new ArgumentException("Không tìm thấy Shot.");
+        var episode = await LoadEpisodeAsync(shot.FilmEpisodeId, ct);
+        var shots = OrderedShots(episode);
+        var target = shots.First(s => s.Id == shotId);
 
-        _logger.LogInformation("Rendering Film Shot {Id} (Scene {Sc}, Shot {Sh})",
-            shotId, shot.FilmScene?.SceneNumber, shot.ShotNumber);
+        await EnsureFramesAsync(episode, new[] { target }, ct);
+        await EnsureVoicesAsync(episode, new[] { target }, ct);
+        return await RenderShotVideoAsync(episode, target, IsSceneStart(shots, target), target == shots[^1], ct);
+    }
 
-        shot.RenderStatus = "Rendering";
-        await _context.SaveChangesAsync(ct);
-
-        var tempRoot = NewsStudio.Infrastructure.Common.TempStorage.GetRoot(_configuration);
-        var shotDir = Path.Combine(tempRoot, "film_factory", "shots");
-        Directory.CreateDirectory(shotDir);
-
-        var shotVideoPath = Path.Combine(shotDir, $"shot_{shot.Id}.mp4");
-
-        // 1. Voiceover TTS nếu có lời thoại
-        string? audioPath = null;
-        double duration = shot.DurationSeconds > 0 ? shot.DurationSeconds : 5.0;
-
-        if (!string.IsNullOrWhiteSpace(shot.DialogueText))
-        {
-            var charVoice = "vi-VN-NamMinhNeural";
-            if (!string.IsNullOrWhiteSpace(shot.SpeakerCharacterId) && shot.FilmEpisode?.FilmProject?.Characters != null)
-            {
-                var speaker = shot.FilmEpisode.FilmProject.Characters
-                    .FirstOrDefault(c => c.CharacterId == shot.SpeakerCharacterId);
-                if (speaker != null && !string.IsNullOrWhiteSpace(speaker.VoiceModel))
-                {
-                    charVoice = speaker.VoiceModel;
-                }
-            }
-
-            try
-            {
-                var ttsResult = await _edgeTts.SynthesizeSpeechWithSubtitlesAsync(new TtsSynthesisRequest
-                {
-                    ProjectId = shot.Id,
-                    Text = shot.DialogueText,
-                    Voice = charVoice,
-                    Speed = "+0%",
-                    Pitch = "+0Hz"
-                }, ct);
-
-                if (!string.IsNullOrEmpty(ttsResult.AudioFilePath) && File.Exists(ttsResult.AudioFilePath))
-                {
-                    audioPath = ttsResult.AudioFilePath;
-                    shot.AudioVoicePath = audioPath;
-                    duration = Math.Max(duration, ttsResult.AudioDurationSeconds + 0.8);
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "TTS failed for shot {Id}, continuing without speech", shot.Id);
-            }
-        }
-
-        shot.DurationSeconds = duration;
-
-        // 2. Tạo hình ảnh nền cinematic
-        var imagePath = Path.Combine(shotDir, $"shot_bg_{shot.Id}.jpg");
-        await GenerateCinematicPlateAsync(imagePath, shot, ct);
-        shot.RawImagePath = imagePath;
-
-        // 3. Render MP4 với hiệu ứng chuyển động máy quay (Ken Burns camera movement)
-        var isVertical = shot.FilmEpisode?.FilmProject?.AspectRatio != "16:9";
-        var width = isVertical ? 1080 : 1920;
-        var height = isVertical ? 1920 : 1080;
-
-        await RenderShotVideoWithFfmpegAsync(imagePath, audioPath, shotVideoPath, duration, width, height, shot.CameraMovement, ct);
-
-        if (!File.Exists(shotVideoPath) || new FileInfo(shotVideoPath).Length < 1000)
-        {
-            throw new InvalidOperationException($"Không thể tạo video cho Shot {shot.Id}. File video không tồn tại hoặc dung lượng rỗng.");
-        }
-
-        shot.RenderedShotVideoPath = shotVideoPath;
-        shot.RenderStatus = "Completed";
-        shot.UpdatedAtUtc = DateTime.UtcNow;
-        await _context.SaveChangesAsync(ct);
-
-        _logger.LogInformation("Shot {Id} rendered successfully: {Path}", shotId, shotVideoPath);
-        return shotVideoPath;
+    /// <summary>Records every line first: the GPU worker needs each shot's real length to size its motion clip.</summary>
+    public async Task PrepareVoicesAsync(Guid episodeId, CancellationToken ct = default)
+    {
+        var episode = await LoadEpisodeAsync(episodeId, ct);
+        if (await _meter.ShouldPauseAsync(ct))
+            throw new InvalidOperationException("Đã vượt ngân sách AI của tháng (chế độ tạm dừng) — tăng ngân sách trong Cài đặt để dựng tiếp.");
+        await SetStatusAsync(episode, "VoiceGenerating", ct);
+        await EnsureVoicesAsync(episode, OrderedShots(episode), ct);
     }
 
     public async Task<string> AssembleEpisodeAsync(Guid episodeId, CancellationToken ct = default)
     {
-        var episode = await _context.FilmEpisodes
-            .Include(e => e.FilmProject)
-            .Include(e => e.Scenes)
-                .ThenInclude(s => s.Shots)
-            .FirstOrDefaultAsync(e => e.Id == episodeId, ct)
-            ?? throw new ArgumentException("Không tìm thấy tập phim.");
+        var episode = await LoadEpisodeAsync(episodeId, ct);
+        var shots = OrderedShots(episode);
+        if (shots.Count == 0)
+            throw new InvalidOperationException("Tập phim chưa có kịch bản (0 shot) — cần viết kịch bản trước khi dựng.");
 
-        _logger.LogInformation("Assembling Episode {Num} ({Title}) for Project {ProjId}",
-            episode.EpisodeNumber, episode.Title, episode.FilmProjectId);
+        _logger.LogInformation("Assembling Episode {Num} ({Title}): {Shots} shots", episode.EpisodeNumber, episode.Title, shots.Count);
 
-        episode.Status = "FilmEditing";
-        await _context.SaveChangesAsync(ct);
-
-        var tempRoot = NewsStudio.Infrastructure.Common.TempStorage.GetRoot(_configuration);
-        var episodeDir = Path.Combine(tempRoot, "film_factory", "episodes");
-        Directory.CreateDirectory(episodeDir);
-
-        var outputVideoPath = Path.Combine(episodeDir, $"episode_{episode.EpisodeNumber}_{episode.Id}.mp4");
-
-        // 1. Đảm bảo toàn bộ các Shots đã được render
-        var allShots = episode.Scenes
-            .OrderBy(s => s.SceneNumber)
-            .SelectMany(s => s.Shots.OrderBy(sh => sh.ShotNumber))
-            .ToList();
-
-        var shotFiles = new List<string>();
-
-        foreach (var shot in allShots)
+        try
         {
-            if (string.IsNullOrWhiteSpace(shot.RenderedShotVideoPath) || !File.Exists(shot.RenderedShotVideoPath) || shot.RenderStatus != "Completed")
+            if (await _meter.ShouldPauseAsync(ct))
+                throw new InvalidOperationException("Đã vượt ngân sách AI của tháng (chế độ tạm dừng) — tăng ngân sách trong Cài đặt để dựng tiếp.");
+
+            await SetStatusAsync(episode, "VisualAssetsGenerating", ct);
+            await EnsureFramesAsync(episode, shots, ct);
+
+            await SetStatusAsync(episode, "VoiceGenerating", ct);
+            await EnsureVoicesAsync(episode, shots, ct);
+
+            await SetStatusAsync(episode, "FilmEditing", ct);
+            var files = new List<string>();
+            for (var i = 0; i < shots.Count; i++)
             {
-                var path = await RenderShotAsync(shot.Id, ct);
-                shotFiles.Add(path);
+                var shot = shots[i];
+                var upToDate = shot.RenderStatus == "Completed"
+                               && !string.IsNullOrWhiteSpace(shot.RenderedShotVideoPath)
+                               && File.Exists(shot.RenderedShotVideoPath);
+                files.Add(upToDate
+                    ? shot.RenderedShotVideoPath!
+                    : await RenderShotVideoAsync(episode, shot, IsSceneStart(shots, shot), i == shots.Count - 1, ct));
             }
-            else
-            {
-                shotFiles.Add(shot.RenderedShotVideoPath);
-            }
-        }
 
-        if (!shotFiles.Any())
+            var episodeDir = Directory.CreateDirectory(Path.Combine(Root, "episodes")).FullName;
+            var output = Path.Combine(episodeDir, $"episode_{episode.EpisodeNumber}_{episode.Id}.mp4");
+            await ConcatAsync(files, output, episode.Id, ct);
+
+            await SetStatusAsync(episode, "QualityCheck", ct);
+            var (score, duration) = await InspectAsync(output, shots.Any(s => s.DialogueText != null), shots.Sum(s => s.DurationSeconds), ct);
+
+            episode.OutputVideoPath = output;
+            episode.ActualDurationSeconds = Math.Round(duration, 1);
+            episode.QualityScore = score;
+            episode.ThumbnailPath = shots.First().RawImagePath;
+            episode.ErrorMessage = null;
+            episode.Status = "Completed";
+            episode.UpdatedAtUtc = DateTime.UtcNow;
+            await _context.SaveChangesAsync(ct);
+
+            _logger.LogInformation("Episode {Num} ready: {Duration:F1}s, QA {Score}/100 -> {Path}", episode.EpisodeNumber, duration, score, output);
+            return output;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            throw new InvalidOperationException("Tập phim không có shot nào để dựng.");
+            _logger.LogError(ex, "Episode {Num} render failed", episode.EpisodeNumber);
+            episode.Status = "Failed";
+            episode.ErrorMessage = ex.Message.Length > 1900 ? ex.Message[..1900] : ex.Message;
+            episode.UpdatedAtUtc = DateTime.UtcNow;
+            await _context.SaveChangesAsync(CancellationToken.None);
+            throw;
         }
-
-        // 2. Tạo file danh sách Concat cho FFmpeg (bắt buộc dùng UTF8 không BOM để FFmpeg demuxer không bị lỗi 'unknown keyword')
-        var concatListPath = Path.Combine(episodeDir, $"concat_ep_{episode.Id}.txt");
-        var sb = new StringBuilder();
-        foreach (var file in shotFiles)
-        {
-            // Escape path cho FFmpeg concat demuxer (hỗ trợ cả Linux và Windows, escape dấu nháy đơn)
-            var escaped = file.Replace("\\", "/").Replace("'", "'\\''");
-            sb.AppendLine($"file '{escaped}'");
-        }
-        await File.WriteAllTextAsync(concatListPath, sb.ToString(), new UTF8Encoding(false), ct);
-
-        // 3. Ghép nối các file video shot thành video tập phim 5 phút
-        if (File.Exists(outputVideoPath)) File.Delete(outputVideoPath);
-
-        var concatArgs = $"-y -f concat -safe 0 -i \"{concatListPath}\" -c:v libx264 -pix_fmt yuv420p -preset fast -c:a aac -b:a 192k -movflags +faststart \"{outputVideoPath}\"";
-
-        var success = await ExecuteProcessAsync(_ffmpegPath, concatArgs, ct);
-        if (!success || !File.Exists(outputVideoPath))
-        {
-            // Fallback concat copy
-            var fallbackArgs = $"-y -f concat -safe 0 -i \"{concatListPath}\" -c copy -movflags +faststart \"{outputVideoPath}\"";
-            await ExecuteProcessAsync(_ffmpegPath, fallbackArgs, ct);
-        }
-
-        if (!File.Exists(outputVideoPath) || new FileInfo(outputVideoPath).Length < 1000)
-        {
-            throw new InvalidOperationException($"FFmpeg ghép video tập phim thất bại. File đích không tồn tại hoặc rỗng: {outputVideoPath}");
-        }
-
-        // 4. Đo đạc thời lượng thực tế
-        var actualDuration = allShots.Sum(s => s.DurationSeconds);
-        episode.ActualDurationSeconds = actualDuration;
-        episode.OutputVideoPath = outputVideoPath;
-        episode.Status = "QualityCheck";
-        episode.UpdatedAtUtc = DateTime.UtcNow;
-        await _context.SaveChangesAsync(ct);
-
-        // 5. Kiểm tra chất lượng kỹ thuật
-        var score = await CheckQualityAsync(episode.Id, outputVideoPath, ct);
-        episode.QualityScore = score;
-        episode.Status = "Completed";
-        episode.UpdatedAtUtc = DateTime.UtcNow;
-        await _context.SaveChangesAsync(ct);
-
-        _logger.LogInformation("Episode {Num} assembled and QA passed ({Score}/100) -> {Path}",
-            episode.EpisodeNumber, score, outputVideoPath);
-
-        return outputVideoPath;
     }
 
     public async Task<double> CheckQualityAsync(Guid episodeId, string videoPath, CancellationToken ct = default)
     {
-        if (!File.Exists(videoPath)) return 0.0;
-
-        var fileInfo = new FileInfo(videoPath);
-        if (fileInfo.Length < 100 * 1024) // Dưới 100KB là lỗi
-        {
-            return 20.0;
-        }
-
-        // Kiểm tra cơ bản: file tồn tại, dung lượng hợp lý, đọc được
-        double score = 95.0;
-        return await Task.FromResult(score);
+        var episode = await LoadEpisodeAsync(episodeId, ct);
+        var shots = OrderedShots(episode);
+        var (score, _) = await InspectAsync(videoPath, shots.Any(s => s.DialogueText != null), shots.Sum(s => s.DurationSeconds), ct);
+        return score;
     }
 
-    private async Task GenerateCinematicPlateAsync(string imagePath, FilmShot shot, CancellationToken ct)
+    // ─────────────────────────────── Frames (AI stills) ───────────────────────────────
+
+    private async Task EnsureFramesAsync(FilmEpisode episode, IReadOnlyList<FilmShot> shots, CancellationToken ct)
     {
-        if (File.Exists(imagePath)) return;
+        var project = episode.FilmProject!;
+        var aspect = project.AspectRatio == "16:9" ? "16:9" : "9:16";
+        var framesDir = Directory.CreateDirectory(Path.Combine(Root, "frames")).FullName;
 
-        // Sinh ảnh nền màu điện ảnh chất lượng cao (RGB gradient với ánh sáng phim)
-        // Dùng FFmpeg lavfi testsrc2 / color / gradients để tạo texture phim đẹp mắt nếu chưa có ảnh
-        var isVertical = shot.FilmEpisode?.FilmProject?.AspectRatio != "16:9";
-        var width = isVertical ? 1080 : 1920;
-        var height = isVertical ? 1920 : 1080;
+        // Frames already delivered (e.g. by the free GPU worker) are used as they are.
+        shots = shots.Where(s => string.IsNullOrWhiteSpace(s.RawImagePath) || !File.Exists(s.RawImagePath)).ToList();
+        if (shots.Count == 0) return;
+        if (_gpu.IsConfigured && _configuration.GetValue("Film:Gpu:Enabled", true))
+            throw new InvalidOperationException(
+                $"{shots.Count} shot chưa có khung hình từ máy GPU {_gpu.Name}. Bấm \"Dựng tập\" để gửi lại lên GPU " +
+                "(app không tự chuyển sang vẽ ảnh Gemini trả phí).");
 
-        // Chọn gam màu điện ảnh theo thể loại hoặc loại shot
-        string colorFilter;
-        if (shot.ShotType == "CloseUp")
+        // Characters seen in these frames need a reference portrait first (keeps faces consistent).
+        var charsById = project.Characters.ToDictionary(c => c.CharacterId, StringComparer.OrdinalIgnoreCase);
+        var needed = shots.SelectMany(CharactersIn).Distinct(StringComparer.OrdinalIgnoreCase)
+            .Where(charsById.ContainsKey).Select(id => charsById[id]).ToList();
+        foreach (var character in needed)
         {
-            colorFilter = "color=c=0x181824:s=1080x1920:d=1,drawbox=y=ih*0.2:color=0x4338ca@0.3:width=iw:height=ih*0.6:t=fill";
-        }
-        else if (shot.CameraMovement == "PanLeft" || shot.CameraMovement == "PanRight")
-        {
-            colorFilter = "color=c=0x0f172a:s=1080x1920:d=1,drawbox=y=ih*0.4:color=0x0284c7@0.25:width=iw:height=ih*0.4:t=fill";
-        }
-        else
-        {
-            colorFilter = "color=c=0x111827:s=1080x1920:d=1,drawbox=y=ih*0.3:color=0x6366f1@0.2:width=iw:height=ih*0.5:t=fill";
+            await EnsurePortraitAsync(project, episode, character, ct);
         }
 
-        var args = $"-y -f lavfi -i \"{colorFilter}\" -update 1 -frames:v 1 -q:v 2 \"{imagePath}\"";
-        await ExecuteProcessAsync(_ffmpegPath, args, ct);
-
-        if (!File.Exists(imagePath))
+        // One image per distinct frame prompt; shots sharing a prompt reuse it.
+        var jobs = new List<(string Path, string Prompt, List<FilmCharacter> Refs, List<FilmShot> Shots)>();
+        foreach (var group in shots.GroupBy(s => s.VisualPrompt))
         {
-            // Fallback tạo file ảnh BMP/JPG tối giản
-            await File.WriteAllBytesAsync(imagePath, CreatePlaceholderJpeg(width, height), ct);
-        }
-    }
-
-    private async Task RenderShotVideoWithFfmpegAsync(
-        string imagePath,
-        string? audioPath,
-        string outputPath,
-        double duration,
-        int width,
-        int height,
-        string cameraMovement,
-        CancellationToken ct)
-    {
-        var fps = 30;
-        var totalFrames = (int)Math.Max(30, duration * fps);
-
-        // Hiệu ứng chuyển động máy quay (Ken Burns Cinematic Pan/Zoom)
-        string zoompanFilter;
-        switch (cameraMovement)
-        {
-            case "SlowZoomIn":
-                zoompanFilter = $"zoompan=z='min(zoom+0.0015,1.25)':d={totalFrames}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={width}x{height}:fps={fps}";
-                break;
-            case "SlowZoomOut":
-                zoompanFilter = $"zoompan=z='if(lte(zoom,1.0),1.25,max(1.001,zoom-0.0015))':d={totalFrames}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={width}x{height}:fps={fps}";
-                break;
-            case "PanLeft":
-                zoompanFilter = $"zoompan=z=1.15:x='if(lte(on,-1),(it-1)*2,x-1)':y='ih/2-(ih/zoom/2)':d={totalFrames}:s={width}x{height}:fps={fps}";
-                break;
-            case "PanRight":
-                zoompanFilter = $"zoompan=z=1.15:x='if(lte(on,-1),(it-1)*2,x+1)':y='ih/2-(ih/zoom/2)':d={totalFrames}:s={width}x{height}:fps={fps}";
-                break;
-            case "TiltUp":
-                zoompanFilter = $"zoompan=z=1.15:x='iw/2-(iw/zoom/2)':y='if(lte(on,-1),(it-1)*2,y-1)':d={totalFrames}:s={width}x{height}:fps={fps}";
-                break;
-            case "TiltDown":
-                zoompanFilter = $"zoompan=z=1.15:x='iw/2-(iw/zoom/2)':y='if(lte(on,-1),(it-1)*2,y+1)':d={totalFrames}:s={width}x{height}:fps={fps}";
-                break;
-            case "Static":
-            default:
-                zoompanFilter = $"scale={width}:{height},setsar=1";
-                break;
-        }
-
-        string args;
-        if (!string.IsNullOrWhiteSpace(audioPath) && File.Exists(audioPath))
-        {
-            args = $"-y -loop 1 -i \"{imagePath}\" -i \"{audioPath}\" -vf \"{zoompanFilter}\" -c:v libx264 -t {duration:F2} -pix_fmt yuv420p -preset ultrafast -c:a aac -b:a 192k -shortest \"{outputPath}\"";
-        }
-        else
-        {
-            // Không có thoại: tạo luồng audio yên lặng (anullsrc) để mọi shot đồng nhất audio codec khi ghép concat
-            args = $"-y -loop 1 -i \"{imagePath}\" -f lavfi -i anullsrc=channel_layout=stereo:sample_rate=44100 -vf \"{zoompanFilter}\" -c:v libx264 -t {duration:F2} -pix_fmt yuv420p -preset ultrafast -c:a aac -b:a 192k -shortest \"{outputPath}\"";
-        }
-
-        await ExecuteProcessAsync(_ffmpegPath, args, ct);
-
-        if (!File.Exists(outputPath))
-        {
-            _logger.LogWarning("Ken Burns render failed for shot, using basic scale fallback: {Path}", outputPath);
-            var fallbackArgs = !string.IsNullOrWhiteSpace(audioPath) && File.Exists(audioPath)
-                ? $"-y -loop 1 -t {duration:F2} -i \"{imagePath}\" -i \"{audioPath}\" -vf \"scale={width}:{height},format=yuv420p\" -c:v libx264 -preset ultrafast -c:a aac -b:a 128k -t {duration:F2} -shortest \"{outputPath}\""
-                : $"-y -loop 1 -t {duration:F2} -i \"{imagePath}\" -f lavfi -i anullsrc=channel_layout=stereo:sample_rate=44100 -vf \"scale={width}:{height},format=yuv420p\" -c:v libx264 -preset ultrafast -c:a aac -b:a 128k -t {duration:F2} -shortest \"{outputPath}\"";
-            await ExecuteProcessAsync(_ffmpegPath, fallbackArgs, ct);
-        }
-    }
-
-    private static byte[] CreatePlaceholderJpeg(int width, int height)
-    {
-        // 1x1 black JPEG fallback bytes
-        return new byte[] {
-            0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x01, 0x00, 0x60,
-            0x00, 0x60, 0x00, 0x00, 0xFF, 0xDB, 0x00, 0x43, 0x00, 0x08, 0x06, 0x06, 0x07, 0x06, 0x05, 0x08,
-            0x07, 0x07, 0x07, 0x09, 0x09, 0x08, 0x0A, 0x0C, 0x14, 0x0D, 0x0C, 0x0B, 0x0B, 0x0C, 0x19, 0x12,
-            0x13, 0x0F, 0x14, 0x1D, 0x1A, 0x1F, 0x1E, 0x1D, 0x1A, 0x1C, 0x1C, 0x20, 0x24, 0x2E, 0x27, 0x20,
-            0x22, 0x2C, 0x23, 0x1C, 0x1C, 0x28, 0x37, 0x29, 0x2C, 0x30, 0x31, 0x34, 0x34, 0x34, 0x1F, 0x27,
-            0x39, 0x3D, 0x38, 0x32, 0x3C, 0x2E, 0x33, 0x34, 0x32, 0xFF, 0xC0, 0x00, 0x0B, 0x08, 0x00, 0x01,
-            0x00, 0x01, 0x01, 0x01, 0x11, 0x00, 0xFF, 0xC4, 0x00, 0x1F, 0x00, 0x00, 0x01, 0x05, 0x01, 0x01,
-            0x01, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x02, 0x03, 0x04,
-            0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0xFF, 0xDA, 0x00, 0x08, 0x01, 0x01, 0x00, 0x00, 0x3F,
-            0x00, 0x7F, 0x00, 0xAF, 0xFF, 0xD9
-        };
-    }
-
-    private async Task<bool> ExecuteProcessAsync(string exe, string args, CancellationToken ct)
-    {
-        try
-        {
-            var psi = new ProcessStartInfo
+            var refs = CharactersIn(group.First()).Where(charsById.ContainsKey).Select(id => charsById[id]).Take(3).ToList();
+            var key = Hash($"{_gemini.ImageModel}|{aspect}|{group.Key}|{string.Join(",", refs.Select(r => r.Id + r.ConsistencyPrompt))}");
+            var path = Path.Combine(framesDir, key + ".jpg");
+            if (File.Exists(path))
             {
-                FileName = exe,
-                Arguments = args,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardError = true,
-                RedirectStandardOutput = true
-            };
-
-            using var proc = new Process { StartInfo = psi };
-            if (!proc.Start()) return false;
-
-            var stderrTask = proc.StandardError.ReadToEndAsync(ct);
-            var stdoutTask = proc.StandardOutput.ReadToEndAsync(ct);
-
-            await proc.WaitForExitAsync(ct);
-            var (stderr, stdout) = (await stderrTask, await stdoutTask);
-
-            if (proc.ExitCode != 0)
-            {
-                _logger.LogWarning("FFmpeg/Process {Exe} exited with code {Code}. Stderr: {Err}", exe, proc.ExitCode, stderr);
+                foreach (var s in group) s.RawImagePath = path;
+                continue;
             }
-
-            return proc.ExitCode == 0;
+            jobs.Add((path, group.Key, refs, group.ToList()));
         }
-        catch (Exception ex)
+
+        var parallel = Math.Clamp(_configuration.GetValue("Film:ImageParallelism", 3), 1, 6);
+        foreach (var batch in jobs.Chunk(parallel))
         {
-            _logger.LogError(ex, "Failed to execute process {Exe} with args {Args}", exe, args);
-            return false;
+            await EnsureBudgetAsync(project, _gemini.EstimatedImageCostUsd * batch.Length, ct);
+            var results = await Task.WhenAll(batch.Select(async job =>
+            {
+                var references = new List<FilmGeminiClient.ReferenceImage>();
+                var intro = new StringBuilder();
+                for (var i = 0; i < job.Refs.Count; i++)
+                {
+                    var portrait = job.Refs[i].FrontReferenceImageUrl!;
+                    references.Add(new FilmGeminiClient.ReferenceImage(await File.ReadAllBytesAsync(portrait, ct), "image/jpeg"));
+                    intro.Append($"Reference photo {i + 1} shows this person: {job.Refs[i].ConsistencyPrompt}. ");
+                }
+                var scene = $"{job.Prompt}. {project.VisualArtStyle}, photorealistic cinematic film still, no text, no subtitles, no watermark";
+                var prompt = references.Count > 0
+                    ? intro + "Keep each person's face, hairstyle and outfit exactly as in the reference photos, but create a completely new picture (new pose, framing and background) of this scene: " + scene
+                    : scene;
+                var image = await _gemini.GenerateImageAsync(prompt, aspect, references, ct);
+                await SaveAsJpegAsync(image.Bytes, job.Path, ct);
+                return (job, image);
+            }));
+
+            foreach (var (job, image) in results)
+            {
+                await _costController.RecordCostAsync(project.Id, episode.Id, null, "Gemini", "ImageGen", image.Tokens, image.CostUsd, image.FreeKey,
+                    $"Khung hình tập {episode.EpisodeNumber}", ct);
+                foreach (var s in job.Shots) s.RawImagePath = job.Path;
+            }
+        }
+        await _context.SaveChangesAsync(ct);
+    }
+
+    private async Task EnsurePortraitAsync(FilmProject project, FilmEpisode episode, FilmCharacter character, CancellationToken ct)
+    {
+        if (!string.IsNullOrWhiteSpace(character.FrontReferenceImageUrl) && File.Exists(character.FrontReferenceImageUrl)) return;
+
+        var dir = Directory.CreateDirectory(Path.Combine(Root, "characters")).FullName;
+        var path = Path.Combine(dir, $"{character.Id}_{Hash(character.ConsistencyPrompt)}.jpg");
+        if (!File.Exists(path))
+        {
+            await EnsureBudgetAsync(project, _gemini.EstimatedImageCostUsd, ct);
+            var prompt = $"Character reference portrait, waist-up, facing the camera, neutral expression, plain dark grey studio background, soft even lighting. " +
+                         $"{character.ConsistencyPrompt}. {project.VisualArtStyle}, photorealistic, no text, no watermark.";
+            var image = await _gemini.GenerateImageAsync(prompt, "3:4", Array.Empty<FilmGeminiClient.ReferenceImage>(), ct);
+            await SaveAsJpegAsync(image.Bytes, path, ct);
+            await _costController.RecordCostAsync(project.Id, episode.Id, null, "Gemini", "ImageGen", image.Tokens, image.CostUsd, image.FreeKey,
+                $"Ảnh tham chiếu nhân vật {character.Name}", ct);
+        }
+        character.FrontReferenceImageUrl = path;
+        await _context.SaveChangesAsync(ct);
+    }
+
+    private async Task EnsureBudgetAsync(FilmProject project, decimal estimate, CancellationToken ct)
+    {
+        if (!await _costController.CanExecutePaidTaskAsync(project.Id, estimate, ct))
+        {
+            throw new InvalidOperationException(
+                $"Dự án đã chạm trần ngân sách {project.TotalBudgetLimitUsd:0.##} USD (đã chi {project.TotalActualCostUsd:0.####} USD). " +
+                "Tăng ngân sách dự án để dựng tiếp.");
         }
     }
 
-    private string FindFfmpegExecutable()
+    private static IEnumerable<string> CharactersIn(FilmShot shot) =>
+        (shot.CharacterIdsPresent ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+    // ─────────────────────────────── Voices ───────────────────────────────
+
+    private async Task EnsureVoicesAsync(FilmEpisode episode, IReadOnlyList<FilmShot> shots, CancellationToken ct)
     {
-        var cfgPath = _configuration["Ffmpeg:BinaryPath"];
-        if (!string.IsNullOrWhiteSpace(cfgPath) && File.Exists(cfgPath)) return cfgPath;
+        var project = episode.FilmProject!;
+        var voices = project.Characters.ToDictionary(c => c.CharacterId, c => c.VoiceModel, StringComparer.OrdinalIgnoreCase);
+        var narrator = GeminiFilmVoices.Narrator(voices.Values);
+        var audioPricePerM = decimal.TryParse(_configuration["Ai:Pricing:TtsAudioPerM"], NumberStyles.Number, CultureInfo.InvariantCulture, out var p) ? p : 10m;
 
-        var localBin = Path.Combine(AppContext.BaseDirectory, "ffmpeg.exe");
-        if (File.Exists(localBin)) return localBin;
+        foreach (var shot in shots.Where(s => !string.IsNullOrWhiteSpace(s.DialogueText)))
+        {
+            if (!string.IsNullOrWhiteSpace(shot.AudioVoicePath) && File.Exists(shot.AudioVoicePath)) continue;
 
-        var toolBin = @"D:\tools\ffmpeg-master-latest-win64-gpl\bin\ffmpeg.exe";
-        if (File.Exists(toolBin)) return toolBin;
+            var voice = shot.SpeakerCharacterId != null && voices.TryGetValue(shot.SpeakerCharacterId, out var v) && GeminiFilmVoices.IsGeminiVoice(v)
+                ? v
+                : narrator;
 
-        return "ffmpeg";
+            var result = await _tts.SynthesizeSpeechWithSubtitlesAsync(new TtsSynthesisRequest
+            {
+                ProjectId = shot.Id,
+                Text = shot.DialogueText!,
+                Voice = voice,
+                Speed = "+0%"
+            }, ct);
+
+            if (string.IsNullOrEmpty(result.AudioFilePath) || !File.Exists(result.AudioFilePath))
+                throw new InvalidOperationException($"Không tạo được giọng đọc cho cảnh {shot.FilmScene?.SceneNumber}, shot {shot.ShotNumber}.");
+
+            shot.AudioVoicePath = result.AudioFilePath;
+            shot.DurationSeconds = Math.Round(result.AudioDurationSeconds + GapAfterLine, 2);
+            shot.RenderStatus = "Pending"; // new audio → the shot video must be rebuilt
+
+            if (!result.FromCache)
+            {
+                // Gemini audio ≈ 25 tokens per second (estimate; the exact amount is in the AI usage log).
+                var tokens = (long)Math.Ceiling(result.AudioDurationSeconds * 25);
+                await _costController.RecordCostAsync(project.Id, episode.Id, shot.Id, "Gemini", "VoiceTTS", tokens,
+                    Math.Round(tokens * audioPricePerM / 1_000_000m, 6), false, $"Giọng {voice}", ct);
+            }
+            await _context.SaveChangesAsync(ct); // keep finished lines if a later one fails
+        }
+    }
+
+    // ─────────────────────────────── Shot video ───────────────────────────────
+
+    private async Task<string> RenderShotVideoAsync(FilmEpisode episode, FilmShot shot, bool sceneStart, bool lastShot, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(shot.RawImagePath) || !File.Exists(shot.RawImagePath))
+            throw new InvalidOperationException($"Shot {shot.ShotNumber} chưa có khung hình.");
+
+        var vertical = episode.FilmProject?.AspectRatio != "16:9";
+        var (w, h) = vertical ? (1080, 1920) : (1920, 1080);
+        var hasVoice = !string.IsNullOrWhiteSpace(shot.AudioVoicePath) && File.Exists(shot.AudioVoicePath);
+        var duration = hasVoice ? shot.DurationSeconds : Math.Clamp(shot.DurationSeconds, 2.0, 5.0);
+        var frames = Math.Max(Fps, (int)Math.Round(duration * Fps));
+        duration = frames / (double)Fps;
+
+        var dir = Directory.CreateDirectory(Path.Combine(Root, "shots")).FullName;
+        var output = Path.Combine(dir, $"shot_{shot.Id}.mp4");
+
+        shot.RenderStatus = "Rendering";
+        await _context.SaveChangesAsync(ct);
+
+        var d = duration.ToString("F3", CultureInfo.InvariantCulture);
+        var fades = new StringBuilder();
+        var afades = new StringBuilder();
+        if (sceneStart) fades.Append(",fade=t=in:st=0:d=0.4");
+        if (lastShot)
+        {
+            var st = Math.Max(0, duration - 1.2).ToString("F3", CultureInfo.InvariantCulture);
+            fades.Append($",fade=t=out:st={st}:d=1.2");
+            afades.Append($",afade=t=out:st={st}:d=1.2");
+        }
+
+        var clip = !string.IsNullOrWhiteSpace(shot.MotionVideoPath) && File.Exists(shot.MotionVideoPath) ? shot.MotionVideoPath : null;
+        string video;
+        string visualInput;
+        if (clip != null)
+        {
+            // Real motion clip: upscale to the delivery size, sharpen lightly, slow it down a little when the line
+            // is longer than the clip (max 1.5x) and hold the last frame for whatever remains.
+            // The last part of an image-to-video clip is where it tends to smear, so only the first
+            // Film:MotionKeepFraction (default 85%) is used.
+            var keep = Math.Clamp(_configuration.GetValue("Film:MotionKeepFraction", 0.85), 0.5, 1.0);
+            var clipSeconds = await ProbeDurationAsync(clip, ct) * keep;
+            var slow = clipSeconds > 0 ? Math.Clamp(duration / clipSeconds, 1.0, 1.5) : 1.0;
+            var s = slow.ToString("F3", CultureInfo.InvariantCulture);
+            var kept = clipSeconds.ToString("F3", CultureInfo.InvariantCulture);
+            video = $"[0:v]trim=duration={kept},setpts={s}*(PTS-STARTPTS),scale={w}:{h}:force_original_aspect_ratio=increase:flags=lanczos,crop={w}:{h},setsar=1," +
+                    $"unsharp=5:5:0.6:5:5:0.0,fps={Fps},tpad=stop_mode=clone:stop_duration={d},trim=end_frame={frames},format=yuv420p{fades}[v]";
+            visualInput = $"-i \"{clip}\"";
+        }
+        else
+        {
+            video = $"[0:v]scale={w * 2}:{h * 2}:force_original_aspect_ratio=increase,crop={w * 2}:{h * 2},setsar=1," +
+                    $"{ZoomPan(shot.CameraMovement, frames, w, h)},format=yuv420p{fades}[v]";
+            visualInput = $"-i \"{shot.RawImagePath}\"";
+        }
+        var audio = $"[1:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,apad,atrim=0:{d}{afades}[a]";
+        var audioInput = hasVoice
+            ? $"-i \"{shot.AudioVoicePath}\""
+            : $"-f lavfi -t {d} -i anullsrc=r=48000:cl=stereo";
+
+        var args = $"-hide_banner -y {visualInput} {audioInput} -filter_complex \"{video};{audio}\" " +
+                   $"-map \"[v]\" -map \"[a]\" -frames:v {frames} -r {Fps} -c:v libx264 -preset veryfast -crf 21 -pix_fmt yuv420p " +
+                   $"-color_range tv -c:a aac -b:a 160k -ar 48000 -ac 2 -t {d} \"{output}\"";
+
+        var (code, _, err) = await RunAsync(_ffmpeg, args, ct);
+        if (code != 0 || !File.Exists(output) || new FileInfo(output).Length < 10_000)
+        {
+            shot.RenderStatus = "Failed";
+            shot.ErrorMessage = Tail(err);
+            await _context.SaveChangesAsync(ct);
+            throw new InvalidOperationException($"FFmpeg dựng shot {shot.ShotNumber} thất bại: {Tail(err)}");
+        }
+
+        shot.DurationSeconds = Math.Round(duration, 2);
+        shot.RenderedShotVideoPath = output;
+        shot.RenderStatus = "Completed";
+        shot.ErrorMessage = null;
+        shot.UpdatedAtUtc = DateTime.UtcNow;
+        await _context.SaveChangesAsync(ct);
+        return output;
+    }
+
+    /// <summary>Ken Burns camera move over exactly <paramref name="n"/> frames on a 2× upscaled still (less jitter).</summary>
+    private static string ZoomPan(string? move, int n, int w, int h)
+    {
+        const string cx = "(iw-iw/zoom)/2", cy = "(ih-ih/zoom)/2";
+        var (z, x, y) = move switch
+        {
+            "SlowZoomOut" => ($"1.16-0.16*on/{n}", cx, cy),
+            "PanRight" => ("1.12", $"(iw-iw/zoom)*on/{n}", cy),
+            "PanLeft" => ("1.12", $"(iw-iw/zoom)*(1-on/{n})", cy),
+            "TiltUp" => ("1.12", cx, $"(ih-ih/zoom)*(1-on/{n})"),
+            "TiltDown" => ("1.12", cx, $"(ih-ih/zoom)*on/{n}"),
+            "Static" => ($"1.03+0.03*on/{n}", cx, cy),
+            _ => ($"1+0.16*on/{n}", cx, cy) // SlowZoomIn and anything unknown
+        };
+        return $"zoompan=z='{z}':x='{x}':y='{y}':d={n}:s={w}x{h}:fps={Fps}";
+    }
+
+    // ─────────────────────────────── Assembly & QA ───────────────────────────────
+
+    private async Task ConcatAsync(IReadOnlyList<string> files, string output, Guid episodeId, CancellationToken ct)
+    {
+        var list = Path.Combine(Path.GetDirectoryName(output)!, $"concat_{episodeId}.txt");
+        var sb = new StringBuilder();
+        foreach (var f in files) sb.Append("file '").Append(f.Replace("\\", "/").Replace("'", "'\\''")).Append("'\n");
+        await File.WriteAllTextAsync(list, sb.ToString(), new UTF8Encoding(false), ct);
+
+        if (File.Exists(output)) File.Delete(output);
+        // Every shot is encoded with identical settings, so the picture is copied as-is; sound is re-encoded once
+        // so the joins are seamless.
+        var (code, _, err) = await RunAsync(_ffmpeg,
+            $"-hide_banner -y -f concat -safe 0 -i \"{list}\" -c:v copy -c:a aac -b:a 160k -ar 48000 -ac 2 -movflags +faststart \"{output}\"", ct);
+        if (code != 0 || !File.Exists(output))
+        {
+            _logger.LogWarning("Stream-copy concat failed, re-encoding: {Err}", Tail(err));
+            (code, _, err) = await RunAsync(_ffmpeg,
+                $"-hide_banner -y -f concat -safe 0 -i \"{list}\" -c:v libx264 -preset veryfast -crf 21 -pix_fmt yuv420p -r {Fps} " +
+                $"-c:a aac -b:a 160k -ar 48000 -ac 2 -movflags +faststart \"{output}\"", ct);
+        }
+        try { File.Delete(list); } catch { /* best effort */ }
+
+        if (code != 0 || !File.Exists(output) || new FileInfo(output).Length < 100_000)
+            throw new InvalidOperationException($"FFmpeg ghép tập phim thất bại: {Tail(err)}");
+    }
+
+    /// <summary>Real checks on the finished file. Throws when it would not be watchable (no picture, silent, too short).</summary>
+    private async Task<(double Score, double Duration)> InspectAsync(string path, bool expectSpeech, double expectedSeconds, CancellationToken ct)
+    {
+        if (!File.Exists(path)) throw new InvalidOperationException("Không tìm thấy file video tập phim.");
+
+        var (_, probe, _) = await RunAsync(_ffprobe,
+            $"-v error -show_entries stream=codec_type,codec_name,width,height,pix_fmt:format=duration -of default=nw=1 \"{path}\"", ct);
+        var hasVideo = probe.Contains("codec_type=video");
+        var hasAudio = probe.Contains("codec_type=audio");
+        var durMatch = Regex.Match(probe, @"duration=([\d.]+)");
+        var duration = durMatch.Success ? double.Parse(durMatch.Groups[1].Value, CultureInfo.InvariantCulture) : 0;
+
+        if (!hasVideo) throw new InvalidOperationException("Kiểm tra chất lượng: file không có hình.");
+        if (!hasAudio) throw new InvalidOperationException("Kiểm tra chất lượng: file không có âm thanh.");
+
+        var (_, _, vol) = await RunAsync(_ffmpeg, $"-hide_banner -nostats -i \"{path}\" -vn -af volumedetect -f null -", ct);
+        var mean = Regex.Match(vol, @"mean_volume:\s*(-?[\d.]+|-inf) dB");
+        var meanDb = mean.Success && double.TryParse(mean.Groups[1].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out var m) ? m : -999;
+        if (expectSpeech && meanDb < -45)
+            throw new InvalidOperationException($"Kiểm tra chất lượng: âm thanh gần như câm (mean {meanDb:F1} dB) dù tập có lời thoại.");
+
+        var score = 100.0;
+        if (expectedSeconds > 0 && Math.Abs(duration - expectedSeconds) > Math.Max(3, expectedSeconds * 0.05)) score -= 15;
+        if (!probe.Contains("pix_fmt=yuv420p")) score -= 10;
+        if (meanDb < -30) score -= 10;
+        return (score, duration);
+    }
+
+    // ─────────────────────────────── Helpers ───────────────────────────────
+
+    private async Task<FilmEpisode> LoadEpisodeAsync(Guid episodeId, CancellationToken ct) =>
+        await _context.FilmEpisodes
+            .Include(e => e.FilmProject).ThenInclude(p => p!.Characters)
+            .Include(e => e.Scenes).ThenInclude(s => s.Shots)
+            .FirstOrDefaultAsync(e => e.Id == episodeId, ct)
+        ?? throw new ArgumentException("Không tìm thấy tập phim.");
+
+    private static List<FilmShot> OrderedShots(FilmEpisode episode) =>
+        episode.Scenes.OrderBy(s => s.SceneNumber).SelectMany(s => s.Shots.OrderBy(sh => sh.ShotNumber)).ToList();
+
+    private static bool IsSceneStart(List<FilmShot> shots, FilmShot shot)
+    {
+        var i = shots.IndexOf(shot);
+        return i == 0 || shots[i - 1].FilmSceneId != shot.FilmSceneId;
+    }
+
+    private async Task SetStatusAsync(FilmEpisode episode, string status, CancellationToken ct)
+    {
+        episode.Status = status;
+        episode.ErrorMessage = null;
+        episode.UpdatedAtUtc = DateTime.UtcNow;
+        await _context.SaveChangesAsync(ct);
+    }
+
+    /// <summary>Stores any returned image format as a high-quality JPEG (what FFmpeg and the reference upload expect).</summary>
+    private async Task SaveAsJpegAsync(byte[] bytes, string path, CancellationToken ct)
+    {
+        var isJpeg = bytes.Length > 3 && bytes[0] == 0xFF && bytes[1] == 0xD8;
+        if (isJpeg)
+        {
+            await File.WriteAllBytesAsync(path, bytes, ct);
+            return;
+        }
+        var tmp = path + ".src";
+        await File.WriteAllBytesAsync(tmp, bytes, ct);
+        var (code, _, err) = await RunAsync(_ffmpeg, $"-hide_banner -y -i \"{tmp}\" -q:v 2 \"{path}\"", ct);
+        try { File.Delete(tmp); } catch { /* best effort */ }
+        if (code != 0 || !File.Exists(path)) throw new InvalidOperationException($"Không lưu được ảnh khung hình: {Tail(err)}");
+    }
+
+    private async Task<double> ProbeDurationAsync(string path, CancellationToken ct)
+    {
+        var (_, output, _) = await RunAsync(_ffprobe, $"-v error -show_entries format=duration -of csv=p=0 \"{path}\"", ct);
+        return double.TryParse(output.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var v) ? v : 0;
+    }
+
+    private static string Hash(string s) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(s)))[..24].ToLowerInvariant();
+
+    private static string Tail(string s)
+    {
+        var t = (s ?? string.Empty).Trim();
+        return t.Length > 600 ? "…" + t[^600..] : t;
+    }
+
+    private static async Task<(int Code, string Stdout, string Stderr)> RunAsync(string exe, string args, CancellationToken ct)
+    {
+        var psi = new ProcessStartInfo
+        {
+            FileName = exe,
+            Arguments = args,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardError = true,
+            RedirectStandardOutput = true
+        };
+        using var proc = Process.Start(psi) ?? throw new InvalidOperationException($"Không chạy được {exe}.");
+        var stderr = proc.StandardError.ReadToEndAsync(ct);
+        var stdout = proc.StandardOutput.ReadToEndAsync(ct);
+        await proc.WaitForExitAsync(ct);
+        return (proc.ExitCode, await stdout, await stderr);
+    }
+
+    private static (string Ffmpeg, string Ffprobe) FindFfmpeg(IConfiguration configuration)
+    {
+        var configured = configuration["Ffmpeg:BinaryPath"];
+        var ffmpeg = !string.IsNullOrWhiteSpace(configured) && File.Exists(configured)
+            ? configured
+            : EdgeTtsService.FindFfmpegExecutable() ?? "ffmpeg";
+
+        // ffprobe ships next to ffmpeg; otherwise rely on PATH (Linux containers).
+        var dir = Path.GetDirectoryName(ffmpeg);
+        var probeName = OperatingSystem.IsWindows() ? "ffprobe.exe" : "ffprobe";
+        var probe = !string.IsNullOrEmpty(dir) && File.Exists(Path.Combine(dir, probeName)) ? Path.Combine(dir, probeName) : "ffprobe";
+        return (ffmpeg, probe);
     }
 }

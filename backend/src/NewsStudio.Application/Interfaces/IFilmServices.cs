@@ -69,6 +69,11 @@ public interface IFilmRendererService
     Task<string> AssembleEpisodeAsync(Guid episodeId, CancellationToken ct = default);
 
     /// <summary>
+    /// Lồng tiếng toàn bộ câu thoại của tập trước (để biết thời lượng thật từng shot trước khi gửi lên máy GPU).
+    /// </summary>
+    Task PrepareVoicesAsync(Guid episodeId, CancellationToken ct = default);
+
+    /// <summary>
     /// Kiểm tra chất lượng kỹ thuật của tập video xuất xưởng (Codec, độ phân giải, âm thanh, độ dài).
     /// </summary>
     Task<double> CheckQualityAsync(Guid episodeId, string videoPath, CancellationToken ct = default);
@@ -85,4 +90,14 @@ public interface IFilmProductionCoordinator
     /// Tiến trình từng bước được gọi từ background worker.
     /// </summary>
     Task ExecuteProductionPipelineAsync(Guid projectId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Đưa 1 tập vào hàng đợi dựng (chạy nền): viết kịch bản nếu chưa có, tạo hình + giọng, ghép MP4.
+    /// </summary>
+    Task TriggerEpisodeRenderAsync(Guid episodeId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Job nền dựng 1 tập phim.
+    /// </summary>
+    Task RenderEpisodeJobAsync(Guid episodeId, CancellationToken ct = default);
 }

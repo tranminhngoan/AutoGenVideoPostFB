@@ -49,7 +49,7 @@ public class AiUsageMeter
     }
 
     /// <summary>Records one call from Gemini's usageMetadata; never throws (metering must not break a video).</summary>
-    public async Task RecordAsync(string kind, string model, bool freeKey, JsonElement? usage, bool speech = false, Guid? projectId = null)
+    public async Task RecordAsync(string kind, string model, bool freeKey, JsonElement? usage, bool speech = false, Guid? projectId = null, decimal? costOverrideUsd = null)
     {
         try
         {
@@ -65,7 +65,7 @@ public class AiUsageMeter
                 FreeKey = freeKey,
                 InputTokens = input,
                 OutputTokens = output,
-                CostUsd = Cost(speech, input, output, freeKey),
+                CostUsd = costOverrideUsd ?? Cost(speech, input, output, freeKey),
                 VideoProjectId = projectId
             });
             await db.SaveChangesAsync();

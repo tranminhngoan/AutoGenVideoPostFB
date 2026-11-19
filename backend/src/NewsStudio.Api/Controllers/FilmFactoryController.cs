@@ -130,20 +130,27 @@ public class FilmFactoryController : ControllerBase
         return Ok(ep);
     }
 
+    /// <summary>
+    /// Queues the episode for rendering (script if missing → AI frames → voices → MP4). Takes several
+    /// minutes, so it runs in the background; poll the episode status.
+    /// </summary>
     [HttpPost("episodes/{id:guid}/render")]
     public async Task<IActionResult> RenderEpisode(Guid id, CancellationToken ct)
     {
+        var ep = await _filmFactoryService.GetEpisodeDetailAsync(id, ct);
+        if (ep == null) return NotFound(new { message = "Không tìm thấy tập phim." });
         try
         {
-            var videoPath = await _rendererService.AssembleEpisodeAsync(id, ct);
-            return Ok(new { message = "Dựng tập phim thành công.", videoPath });
+            await _productionCoordinator.TriggerEpisodeRenderAsync(id, ct);
         }
-        catch (Exception ex)
+        catch (InvalidOperationException ex)
         {
-            return StatusCode(500, new { message = $"Dựng tập phim thất bại: {ex.Message}" });
+            return Conflict(new { message = ex.Message });
         }
+        return Accepted(new { message = $"Đã đưa tập {ep.EpisodeNumber} vào hàng đợi dựng phim.", episodeId = id });
     }
 
+    // Serving never starts a render: rendering costs money and minutes, a <video> request must not trigger it.
     [HttpGet("episodes/{id:guid}/video")]
     [HttpHead("episodes/{id:guid}/video")]
     [ProducesResponseType(StatusCodes.Status200OK)]
@@ -156,24 +163,7 @@ public class FilmFactoryController : ControllerBase
         var filePath = ResolveEpisodeVideoPath(ep);
         if (string.IsNullOrWhiteSpace(filePath) || !System.IO.File.Exists(filePath))
         {
-            // Tự động render/ghép lại tập phim theo yêu cầu nếu container bị reset
-            try
-            {
-                var generatedPath = await _rendererService.AssembleEpisodeAsync(id, ct);
-                if (System.IO.File.Exists(generatedPath))
-                {
-                    filePath = generatedPath;
-                }
-            }
-            catch
-            {
-                // Fallback nếu chưa thể tự dựng
-            }
-        }
-
-        if (string.IsNullOrWhiteSpace(filePath) || !System.IO.File.Exists(filePath))
-        {
-            return NotFound(new { message = "Chưa có file video hoàn chỉnh cho tập phim này hoặc file đang được xử lý." });
+            return NotFound(new { message = "Chưa có file video cho tập này (hoặc máy chủ đã khởi động lại và xoá file tạm) — bấm \"Dựng tập\" để dựng." });
         }
 
         var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read);
@@ -187,21 +177,6 @@ public class FilmFactoryController : ControllerBase
         if (ep == null) return NotFound(new { message = "Không tìm thấy tập phim." });
 
         var filePath = ResolveEpisodeVideoPath(ep);
-        if (string.IsNullOrWhiteSpace(filePath) || !System.IO.File.Exists(filePath))
-        {
-            try
-            {
-                var generatedPath = await _rendererService.AssembleEpisodeAsync(id, ct);
-                if (System.IO.File.Exists(generatedPath))
-                {
-                    filePath = generatedPath;
-                }
-            }
-            catch
-            {
-            }
-        }
-
         if (string.IsNullOrWhiteSpace(filePath) || !System.IO.File.Exists(filePath))
         {
             return NotFound(new { message = "Chưa có file video hoàn chỉnh để tải về." });

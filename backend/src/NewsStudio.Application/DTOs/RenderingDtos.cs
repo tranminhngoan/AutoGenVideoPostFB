@@ -31,6 +31,8 @@ public class TtsSynthesisResult
     public string Format { get; set; } = "audio/mpeg";
     public long FileSizeBytes { get; set; }
     public string Sha256Hash { get; set; } = string.Empty;
+    /// <summary>True when the audio was reused from the local cache (no paid API call).</summary>
+    public bool FromCache { get; set; }
 }
 
 public class VideoRenderRequest

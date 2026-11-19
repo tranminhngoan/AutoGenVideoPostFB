@@ -931,6 +931,12 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("FilmProjectId")
                         .HasColumnType("uuid");
 
+                    b.Property<string>("GpuBatchRef")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("GpuSubmittedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<string>("OpeningHook")
                         .IsRequired()
                         .HasColumnType("text");
@@ -1344,6 +1350,12 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("FilmSceneId")
                         .HasColumnType("uuid");
 
+                    b.Property<string>("MotionPrompt")
+                        .HasColumnType("text");
+
+                    b.Property<string>("MotionVideoPath")
+                        .HasColumnType("text");
+
                     b.Property<string>("NegativePrompt")
                         .HasColumnType("text");
 
@@ -1376,6 +1388,9 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
 
                     b.Property<DateTime?>("UpdatedAtUtc")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("UseMotion")
+                        .HasColumnType("boolean");
 
                     b.Property<string>("VisualMethod")
                         .IsRequired()

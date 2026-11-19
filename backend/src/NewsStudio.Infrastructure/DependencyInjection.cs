@@ -133,6 +133,9 @@ public static class DependencyInjection
             });
 
         // AI Film Factory Subsystem
+        services.AddHttpClient<FilmGeminiClient>();
+        services.AddSingleton<IFilmGpuBackend, KaggleGpuBackend>();
+        services.AddScoped<FilmGpuService>();
         services.AddScoped<IFilmCostController, FilmCostController>();
         services.AddScoped<IFilmFactoryService, FilmFactoryService>();
         services.AddScoped<IFilmShowrunnerService, FilmShowrunnerService>();

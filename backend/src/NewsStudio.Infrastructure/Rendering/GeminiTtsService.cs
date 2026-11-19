@@ -101,8 +101,9 @@ public class GeminiTtsService : ITtsService
         string CachePath(string m) => Path.Combine(cacheDir, Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
             Encoding.UTF8.GetBytes($"{m}|{voiceName}|{prompt}")))[..32].ToLowerInvariant() + ".pcm");
 
-        byte[] pcm;
+        byte[]? pcm = null;
         var cached = models.Select(CachePath).FirstOrDefault(File.Exists);
+        var fromCache = cached != null;
         if (cached != null)
         {
             pcm = await File.ReadAllBytesAsync(cached, cancellationToken);
@@ -115,6 +116,8 @@ public class GeminiTtsService : ITtsService
             try { await File.WriteAllBytesAsync(CachePath(model), pcm, cancellationToken); }
             catch (IOException ex) { _logger.LogWarning("Could not cache TTS audio: {Message}", ex.Message); }
         }
+        pcm = TrimTrailingNoiseBurst(pcm, out var trimmedMs);
+        if (trimmedMs > 0) _logger.LogDebug("Gemini TTS: trimmed {Ms} ms end-of-clip noise burst", trimmedMs);
         await WriteWavAsync(rawWavPath, pcm, cancellationToken);
         var rawSeconds = pcm.Length / (double)(SampleRate * 2);
 
@@ -150,7 +153,8 @@ public class GeminiTtsService : ITtsService
             Subtitles = cues,
             Format = "audio/wav",
             FileSizeBytes = info.Length,
-            Sha256Hash = await EdgeTtsService.ComputeFileSha256Async(audioFilePath, cancellationToken)
+            Sha256Hash = await EdgeTtsService.ComputeFileSha256Async(audioFilePath, cancellationToken),
+            FromCache = fromCache
         };
     }
 
@@ -204,11 +208,24 @@ public class GeminiTtsService : ITtsService
     private async Task<byte[]> RequestSpeechAsync(string model, string voiceName, string prompt, CancellationToken ct)
     {
         var keys = GeminiKeys.InOrder(_configuration, model);
+        var rateWaits = 0;
         for (var i = 0; ; i++)
         {
             var key = keys[i];
             var hasNext = i < keys.Count - 1;
             var (pcm, status, reason, usage) = await SendSpeechRequestAsync(key.Value, model, voiceName, prompt, ct);
+
+            // Per-minute limit on the last key (TTS allows only a few requests per minute): wait it out and retry
+            // instead of failing a whole video. A daily quota is not waited for.
+            if (pcm == null && (int)status == 429 && !hasNext && rateWaits < 6 && !GeminiKeys.IsDailyQuota(reason))
+            {
+                rateWaits++;
+                var wait = RetryDelay(reason) ?? TimeSpan.FromSeconds(20 * rateWaits);
+                _logger.LogInformation("Gemini TTS rate-limited; waiting {Seconds:F0}s before retry {Attempt}/6", wait.TotalSeconds, rateWaits);
+                await Task.Delay(wait, ct);
+                i--; // same key again
+                continue;
+            }
             if (pcm != null)
             {
                 _logger.LogInformation("Gemini TTS used the {KeyType} key ({Model})", key.Label, model);
@@ -229,6 +246,73 @@ public class GeminiTtsService : ITtsService
                 throw new TtsModelUnavailableException(error.Message);
             throw error;
         }
+    }
+
+    /// <summary>
+    /// Gemini TTS clips end with a ~160 ms burst of loud static after the speech has already faded to silence
+    /// (heard as a "rè" crackle after every line). Cuts everything after the last ≥50 ms silence when what
+    /// follows, within the final 400 ms, contains such a loud burst. Speech running to the very end is left alone.
+    /// </summary>
+    public static byte[] TrimTrailingNoiseBurst(byte[] pcm, out int trimmedMs)
+    {
+        trimmedMs = 0;
+        const int window = SampleRate / 100; // 10 ms
+        var samples = pcm.Length / 2;
+        var windows = samples / window;
+        if (windows < 10) return pcm;
+
+        double Rms(int w)
+        {
+            double sum = 0;
+            for (var i = w * window; i < (w + 1) * window; i++)
+            {
+                var v = BitConverter.ToInt16(pcm, i * 2);
+                sum += (double)v * v;
+            }
+            return Math.Sqrt(sum / window);
+        }
+
+        var rms = Enumerable.Range(0, windows).Select(Rms).ToArray();
+        var searchFrom = Math.Max(0, windows - 40); // last 400 ms
+        var loudAfter = false;
+        var silentRun = 0;
+        for (var w = windows - 1; w >= searchFrom; w--)
+        {
+            if (rms[w] > 3000) { loudAfter = true; silentRun = 0; continue; }
+            if (rms[w] < 150)
+            {
+                silentRun++;
+                if (silentRun >= 5 && loudAfter)
+                {
+                    var cutWindow = w + silentRun; // first window of the burst
+                    var tailSamples = samples - cutWindow * window;
+                    // Static, not a last word: short, and noise-like (speech crosses zero ~1k times/s, the burst ~4k).
+                    var crossings = 0;
+                    for (var i = cutWindow * window + 1; i < samples; i++)
+                        if ((BitConverter.ToInt16(pcm, i * 2) < 0) != (BitConverter.ToInt16(pcm, (i - 1) * 2) < 0)) crossings++;
+                    var crossingsPerSecond = crossings * (double)SampleRate / Math.Max(1, tailSamples);
+                    if (tailSamples > SampleRate / 4 || crossingsPerSecond < 2500) return pcm;
+
+                    trimmedMs = tailSamples * 1000 / SampleRate;
+                    return pcm[..(cutWindow * window * 2)];
+                }
+            }
+            else
+            {
+                silentRun = 0;
+            }
+        }
+        return pcm;
+    }
+
+    /// <summary>"Please retry in 37.5s" / "retryDelay": "37s" → 38 s (capped to 2 minutes).</summary>
+    private static TimeSpan? RetryDelay(string reason)
+    {
+        var m = System.Text.RegularExpressions.Regex.Match(reason, @"(?:retry in|retryDelay""?\s*:\s*""?)\s*(\d+(?:\.\d+)?)s",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        return m.Success && double.TryParse(m.Groups[1].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out var s)
+            ? TimeSpan.FromSeconds(Math.Clamp(Math.Ceiling(s) + 1, 2, 120))
+            : null;
     }
 
     private static InvalidOperationException BuildSpeechError(string model, System.Net.HttpStatusCode status, string reason, bool freeKey)
