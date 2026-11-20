@@ -154,25 +154,33 @@ public class FilmGpuService
         var shots = Ordered(episode);
         var chars = project.Characters.ToDictionary(c => c.CharacterId, StringComparer.OrdinalIgnoreCase);
 
-        // Face references: one portrait per character that appears alone in a frame (IP-Adapter applies one face to
-        // everybody in the picture, so frames with several people rely on their written description only).
+        // Face references: anchor portrait for every character in the project
+        // (IP-Adapter Plus Face applies one face reference per frame).
         var portraitName = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var id in shots.Select(Characters).Where(c => c.Count == 1).Select(c => c[0]).Distinct(StringComparer.OrdinalIgnoreCase))
+        foreach (var c in project.Characters)
         {
-            if (!chars.TryGetValue(id, out var c)) continue;
             var name = $"portrait_{Hash(c.Id + c.ConsistencyPrompt)}.jpg";
-            portraitName[id] = name;
+            portraitName[c.CharacterId] = name;
             if (!string.IsNullOrWhiteSpace(c.FrontReferenceImageUrl) && File.Exists(c.FrontReferenceImageUrl))
             {
                 File.Copy(c.FrontReferenceImageUrl, Path.Combine(bundleDir, name), true);
                 continue;
             }
+
+            var isFemale = (c.Gender ?? "").Contains("Nữ", StringComparison.OrdinalIgnoreCase)
+                           || (c.Gender ?? "").Contains("Female", StringComparison.OrdinalIgnoreCase);
+            var genderPositive = isFemale ? "1woman, feminine facial structure, female" : "1man, masculine facial structure, male";
+            var genderNegative = isFemale
+                ? "man, male, masculine, boy, beard, mustache, facial hair"
+                : "woman, female, feminine, girl";
+
             jobs.Add(new()
             {
                 ["id"] = name, ["type"] = "image", ["out"] = name,
                 ["width"] = 832, ["height"] = 1216, ["target_width"] = 832, ["target_height"] = 1216,
                 ["seed"] = Seed(c.Id.ToString()),
-                ["prompt"] = $"close-up portrait photo of a {c.ConsistencyPrompt}, facing the camera, plain grey studio background, soft even light, {style}"
+                ["prompt"] = $"close-up portrait photo of a {genderPositive}, {c.ConsistencyPrompt}, looking at camera, neutral plain grey studio background, soft cinematic lighting, {style}",
+                ["negative"] = $"{genderNegative}, blurry, deformed face, bad anatomy, extra fingers, cartoon, 3d render"
             });
         }
 
@@ -187,25 +195,53 @@ public class FilmGpuService
                 ["seed"] = Seed(group.Key),
                 ["prompt"] = $"{group.Key}, {style}"
             };
+
             var present = Characters(first);
+            string? refPortrait = null;
+            string? genderNeg = null;
+
             if (present.Count == 1 && portraitName.TryGetValue(present[0], out var p))
             {
-                job["face_ref"] = p;
-                // Strong face guidance also copies the portrait's studio light/background; 0.45 keeps the face, frees the scene.
+                refPortrait = p;
+                if (chars.TryGetValue(present[0], out var c1))
+                {
+                    var isFemale = (c1.Gender ?? "").Contains("Nữ", StringComparison.OrdinalIgnoreCase) || (c1.Gender ?? "").Contains("Female", StringComparison.OrdinalIgnoreCase);
+                    genderNeg = isFemale ? "man, male, masculine, boy, beard, mustache" : "woman, female, feminine";
+                }
+            }
+            else if (present.Count > 1 && !string.IsNullOrWhiteSpace(first.SpeakerCharacterId) && portraitName.TryGetValue(first.SpeakerCharacterId, out var spkP))
+            {
+                // In a multi-person frame, focus face conditioning on the speaking character
+                refPortrait = spkP;
+                if (chars.TryGetValue(first.SpeakerCharacterId, out var spkC))
+                {
+                    var isFemale = (spkC.Gender ?? "").Contains("Nữ", StringComparison.OrdinalIgnoreCase) || (spkC.Gender ?? "").Contains("Female", StringComparison.OrdinalIgnoreCase);
+                    genderNeg = isFemale ? "man, male, masculine, boy, beard, mustache" : "woman, female, feminine";
+                }
+            }
+
+            if (refPortrait != null)
+            {
+                job["face_ref"] = refPortrait;
                 job["face_strength"] = 0.45;
+            }
+            if (genderNeg != null)
+            {
+                job["negative"] = $"{genderNeg}, blurry, deformed face, bad anatomy, extra limbs, cartoon, 3d render";
             }
             jobs.Add(job);
         }
 
         foreach (var shot in shots.Where(s => s.UseMotion))
         {
+            var motionPrompt = (string.IsNullOrWhiteSpace(shot.MotionPrompt) ? "subtle natural movement" : shot.MotionPrompt!)
+                         + ", smooth natural motion, stable face and eyes, highly detailed photorealistic, cinematic camera";
             jobs.Add(new()
             {
                 ["id"] = $"motion_{shot.Id:N}", ["type"] = "motion", ["out"] = $"motion_{shot.Id:N}.mp4",
                 ["image"] = $"frame_{Hash(shot.VisualPrompt + project.AspectRatio)}.jpg",
-                ["prompt"] = (string.IsNullOrWhiteSpace(shot.MotionPrompt) ? "subtle natural movement" : shot.MotionPrompt!)
-                             + ", smooth natural motion, faces stay natural and stable, cinematic",
-                // A bit longer than the line: the renderer drops the clip's last 15% (where motion tends to smear).
+                ["prompt"] = motionPrompt,
+                ["negative"] = "worst quality, blurry, jittery, distorted face, deformed face, morphing face, melting face, asymmetrical eyes, open mouth, screaming, grimace, deformed, extra limbs, morphing body, text, watermark",
                 ["seconds"] = Math.Round(Math.Clamp(shot.DurationSeconds / 0.85, 2, 5), 1),
                 ["width"] = landscape ? 832 : 480, ["height"] = landscape ? 480 : 832,
                 ["seed"] = Seed(shot.Id.ToString())

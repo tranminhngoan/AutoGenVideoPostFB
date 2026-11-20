@@ -1,0 +1,20 @@
+#!/bin/bash
+# ==============================================================================
+# AI Film Factory — RunPod GPU Worker Startup Script
+# Supports: NVIDIA RTX 3090 / RTX 4090 / A5000 (24GB VRAM)
+# ==============================================================================
+set -e
+
+PORT=${1:-8000}
+echo "=========================================================="
+echo " Starting AI Film Factory GPU Worker on port $PORT"
+echo "=========================================================="
+
+# Check GPU
+nvidia-smi
+
+# Check Python and CUDA
+python3 -c "import torch; print('PyTorch:', torch.__version__, '| CUDA Available:', torch.cuda.is_available(), '| Device:', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'None')"
+
+# Start server
+python3 film_gpu_worker.py --server --port "$PORT"

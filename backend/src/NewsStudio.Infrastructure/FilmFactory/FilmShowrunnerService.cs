@@ -325,16 +325,17 @@ Trả về JSON:
         episode.UpdatedAtUtc = DateTime.UtcNow;
         await _context.SaveChangesAsync(ct);
 
-        var target = episode.TargetDurationSeconds > 0 ? episode.TargetDurationSeconds : 300;
+        var target = episode.TargetDurationSeconds > 0 ? episode.TargetDurationSeconds : _configuration.GetValue("Film:TargetDurationSeconds", 150);
         // Natural Vietnamese delivery ≈ 2.6 words/second, plus short pauses between lines.
         var targetWords = (int)Math.Round(target * 2.3);
         var frames = FramesPerEpisode;
-        var motionPct = (int)Math.Round(Math.Clamp(_configuration.GetValue("Film:MotionShare", 0.35), 0, 1) * 100);
-        // The free 16 GB GPU model (LTX) distorts faces that move; it is good at scenery, weather, objects and far figures.
-        // Film:MotionFaces=true (e.g. a rented 24 GB GPU running Wan 2.2) allows motion on visible faces too.
-        var motionRule = _configuration.GetValue("Film:MotionFaces", false)
-            ? "chọn shot có chuyển động cơ thể vừa phải (đi, quay đầu, nắm tay, ôm, cúi xuống), xe chạy, mưa, khói, gió; shot chỉ có lời dẫn hoặc cận mặt nói dài thì false. Tránh chuyển động mạnh (chạy nhanh, đánh nhau) vì dễ méo mặt."
-            : "CHỈ chọn shot KHÔNG thấy rõ mặt người: cảnh vật, thời tiết (mưa, khói, gió), xe chạy, đồ vật cận cảnh (đồng hồ, tay cầm đồ vật), cảnh rộng người nhỏ ở xa, nhân vật quay lưng hoặc bóng dáng. Mọi shot thấy rõ mặt người (cận, trung cảnh) thì motion false — máy làm video hay làm méo mặt.";
+        var isFullMotion = _configuration.GetValue("Film:FullMotion", true);
+        var motionPct = isFullMotion ? 100 : (int)Math.Round(Math.Clamp(_configuration.GetValue("Film:MotionShare", 0.35), 0, 1) * 100);
+        var motionRule = isFullMotion
+            ? "TẤT CẢ CÁC SHOT (100%) đều là clip video chuyển động (motion: true). Mỗi shot kéo dài từ 3 đến 5 giây, chuyển động mượt mà, diễn xuất và nét mặt tự nhiên, ánh mắt ổn định, tránh quay giật camera."
+            : (_configuration.GetValue("Film:MotionFaces", false)
+                ? "chọn shot có chuyển động cơ thể vừa phải (đi, quay đầu, nắm tay, ôm, cúi xuống), xe chạy, mưa, khói, gió; shot chỉ có lời dẫn hoặc cận mặt nói dài thì false. Tránh chuyển động mạnh (chạy nhanh, đánh nhau) vì dễ méo mặt."
+                : "CHỈ chọn shot KHÔNG thấy rõ mặt người: cảnh vật, thời tiết (mưa, khói, gió), xe chạy, đồ vật cận cảnh (đồng hồ, tay cầm đồ vật), cảnh rộng người nhỏ ở xa, nhân vật quay lưng hoặc bóng dáng. Mọi shot thấy rõ mặt người (cận, trung cảnh) thì motion false — máy làm video hay làm méo mặt.");
 
         var cast = string.Join("\n", project.Characters.Select(c =>
             $"- id={c.CharacterId} | {c.Name} ({c.Gender}, {c.Age} tuổi, {c.Role}) | tính cách: {c.Personality} | ngoại hình (EN): {c.ConsistencyPrompt}"));
@@ -345,6 +346,10 @@ Trả về JSON:
             .Select(e => $"- Tập {e.EpisodeNumber} \"{e.Title}\": {e.Synopsis} (kết: {e.EndingCliffhanger})"));
 
         var system = "Bạn là biên kịch kiêm đạo diễn hình ảnh cho phim ngắn tiếng Việt dạng 'ảnh điện ảnh chuyển động + lồng tiếng'. Chỉ trả về JSON hợp lệ.";
+        var filmingStyle = isFullMotion
+            ? $"MỌI SHOT (100%) đều là CLIP CHUYỂN ĐỘNG THẬT 3-5 giây (Wan 2.2), KHÔNG DÙNG ẢNH TĨNH. Mỗi shot đi kèm chuyển động tự nhiên và 1 câu thoại lồng tiếng tương ứng."
+            : $"mỗi \"frame\" là MỘT ảnh do AI vẽ; mỗi \"shot\" dùng lại 1 frame với 1 chuyển động máy (zoom/pan/tilt) và 1 câu thoại được lồng tiếng; khoảng {motionPct}% shot được AI biến ảnh thành CLIP CHUYỂN ĐỘNG thật 4-5 giây.";
+
         var user = $@"Viết kịch bản quay chi tiết cho TẬP {episode.EpisodeNumber} của series ""{project.Title}"".
 
 STORY BIBLE: {project.StoryBible?.Logline}
@@ -366,7 +371,7 @@ Diễn biến: {episode.Synopsis}
 Mở đầu: {episode.OpeningHook}
 Kết thúc: {episode.EndingCliffhanger}
 
-CÁCH PHIM ĐƯỢC DỰNG: mỗi ""frame"" là MỘT ảnh do AI vẽ; mỗi ""shot"" dùng lại 1 frame với 1 chuyển động máy (zoom/pan/tilt) và 1 câu thoại được lồng tiếng; khoảng {motionPct}% shot được AI biến ảnh thành CLIP CHUYỂN ĐỘNG thật 4-5 giây. Vì vậy:
+CÁCH PHIM ĐƯỢC DỰNG: {filmingStyle} Vì vậy:
 - Tổng cộng ĐÚNG {frames} frame cho cả tập (mỗi cảnh 1-3 frame). Mỗi frame được 2-4 shot dùng lại, các shot liền nhau dùng chung frame nên đổi camera.
 - 26-40 shot. Tổng số chữ của tất cả ""line"" khoảng {targetWords} từ (để tập dài ~{target / 60} phút).
 - ""speaker"": id nhân vật đang nói, hoặc ""narrator"" (lời dẫn/độc thoại nội tâm, tối đa 30% số câu), hoặc ""none"" (khoảnh khắc im lặng, tối đa 3 shot).
@@ -453,6 +458,7 @@ Trả về JSON:
                 NarrativeSummary = Str(sc, "summary")
             };
 
+            var isFullMotion = _configuration.GetValue("Film:FullMotion", true);
             var frames = new Dictionary<string, (string Prompt, string ShotType, string Characters)>(StringComparer.OrdinalIgnoreCase);
             if (sc.TryGetProperty("frames", out var fs) && fs.ValueKind == JsonValueKind.Array)
             {
@@ -460,6 +466,14 @@ Trả về JSON:
                 {
                     var prompt = Str(f, "prompt");
                     if (string.IsNullOrWhiteSpace(prompt)) continue;
+
+                    // Anchor location consistency: inject architectural style, props and lighting
+                    if (loc != null && !prompt.Contains(loc.Name, StringComparison.OrdinalIgnoreCase))
+                    {
+                        var locAnchor = $"in {loc.Name}, architectural style: {loc.ArchitectureStyle}, lighting: {loc.LightingMood}, key interior elements: {loc.KeyProps}, maintaining consistent room layout and architectural details";
+                        prompt = $"{prompt}, {locAnchor}";
+                    }
+
                     var ids = f.TryGetProperty("characters", out var ce) && ce.ValueKind == JsonValueKind.Array
                         ? ce.EnumerateArray().Select(x => x.GetString() ?? "").Where(characterIds.Contains)
                         : Enumerable.Empty<string>();
@@ -488,6 +502,14 @@ Trả về JSON:
 
                     var camera = CameraMoves.FirstOrDefault(m => m.Equals(Str(s, "camera"), StringComparison.OrdinalIgnoreCase)) ?? "SlowZoomIn";
                     var words = line.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length;
+                    var useMotion = isFullMotion || (s.TryGetProperty("motion", out var mv) && mv.ValueKind == JsonValueKind.True);
+                    var motionPrompt = Str(s, "motionPrompt");
+                    if (string.IsNullOrWhiteSpace(motionPrompt) && useMotion)
+                    {
+                        var acting = Str(s, "acting", "subtle natural movement");
+                        motionPrompt = $"{acting}, smooth cinematic camera movement, stable natural face and eyes, photorealistic";
+                    }
+
                     scene.Shots.Add(new FilmShot
                     {
                         FilmSceneId = scene.Id,
@@ -505,8 +527,8 @@ Trả về JSON:
                         // Estimate only — the real length comes from the recorded voice.
                         DurationSeconds = words > 0 ? Math.Round(words / 2.6 + 0.5, 1) : 3.0,
                         Provider = ShotProvider,
-                        UseMotion = s.TryGetProperty("motion", out var mv) && mv.ValueKind == JsonValueKind.True,
-                        MotionPrompt = Str(s, "motionPrompt") is { Length: > 0 } mp ? mp : null,
+                        UseMotion = useMotion,
+                        MotionPrompt = motionPrompt,
                         RenderStatus = "Pending"
                     });
                 }

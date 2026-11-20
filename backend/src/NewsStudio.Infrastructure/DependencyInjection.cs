@@ -134,7 +134,21 @@ public static class DependencyInjection
 
         // AI Film Factory Subsystem
         services.AddHttpClient<FilmGeminiClient>();
-        services.AddSingleton<IFilmGpuBackend, KaggleGpuBackend>();
+        services.AddHttpClient<RunPodGpuBackend>(c => c.Timeout = TimeSpan.FromMinutes(10));
+        services.AddSingleton<KaggleGpuBackend>();
+        services.AddSingleton<RunPodGpuBackend>();
+        services.AddSingleton<IFilmGpuBackend>(sp =>
+        {
+            var config = sp.GetRequiredService<IConfiguration>();
+            var pref = config["Film:Gpu:Backend"];
+            var runpod = sp.GetRequiredService<RunPodGpuBackend>();
+            var kaggle = sp.GetRequiredService<KaggleGpuBackend>();
+
+            if (string.Equals(pref, "RunPod", StringComparison.OrdinalIgnoreCase)) return runpod;
+            if (string.Equals(pref, "Kaggle", StringComparison.OrdinalIgnoreCase)) return kaggle;
+
+            return runpod.IsConfigured ? runpod : kaggle;
+        });
         services.AddScoped<FilmGpuService>();
         services.AddScoped<IFilmCostController, FilmCostController>();
         services.AddScoped<IFilmFactoryService, FilmFactoryService>();
