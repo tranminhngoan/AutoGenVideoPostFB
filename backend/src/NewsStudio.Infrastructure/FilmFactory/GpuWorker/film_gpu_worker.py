@@ -398,7 +398,8 @@ def process_batch(in_dir, out_dir, batch_id=None, progress_cb=None):
 
             neg_default = (
                 "worst quality, blurry, jittery, distorted face, deformed face, morphing face, melting face, "
-                "asymmetrical eyes, open mouth, screaming, grimace, deformed, extra limbs, morphing body, text, watermark, bad anatomy"
+                "asymmetrical eyes, open mouth, screaming, grimace, deformed, extra limbs, morphing body, text, watermark, bad anatomy, "
+                "cartoon, anime, 3d render, cgi, plastic skin, doll, artificial, drawing, illustration"
             )
             neg = j.get("negative", neg_default)
             generator = torch.Generator("cuda" if torch.cuda.is_available() else "cpu").manual_seed(j.get("seed", 42))
