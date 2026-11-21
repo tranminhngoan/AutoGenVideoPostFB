@@ -747,6 +747,21 @@ export const api = {
     return `${API_BASE}/film-factory/episodes/${episodeId}/download`;
   },
 
+  async getRunPodGpuStatus(): Promise<{ configured: boolean; baseUrl: string; podId: string | null; hasApiKey: boolean; online: boolean; pingDetail: string | null }> {
+    const res = await fetch(`${API_BASE}/film-factory/gpu/status`);
+    if (!res.ok) return { configured: false, baseUrl: '', podId: null, hasApiKey: false, online: false, pingDetail: null };
+    return await res.json();
+  },
+
+  async setRunPodPodId(podId: string): Promise<void> {
+    const res = await fetch(`${API_BASE}/film-factory/gpu/runpod/pod`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ podId }),
+    });
+    if (!res.ok) throw new Error(await apiError(res, 'Cập nhật Pod ID thất bại'));
+  },
+
   async connectFilmFacebookPage(data: ConnectFacebookPageRequestDto): Promise<FilmPageDto> {
     const res = await fetch(`${API_BASE}/film-factory/pages/connect-facebook`, {
       method: 'POST',

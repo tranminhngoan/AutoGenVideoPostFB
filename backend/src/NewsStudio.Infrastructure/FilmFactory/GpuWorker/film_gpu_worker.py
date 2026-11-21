@@ -34,6 +34,19 @@ import queue
 
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
+# Route HuggingFace cache and temp directories to /workspace to avoid filling the small container root disk
+WORKSPACE_DIR = os.environ.get("WORKSPACE_DIR", "/workspace" if os.path.isdir("/workspace") else os.getcwd())
+CACHE_DIR = os.path.join(WORKSPACE_DIR, ".cache")
+try:
+    os.makedirs(os.path.join(CACHE_DIR, "huggingface"), exist_ok=True)
+    os.makedirs(os.path.join(CACHE_DIR, "torch"), exist_ok=True)
+    os.makedirs(os.path.join(CACHE_DIR, "tmp"), exist_ok=True)
+    os.environ.setdefault("HF_HOME", os.path.join(CACHE_DIR, "huggingface"))
+    os.environ.setdefault("TORCH_HOME", os.path.join(CACHE_DIR, "torch"))
+    os.environ.setdefault("TMPDIR", os.path.join(CACHE_DIR, "tmp"))
+except Exception:
+    pass
+
 
 def log(*a):
     print(time.strftime("%H:%M:%S"), *a, flush=True)
@@ -169,7 +182,7 @@ def process_batch(in_dir, out_dir, batch_id=None, progress_cb=None):
                 log(f"Warning: Could not load IP-Adapter ({e}), face reference disabled.")
 
         import urllib.request
-        esr = "/tmp/RealESRGAN_x2plus.pth"
+        esr = os.path.join(CACHE_DIR, "RealESRGAN_x2plus.pth")
         if not os.path.exists(esr):
             os.makedirs(os.path.dirname(esr), exist_ok=True)
             urllib.request.urlretrieve("https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.1/RealESRGAN_x2plus.pth", esr)
@@ -259,8 +272,9 @@ def process_batch(in_dir, out_dir, batch_id=None, progress_cb=None):
         if use_wan:
             from diffusers import WanImageToVideoPipeline
             wan_candidates = [
-                spec.get("wan_model", "Wan-AI/Wan2.2-I2V-A14B-Diffusers"),
-                "Wan-AI/Wan2.1-I2V-14B-480P-Diffusers"
+                spec.get("wan_model", "Wan-AI/Wan2.1-I2V-1.3B-480P-Diffusers"),
+                "Wan-AI/Wan2.1-I2V-14B-480P-Diffusers",
+                "Wan-AI/Wan2.2-I2V-A14B-Diffusers"
             ]
             for candidate in wan_candidates:
                 try:

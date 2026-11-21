@@ -46,8 +46,17 @@ public class RunPodGpuBackend : IFilmGpuBackend
         }
     }
 
-    /// <summary>Exposed port inside the RunPod pod (defaults to 19123 or 8000).</summary>
-    public int Port => _configuration.GetValue("Film:Gpu:RunPod:Port", 19123);
+    /// <summary>Exposed port inside the RunPod pod (defaults to 8000).</summary>
+    public int Port => _configuration.GetValue("Film:Gpu:RunPod:Port", 8000);
+
+    private static string? _runtimePodId;
+
+    public static void SetRuntimePodId(string? podId)
+    {
+        _runtimePodId = string.IsNullOrWhiteSpace(podId) ? null : podId.Trim();
+    }
+
+    public static string? GetRuntimePodId() => _runtimePodId;
 
     /// <summary>Explicit endpoint URL or automatic RunPod proxy URL.</summary>
     public string BaseUrl
@@ -56,13 +65,14 @@ public class RunPodGpuBackend : IFilmGpuBackend
         {
             var custom = _configuration["Film:Gpu:RunPod:EndpointUrl"] ?? Environment.GetEnvironmentVariable("RUNPOD_ENDPOINT_URL");
             if (!string.IsNullOrWhiteSpace(custom)) return custom.Trim().TrimEnd('/');
+            if (!string.IsNullOrWhiteSpace(_runtimePodId)) return $"https://{_runtimePodId}-{Port}.proxy.runpod.net";
             if (!string.IsNullOrWhiteSpace(_cachedDiscoveredPodId)) return $"https://{_cachedDiscoveredPodId}-{Port}.proxy.runpod.net";
             if (!string.IsNullOrWhiteSpace(PodId)) return $"https://{PodId}-{Port}.proxy.runpod.net";
             return string.Empty;
         }
     }
 
-    public bool IsConfigured => !string.IsNullOrWhiteSpace(BaseUrl) || !string.IsNullOrWhiteSpace(ApiKey);
+    public bool IsConfigured => !string.IsNullOrWhiteSpace(BaseUrl) || !string.IsNullOrWhiteSpace(ApiKey) || !string.IsNullOrWhiteSpace(_runtimePodId);
 
     private string? _cachedDiscoveredPodId;
     private DateTimeOffset _cachedPodIdTime = DateTimeOffset.MinValue;
@@ -71,6 +81,11 @@ public class RunPodGpuBackend : IFilmGpuBackend
     {
         var custom = _configuration["Film:Gpu:RunPod:EndpointUrl"] ?? Environment.GetEnvironmentVariable("RUNPOD_ENDPOINT_URL");
         if (!string.IsNullOrWhiteSpace(custom)) return custom.Trim().TrimEnd('/');
+
+        if (!string.IsNullOrWhiteSpace(_runtimePodId))
+        {
+            return $"https://{_runtimePodId}-{Port}.proxy.runpod.net";
+        }
 
         // 1. Tự động phát hiện Pod đang RUNNING nếu có ApiKey (đặc biệt khi Pod bị đổi ID hoặc migrate)
         if (!string.IsNullOrWhiteSpace(ApiKey))
@@ -106,12 +121,17 @@ public class RunPodGpuBackend : IFilmGpuBackend
 
         try
         {
-            var req = new HttpRequestMessage(HttpMethod.Post, "https://api.runpod.io/graphql");
+            var uri = $"https://api.runpod.io/graphql?api_key={Uri.EscapeDataString(apiKey)}";
+            var req = new HttpRequestMessage(HttpMethod.Post, uri);
             req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
             req.Content = System.Net.Http.Json.JsonContent.Create(new { query = "query { myself { pods { id name desiredStatus } } }" });
 
             var res = await _httpClient.SendAsync(req, ct);
-            if (!res.IsSuccessStatusCode) return null;
+            if (!res.IsSuccessStatusCode)
+            {
+                _logger.LogWarning("RunPod GraphQL query failed with HTTP {StatusCode}", res.StatusCode);
+                return null;
+            }
 
             var json = await res.Content.ReadAsStringAsync(ct);
             using var doc = JsonDocument.Parse(json);

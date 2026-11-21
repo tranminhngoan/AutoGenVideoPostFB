@@ -227,4 +227,54 @@ public class FilmFactoryController : ControllerBase
 
         return null;
     }
+
+    [HttpGet("gpu/status")]
+    public async Task<IActionResult> GetGpuStatus(CancellationToken ct)
+    {
+        var runpod = HttpContext.RequestServices.GetService<NewsStudio.Infrastructure.FilmFactory.RunPodGpuBackend>();
+        if (runpod == null) return Ok(new { configured = false, message = "RunPod backend chưa được đăng ký." });
+
+        var baseUrl = await runpod.GetEffectiveBaseUrlAsync(ct);
+        var podId = NewsStudio.Infrastructure.FilmFactory.RunPodGpuBackend.GetRuntimePodId() ?? runpod.PodId;
+        var hasApiKey = !string.IsNullOrWhiteSpace(runpod.ApiKey);
+
+        bool online = false;
+        string? pingDetail = null;
+        if (!string.IsNullOrWhiteSpace(baseUrl))
+        {
+            try
+            {
+                using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+                var res = await client.GetAsync($"{baseUrl}/status", ct);
+                online = res.IsSuccessStatusCode;
+                pingDetail = await res.Content.ReadAsStringAsync(ct);
+            }
+            catch (Exception ex)
+            {
+                pingDetail = ex.Message;
+            }
+        }
+
+        return Ok(new
+        {
+            configured = runpod.IsConfigured || !string.IsNullOrWhiteSpace(baseUrl),
+            baseUrl,
+            podId,
+            hasApiKey,
+            online,
+            pingDetail
+        });
+    }
+
+    public class SetPodIdRequest
+    {
+        public string? PodId { get; set; }
+    }
+
+    [HttpPost("gpu/runpod/pod")]
+    public IActionResult SetRuntimePod([FromBody] SetPodIdRequest req)
+    {
+        NewsStudio.Infrastructure.FilmFactory.RunPodGpuBackend.SetRuntimePodId(req.PodId);
+        return Ok(new { success = true, podId = req.PodId });
+    }
 }

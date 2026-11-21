@@ -10,6 +10,9 @@ echo "=========================================================="
 echo " Starting AI Film Factory GPU Worker on port $PORT"
 echo "=========================================================="
 
+# Clean up any leftover root cache / tmp files to keep disk usage healthy
+rm -rf /root/.cache/pip /tmp/* 2>/dev/null || true
+
 # Check GPU
 nvidia-smi
 

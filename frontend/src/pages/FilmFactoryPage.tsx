@@ -208,6 +208,37 @@ export function FilmFactoryPage() {
     }
   }, [distinctPages]);
 
+  // GPU Status
+  const [gpuStatus, setGpuStatus] = useState<{ configured: boolean; baseUrl: string; podId: string | null; online: boolean } | null>(null);
+  const [editingPodId, setEditingPodId] = useState(false);
+  const [podInput, setPodInput] = useState('');
+  const [savingPodId, setSavingPodId] = useState(false);
+
+  const loadGpuStatus = async () => {
+    try {
+      const st = await api.getRunPodGpuStatus();
+      setGpuStatus(st);
+      if (st.podId && !podInput) setPodInput(st.podId);
+    } catch {
+      // ignore
+    }
+  };
+
+  const handleSavePodId = async () => {
+    if (!podInput.trim()) return;
+    try {
+      setSavingPodId(true);
+      await api.setRunPodPodId(podInput.trim());
+      toast.success('Đã cập nhật RunPod Pod ID thành công!');
+      setEditingPodId(false);
+      await loadGpuStatus();
+    } catch (err: any) {
+      toast.error(err.message || 'Lỗi cập nhật Pod ID');
+    } finally {
+      setSavingPodId(false);
+    }
+  };
+
   // Load Pages
   const loadPages = async () => {
     try {
@@ -255,6 +286,9 @@ export function FilmFactoryPage() {
   useEffect(() => {
     loadPages();
     loadProjects();
+    loadGpuStatus();
+    const gpuTimer = window.setInterval(loadGpuStatus, 15000);
+    return () => window.clearInterval(gpuTimer);
   }, []);
 
   // Sync Project Detail when selection changes
@@ -649,6 +683,53 @@ export function FilmFactoryPage() {
                       Xóa Series
                     </Button>
                   </div>
+                </div>
+              </div>
+
+              {/* GPU Connection Bar */}
+              <div className="flex flex-wrap items-center justify-between gap-3 bg-muted/30 px-5 py-2.5 text-xs text-fg border-b border-line">
+                <div className="flex items-center gap-2">
+                  <span className="font-medium text-fg-muted">Máy chủ GPU RunPod:</span>
+                  {gpuStatus?.online ? (
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-emerald-500/10 text-emerald-500 border border-emerald-500/20">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                      Đang kết nối: {gpuStatus.podId || 'RunPod'}
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-amber-500/10 text-amber-500 border border-amber-500/20">
+                      <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                      {gpuStatus?.podId ? `Chờ máy phản hồi (${gpuStatus.podId})` : 'Chưa gắn Pod ID'}
+                    </span>
+                  )}
+                  {gpuStatus?.baseUrl && (
+                    <span className="text-[11px] text-fg-muted font-mono hidden md:inline">
+                      {gpuStatus.baseUrl}
+                    </span>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-2">
+                  {editingPodId ? (
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="text"
+                        placeholder="Dán Pod ID (vd: 3awp9vz2o4d9qk)"
+                        className="px-2.5 py-1 text-xs rounded border border-line bg-surface text-fg focus:outline-none focus:ring-1 focus:ring-accent"
+                        value={podInput}
+                        onChange={(e) => setPodInput(e.target.value)}
+                      />
+                      <Button size="sm" variant="primary" loading={savingPodId} onClick={handleSavePodId}>
+                        Lưu
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={() => setEditingPodId(false)}>
+                        Hủy
+                      </Button>
+                    </div>
+                  ) : (
+                    <Button size="sm" variant="ghost" onClick={() => setEditingPodId(true)}>
+                      Đổi Pod ID
+                    </Button>
+                  )}
                 </div>
               </div>
 
