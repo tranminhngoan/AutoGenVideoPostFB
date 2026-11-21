@@ -137,6 +137,29 @@ def process_batch(in_dir, out_dir, batch_id=None, progress_cb=None):
         for idx, j in enumerate(todo):
             t = time.time()
             jid = j["id"]
+            out_file = os.path.join(out_dir, j.get("out", ""))
+
+            # Checkpoint Resume: If this exact output file already exists on disk and is non-empty, SKIP IT!
+            if os.path.exists(out_file) and os.path.getsize(out_file) > 10240:
+                log(f"  [{kind}] {jid} already completed on disk ({os.path.getsize(out_file):,d} bytes), skipping!")
+                results["jobs"][jid] = {"status": "ok", "seconds": 0.0, "out": j["out"], "resumed": True}
+                continue
+
+            # Checkpoint Recovery: Check if previous batch of this same episode already rendered this exact file
+            prefix = batch_id.split("-")[0] if batch_id else ""
+            if prefix:
+                found_prev = False
+                for prev_path in glob.glob(os.path.join(WORKSPACE_DIR, "batches", f"{prefix}*", "out", j.get("out", ""))):
+                    if prev_path != out_file and os.path.exists(prev_path) and os.path.getsize(prev_path) > 10240:
+                        log(f"  [{kind}] {jid} recovered from previous batch ({os.path.getsize(prev_path):,d} bytes)!")
+                        os.makedirs(os.path.dirname(out_file), exist_ok=True)
+                        shutil.copy2(prev_path, out_file)
+                        results["jobs"][jid] = {"status": "ok", "seconds": 0.0, "out": j["out"], "recovered": True}
+                        found_prev = True
+                        break
+                if found_prev:
+                    continue
+
             if progress_cb:
                 progress_cb(f"Stage {kind}: {idx + 1}/{len(todo)} ({jid})")
             try:
