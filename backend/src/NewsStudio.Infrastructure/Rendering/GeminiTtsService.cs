@@ -467,6 +467,8 @@ public class GeminiTtsService : ITtsService
 
     private static async Task WriteWavAsync(string path, byte[] pcm, CancellationToken ct)
     {
+        var dir = Path.GetDirectoryName(path);
+        if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
         await using var fs = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None);
         await using var bw = new BinaryWriter(fs);
         const short channels = 1, bits = 16;
