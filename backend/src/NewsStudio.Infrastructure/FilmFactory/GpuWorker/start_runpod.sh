@@ -29,6 +29,7 @@ nvidia-smi
 
 # Check Python and CUDA
 python3 -c "import torch; print('PyTorch:', torch.__version__, '| CUDA Available:', torch.cuda.is_available(), '| Device:', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'None')"
+pip install -q -U tiktoken protobuf einops
 
 # Start server
 python3 film_gpu_worker.py --server --port "$PORT"

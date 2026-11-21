@@ -64,7 +64,7 @@ def pip(*pkgs):
 # Install required packages on worker startup
 log("Checking / installing AI dependencies...")
 pip("diffusers>=0.35.0", "transformers>=4.49", "accelerate", "sentencepiece", "peft",
-    "imageio", "imageio-ffmpeg", "spandrel", "ftfy")
+    "imageio", "imageio-ffmpeg", "spandrel", "ftfy", "tiktoken", "protobuf", "einops")
 
 import numpy as np
 import torch
@@ -296,6 +296,11 @@ def process_batch(in_dir, out_dir, batch_id=None, progress_cb=None):
 
         hf_cache = os.path.join(CACHE_DIR, "huggingface", "hub")
         if use_wan:
+            try:
+                import tiktoken
+            except ImportError:
+                log("Installing missing tiktoken/protobuf for Wan tokenizer...")
+                pip("tiktoken", "protobuf", "einops")
             from diffusers import WanImageToVideoPipeline
             wan_candidates = [
                 spec.get("wan_model", "Wan-AI/Wan2.1-I2V-14B-480P-Diffusers"),
