@@ -436,7 +436,14 @@ class GpuRequestHandler(BaseHTTPRequestHandler):
         if url.path == "/status":
             batch_id = qs.get("batch_id", [None])[0]
             if not batch_id:
-                self.send_json(400, {"error": "Missing batch_id query parameter"})
+                data = {
+                    "status": "ok",
+                    "gpu": gpu.name if gpu else "cpu",
+                    "vram_gb": round(VRAM_GB, 1),
+                    "state": "idle" if not server_state.current_batch else "busy",
+                    "current_batch": server_state.current_batch
+                }
+                self.send_json(200, data)
                 return
 
             with server_state.lock:
@@ -546,12 +553,11 @@ class GpuRequestHandler(BaseHTTPRequestHandler):
         self.send_json(404, {"error": "Endpoint not found"})
 
 
-def run_server(port=8000):
+def run_server(port=8888):
     ports = [port]
-    if 19123 not in ports:
-        ports.append(19123)
-    if 8000 not in ports:
-        ports.append(8000)
+    for p in (8888, 8000):
+        if p not in ports:
+            ports.append(p)
 
     log(f"Starting Film GPU Worker HTTP Server on ports: {ports}...")
     t = threading.Thread(target=worker_loop, daemon=True)

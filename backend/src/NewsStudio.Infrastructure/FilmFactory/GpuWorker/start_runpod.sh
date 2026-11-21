@@ -5,10 +5,13 @@
 # ==============================================================================
 set -e
 
-PORT=${1:-8000}
+PORT=${1:-8888}
 echo "=========================================================="
 echo " Starting AI Film Factory GPU Worker on port $PORT"
 echo "=========================================================="
+
+# Free port 8888 (Jupyter) so RunPod HTTP proxy routes directly to our film worker
+fuser -k 8888/tcp 2>/dev/null || pkill -9 -f jupyter 2>/dev/null || true
 
 # Clean up any leftover root cache / tmp files to keep disk usage healthy
 rm -rf /root/.cache/pip /tmp/* 2>/dev/null || true
