@@ -42,7 +42,11 @@ export const ArticlesPage: React.FC = () => {
   const load = async () => {
     setRefreshing(true);
     try {
-      setArticles(await api.getArticles(1, 50));
+      const data = await api.getArticles(1, 50);
+      setArticles(data || []);
+    } catch (err) {
+      toast.error('Không tải được danh sách bài báo', errorText(err, 'Lỗi kết nối máy chủ'));
+      setArticles([]);
     } finally {
       setRefreshing(false);
     }
@@ -148,7 +152,7 @@ export const ArticlesPage: React.FC = () => {
       </Card>
 
       {articles && articles.length > 0 && (
-        <div className="mb-3 flex items-center justify-between gap-3">
+        <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <p className="shrink-0 whitespace-nowrap text-[13px] text-fg-muted">{articles.length} bài báo</p>
           <div className="w-full sm:w-64">
             <Input leading={<Search />} value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Tìm bài báo…" />

@@ -99,25 +99,68 @@ public class ArticleService : IArticleService
 
     public async Task<IEnumerable<ArticleResponseDto>> GetArticlesAsync(int page = 1, int pageSize = 20, CancellationToken cancellationToken = default)
     {
-        var articles = await _context.Articles
-            .AsNoTracking()
-            .Include(a => a.Images)
-            .OrderByDescending(a => a.CreatedAtUtc)
-            .Skip((page - 1) * pageSize)
-            .Take(pageSize)
-            .ToListAsync(cancellationToken);
+        try
+        {
+            var articles = await _context.Articles
+                .AsNoTracking()
+                .Include(a => a.Images)
+                .OrderByDescending(a => a.CreatedAtUtc)
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .ToListAsync(cancellationToken);
 
-        return articles.Select(MapToDto);
+            return articles.Select(MapToDto).ToList();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to load articles with images (page {Page}, pageSize {PageSize}). Trying fallback query without images join.", page, pageSize);
+            try
+            {
+                var articles = await _context.Articles
+                    .AsNoTracking()
+                    .OrderByDescending(a => a.CreatedAtUtc)
+                    .Skip((page - 1) * pageSize)
+                    .Take(pageSize)
+                    .ToListAsync(cancellationToken);
+
+                return articles.Select(MapToDto).ToList();
+            }
+            catch (Exception ex2)
+            {
+                _logger.LogError(ex2, "Fallback query for articles also failed.");
+                return Enumerable.Empty<ArticleResponseDto>();
+            }
+        }
     }
 
     public async Task<ArticleResponseDto?> GetArticleByIdAsync(Guid id, CancellationToken cancellationToken = default)
     {
-        var article = await _context.Articles
-            .AsNoTracking()
-            .Include(a => a.Images)
-            .FirstOrDefaultAsync(a => a.Id == id, cancellationToken);
+        try
+        {
+            var article = await _context.Articles
+                .AsNoTracking()
+                .Include(a => a.Images)
+                .FirstOrDefaultAsync(a => a.Id == id, cancellationToken);
 
-        return article == null ? null : MapToDto(article);
+            return article == null ? null : MapToDto(article);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to load article by ID {Id} with images. Trying fallback query without images join.", id);
+            try
+            {
+                var article = await _context.Articles
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(a => a.Id == id, cancellationToken);
+
+                return article == null ? null : MapToDto(article);
+            }
+            catch (Exception ex2)
+            {
+                _logger.LogError(ex2, "Fallback query for article by ID {Id} also failed.", id);
+                return null;
+            }
+        }
     }
 
     public async Task<ArticleImageResponseDto?> UpdateArticleImageAsync(Guid articleId, Guid imageId, UpdateArticleImageDto dto, CancellationToken cancellationToken = default)
@@ -174,22 +217,22 @@ public class ArticleService : IArticleService
         return new ArticleResponseDto
         {
             Id = article.Id,
-            Title = article.Title,
-            Url = article.Url,
-            CanonicalUrl = article.CanonicalUrl,
-            Publisher = article.Publisher,
+            Title = article.Title ?? string.Empty,
+            Url = article.Url ?? string.Empty,
+            CanonicalUrl = article.CanonicalUrl ?? string.Empty,
+            Publisher = article.Publisher ?? string.Empty,
             Author = article.Author,
             Description = article.Description,
-            ContentBody = article.ContentBody,
+            ContentBody = article.ContentBody ?? string.Empty,
             PublishedAtUtc = article.PublishedAtUtc,
-            Status = article.Status,
+            Status = article.Status ?? "Extracted",
             CreatedAtUtc = article.CreatedAtUtc,
             ErrorMessage = article.ErrorMessage,
-            Images = article.Images.OrderBy(i => i.ArticleImageOrder).Select(i => new ArticleImageResponseDto
+            Images = (article.Images ?? Enumerable.Empty<ArticleImage>()).OrderBy(i => i.ArticleImageOrder).Select(i => new ArticleImageResponseDto
             {
                 Id = i.Id,
                 ArticleId = i.ArticleId,
-                OriginalImageUrl = i.OriginalImageUrl,
+                OriginalImageUrl = i.OriginalImageUrl ?? string.Empty,
                 LocalTempPath = i.LocalTempPath,
                 Caption = i.Caption,
                 AltText = i.AltText,
@@ -199,7 +242,7 @@ public class ArticleService : IArticleService
                 ImageHash = i.ImageHash,
                 RightsStatus = i.RightsStatus.ToString(),
                 Category = i.Category.ToString(),
-                Status = i.Status,
+                Status = i.Status ?? "Extracted",
                 ErrorMessage = i.ErrorMessage,
                 SelectedForVideo = NewsStudio.Infrastructure.Common.ImageStatus.IsSelectedForVideo(i.Status)
             }).ToList()

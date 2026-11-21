@@ -108,13 +108,13 @@ export function PageHeader({
   return (
     <div className="mb-5 sm:mb-6">
       {back && <div className="mb-3">{back}</div>}
-      {/* Title and actions share one row on every screen size; the description wraps underneath */}
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
+      {/* Title and actions stack cleanly on small mobile screens and spread out on larger displays */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0 flex-1">
           <h1 className="text-xl font-semibold leading-tight text-fg sm:text-[22px]">{title}</h1>
           {description && <div className="mt-1 text-[13px] text-fg-muted sm:text-sm">{description}</div>}
         </div>
-        {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
+        {actions && <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto sm:shrink-0">{actions}</div>}
       </div>
     </div>
   );

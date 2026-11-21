@@ -371,7 +371,7 @@ export function FilmFactoryPage() {
         }
         description="Hệ thống tự động sản xuất phim nhiều tập: AI Showrunner, Wan 2.2 / RunPod GPU, và xuất bản trực tiếp lên Facebook Reels."
         actions={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <IconButton
               label="Làm mới dữ liệu"
               onClick={handleRefreshAll}
@@ -384,14 +384,16 @@ export function FilmFactoryPage() {
               icon={<Share2 className="h-4 w-4" />}
               onClick={() => setShowConnectFbModal(true)}
             >
-              Kết nối Facebook Page
+              <span className="hidden sm:inline">Kết nối Facebook Page</span>
+              <span className="sm:hidden">Kết nối Page</span>
             </Button>
             <Button
               variant="primary"
               icon={<Plus className="h-4 w-4" />}
               onClick={() => setShowCreateModal(true)}
             >
-              Khai hoả Series Mới
+              <span className="hidden sm:inline">Khai hoả Series Mới</span>
+              <span className="sm:hidden">Series Mới</span>
             </Button>
           </div>
         }
@@ -399,49 +401,49 @@ export function FilmFactoryPage() {
 
       {/* ── Top Metric Stats (Always visible when in list view) ── */}
       {!selectedProjectId && (
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <Card className="p-4">
+        <div className="grid grid-cols-2 gap-2.5 sm:gap-3 lg:grid-cols-4">
+          <Card className="p-3 sm:p-4">
             <div className="flex items-center gap-2 text-xs text-fg-subtle">
-              <Tv className="h-4 w-4 text-fg-muted" />
-              <span>Facebook Film Pages</span>
+              <Tv className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-fg-muted shrink-0" />
+              <span className="truncate">Facebook Film Pages</span>
             </div>
-            <div className="mt-2 text-xl font-semibold text-fg">
+            <div className="mt-1.5 sm:mt-2 text-base sm:text-xl font-semibold text-fg">
               {pages.length} Kênh Kết Nối
             </div>
-            <div className="mt-1 text-[11px] text-fg-muted">Tự động đăng Reels lên Facebook Page</div>
+            <div className="mt-1 text-[11px] text-fg-muted line-clamp-1">Tự động đăng Reels lên Page</div>
           </Card>
 
-          <Card className="p-4">
+          <Card className="p-3 sm:p-4">
             <div className="flex items-center gap-2 text-xs text-fg-subtle">
-              <Film className="h-4 w-4 text-fg-muted" />
-              <span>Tổng Series Phim</span>
+              <Film className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-fg-muted shrink-0" />
+              <span className="truncate">Tổng Series Phim</span>
             </div>
-            <div className="mt-2 text-xl font-semibold text-fg">
+            <div className="mt-1.5 sm:mt-2 text-base sm:text-xl font-semibold text-fg">
               {projects.length} Series
             </div>
-            <div className="mt-1 text-[11px] text-fg-muted">Cốt truyện do AI Showrunner chỉ đạo</div>
+            <div className="mt-1 text-[11px] text-fg-muted line-clamp-1">AI Showrunner chỉ đạo</div>
           </Card>
 
-          <Card className="p-4">
+          <Card className="p-3 sm:p-4">
             <div className="flex items-center gap-2 text-xs text-fg-subtle">
-              <Clapperboard className="h-4 w-4 text-fg-muted" />
-              <span>Quy Mô Linh Hoạt</span>
+              <Clapperboard className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-fg-muted shrink-0" />
+              <span className="truncate">Quy Mô Linh Hoạt</span>
             </div>
-            <div className="mt-2 text-xl font-semibold text-fg">
+            <div className="mt-1.5 sm:mt-2 text-base sm:text-xl font-semibold text-fg">
               1 - 20 Tập / Series
             </div>
-            <div className="mt-1 text-[11px] text-fg-muted">Tự chọn thời lượng (1 - 5 phút/tập)</div>
+            <div className="mt-1 text-[11px] text-fg-muted line-clamp-1">1 - 5 phút/tập</div>
           </Card>
 
-          <Card className="p-4">
+          <Card className="p-3 sm:p-4">
             <div className="flex items-center gap-2 text-xs text-fg-subtle">
-              <ShieldCheck className="h-4 w-4 text-emerald-500" />
-              <span>Bảo Vệ Ngân Sách</span>
+              <ShieldCheck className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-emerald-500 shrink-0" />
+              <span className="truncate">Bảo Vệ Ngân Sách</span>
             </div>
-            <div className="mt-2 text-xl font-semibold text-emerald-500">
+            <div className="mt-1.5 sm:mt-2 text-base sm:text-xl font-semibold text-emerald-500">
               &lt; $5.00 / Series
             </div>
-            <div className="mt-1 text-[11px] text-fg-muted">4 Free Gemini Keys + RunPod RTX 3090</div>
+            <div className="mt-1 text-[11px] text-fg-muted line-clamp-1">4 Free Gemini + RunPod 3090</div>
           </Card>
         </div>
       )}
@@ -755,12 +757,12 @@ export function FilmFactoryPage() {
                       </div>
 
                       {/* Card Footer Actions */}
-                      <div className="flex items-center justify-between border-t border-line px-5 py-3 bg-muted/20">
+                      <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line px-4 py-3 bg-muted/20 sm:px-5">
                         <span className="text-[11px] text-fg-subtle">
                           Chi phí: <strong className="text-fg font-medium">${ep.actualCostUsd.toFixed(4)}</strong>
                         </span>
 
-                        <div className="flex items-center gap-2">
+                        <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
                           <Button
                             size="sm"
                             variant="ghost"
@@ -1415,7 +1417,7 @@ export function FilmFactoryPage() {
           </Field>
 
           {/* Cấu hình linh hoạt: Số tập và Thời lượng mỗi tập */}
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Field label="Số tập phim (1 - 20 tập)" hint="Linh hoạt số lượng tập phim bạn muốn tạo.">
               <Input
                 type="number"
@@ -1441,7 +1443,7 @@ export function FilmFactoryPage() {
             </Field>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Field label="Thể loại">
               <Input
                 type="text"

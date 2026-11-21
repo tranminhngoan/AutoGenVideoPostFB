@@ -188,14 +188,26 @@ export function Layout({
         <SidebarContent active={active} apiHealthy={apiHealthy} awaitingCount={awaitingCount} />
       </aside>
 
-      {/* Mobile top bar — slim: brand + connection status. Navigation lives in the bottom tab bar. */}
+      {/* Mobile top bar — slim: brand + connection status + menu button */}
       <header className="pt-safe sticky top-0 z-20 border-b border-line bg-surface/90 backdrop-blur lg:hidden">
-        <div className="flex h-12 items-center justify-between px-4">
+        <div className="flex h-12 items-center justify-between px-3 sm:px-4">
           <Logo />
-          <span className="flex items-center gap-1.5 text-xs text-fg-muted">
-            <Dot tone={apiHealthy === null ? 'neutral' : apiHealthy ? 'success' : 'danger'} />
-            {apiHealthy === null ? 'Đang kết nối' : apiHealthy ? 'Đã kết nối' : 'Mất kết nối'}
-          </span>
+          <div className="flex items-center gap-2">
+            <span className="flex items-center gap-1.5 text-xs text-fg-muted">
+              <Dot tone={apiHealthy === null ? 'neutral' : apiHealthy ? 'success' : 'danger'} />
+              <span className="hidden sm:inline">
+                {apiHealthy === null ? 'Đang kết nối' : apiHealthy ? 'Đã kết nối' : 'Mất kết nối'}
+              </span>
+            </span>
+            <button
+              type="button"
+              onClick={() => setMobileOpen(true)}
+              className="flex h-8 w-8 items-center justify-center rounded-md border border-line bg-muted/60 text-fg transition-colors hover:bg-muted"
+              aria-label="Mở menu điều hướng"
+            >
+              <MenuIcon className="h-4 w-4" />
+            </button>
+          </div>
         </div>
       </header>
 
@@ -219,8 +231,8 @@ export function Layout({
             type="button"
             onClick={() => setMobileOpen(true)}
             className={cn(
-              'flex h-full flex-col items-center justify-center gap-0.5 text-[11px]',
-              ['auto-post', 'articles', 'activity', 'settings'].includes(active) ? 'font-medium text-fg' : 'text-fg-muted'
+              'flex h-full flex-col items-center justify-center gap-0.5 text-[11px] transition-colors',
+              ['auto-post', 'articles', 'activity', 'settings', 'film-factory'].includes(active) ? 'font-medium text-fg' : 'text-fg-muted'
             )}
           >
             <MenuIcon className="h-5 w-5" />
@@ -237,7 +249,7 @@ export function Layout({
             <button
               type="button"
               onClick={() => setMobileOpen(false)}
-              className="absolute right-3 top-4 flex h-8 w-8 items-center justify-center rounded-md text-fg-muted hover:bg-muted"
+              className="absolute right-3 top-4 z-10 flex h-8 w-8 items-center justify-center rounded-md text-fg-muted hover:bg-muted"
               aria-label="Đóng menu"
             >
               <X className="h-4 w-4" />
@@ -252,14 +264,14 @@ export function Layout({
         </div>
       )}
 
-      <main className="lg:pl-60">
+      <main className="min-w-0 max-w-full overflow-x-hidden lg:pl-60">
         {simulation && (
           <div className="border-b border-warning/30 bg-warning/10 px-4 py-2 text-center text-[13px] text-warning sm:px-6">
             Máy chủ đang bật chế độ giả lập (Simulation:Enabled). Kịch bản, giọng đọc, video và bài đăng Facebook có thể là dữ liệu mẫu, không phải kết quả thật.
           </div>
         )}
         {/* Extra bottom padding on phones so content clears the tab bar */}
-        <div className="mx-auto w-full max-w-[1200px] px-4 pb-28 pt-5 sm:px-6 lg:px-10 lg:py-8">{children}</div>
+        <div className="mx-auto w-full max-w-[1200px] px-3 pb-28 pt-4 sm:px-6 lg:px-10 lg:py-8">{children}</div>
       </main>
     </div>
   );

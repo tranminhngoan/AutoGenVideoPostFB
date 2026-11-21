@@ -72,8 +72,16 @@ public class ArticlesController : ControllerBase
         if (page < 1) page = 1;
         if (pageSize < 1 || pageSize > 100) pageSize = 20;
 
-        var articles = await _articleService.GetArticlesAsync(page, pageSize, cancellationToken);
-        return Ok(articles);
+        try
+        {
+            var articles = await _articleService.GetArticlesAsync(page, pageSize, cancellationToken);
+            return Ok(articles);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting articles (page {Page}, pageSize {PageSize})", page, pageSize);
+            return Ok(Array.Empty<ArticleResponseDto>());
+        }
     }
 
     /// <summary>
@@ -84,13 +92,21 @@ public class ArticlesController : ControllerBase
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> GetArticleById(Guid id, CancellationToken cancellationToken)
     {
-        var article = await _articleService.GetArticleByIdAsync(id, cancellationToken);
-        if (article == null)
+        try
         {
-            return NotFound(new { error = $"Article with ID '{id}' was not found." });
-        }
+            var article = await _articleService.GetArticleByIdAsync(id, cancellationToken);
+            if (article == null)
+            {
+                return NotFound(new { error = $"Article with ID '{id}' was not found." });
+            }
 
-        return Ok(article);
+            return Ok(article);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting article by ID {Id}", id);
+            return StatusCode(StatusCodes.Status500InternalServerError, new { error = "Không thể tải thông tin bài báo." });
+        }
     }
 
     /// <summary>
