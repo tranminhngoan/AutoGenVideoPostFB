@@ -11,10 +11,12 @@ namespace NewsStudio.Api.Controllers;
 public class TrendingController : ControllerBase
 {
     private readonly ITrendingNewsService _trending;
+    private readonly ILogger<TrendingController> _logger;
 
-    public TrendingController(ITrendingNewsService trending)
+    public TrendingController(ITrendingNewsService trending, ILogger<TrendingController> logger)
     {
         _trending = trending;
+        _logger = logger;
     }
 
     /// <summary>Ranked hot stories. region = all | VN | World; hours = look-back window (1–72).</summary>
@@ -28,29 +30,66 @@ public class TrendingController : ControllerBase
         [FromQuery] string? topic = null,
         CancellationToken cancellationToken = default)
     {
-        var result = await _trending.GetTrendingAsync(new TrendingQuery
+        try
         {
-            Region = region,
-            Source = source,
-            Search = q,
-            Hours = hours,
-            Limit = limit,
-            Topic = topic
-        }, cancellationToken);
-        return Ok(result);
+            var result = await _trending.GetTrendingAsync(new TrendingQuery
+            {
+                Region = region,
+                Source = source,
+                Search = q,
+                Hours = hours,
+                Limit = limit,
+                Topic = topic
+            }, cancellationToken);
+            return Ok(result);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get trending news (region={Region}, hours={Hours})", region, hours);
+            return Ok(new TrendingOverviewDto
+            {
+                Items = new List<TrendingArticleDto>(),
+                Sources = new List<TrendingSourceDto>(),
+                TrendKeywords = new List<string>()
+            });
+        }
     }
 
     /// <summary>News topics a Page can be dedicated to (key, Vietnamese name, description).</summary>
     [HttpGet("topics")]
-    public ActionResult<List<NewsTopicDto>> Topics() =>
-        Ok(NewsStudio.Infrastructure.Trending.NewsTopics.All
-            .Select(t => new NewsTopicDto { Key = t.Key, Name = t.Name, Description = t.Description })
-            .ToList());
+    public ActionResult<List<NewsTopicDto>> Topics()
+    {
+        try
+        {
+            return Ok(NewsStudio.Infrastructure.Trending.NewsTopics.All
+                .Select(t => new NewsTopicDto { Key = t.Key, Name = t.Name, Description = t.Description })
+                .ToList());
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to list trending topics");
+            return Ok(new List<NewsTopicDto>());
+        }
+    }
 
     /// <summary>Fetches all feeds now (the Worker also does this automatically every 30 minutes).</summary>
     [HttpPost("refresh")]
     public async Task<ActionResult<TrendingRefreshResultDto>> Refresh(CancellationToken cancellationToken)
     {
-        return Ok(await _trending.RefreshAsync(cancellationToken));
+        try
+        {
+            return Ok(await _trending.RefreshAsync(cancellationToken));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to manually refresh trending feeds");
+            return Ok(new TrendingRefreshResultDto
+            {
+                StartedAtUtc = DateTime.UtcNow,
+                FinishedAtUtc = DateTime.UtcNow,
+                FeedsFailed = 1,
+                FailedFeeds = new List<string> { ex.Message }
+            });
+        }
     }
 }

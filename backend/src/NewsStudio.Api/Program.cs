@@ -146,12 +146,13 @@ try
 
             Log.Error(exception, "Unhandled exception on path: {Path}", context.Request.Path);
 
+            var errorDetail = exception?.InnerException?.Message ?? exception?.Message ?? "Internal server error.";
             var problem = new
             {
                 type = "https://tools.ietf.org/html/rfc7807",
                 title = "An unexpected error occurred processing your request.",
                 status = 500,
-                detail = app.Environment.IsDevelopment() ? exception?.Message : "Internal server error. Please contact administrator.",
+                detail = errorDetail,
                 instance = context.Request.Path.Value,
                 traceId = context.TraceIdentifier
             };

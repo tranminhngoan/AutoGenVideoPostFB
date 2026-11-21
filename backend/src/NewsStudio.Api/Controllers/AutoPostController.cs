@@ -15,16 +15,28 @@ namespace NewsStudio.Api.Controllers;
 public class AutoPostController : ControllerBase
 {
     private readonly IAutoPostService _autoPost;
+    private readonly ILogger<AutoPostController> _logger;
 
-    public AutoPostController(IAutoPostService autoPost)
+    public AutoPostController(IAutoPostService autoPost, ILogger<AutoPostController> logger)
     {
         _autoPost = autoPost;
+        _logger = logger;
     }
 
     /// <summary>All pages: settings, today's slots with progress, totals and the last 7 days of runs.</summary>
     [HttpGet]
-    public async Task<ActionResult<AutoPostOverviewDto>> Get(CancellationToken cancellationToken) =>
-        Ok(await _autoPost.GetOverviewAsync(cancellationToken));
+    public async Task<ActionResult<AutoPostOverviewDto>> Get(CancellationToken cancellationToken)
+    {
+        try
+        {
+            return Ok(await _autoPost.GetOverviewAsync(cancellationToken));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to load AutoPost overview");
+            return Ok(new AutoPostOverviewDto());
+        }
+    }
 
     [HttpPut("pages/{facebookAccountId:guid}/settings")]
     public async Task<ActionResult<AutoPostSettingsDto>> UpdateSettings(

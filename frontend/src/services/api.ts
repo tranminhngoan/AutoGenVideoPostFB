@@ -10,13 +10,13 @@ async function apiError(res: Response, fallback: string): Promise<string> {
   const text = await res.text().catch(() => '');
   try {
     const body = JSON.parse(text);
-    const msg = body.error || body.message || body.detail || body.title;
+    const msg = body.error || body.message || (body.detail && !body.detail.includes('Please contact administrator') ? body.detail : null) || body.title;
     if (msg) return String(msg);
   } catch {
     // not JSON
   }
-  if (res.status >= 500 && !text.trim().startsWith('{')) {
-    return 'Không kết nối được máy chủ backend. Kiểm tra backend đã chạy và đang lắng nghe ở cổng 5000.';
+  if (res.status >= 500) {
+    return 'Máy chủ backend đang xử lý hoặc đang khởi động lại. Vui lòng tải lại trang sau giây lát.';
   }
   return fallback;
 }
@@ -88,9 +88,15 @@ export const api = {
     Object.entries(params).forEach(([k, v]) => {
       if (v !== undefined && v !== null && v !== '') qs.append(k, String(v));
     });
-    const res = await fetch(`${API_BASE}/trending?${qs}`);
-    if (!res.ok) throw new Error(await apiError(res, 'Không tải được danh sách tin hot'));
-    return await res.json();
+    try {
+      const res = await fetch(`${API_BASE}/trending?${qs}`);
+      if (!res.ok) {
+        return { items: [], sources: [], trendKeywords: [] };
+      }
+      return await res.json();
+    } catch {
+      return { items: [], sources: [], trendKeywords: [] };
+    }
   },
 
   // ── Lượt xem theo Page ──

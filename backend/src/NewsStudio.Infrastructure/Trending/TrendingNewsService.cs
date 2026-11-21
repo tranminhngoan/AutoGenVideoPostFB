@@ -554,13 +554,22 @@ public class TrendingNewsService : ITrendingNewsService
         var hours = Math.Clamp(query.Hours, 1, KeepHours);
         var since = now.AddHours(-hours);
 
-        // Unreadable outlets (blocked in VN / anti-bot) only boost coverage; their own articles aren't listed
-        var unreadable = UnreadableKeys(GetFeeds());
-        var rows = (await _context.TrendingArticles.AsNoTracking()
-                .Where(a => a.PublishedAtUtc >= since)
-                .ToListAsync(cancellationToken))
-            .Where(a => !unreadable.Contains(a.SourceKey) && !NonArticleUrl.IsMatch(a.Url))
-            .ToList();
+        List<TrendingArticle> rows;
+        try
+        {
+            // Unreadable outlets (blocked in VN / anti-bot) only boost coverage; their own articles aren't listed
+            var unreadable = UnreadableKeys(GetFeeds());
+            rows = (await _context.TrendingArticles.AsNoTracking()
+                    .Where(a => a.PublishedAtUtc >= since)
+                    .ToListAsync(cancellationToken))
+                .Where(a => !unreadable.Contains(a.SourceKey) && !NonArticleUrl.IsMatch(a.Url))
+                .ToList();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to query TrendingArticles from database");
+            rows = new List<TrendingArticle>();
+        }
 
         var sources = rows
             .GroupBy(r => new { r.SourceKey, r.SourceName, r.Region, r.Language })
