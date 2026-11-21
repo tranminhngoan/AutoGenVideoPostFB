@@ -336,20 +336,30 @@ public class FilmFactoryController : ControllerBase
             {
                 using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
                 var res = await client.GetAsync($"{baseUrl}/", ct);
-                online = res.IsSuccessStatusCode;
-                if (online)
+                if (res.IsSuccessStatusCode)
                 {
                     pingDetail = await res.Content.ReadAsStringAsync(ct);
-                    using var doc = System.Text.Json.JsonDocument.Parse(pingDetail);
-                    var r = doc.RootElement;
-                    if (r.TryGetProperty("gpu", out var g)) gpu = g.GetString();
-                    if (r.TryGetProperty("vram_gb", out var v)) vramGb = v.GetDouble();
-                    if (r.TryGetProperty("disk_free_gb", out var df)) diskFreeGb = df.GetDouble();
-                    if (r.TryGetProperty("disk_total_gb", out var dt)) diskTotalGb = dt.GetDouble();
-                    if (r.TryGetProperty("current_batch", out var cb)) currentBatch = cb.GetString();
-                    if (r.TryGetProperty("queued_batches", out var qb)) queuedBatches = qb.GetInt32();
+                    try
+                    {
+                        using var doc = System.Text.Json.JsonDocument.Parse(pingDetail);
+                        var r = doc.RootElement;
+                        if (r.TryGetProperty("gpu", out var g)) gpu = g.GetString();
+                        if (r.TryGetProperty("vram_gb", out var v)) vramGb = v.GetDouble();
+                        if (r.TryGetProperty("disk_free_gb", out var df)) diskFreeGb = df.GetDouble();
+                        if (r.TryGetProperty("disk_total_gb", out var dt)) diskTotalGb = dt.GetDouble();
+                        if (r.TryGetProperty("current_batch", out var cb)) currentBatch = cb.GetString();
+                        if (r.TryGetProperty("queued_batches", out var qb)) queuedBatches = qb.GetInt32();
 
-                    if (!string.IsNullOrWhiteSpace(currentBatch))
+                        // Chỉ coi là online khi đúng là Film Worker JSON hợp lệ (có trường gpu hoặc status ok)
+                        online = !string.IsNullOrWhiteSpace(gpu) || (r.TryGetProperty("status", out var s) && s.GetString() == "ok");
+                    }
+                    catch (System.Text.Json.JsonException)
+                    {
+                        online = false;
+                        pingDetail = "Pod đang mở nhưng cổng 8888 đang chạy ứng dụng mặc định (Jupyter Lab). Cần chạy lệnh start_a100.sh trong Web Terminal để kích hoạt Worker.";
+                    }
+
+                    if (online && !string.IsNullOrWhiteSpace(currentBatch))
                     {
                         var bRes = await client.GetAsync($"{baseUrl}/status?batch_id={Uri.EscapeDataString(currentBatch)}", ct);
                         if (bRes.IsSuccessStatusCode)
@@ -363,9 +373,15 @@ public class FilmFactoryController : ControllerBase
                         }
                     }
                 }
+                else
+                {
+                    online = false;
+                    pingDetail = $"Cổng 8888 trả về mã HTTP {(int)res.StatusCode}";
+                }
             }
             catch (Exception ex)
             {
+                online = false;
                 pingDetail = ex.Message;
             }
         }

@@ -652,7 +652,7 @@ export function FilmFactoryPage() {
             <div className="mt-1.5 sm:mt-2 text-base sm:text-xl font-semibold text-emerald-500">
               &lt; $5.00 / Series
             </div>
-            <div className="mt-1 text-[11px] text-fg-muted line-clamp-1">4 Free Gemini + RunPod 3090</div>
+            <div className="mt-1 text-[11px] text-fg-muted line-clamp-1">4 Free Gemini + RunPod GPU</div>
           </Card>
         </div>
       )}
@@ -787,15 +787,15 @@ export function FilmFactoryPage() {
                       Máy Chủ GPU RunPod:
                     </span>
 
-                    {gpuStatus?.online ? (
+                    {gpuStatus?.online && gpuStatus.gpu ? (
                       <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-emerald-500/10 text-emerald-500 border border-emerald-500/20">
                         <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                        Online: {gpuStatus.gpu || 'NVIDIA RTX 3090'} ({gpuStatus.vramGb || 24}GB VRAM)
+                        Online: {gpuStatus.gpu} ({gpuStatus.vramGb || 80}GB VRAM)
                       </span>
                     ) : (
-                      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-amber-500/10 text-amber-500 border border-amber-500/20">
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-amber-500/10 text-amber-500 border border-amber-500/20" title={gpuStatus?.pingDetail || ''}>
                         <span className="w-2 h-2 rounded-full bg-amber-500" />
-                        {gpuStatus?.podId ? `Chờ máy phản hồi (${gpuStatus.podId})` : 'Chưa gắn Pod ID'}
+                        {gpuStatus?.podId ? `Chờ bật Worker (${gpuStatus.podId})` : 'Chưa gắn Pod ID'}
                       </span>
                     )}
 
@@ -1036,7 +1036,7 @@ export function FilmFactoryPage() {
                               </div>
                             ) : (
                               <p className="text-[11px] text-fg-subtle">
-                                {ep.status === 'GpuRendering' ? 'Đang thực thi mô hình AI trên RunPod RTX 3090...' : 'GPU và AI đang xử lý ngầm, dữ liệu sẽ tự cập nhật khi hoàn thành.'}
+                                {ep.status === 'GpuRendering' ? (gpuStatus?.gpu ? `Đang thực thi mô hình AI trên RunPod (${gpuStatus.gpu})...` : 'Đang thực thi mô hình AI trên RunPod...') : 'GPU và AI đang xử lý ngầm, dữ liệu sẽ tự cập nhật khi hoàn thành.'}
                               </p>
                             )}
                           </div>
@@ -1478,7 +1478,7 @@ export function FilmFactoryPage() {
                     <span className="font-semibold text-fg">${costSummary.scriptCostUsd.toFixed(4)}</span>
                   </div>
                   <div className="flex justify-between py-1.5 border-b border-line">
-                    <span className="text-fg-muted">Tạo khung hình & Video GPU Wan 2.2 (RunPod RTX 3090):</span>
+                    <span className="text-fg-muted">Tạo khung hình & Video GPU Wan ({gpuStatus?.gpu || 'RunPod GPU'}):</span>
                     <span className="font-semibold text-fg">${costSummary.visualCostUsd.toFixed(4)}</span>
                   </div>
                   <div className="flex justify-between py-1.5 border-b border-line">
@@ -2169,7 +2169,7 @@ export function FilmFactoryPage() {
               • Quy mô cấu hình: <strong>{createForm.targetEpisodes || 5} tập × ~{createForm.targetDurationMinutes || 2.5} phút/tập</strong>.
             </p>
             <p className="text-fg-subtle">
-              • Ngân sách bảo vệ: <strong>Tối đa $5.00 USD</strong> (luân phiên 4 Gemini free keys + RunPod RTX 3090).
+              • Ngân sách bảo vệ: <strong>Tối đa $5.00 USD</strong> (luân phiên 4 Gemini free keys + GPU RunPod).
             </p>
           </div>
 
