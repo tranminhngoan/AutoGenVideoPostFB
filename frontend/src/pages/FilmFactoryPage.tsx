@@ -738,71 +738,88 @@ export function FilmFactoryPage() {
               </Button>
             </div>
 
-            <Card className="overflow-hidden">
-              <div className="border-b border-line p-5">
-                <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-                  <div className="space-y-2 flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="rounded bg-muted px-2 py-0.5 text-xs font-semibold text-fg">
-                        {selectedProject.filmPageName}
-                      </span>
-                      <span className="rounded bg-muted px-2 py-0.5 text-xs text-fg-subtle">
-                        {selectedProject.genre}
-                      </span>
-                      <span className="rounded bg-muted px-2 py-0.5 text-xs text-fg-subtle">
-                        {selectedProject.visualArtStyle}
-                      </span>
-                      <Badge
-                        tone={
-                          selectedProject.status === 'Completed'
-                            ? 'success'
-                            : selectedProject.status === 'Failed'
-                              ? 'danger'
-                              : projectBusy
-                                ? 'warning'
-                                : 'neutral'
-                        }
-                        dot
-                        pulse={projectBusy}
-                      >
-                        {projectBusy ? 'Đang xử lý trong nền' : selectedProject.status}
-                      </Badge>
+            <Card className="overflow-hidden shadow-card border-line">
+              {/* Project Overview & Info Header */}
+              <div className="p-4 sm:p-6 space-y-4">
+                <div className="space-y-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="rounded bg-muted px-2.5 py-0.5 text-xs font-semibold text-fg border border-line">
+                      {selectedProject.filmPageName}
+                    </span>
+                    <span className="rounded bg-muted px-2.5 py-0.5 text-xs text-fg-subtle border border-line">
+                      {selectedProject.genre}
+                    </span>
+                    <span className="rounded bg-muted px-2.5 py-0.5 text-xs text-fg-subtle border border-line">
+                      {selectedProject.visualArtStyle}
+                    </span>
+                    <Badge
+                      tone={
+                        selectedProject.status === 'Completed'
+                          ? 'success'
+                          : selectedProject.status === 'Failed'
+                            ? 'danger'
+                            : projectBusy
+                              ? 'warning'
+                              : 'neutral'
+                      }
+                      dot
+                      pulse={projectBusy}
+                    >
+                      {projectBusy ? 'Đang xử lý trong nền' : selectedProject.status}
+                    </Badge>
+                  </div>
+
+                  <h2 className="text-xl sm:text-2xl font-bold text-fg tracking-tight leading-snug">{selectedProject.title}</h2>
+                  <p className="text-xs sm:text-sm text-fg-muted max-w-3xl leading-relaxed">{selectedProject.logline}</p>
+
+                  <div className="flex flex-wrap items-center gap-4 sm:gap-6 pt-1 text-xs text-fg-subtle">
+                    <div className="flex items-center gap-1.5">
+                      <Clapperboard className="h-3.5 w-3.5 text-accent" />
+                      Quy mô:{' '}
+                      <strong className="text-fg font-semibold">
+                        {selectedProject.completedEpisodesCount} / {selectedProject.targetEpisodes} tập hoàn thành
+                      </strong>{' '}
+                      (~{Math.round(selectedProject.targetDurationPerEpisodeSeconds / 60 * 10) / 10} phút/tập)
                     </div>
-
-                    <h2 className="text-xl font-bold text-fg sm:text-2xl">{selectedProject.title}</h2>
-                    <p className="text-sm text-fg-muted max-w-3xl leading-relaxed">{selectedProject.logline}</p>
-
-                    <div className="flex flex-wrap items-center gap-6 pt-2 text-xs text-fg-subtle">
-                      <div>
-                        Quy mô:{' '}
-                        <strong className="text-fg font-semibold">
-                          {selectedProject.completedEpisodesCount} / {selectedProject.targetEpisodes} tập hoàn thành
-                        </strong>{' '}
-                        (~{Math.round(selectedProject.targetDurationPerEpisodeSeconds / 60 * 10) / 10} phút/tập)
-                      </div>
-                      <div>
-                        Chi phí thực tế:{' '}
-                        <strong className="text-emerald-500 font-semibold">
-                          ${selectedProject.totalActualCostUsd.toFixed(4)}
-                        </strong>{' '}
-                        / ${selectedProject.totalBudgetLimitUsd.toFixed(2)} USD
-                      </div>
-                    </div>
-
-                    {/* Progress bar */}
-                    <div className="pt-2 max-w-md">
-                      <ProgressBar
-                        value={(selectedProject.completedEpisodesCount / (selectedProject.targetEpisodes || 1)) * 100}
-                        tone={selectedProject.completedEpisodesCount === selectedProject.targetEpisodes ? 'success' : 'info'}
-                      />
+                    <div className="flex items-center gap-1.5">
+                      <DollarSign className="h-3.5 w-3.5 text-emerald-500" />
+                      Chi phí thực tế:{' '}
+                      <strong className="text-emerald-500 font-semibold">
+                        ${selectedProject.totalActualCostUsd.toFixed(4)}
+                      </strong>{' '}
+                      / ${selectedProject.totalBudgetLimitUsd.toFixed(2)} USD
                     </div>
                   </div>
 
-                  {/* Actions for this series */}
-                  <div className="flex flex-wrap items-center gap-2 self-start pt-1">
+                  {/* Progress bar */}
+                  <div className="pt-1 max-w-md">
+                    <ProgressBar
+                      value={(selectedProject.completedEpisodesCount / (selectedProject.targetEpisodes || 1)) * 100}
+                      tone={selectedProject.completedEpisodesCount === selectedProject.targetEpisodes ? 'success' : 'info'}
+                    />
+                  </div>
+                </div>
+
+                {/* Project Action Toolbar: Desktop & Mobile responsive */}
+                <div className="pt-3 border-t border-line/70 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      className="w-full sm:w-auto"
+                      icon={producing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4 fill-current" />}
+                      loading={producing}
+                      disabled={producing || generatingStoryBible}
+                      onClick={() => handleTriggerProduce(selectedProject.id)}
+                    >
+                      Dựng toàn bộ {selectedProject.targetEpisodes} tập
+                    </Button>
+
                     {(!selectedProject.storyBible || selectedProject.characters.length === 0) && (
                       <Button
                         variant="secondary"
+                        size="sm"
+                        className="w-full sm:w-auto"
                         icon={generatingStoryBible ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4 text-amber-400" />}
                         loading={generatingStoryBible}
                         disabled={generatingStoryBible || producing}
@@ -811,25 +828,21 @@ export function FilmFactoryPage() {
                         Lên kịch bản & nhân vật trước
                       </Button>
                     )}
-                    <Button
-                      variant="primary"
-                      icon={producing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
-                      loading={producing}
-                      disabled={producing || generatingStoryBible}
-                      onClick={() => handleTriggerProduce(selectedProject.id)}
-                    >
-                      Dựng toàn bộ {selectedProject.targetEpisodes} tập
-                    </Button>
+                  </div>
+
+                  <div className="flex items-center gap-2 self-end sm:self-auto">
                     <Button
                       variant="secondary"
-                      icon={<RotateCw className={cn('h-4 w-4', loadingDetail && 'animate-spin')} />}
+                      size="sm"
+                      icon={<RotateCw className={cn('h-3.5 w-3.5', loadingDetail && 'animate-spin')} />}
                       onClick={() => loadProjectDetail(selectedProject.id)}
                     >
                       Tải lại
                     </Button>
                     <Button
                       variant="danger-soft"
-                      icon={<Trash2 className="h-4 w-4" />}
+                      size="sm"
+                      icon={<Trash2 className="h-3.5 w-3.5" />}
                       onClick={() => setDeletingProject({ id: selectedProject.id, title: selectedProject.title })}
                       title="Xóa series này"
                     >
@@ -839,37 +852,37 @@ export function FilmFactoryPage() {
                 </div>
               </div>
 
-              {/* Live GPU & Production Command Center */}
-              <div className="bg-surface border-b border-line p-4 space-y-3">
-                {/* Header row: Connection status, GPU spec, Disk metric, Pod controls */}
-                <div className="flex flex-wrap items-center justify-between gap-3 text-xs">
-                  <div className="flex flex-wrap items-center gap-2.5">
-                    <span className="font-semibold text-fg flex items-center gap-1.5">
+              {/* Live GPU & Production Command Center: Modern Responsive Deck */}
+              <div className="bg-surface border-t border-line p-3.5 sm:p-4 space-y-3">
+                {/* Deck Row: GPU spec, Disk metric, Master Power Button, Pod controls */}
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs">
+                  <div className="flex flex-wrap items-center gap-2 sm:gap-2.5">
+                    <span className="font-semibold text-fg flex items-center gap-1.5 shrink-0">
                       <Cpu className="h-4 w-4 text-accent" />
-                      Máy Chủ GPU RunPod:
+                      RunPod GPU:
                     </span>
 
                     {gpuStatus?.online && gpuStatus.gpu ? (
-                      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-emerald-500/10 text-emerald-500 border border-emerald-500/20">
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 shadow-sm">
                         <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
                         Online: {gpuStatus.gpu} ({gpuStatus.vramGb || 80}GB VRAM)
                       </span>
                     ) : (
-                      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-amber-500/10 text-amber-500 border border-amber-500/20" title={gpuStatus?.pingDetail || ''}>
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium bg-amber-500/10 text-amber-500 border border-amber-500/20" title={gpuStatus?.pingDetail || ''}>
                         <span className="w-2 h-2 rounded-full bg-amber-500" />
                         {gpuStatus?.podId ? `Chờ bật Worker (${gpuStatus.podId})` : 'Chưa gắn Pod ID'}
                       </span>
                     )}
 
                     {gpuStatus?.diskTotalGb && (
-                      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded bg-muted/60 text-[11px] text-fg-muted font-mono border border-line">
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-muted/60 text-[11px] text-fg-muted font-mono border border-line">
                         <HardDrive className="h-3 w-3 text-fg-subtle" />
-                        Ổ cứng: còn trống {gpuStatus.diskFreeGb} GB / {gpuStatus.diskTotalGb} GB (Đã lưu model & cache: {Math.round((gpuStatus.diskTotalGb - (gpuStatus.diskFreeGb || 0)) * 10) / 10} GB)
+                        Ổ cứng: còn trống {gpuStatus.diskFreeGb} GB / {gpuStatus.diskTotalGb} GB
                       </span>
                     )}
                   </div>
 
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2 w-full md:w-auto justify-between md:justify-end">
                     {/* Master GPU Switch: Start / Stop to save money */}
                     {gpuStatus?.hasApiKey && (
                       (gpuStatus.online || gpuStatus.podDesiredStatus === 'RUNNING') ? (
@@ -879,9 +892,10 @@ export function FilmFactoryPage() {
                           icon={<PowerOff className="h-3.5 w-3.5" />}
                           loading={stoppingGpu}
                           onClick={handleStopGpu}
+                          className="flex-1 sm:flex-initial"
                           title="Dừng máy GPU trên RunPod để lập tức ngừng tính tiền $2.22/giờ (Ổ cứng và dữ liệu vẫn được giữ nguyên)"
                         >
-                          Dừng GPU (Tiết Kiệm Tiền)
+                          Dừng GPU ($2.22/h)
                         </Button>
                       ) : (
                         <Button
@@ -890,6 +904,7 @@ export function FilmFactoryPage() {
                           icon={<Play className="h-3.5 w-3.5" />}
                           loading={startingGpu}
                           onClick={handleStartGpu}
+                          className="flex-1 sm:flex-initial"
                           title="Bật lại máy GPU trên RunPod để tiếp tục dựng phim"
                         >
                           Bật Lại GPU
@@ -898,11 +913,11 @@ export function FilmFactoryPage() {
                     )}
 
                     {editingPodId ? (
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex items-center gap-1.5 flex-1 sm:flex-initial">
                         <input
                           type="text"
-                          placeholder="Dán Pod ID (vd: 3awp9vz2o4d9qk)"
-                          className="px-2.5 py-1 text-xs rounded border border-line bg-surface text-fg focus:outline-none focus:ring-1 focus:ring-accent"
+                          placeholder="Dán Pod ID"
+                          className="px-2.5 py-1 text-xs rounded border border-line bg-surface text-fg focus:outline-none focus:ring-1 focus:ring-accent w-full sm:w-44"
                           value={podInput}
                           onChange={(e) => setPodInput(e.target.value)}
                         />
@@ -921,27 +936,27 @@ export function FilmFactoryPage() {
                   </div>
                 </div>
 
-                {/* Live Task / Activity Card */}
+                {/* Live Mission Control Banner */}
                 {gpuStatus?.online && (
                   <div className={cn(
-                    "rounded-lg p-3 text-xs border transition-all",
+                    "rounded-lg p-3 sm:p-3.5 text-xs border transition-all",
                     gpuStatus.state === 'busy' || gpuStatus.activeEpisodeStatus
-                      ? "bg-accent/5 border-accent/30 text-fg"
+                      ? "bg-accent/5 border-accent/30 text-fg shadow-sm"
                       : "bg-muted/40 border-line text-fg-muted"
                   )}>
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div className="flex items-center gap-2.5">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div className="flex items-start sm:items-center gap-2.5">
                         {gpuStatus.state === 'busy' || gpuStatus.activeEpisodeStatus ? (
-                          <div className="flex h-6 w-6 items-center justify-center rounded-full bg-accent/20 text-accent shrink-0">
-                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          <div className="flex h-7 w-7 items-center justify-center rounded-full bg-accent/20 text-accent shrink-0 mt-0.5 sm:mt-0">
+                            <Loader2 className="h-4 w-4 animate-spin" />
                           </div>
                         ) : (
-                          <div className="flex h-6 w-6 items-center justify-center rounded-full bg-emerald-500/20 text-emerald-500 shrink-0">
-                            <CheckCircle2 className="h-3.5 w-3.5" />
+                          <div className="flex h-7 w-7 items-center justify-center rounded-full bg-emerald-500/20 text-emerald-500 shrink-0 mt-0.5 sm:mt-0">
+                            <CheckCircle2 className="h-4 w-4" />
                           </div>
                         )}
                         <div>
-                          <span className="font-semibold text-fg">
+                          <span className="font-semibold text-fg text-xs sm:text-sm">
                             {gpuStatus.state === 'busy'
                               ? `GPU đang thực thi: ${gpuStatus.currentBatch || 'Tác vụ'}`
                               : gpuStatus.activeEpisodeStatus
@@ -949,7 +964,7 @@ export function FilmFactoryPage() {
                               : 'GPU đang ở trạng thái rảnh rỗi (Idle) — Sẵn sàng nhận việc'}
                           </span>
                           {gpuStatus.batchDetail ? (
-                            <div className="mt-0.5 text-[11px] text-accent font-medium flex items-center gap-1.5">
+                            <div className="mt-1 text-[11px] text-accent font-medium flex items-center gap-1.5">
                               <span className="w-1.5 h-1.5 rounded-full bg-accent animate-ping" />
                               Chi tiết: {gpuStatus.batchDetail}
                             </div>
@@ -962,11 +977,12 @@ export function FilmFactoryPage() {
                       </div>
 
                       {gpuStatus.activeEpisodeId && (
-                        <div className="flex items-center gap-2">
+                        <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 w-full sm:w-auto">
                           <Button
                             size="sm"
                             variant="primary"
                             icon={<Activity className="h-3.5 w-3.5" />}
+                            className="flex-1 sm:flex-initial"
                             onClick={() => {
                               const found = selectedProject?.episodes.find(e => e.id === gpuStatus.activeEpisodeId);
                               setTrackingEpisode(found || {
@@ -994,9 +1010,10 @@ export function FilmFactoryPage() {
                             size="sm"
                             variant="secondary"
                             icon={<RotateCw className="h-3 w-3" />}
+                            className="flex-1 sm:flex-initial"
                             onClick={() => handleRenderEpisode(gpuStatus.activeEpisodeId!, true)}
                           >
-                            Ép Dựng Lại Tập {gpuStatus.activeEpisodeNumber}
+                            Ép Dựng Lại
                           </Button>
                         </div>
                       )}
@@ -1006,7 +1023,7 @@ export function FilmFactoryPage() {
 
                 {/* Stalled Warning */}
                 {gpuStatus?.isStalled && (
-                  <div className="flex items-center justify-between gap-3 bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 text-xs text-amber-500">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 text-xs text-amber-500">
                     <div className="flex items-center gap-2">
                       <AlertTriangle className="h-4 w-4 shrink-0" />
                       <div>
@@ -1233,16 +1250,17 @@ export function FilmFactoryPage() {
                         )}
                       </div>
 
-                      {/* Card Footer Actions */}
-                      <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line px-4 py-3 bg-muted/20 sm:px-5">
+                      {/* Card Footer Actions: Responsive Desktop & Mobile 3-col Grid */}
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 border-t border-line px-4 py-3 bg-muted/20 sm:px-5">
                         <span className="text-[11px] text-fg-subtle">
                           Chi phí: <strong className="text-fg font-medium">${ep.actualCostUsd.toFixed(4)}</strong>
                         </span>
 
-                        <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+                        <div className="grid grid-cols-3 gap-1.5 sm:flex sm:items-center sm:gap-2 w-full sm:w-auto">
                           <Button
                             size="sm"
                             variant="ghost"
+                            className="justify-center text-xs"
                             icon={<Activity className="h-3 w-3 text-fg-subtle" />}
                             onClick={() => setTrackingEpisode(ep)}
                           >
@@ -1252,15 +1270,17 @@ export function FilmFactoryPage() {
                           <Button
                             size="sm"
                             variant="ghost"
+                            className="justify-center text-xs"
                             onClick={() => handleViewEpisodeShots(ep.id)}
                           >
-                            Xem phân cảnh
+                            Phân cảnh
                           </Button>
 
                           {isCompleted ? (
                             <Button
                               size="sm"
                               variant="secondary"
+                              className="justify-center text-xs"
                               icon={<RotateCw className="h-3 w-3" />}
                               onClick={() => handleRenderEpisode(ep.id)}
                               disabled={isEpBusy}
@@ -1271,15 +1291,17 @@ export function FilmFactoryPage() {
                             <Button
                               size="sm"
                               variant="secondary"
+                              className="justify-center text-xs"
                               loading
                               disabled
                             >
-                              Đang dựng…
+                              Đang dựng
                             </Button>
                           ) : isFailed ? (
                             <Button
                               size="sm"
                               variant="secondary"
+                              className="justify-center text-xs"
                               icon={<RotateCw className="h-3 w-3" />}
                               onClick={() => handleRenderEpisode(ep.id, true)}
                             >
@@ -1288,11 +1310,12 @@ export function FilmFactoryPage() {
                           ) : (
                             <Button
                               size="sm"
-                              variant="primary"
+                              variant="secondary"
+                              className="justify-center text-xs"
                               icon={<Play className="h-3 w-3" />}
                               onClick={() => handleRenderEpisode(ep.id)}
                             >
-                              Dựng tập E{ep.episodeNumber}
+                              Dựng tập
                             </Button>
                           )}
                         </div>
@@ -2461,7 +2484,7 @@ export function FilmFactoryPage() {
             onClose={() => setTrackingEpisode(null)}
             title={`Tiến Độ Sản Xuất: Tập ${trackingEpisode.episodeNumber} - ${trackingEpisode.title}`}
           >
-            <div className="space-y-4 text-xs">
+            <div className="space-y-4 text-xs max-h-[75vh] overflow-y-auto pr-1">
               {/* Overall Progress Header */}
               <div className="rounded-lg bg-surface border border-line p-4 space-y-3 shadow-sm">
                 <div className="flex items-center justify-between">
