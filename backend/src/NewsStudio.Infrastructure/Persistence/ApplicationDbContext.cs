@@ -402,7 +402,7 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
             entity.Property(e => e.PrimaryGenre).HasMaxLength(100);
             entity.Property(e => e.VisualArtStyle).HasMaxLength(100);
             entity.Property(e => e.Status).HasMaxLength(50);
-            entity.HasIndex(e => e.PageNumber).IsUnique();
+            entity.HasIndex(e => e.PageNumber);
             entity.HasOne(e => e.LinkedFacebookAccount)
                   .WithMany()
                   .HasForeignKey(e => e.LinkedFacebookAccountId)

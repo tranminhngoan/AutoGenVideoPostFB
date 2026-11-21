@@ -117,16 +117,19 @@ public class FilmFactoryService : IFilmFactoryService
         // Gán FacebookAccount mặc định nếu có
         var existingFb = await _context.FacebookAccounts.FirstOrDefaultAsync(f => f.IsActive, ct);
 
+        var existingPages = await _context.FilmPages.ToListAsync(ct);
+        var existingNumbers = existingPages.Select(p => p.PageNumber).ToHashSet();
+
         foreach (var def in defaults)
         {
-            var exists = await _context.FilmPages.AnyAsync(p => p.PageNumber == def.PageNumber, ct);
-            if (!exists)
+            if (!existingNumbers.Contains(def.PageNumber))
             {
                 if (existingFb != null)
                 {
                     def.LinkedFacebookAccountId = existingFb.Id;
                 }
                 _context.FilmPages.Add(def);
+                existingNumbers.Add(def.PageNumber);
             }
         }
 
@@ -142,15 +145,26 @@ public class FilmFactoryService : IFilmFactoryService
             .OrderBy(f => f.CreatedAtUtc)
             .ToListAsync(ct);
 
+        var existingPages = await _context.FilmPages.ToListAsync(ct);
+        var existingNumbers = existingPages.Select(p => p.PageNumber).ToHashSet();
+        int currentMaxNumber = existingPages.Count > 0 ? existingPages.Max(p => p.PageNumber) : 0;
+        bool hasChanges = false;
+
         foreach (var fb in activeFbAccounts)
         {
-            var existing = await _context.FilmPages.FirstOrDefaultAsync(p => p.LinkedFacebookAccountId == fb.Id, ct);
+            var existing = existingPages.FirstOrDefault(p => p.LinkedFacebookAccountId == fb.Id);
             if (existing == null)
             {
-                var nextNumber = (await _context.FilmPages.MaxAsync(p => (int?)p.PageNumber, ct) ?? 0) + 1;
-                _context.FilmPages.Add(new FilmPage
+                currentMaxNumber++;
+                while (existingNumbers.Contains(currentMaxNumber))
                 {
-                    PageNumber = nextNumber,
+                    currentMaxNumber++;
+                }
+                existingNumbers.Add(currentMaxNumber);
+
+                var newPage = new FilmPage
+                {
+                    PageNumber = currentMaxNumber,
                     Name = fb.PageName,
                     Description = $"Kênh phim chính thức kết nối với Facebook Page {fb.PageName} (ID: {fb.PageId})",
                     PrimaryGenre = "Drama",
@@ -163,21 +177,31 @@ public class FilmFactoryService : IFilmFactoryService
                     LinkedFacebookAccountId = fb.Id,
                     Status = fb.Status,
                     IsActive = fb.IsActive
-                });
+                };
+                _context.FilmPages.Add(newPage);
+                existingPages.Add(newPage);
+                hasChanges = true;
             }
             else
             {
-                existing.Name = fb.PageName;
-                existing.Status = fb.Status;
-                existing.IsActive = fb.IsActive;
+                if (existing.Name != fb.PageName || existing.Status != fb.Status || existing.IsActive != fb.IsActive)
+                {
+                    existing.Name = fb.PageName;
+                    existing.Status = fb.Status;
+                    existing.IsActive = fb.IsActive;
+                    hasChanges = true;
+                }
             }
         }
 
-        await _context.SaveChangesAsync(ct);
+        if (hasChanges)
+        {
+            await _context.SaveChangesAsync(ct);
+        }
 
         // Nếu chưa từng có Facebook Page nào được kết nối, seed các kênh mặc định
-        var hasRealPages = await _context.FilmPages.AnyAsync(p => p.LinkedFacebookAccountId != null, ct);
-        if (!hasRealPages)
+        var hasRealPages = existingPages.Any(p => p.LinkedFacebookAccountId != null);
+        if (!hasRealPages && existingPages.Count == 0)
         {
             await SeedDefaultFilmPagesAsync(ct);
         }
