@@ -731,8 +731,9 @@ export const api = {
     return await res.json();
   },
 
-  async renderFilmEpisode(id: string): Promise<{ message: string; episodeId: string }> {
-    const res = await fetch(`${API_BASE}/film-factory/episodes/${id}/render`, {
+  async renderFilmEpisode(id: string, force: boolean = false): Promise<{ message: string; episodeId: string }> {
+    const url = `${API_BASE}/film-factory/episodes/${id}/render${force ? '?force=true' : ''}`;
+    const res = await fetch(url, {
       method: 'POST',
     });
     if (!res.ok) throw new Error(await apiError(res, 'Dựng tập phim thất bại'));
@@ -747,7 +748,7 @@ export const api = {
     return `${API_BASE}/film-factory/episodes/${episodeId}/download`;
   },
 
-  async getRunPodGpuStatus(): Promise<{ configured: boolean; baseUrl: string; podId: string | null; hasApiKey: boolean; online: boolean; pingDetail: string | null }> {
+  async getRunPodGpuStatus(): Promise<RunPodGpuLiveStatus> {
     const res = await fetch(`${API_BASE}/film-factory/gpu/status`);
     if (!res.ok) return { configured: false, baseUrl: '', podId: null, hasApiKey: false, online: false, pingDetail: null };
     return await res.json();
@@ -1439,6 +1440,28 @@ export interface AiUsageReportDto {
 }
 
 // ── AI Film Factory DTOs ──
+export interface RunPodGpuLiveStatus {
+  configured: boolean;
+  baseUrl: string;
+  podId: string | null;
+  hasApiKey: boolean;
+  online: boolean;
+  pingDetail: string | null;
+  gpu?: string | null;
+  vramGb?: number;
+  diskFreeGb?: number;
+  diskTotalGb?: number;
+  state?: 'idle' | 'busy';
+  currentBatch?: string | null;
+  batchDetail?: string | null;
+  queuedBatches?: number;
+  activeEpisodeId?: string | null;
+  activeEpisodeNumber?: number | null;
+  activeEpisodeTitle?: string | null;
+  activeEpisodeStatus?: string | null;
+  isStalled?: boolean;
+}
+
 export interface FilmPageDto {
   id: string;
   pageNumber: number;

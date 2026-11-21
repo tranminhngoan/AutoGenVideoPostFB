@@ -27,7 +27,10 @@ import {
   RefreshCw,
   Info,
   Share2,
-  ExternalLink
+  ExternalLink,
+  Cpu,
+  HardDrive,
+  Zap
 } from 'lucide-react';
 import {
   Button,
@@ -60,7 +63,8 @@ import {
   FilmCostSummaryDto,
   ConnectFacebookPageRequestDto,
   UserTokenPagesResultDto,
-  FacebookAccountDto
+  FacebookAccountDto,
+  RunPodGpuLiveStatus
 } from '../services/api';
 import { useToast } from '../components/feedback';
 
@@ -209,7 +213,7 @@ export function FilmFactoryPage() {
   }, [distinctPages]);
 
   // GPU Status
-  const [gpuStatus, setGpuStatus] = useState<{ configured: boolean; baseUrl: string; podId: string | null; online: boolean } | null>(null);
+  const [gpuStatus, setGpuStatus] = useState<RunPodGpuLiveStatus | null>(null);
   const [editingPodId, setEditingPodId] = useState(false);
   const [podInput, setPodInput] = useState('');
   const [savingPodId, setSavingPodId] = useState(false);
@@ -282,14 +286,26 @@ export function FilmFactoryPage() {
     }
   };
 
-  // Initial Load
+  // Initial Load & GPU Polling
   useEffect(() => {
     loadPages();
     loadProjects();
     loadGpuStatus();
-    const gpuTimer = window.setInterval(loadGpuStatus, 15000);
-    return () => window.clearInterval(gpuTimer);
   }, []);
+
+  // Polling while server is processing or GPU is active
+  const projectBusy =
+    !!selectedProject &&
+    (BUSY_PROJECT_STATUSES.includes(selectedProject.status) ||
+      gpuStatus?.state === 'busy' ||
+      selectedProject.episodes.some((e) => BUSY_EPISODE_STATUSES.includes(e.status)));
+
+  useEffect(() => {
+    const isBusy = gpuStatus?.state === 'busy' || projectBusy;
+    const interval = isBusy ? 3000 : 8000;
+    const gpuTimer = window.setInterval(loadGpuStatus, interval);
+    return () => window.clearInterval(gpuTimer);
+  }, [gpuStatus?.state, projectBusy]);
 
   // Sync Project Detail when selection changes
   useEffect(() => {
@@ -300,12 +316,6 @@ export function FilmFactoryPage() {
       setCostSummary(null);
     }
   }, [selectedProjectId]);
-
-  // Polling while server is processing
-  const projectBusy =
-    !!selectedProject &&
-    (BUSY_PROJECT_STATUSES.includes(selectedProject.status) ||
-      selectedProject.episodes.some((e) => BUSY_EPISODE_STATUSES.includes(e.status)));
 
   useEffect(() => {
     if (!selectedProjectId || !projectBusy) return;
@@ -319,7 +329,7 @@ export function FilmFactoryPage() {
       } catch {
         // Keep last state on failure
       }
-    }, 5000);
+    }, 4000);
     return () => window.clearInterval(timer);
   }, [selectedProjectId, projectBusy]);
 
@@ -442,12 +452,13 @@ export function FilmFactoryPage() {
     }
   };
 
-  // Render Single Episode
-  const handleRenderEpisode = async (episodeId: string) => {
+  // Render Single Episode (support force)
+  const handleRenderEpisode = async (episodeId: string, force: boolean = false) => {
     try {
       setRenderingEpisodeId(episodeId);
-      const res = await api.renderFilmEpisode(episodeId);
+      const res = await api.renderFilmEpisode(episodeId, force);
       toast.success(`${res.message} Quá trình diễn ra tự động trong nền.`);
+      await loadGpuStatus();
       if (selectedProjectId) {
         await loadProjectDetail(selectedProjectId);
       }
@@ -686,63 +697,139 @@ export function FilmFactoryPage() {
                 </div>
               </div>
 
-              {/* GPU Connection Bar */}
-              <div className="flex flex-wrap items-center justify-between gap-3 bg-muted/30 px-5 py-2.5 text-xs text-fg border-b border-line">
-                <div className="flex items-center gap-2">
-                  <span className="font-medium text-fg-muted">Máy chủ GPU RunPod:</span>
-                  {gpuStatus?.online ? (
-                    <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-emerald-500/10 text-emerald-500 border border-emerald-500/20">
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                      Đang kết nối: {gpuStatus.podId || 'RunPod'}
+              {/* Live GPU & Production Command Center */}
+              <div className="bg-surface border-b border-line p-4 space-y-3">
+                {/* Header row: Connection status, GPU spec, Disk metric, Pod controls */}
+                <div className="flex flex-wrap items-center justify-between gap-3 text-xs">
+                  <div className="flex flex-wrap items-center gap-2.5">
+                    <span className="font-semibold text-fg flex items-center gap-1.5">
+                      <Cpu className="h-4 w-4 text-accent" />
+                      Máy Chủ GPU RunPod:
                     </span>
-                  ) : (
-                    <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-amber-500/10 text-amber-500 border border-amber-500/20">
-                      <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
-                      {gpuStatus?.podId ? `Chờ máy phản hồi (${gpuStatus.podId})` : 'Chưa gắn Pod ID'}
-                    </span>
-                  )}
-                  {gpuStatus?.baseUrl && (
-                    <span className="text-[11px] text-fg-muted font-mono hidden md:inline">
-                      {gpuStatus.baseUrl}
-                    </span>
-                  )}
-                </div>
 
-                <div className="flex items-center gap-2">
-                  {editingPodId ? (
-                    <div className="flex items-center gap-1.5">
-                      <input
-                        type="text"
-                        placeholder="Dán Pod ID (vd: 3awp9vz2o4d9qk)"
-                        className="px-2.5 py-1 text-xs rounded border border-line bg-surface text-fg focus:outline-none focus:ring-1 focus:ring-accent"
-                        value={podInput}
-                        onChange={(e) => setPodInput(e.target.value)}
-                      />
-                      <Button size="sm" variant="primary" loading={savingPodId} onClick={handleSavePodId}>
-                        Lưu
-                      </Button>
-                      <Button size="sm" variant="ghost" onClick={() => setEditingPodId(false)}>
-                        Hủy
-                      </Button>
-                    </div>
-                  ) : (
-                    <Button size="sm" variant="ghost" onClick={() => setEditingPodId(true)}>
-                      Đổi Pod ID
-                    </Button>
-                  )}
-                </div>
-              </div>
+                    {gpuStatus?.online ? (
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-emerald-500/10 text-emerald-500 border border-emerald-500/20">
+                        <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                        Online: {gpuStatus.gpu || 'NVIDIA RTX 3090'} ({gpuStatus.vramGb || 24}GB VRAM)
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-amber-500/10 text-amber-500 border border-amber-500/20">
+                        <span className="w-2 h-2 rounded-full bg-amber-500" />
+                        {gpuStatus?.podId ? `Chờ máy phản hồi (${gpuStatus.podId})` : 'Chưa gắn Pod ID'}
+                      </span>
+                    )}
 
-              {/* Busy Callout Banner */}
-              {projectBusy && (
-                <div className="flex items-center gap-3 bg-muted/60 px-5 py-3 text-xs text-fg border-b border-line">
-                  <Loader2 className="h-4 w-4 animate-spin text-fg shrink-0" />
-                  <div className="flex-1">
-                    <span className="font-semibold">Hệ thống đang sản xuất tự động trong nền:</span>{' '}
-                    GPU Wan 2.2 trên RunPod và AI Showrunner đang chạy độc lập. Trang tự động cập nhật mỗi 5 giây. Bạn không cần treo máy và có thể tắt trình duyệt an tâm.
+                    {gpuStatus?.diskTotalGb && (
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded bg-muted/60 text-[11px] text-fg-muted font-mono border border-line">
+                        <HardDrive className="h-3 w-3 text-fg-subtle" />
+                        Ổ cứng: còn trống {gpuStatus.diskFreeGb} GB / {gpuStatus.diskTotalGb} GB (Đã lưu model & cache: {Math.round((gpuStatus.diskTotalGb - (gpuStatus.diskFreeGb || 0)) * 10) / 10} GB)
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    {editingPodId ? (
+                      <div className="flex items-center gap-1.5">
+                        <input
+                          type="text"
+                          placeholder="Dán Pod ID (vd: 3awp9vz2o4d9qk)"
+                          className="px-2.5 py-1 text-xs rounded border border-line bg-surface text-fg focus:outline-none focus:ring-1 focus:ring-accent"
+                          value={podInput}
+                          onChange={(e) => setPodInput(e.target.value)}
+                        />
+                        <Button size="sm" variant="primary" loading={savingPodId} onClick={handleSavePodId}>
+                          Lưu
+                        </Button>
+                        <Button size="sm" variant="ghost" onClick={() => setEditingPodId(false)}>
+                          Hủy
+                        </Button>
+                      </div>
+                    ) : (
+                      <Button size="sm" variant="ghost" onClick={() => setEditingPodId(true)}>
+                        Đổi Pod ID ({gpuStatus?.podId || 'RunPod'})
+                      </Button>
+                    )}
                   </div>
                 </div>
-              )}
+
+                {/* Live Task / Activity Card */}
+                {gpuStatus?.online && (
+                  <div className={cn(
+                    "rounded-lg p-3 text-xs border transition-all",
+                    gpuStatus.state === 'busy' || gpuStatus.activeEpisodeStatus
+                      ? "bg-accent/5 border-accent/30 text-fg"
+                      : "bg-muted/40 border-line text-fg-muted"
+                  )}>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-2.5">
+                        {gpuStatus.state === 'busy' || gpuStatus.activeEpisodeStatus ? (
+                          <div className="flex h-6 w-6 items-center justify-center rounded-full bg-accent/20 text-accent shrink-0">
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          </div>
+                        ) : (
+                          <div className="flex h-6 w-6 items-center justify-center rounded-full bg-emerald-500/20 text-emerald-500 shrink-0">
+                            <CheckCircle2 className="h-3.5 w-3.5" />
+                          </div>
+                        )}
+                        <div>
+                          <span className="font-semibold text-fg">
+                            {gpuStatus.state === 'busy'
+                              ? `GPU đang thực thi: ${gpuStatus.currentBatch || 'Tác vụ'}`
+                              : gpuStatus.activeEpisodeStatus
+                              ? `Tiến trình: Tập ${gpuStatus.activeEpisodeNumber || '?'}: ${gpuStatus.activeEpisodeTitle || ''} (${EPISODE_STATUS_LABELS[gpuStatus.activeEpisodeStatus] || gpuStatus.activeEpisodeStatus})`
+                              : 'GPU đang ở trạng thái rảnh rỗi (Idle) — Sẵn sàng nhận việc'}
+                          </span>
+                          {gpuStatus.batchDetail ? (
+                            <div className="mt-0.5 text-[11px] text-accent font-medium flex items-center gap-1.5">
+                              <span className="w-1.5 h-1.5 rounded-full bg-accent animate-ping" />
+                              Chi tiết: {gpuStatus.batchDetail}
+                            </div>
+                          ) : (
+                            <div className="mt-0.5 text-[11px] text-fg-subtle">
+                              Trang tự động cập nhật liên tục mỗi 3-4 giây.
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {gpuStatus.activeEpisodeId && (
+                        <div className="flex items-center gap-2">
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            icon={<RotateCw className="h-3 w-3" />}
+                            onClick={() => handleRenderEpisode(gpuStatus.activeEpisodeId!, true)}
+                          >
+                            Ép Dựng Lại Tập {gpuStatus.activeEpisodeNumber}
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Stalled Warning */}
+                {gpuStatus?.isStalled && (
+                  <div className="flex items-center justify-between gap-3 bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 text-xs text-amber-500">
+                    <div className="flex items-center gap-2">
+                      <AlertTriangle className="h-4 w-4 shrink-0" />
+                      <div>
+                        <span className="font-semibold">Phát hiện tác vụ bị ngắt quãng:</span>{' '}
+                        Tập {gpuStatus.activeEpisodeNumber} đang ghi nhận là GpuRendering nhưng máy GPU báo rảnh rỗi (do máy vừa khởi động lại).
+                      </div>
+                    </div>
+                    {gpuStatus.activeEpisodeId && (
+                      <Button
+                        size="sm"
+                        variant="primary"
+                        onClick={() => handleRenderEpisode(gpuStatus.activeEpisodeId!, true)}
+                      >
+                        Gỡ Kẹt & Tiếp Tục Ngay
+                      </Button>
+                    )}
+                  </div>
+                )}
+              </div>
             </Card>
           </div>
 
@@ -862,9 +949,16 @@ export function FilmFactoryPage() {
                                 style={{ width: `${getStatusPercent(ep.status)}%` }}
                               />
                             </div>
-                            <p className="text-[11px] text-fg-subtle">
-                              GPU và AI đang xử lý ngầm, dữ liệu sẽ tự cập nhật khi hoàn thành.
-                            </p>
+                            {((gpuStatus?.activeEpisodeId === ep.id) || (gpuStatus?.currentBatch && gpuStatus.currentBatch.startsWith(`ep${ep.episodeNumber}-`))) && gpuStatus?.batchDetail ? (
+                              <div className="text-[11px] font-medium text-emerald-500 flex items-center gap-1.5 bg-emerald-500/10 px-2 py-1 rounded border border-emerald-500/20">
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping" />
+                                <span>{gpuStatus.batchDetail}</span>
+                              </div>
+                            ) : (
+                              <p className="text-[11px] text-fg-subtle">
+                                {ep.status === 'GpuRendering' ? 'Đang thực thi mô hình AI trên RunPod RTX 3090...' : 'GPU và AI đang xử lý ngầm, dữ liệu sẽ tự cập nhật khi hoàn thành.'}
+                              </p>
+                            )}
                           </div>
                         )}
 
@@ -971,7 +1065,7 @@ export function FilmFactoryPage() {
                               size="sm"
                               variant="secondary"
                               icon={<RotateCw className="h-3 w-3" />}
-                              onClick={() => handleRenderEpisode(ep.id)}
+                              onClick={() => handleRenderEpisode(ep.id, true)}
                             >
                               Thử lại
                             </Button>

@@ -240,18 +240,77 @@ public class FilmFactoryController : ControllerBase
 
         bool online = false;
         string? pingDetail = null;
+        string? gpu = null;
+        double? vramGb = null;
+        double? diskFreeGb = null;
+        double? diskTotalGb = null;
+        string? currentBatch = null;
+        string? batchDetail = null;
+        int queuedBatches = 0;
+
         if (!string.IsNullOrWhiteSpace(baseUrl))
         {
             try
             {
                 using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
-                var res = await client.GetAsync($"{baseUrl}/status", ct);
+                var res = await client.GetAsync($"{baseUrl}/", ct);
                 online = res.IsSuccessStatusCode;
-                pingDetail = await res.Content.ReadAsStringAsync(ct);
+                if (online)
+                {
+                    pingDetail = await res.Content.ReadAsStringAsync(ct);
+                    using var doc = System.Text.Json.JsonDocument.Parse(pingDetail);
+                    var r = doc.RootElement;
+                    if (r.TryGetProperty("gpu", out var g)) gpu = g.GetString();
+                    if (r.TryGetProperty("vram_gb", out var v)) vramGb = v.GetDouble();
+                    if (r.TryGetProperty("disk_free_gb", out var df)) diskFreeGb = df.GetDouble();
+                    if (r.TryGetProperty("disk_total_gb", out var dt)) diskTotalGb = dt.GetDouble();
+                    if (r.TryGetProperty("current_batch", out var cb)) currentBatch = cb.GetString();
+                    if (r.TryGetProperty("queued_batches", out var qb)) queuedBatches = qb.GetInt32();
+
+                    if (!string.IsNullOrWhiteSpace(currentBatch))
+                    {
+                        var bRes = await client.GetAsync($"{baseUrl}/status?batch_id={Uri.EscapeDataString(currentBatch)}", ct);
+                        if (bRes.IsSuccessStatusCode)
+                        {
+                            var bJson = await bRes.Content.ReadAsStringAsync(ct);
+                            using var bDoc = System.Text.Json.JsonDocument.Parse(bJson);
+                            if (bDoc.RootElement.TryGetProperty("detail", out var d))
+                            {
+                                batchDetail = d.GetString();
+                            }
+                        }
+                    }
+                }
             }
             catch (Exception ex)
             {
                 pingDetail = ex.Message;
+            }
+        }
+
+        var db = HttpContext.RequestServices.GetService<NewsStudio.Application.Common.Interfaces.IApplicationDbContext>();
+        Guid? activeEpisodeId = null;
+        int? activeEpisodeNumber = null;
+        string? activeEpisodeTitle = null;
+        string? activeEpisodeStatus = null;
+        bool isStalled = false;
+
+        if (db != null)
+        {
+            var activeEp = await Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.FirstOrDefaultAsync(
+                db.FilmEpisodes.Where(e => e.Status == "GpuRendering" || e.Status == "GpuQueued" || e.Status == "VoiceGenerating"),
+                ct);
+
+            if (activeEp != null)
+            {
+                activeEpisodeId = activeEp.Id;
+                activeEpisodeNumber = activeEp.EpisodeNumber;
+                activeEpisodeTitle = activeEp.Title;
+                activeEpisodeStatus = activeEp.Status;
+                if (online && activeEp.Status == "GpuRendering" && string.IsNullOrWhiteSpace(currentBatch))
+                {
+                    isStalled = true;
+                }
             }
         }
 
@@ -262,7 +321,20 @@ public class FilmFactoryController : ControllerBase
             podId,
             hasApiKey,
             online,
-            pingDetail
+            pingDetail,
+            gpu,
+            vramGb,
+            diskFreeGb,
+            diskTotalGb,
+            state = string.IsNullOrWhiteSpace(currentBatch) ? "idle" : "busy",
+            currentBatch,
+            batchDetail,
+            queuedBatches,
+            activeEpisodeId,
+            activeEpisodeNumber,
+            activeEpisodeTitle,
+            activeEpisodeStatus,
+            isStalled
         });
     }
 
