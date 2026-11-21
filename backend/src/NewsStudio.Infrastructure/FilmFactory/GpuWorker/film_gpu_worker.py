@@ -572,15 +572,24 @@ def run_server(port=8888):
 
     servers = []
     for p in ports:
-        try:
-            srv = ThreadedHTTPServer(("0.0.0.0", p), GpuRequestHandler)
-            servers.append(srv)
-            log(f"Server is ready and listening on http://0.0.0.0:{p}")
-            if len(servers) > 1:
-                th = threading.Thread(target=srv.serve_forever, daemon=True)
-                th.start()
-        except Exception as e:
-            log(f"Port {p} busy or error: {e}")
+        for attempt in range(2):
+            try:
+                srv = ThreadedHTTPServer(("0.0.0.0", p), GpuRequestHandler)
+                servers.append(srv)
+                log(f"Server is ready and listening on http://0.0.0.0:{p}")
+                if len(servers) > 1:
+                    th = threading.Thread(target=srv.serve_forever, daemon=True)
+                    th.start()
+                break
+            except Exception as e:
+                log(f"Port {p} busy or error (attempt {attempt+1}): {e}")
+                if attempt == 0 and p == 8888:
+                    try:
+                        subprocess.run(["supervisorctl", "stop", "jupyter"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        subprocess.run(["fuser", "-k", "8888/tcp"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        time.sleep(1)
+                    except Exception:
+                        pass
 
     if servers:
         try:
