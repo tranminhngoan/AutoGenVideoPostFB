@@ -58,7 +58,9 @@ import {
   FilmEpisodeDto,
   FilmEpisodeDetailDto,
   FilmCostSummaryDto,
-  ConnectFacebookPageRequestDto
+  ConnectFacebookPageRequestDto,
+  UserTokenPagesResultDto,
+  FacebookAccountDto
 } from '../services/api';
 import { useToast } from '../components/feedback';
 
@@ -149,14 +151,35 @@ export function FilmFactoryPage() {
   const [deletingProject, setDeletingProject] = useState<{ id: string; title: string } | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
 
-  // Connect Real Facebook Page Modal
+  // Connect Real Facebook Page Modal States
   const [showConnectFbModal, setShowConnectFbModal] = useState(false);
+  const [connectFbTab, setConnectFbTab] = useState<'quick' | 'existing' | 'manual'>('quick');
+  const [userToken, setUserToken] = useState('');
+  const [loadingUserTokenPages, setLoadingUserTokenPages] = useState(false);
+  const [userTokenResult, setUserTokenResult] = useState<UserTokenPagesResultDto | null>(null);
+  const [selectedUserTokenPages, setSelectedUserTokenPages] = useState<string[]>([]);
+  const [connectingUserToken, setConnectingUserToken] = useState(false);
+
+  // Existing Facebook Accounts from database
+  const [existingFbAccounts, setExistingFbAccounts] = useState<FacebookAccountDto[]>([]);
+  const [loadingExistingFbAccounts, setLoadingExistingFbAccounts] = useState(false);
+
   const [connectingFb, setConnectingFb] = useState(false);
   const [fbForm, setFbForm] = useState<ConnectFacebookPageRequestDto>({
     pageId: '',
     pageName: '',
     pageAccessToken: '',
   });
+
+  useEffect(() => {
+    if (showConnectFbModal) {
+      setLoadingExistingFbAccounts(true);
+      api.getFacebookPages()
+        .then((accs: FacebookAccountDto[]) => setExistingFbAccounts(accs))
+        .catch(() => undefined)
+        .finally(() => setLoadingExistingFbAccounts(false));
+    }
+  }, [showConnectFbModal]);
 
   // Create Project Modal & Form
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -276,7 +299,57 @@ export function FilmFactoryPage() {
     toast.success('Đã làm mới dữ liệu');
   };
 
-  // Handle Connect Real Facebook Page
+  // Quick Connect User Token Handlers
+  const handleFetchUserTokenPages = async () => {
+    if (!userToken.trim()) {
+      toast.info('Vui lòng dán mã User Access Token từ Facebook');
+      return;
+    }
+    try {
+      setLoadingUserTokenPages(true);
+      setUserTokenResult(null);
+      const r = await api.connectFromUserToken(userToken.trim());
+      setUserTokenResult(r);
+      // Default tick all pages
+      setSelectedUserTokenPages(r.pages.map((p) => p.pageId));
+    } catch (err: any) {
+      toast.error(err.message || 'Không đọc được danh sách Page từ Facebook');
+    } finally {
+      setLoadingUserTokenPages(false);
+    }
+  };
+
+  const handleConnectSelectedUserTokenPages = async () => {
+    if (selectedUserTokenPages.length === 0) {
+      toast.info('Vui lòng chọn ít nhất 1 Facebook Page để kết nối');
+      return;
+    }
+    try {
+      setConnectingUserToken(true);
+      const r = await api.connectFromUserToken(userToken.trim(), selectedUserTokenPages);
+      const connectedCount = r.pages.filter((p) => p.connected).length;
+      toast.success(
+        `Đã kết nối thành công ${connectedCount} Facebook Page làm Kênh Phim!`,
+        r.longLived ? 'Token vĩnh viễn không bao giờ hết hạn.' : undefined
+      );
+      setShowConnectFbModal(false);
+      setUserToken('');
+      setUserTokenResult(null);
+      await loadPages();
+    } catch (err: any) {
+      toast.error(err.message || 'Kết nối Facebook Page thất bại');
+    } finally {
+      setConnectingUserToken(false);
+    }
+  };
+
+  const handleSelectExistingAccount = async (account: FacebookAccountDto) => {
+    await loadPages();
+    toast.success(`Đã đồng bộ Kênh Phim "${account.pageName}" thành công!`);
+    setShowConnectFbModal(false);
+  };
+
+  // Handle Connect Real Facebook Page (Manual)
   const handleConnectFacebook = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!fbForm.pageId.trim() || !fbForm.pageName.trim() || !fbForm.pageAccessToken.trim()) {
@@ -1273,65 +1346,260 @@ export function FilmFactoryPage() {
       <Modal
         open={showConnectFbModal}
         onClose={() => setShowConnectFbModal(false)}
-        title="Kết nối Facebook Page thật cho Kênh Phim"
+        title="Kết nối Facebook Page cho Kênh Phim"
       >
-        <form onSubmit={handleConnectFacebook} className="space-y-4">
-          <p className="text-xs text-fg-muted leading-relaxed">
-            Nhập thông tin kết nối Facebook Page của bạn (tương tự như cài đặt trang báo). Hệ thống sẽ dùng trang này để quản lý và xuất bản các tập phim ngắn.
-          </p>
+        <div className="space-y-4">
+          <Tabs
+            items={[
+              { id: 'quick', label: '⚡ Quét tự động từ Facebook (Token vĩnh viễn)' },
+              { id: 'existing', label: `📋 Page đã có sẵn (${existingFbAccounts.length})` },
+              { id: 'manual', label: '⚙️ Nhập thủ công' },
+            ]}
+            value={connectFbTab}
+            onChange={(id) => setConnectFbTab(id as any)}
+          />
 
-          <Field
-            label={<span>Facebook Page ID <span className="text-danger">*</span></span>}
-            hint="Dãy số ID của trang Facebook (VD: 109283746152839)."
-          >
-            <Input
-              type="text"
-              placeholder="VD: 109283746152839"
-              value={fbForm.pageId}
-              onChange={(e) => setFbForm((prev) => ({ ...prev, pageId: e.target.value }))}
-              required
-            />
-          </Field>
+          {connectFbTab === 'quick' && (
+            <div className="space-y-3">
+              <div className="rounded-lg border border-accent/25 bg-accent/5 p-3.5 text-xs text-fg space-y-2">
+                <div className="font-semibold text-accent flex items-center gap-1.5">
+                  <Sparkles className="h-4 w-4 shrink-0" />
+                  Tự động kết nối tất cả Page — Token vĩnh viễn không lo hết hạn
+                </div>
+                <ol className="list-decimal space-y-1 pl-4 text-fg-muted leading-relaxed">
+                  <li>
+                    Mở{' '}
+                    <a
+                      href="https://developers.facebook.com/tools/explorer"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-accent underline font-medium inline-flex items-center gap-0.5"
+                    >
+                      Graph API Explorer <ExternalLink className="h-3 w-3" />
+                    </a>
+                    . Ô <b>Người dùng hoặc Trang</b> chọn <b>Quay lại mã người dùng</b>.
+                  </li>
+                  <li>
+                    Bấm <b>Generate Access Token</b>, tick chọn các Page (kể cả Page bạn mới tạo).
+                  </li>
+                  <li>
+                    <i>(Để vĩnh viễn không hết hạn)</i> Bấm biểu tượng <b>ⓘ</b> cạnh mã → <b>Mở trong Trình gỡ lỗi</b> → kéo xuống bấm <b>Gia hạn mã truy cập</b>.
+                  </li>
+                  <li>Copy mã đó dán vào ô bên dưới rồi bấm <b>Lấy danh sách Page</b>.</li>
+                </ol>
+              </div>
 
-          <Field
-            label={<span>Tên Facebook Page <span className="text-danger">*</span></span>}
-            hint="Tên hiển thị của trang Facebook."
-          >
-            <Input
-              type="text"
-              placeholder="VD: Phim Ngắn Điện Ảnh HD"
-              value={fbForm.pageName}
-              onChange={(e) => setFbForm((prev) => ({ ...prev, pageName: e.target.value }))}
-              required
-            />
-          </Field>
+              <div className="space-y-2">
+                <Field label={<span>Mã User Access Token <span className="text-danger">*</span></span>}>
+                  <div className="flex gap-2">
+                    <Input
+                      type="password"
+                      placeholder="Dán mã EAAG... vào đây"
+                      value={userToken}
+                      onChange={(e) => {
+                        setUserToken(e.target.value);
+                        setUserTokenResult(null);
+                      }}
+                      className="flex-1"
+                    />
+                    <Button
+                      variant="primary"
+                      loading={loadingUserTokenPages}
+                      onClick={handleFetchUserTokenPages}
+                    >
+                      Lấy danh sách Page
+                    </Button>
+                  </div>
+                </Field>
+              </div>
 
-          <Field
-            label={<span>Page Access Token <span className="text-danger">*</span></span>}
-            hint="Mã truy cập trang (Page Token) bắt đầu bằng EAAG... có quyền đăng Reels."
-          >
-            <Textarea
-              rows={3}
-              placeholder="EAAG..."
-              value={fbForm.pageAccessToken}
-              onChange={(e) => setFbForm((prev) => ({ ...prev, pageAccessToken: e.target.value }))}
-              required
-            />
-          </Field>
+              {userTokenResult && (
+                <div className="space-y-3 pt-2 border-t border-line">
+                  {userTokenResult.longLived ? (
+                    <div className="rounded-md border border-emerald-500/30 bg-emerald-500/10 p-2.5 text-xs text-emerald-400 flex items-center gap-2">
+                      <ShieldCheck className="h-4 w-4 shrink-0" />
+                      <span><strong>Tuyệt vời!</strong> Token này là mã dài hạn. Toàn bộ Page được chọn sẽ có <strong>Token VĨNH VIỄN KHÔNG HẾT HẠN</strong>.</span>
+                    </div>
+                  ) : (
+                    <div className="rounded-md border border-amber-500/30 bg-amber-500/10 p-2.5 text-xs text-amber-400 flex items-center gap-2">
+                      <AlertTriangle className="h-4 w-4 shrink-0" />
+                      <span>Mã ngắn hạn (~1-2 giờ). Nếu bạn có cấu hình AppId/AppSecret trên Railway, hệ thống sẽ tự động nâng cấp sang vĩnh viễn.</span>
+                    </div>
+                  )}
 
-          <div className="flex justify-end gap-2 pt-3 border-t border-line">
-            <Button variant="secondary" onClick={() => setShowConnectFbModal(false)}>
-              Hủy
-            </Button>
-            <Button
-              type="submit"
-              variant="primary"
-              loading={connectingFb}
-            >
-              Kết nối Facebook Page
-            </Button>
-          </div>
-        </form>
+                  <div className="text-xs font-semibold text-fg">
+                    Chọn các Page bạn muốn kết nối làm Kênh Phim ({userTokenResult.pages.length} Page tìm thấy):
+                  </div>
+
+                  <div className="max-h-60 overflow-y-auto space-y-2 pr-1">
+                    {userTokenResult.pages.map((p) => {
+                      const isSelected = selectedUserTokenPages.includes(p.pageId);
+                      return (
+                        <div
+                          key={p.pageId}
+                          onClick={() => {
+                            setSelectedUserTokenPages((prev) =>
+                              prev.includes(p.pageId) ? prev.filter((id) => id !== p.pageId) : [...prev, p.pageId]
+                            );
+                          }}
+                          className={cn(
+                            'p-3 rounded-md border cursor-pointer transition-all flex items-center justify-between',
+                            isSelected
+                              ? 'border-accent bg-accent/10 text-fg'
+                              : 'border-line hover:border-line-strong bg-surface text-fg-muted'
+                          )}
+                        >
+                          <div className="space-y-0.5">
+                            <div className="font-semibold text-sm text-fg flex items-center gap-1.5">
+                              {p.pageName}
+                              {p.alreadyConnected && (
+                                <Badge tone="success">Đã trong hệ thống</Badge>
+                              )}
+                              {p.neverExpires && (
+                                <Badge tone="info">Vĩnh viễn</Badge>
+                              )}
+                            </div>
+                            <div className="text-[11px] font-mono text-fg-muted">ID: {p.pageId}</div>
+                          </div>
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            readOnly
+                            className="h-4 w-4 rounded border-line text-accent focus:ring-accent pointer-events-none"
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <div className="flex justify-end gap-2 pt-2 border-t border-line">
+                    <Button variant="secondary" onClick={() => setShowConnectFbModal(false)}>
+                      Hủy
+                    </Button>
+                    <Button
+                      variant="primary"
+                      loading={connectingUserToken}
+                      onClick={handleConnectSelectedUserTokenPages}
+                    >
+                      Kết nối {selectedUserTokenPages.length} Page đã chọn
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {connectFbTab === 'existing' && (
+            <div className="space-y-3">
+              <p className="text-xs text-fg-muted leading-relaxed">
+                Tất cả Facebook Page đã từng kết nối vào hệ thống (ở trang Báo / Cài đặt) đều có thể dùng ngay làm Kênh Phim mà không cần nhập lại token.
+              </p>
+
+              {loadingExistingFbAccounts ? (
+                <div className="py-8 flex justify-center text-fg-muted">
+                  <Loader2 className="h-6 w-6 animate-spin" />
+                </div>
+              ) : existingFbAccounts.length === 0 ? (
+                <EmptyState
+                  icon={<Tv />}
+                  title="Chưa có Page nào trong hệ thống"
+                  description="Hãy chuyển sang tab 'Quét tự động từ Facebook' để kết nối Page của bạn bằng User Token một lần duy nhất."
+                />
+              ) : (
+                <div className="max-h-72 overflow-y-auto space-y-2 pr-1">
+                  {existingFbAccounts.map((acc) => {
+                    const isLinked = distinctPages.some((p) => p.linkedFacebookAccountId === acc.id);
+                    return (
+                      <div
+                        key={acc.id}
+                        className="p-3 rounded-md border border-line bg-surface hover:border-line-strong flex items-center justify-between transition-all"
+                      >
+                        <div className="space-y-0.5">
+                          <div className="font-semibold text-sm text-fg flex items-center gap-1.5">
+                            {acc.pageName}
+                            {isLinked ? (
+                              <Badge tone="success">Đã là Kênh Phim</Badge>
+                            ) : (
+                              <Badge tone="neutral">Trang Báo</Badge>
+                            )}
+                          </div>
+                          <div className="text-[11px] font-mono text-fg-muted">ID: {acc.pageId}</div>
+                        </div>
+                        <Button
+                          size="sm"
+                          variant={isLinked ? 'secondary' : 'primary'}
+                          onClick={() => handleSelectExistingAccount(acc)}
+                        >
+                          {isLinked ? 'Đã liên kết' : 'Chọn làm Kênh Phim'}
+                        </Button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {connectFbTab === 'manual' && (
+            <form onSubmit={handleConnectFacebook} className="space-y-4">
+              <p className="text-xs text-fg-muted leading-relaxed">
+                Dành cho trường hợp bạn có sẵn Page Access Token riêng lẻ của một Page cụ thể.
+              </p>
+
+              <Field
+                label={<span>Facebook Page ID <span className="text-danger">*</span></span>}
+                hint="Dãy số ID của trang Facebook (VD: 109283746152839)."
+              >
+                <Input
+                  type="text"
+                  placeholder="VD: 109283746152839"
+                  value={fbForm.pageId}
+                  onChange={(e) => setFbForm((prev) => ({ ...prev, pageId: e.target.value }))}
+                  required
+                />
+              </Field>
+
+              <Field
+                label={<span>Tên Facebook Page <span className="text-danger">*</span></span>}
+                hint="Tên hiển thị của trang Facebook."
+              >
+                <Input
+                  type="text"
+                  placeholder="VD: Phim Ngắn Điện Ảnh HD"
+                  value={fbForm.pageName}
+                  onChange={(e) => setFbForm((prev) => ({ ...prev, pageName: e.target.value }))}
+                  required
+                />
+              </Field>
+
+              <Field
+                label={<span>Page Access Token <span className="text-danger">*</span></span>}
+                hint="Mã truy cập trang (Page Token) bắt đầu bằng EAAG... có quyền đăng Reels."
+              >
+                <Textarea
+                  rows={3}
+                  placeholder="EAAG..."
+                  value={fbForm.pageAccessToken}
+                  onChange={(e) => setFbForm((prev) => ({ ...prev, pageAccessToken: e.target.value }))}
+                  required
+                />
+              </Field>
+
+              <div className="flex justify-end gap-2 pt-3 border-t border-line">
+                <Button variant="secondary" onClick={() => setShowConnectFbModal(false)}>
+                  Hủy
+                </Button>
+                <Button
+                  type="submit"
+                  variant="primary"
+                  loading={connectingFb}
+                >
+                  Kết nối Facebook Page
+                </Button>
+              </div>
+            </form>
+          )}
+        </div>
       </Modal>
 
       {/* ── MODAL: CONFIRM DELETE SERIES ── */}

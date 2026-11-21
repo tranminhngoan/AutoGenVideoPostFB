@@ -903,6 +903,35 @@ public class FacebookPublishingService : IFacebookPublishingService
         result.LongLived = userExpires == null || userExpires > DateTime.UtcNow.AddDays(7);
         result.MissingPermissions = RequiredPermissions.Where(p => !scopes.Contains(p)).ToList();
 
+        // 1b. Tự động gia hạn sang Long-Lived User Token (60 ngày) nếu có cấu hình AppId & AppSecret
+        var appId = _configuration["Facebook:AppId"] ?? Environment.GetEnvironmentVariable("Facebook__AppId");
+        var appSecret = _configuration["Facebook:AppSecret"] ?? Environment.GetEnvironmentVariable("Facebook__AppSecret");
+        if (!string.IsNullOrWhiteSpace(appId) && !string.IsNullOrWhiteSpace(appSecret) && !result.LongLived)
+        {
+            try
+            {
+                var exchangeUrl = $"{baseUrl}/oauth/access_token?grant_type=fb_exchange_token&client_id={Uri.EscapeDataString(appId)}&client_secret={Uri.EscapeDataString(appSecret)}&fb_exchange_token={Uri.EscapeDataString(userToken)}";
+                var (exOk, exBody, _) = await GetGraphAsync(exchangeUrl, cancellationToken);
+                if (exOk && exBody.TryGetProperty("access_token", out var exToken))
+                {
+                    var extended = exToken.GetString();
+                    if (!string.IsNullOrWhiteSpace(extended))
+                    {
+                        userToken = extended;
+                        var (newExpires, newScopes, _) = await DebugTokenAsync(userToken, userToken, cancellationToken);
+                        userExpires = newExpires;
+                        result.UserTokenExpiresAtUtc = newExpires;
+                        result.LongLived = true;
+                        _logger.LogInformation("Successfully auto-exchanged User Access Token to 60-day Long-Lived Token.");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to auto-exchange user access token; proceeding with original token.");
+            }
+        }
+
         // 2. Every page the user manages, each with its own page token
         var pages = new List<(string Id, string Name, string Token)>();
         string? next = $"{baseUrl}/me/accounts?fields=id,name,access_token&limit=100&access_token={Uri.EscapeDataString(userToken)}";
