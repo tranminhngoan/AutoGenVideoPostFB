@@ -295,6 +295,7 @@ def process_batch(in_dir, out_dir, batch_id=None, progress_cb=None):
         pipe = None
 
         hf_cache = os.path.join(CACHE_DIR, "huggingface", "hub")
+        is_14b = False
         if use_wan:
             try:
                 import tiktoken
@@ -302,15 +303,30 @@ def process_batch(in_dir, out_dir, batch_id=None, progress_cb=None):
                 log("Installing missing tiktoken/protobuf for Wan tokenizer...")
                 pip("tiktoken", "protobuf", "einops")
             from diffusers import WanImageToVideoPipeline
-            wan_candidates = [
-                spec.get("wan_model", "Wan-AI/Wan2.1-I2V-14B-480P-Diffusers"),
-                "Wan-AI/Wan2.2-I2V-A14B-Diffusers"
-            ]
+
+            # Smart Model Selection based on available VRAM:
+            # - If VRAM >= 70 GB (A100/H100 80GB): default to Wan 14B for maximum cinematic quality
+            # - If VRAM < 70 GB (RTX 3090/4090 24GB): default to Wan 1.3B for ultra-fast native VRAM (25s/clip)
+            forced_wan = spec.get("wan_model") or os.environ.get("WAN_MODEL")
+            if forced_wan:
+                wan_candidates = [forced_wan]
+            elif VRAM_GB >= 70:
+                wan_candidates = [
+                    "Wan-AI/Wan2.1-I2V-14B-480P-Diffusers",
+                    "Wan-AI/Wan2.1-I2V-1.3B-480P-Diffusers"
+                ]
+            else:
+                wan_candidates = [
+                    "Wan-AI/Wan2.1-I2V-1.3B-480P-Diffusers",
+                    "Wan-AI/Wan2.1-I2V-14B-480P-Diffusers"
+                ]
+
             for candidate in wan_candidates:
                 try:
                     log(f"Loading Wan video model: {candidate} ...")
                     pipe = WanImageToVideoPipeline.from_pretrained(candidate, torch_dtype=torch.bfloat16, cache_dir=hf_cache)
                     results["env"]["motion_model"] = candidate
+                    is_14b = "14B" in candidate
                     break
                 except Exception as e:
                     log(f"Warning: Failed to load {candidate} ({e})")
@@ -329,14 +345,24 @@ def process_batch(in_dir, out_dir, batch_id=None, progress_cb=None):
         if pipe is None:
             raise RuntimeError("Could not load any video motion model (Wan or LTX-Video).")
 
-        # Crucial for 24GB GPUs (RTX 3090/4090): sequential cpu offload and VAE tiling prevents CUDA OOM
+        # Hardware execution strategy:
+        # - 14B on 24GB card requires sequential CPU offload to prevent CUDA OOM
+        # - 1.3B on 24GB card or 14B on 80GB card: runs in native VRAM for MAX SPEED!
         if use_wan:
-            try:
-                pipe.enable_sequential_cpu_offload()
-                log("Enabled sequential CPU offload for Wan video model (safe for 24GB VRAM).")
-            except Exception as e_off:
-                log(f"Sequential cpu offload error ({e_off}), falling back to model cpu offload...")
-                pipe.enable_model_cpu_offload()
+            if is_14b and VRAM_GB < 70:
+                try:
+                    pipe.enable_sequential_cpu_offload()
+                    log("Enabled sequential CPU offload for 14B model on 24GB VRAM.")
+                except Exception as e_off:
+                    log(f"Sequential offload warning ({e_off}), using model offload...")
+                    pipe.enable_model_cpu_offload()
+            else:
+                try:
+                    pipe.enable_model_cpu_offload()
+                    log(f"Enabled model CPU offload (native VRAM execution for {'14B on 80GB' if is_14b else '1.3B on 24GB'}).")
+                except Exception:
+                    pipe.to("cuda")
+
             if hasattr(pipe, "vae"):
                 if hasattr(pipe.vae, "enable_tiling"):
                     pipe.vae.enable_tiling()
@@ -349,9 +375,9 @@ def process_batch(in_dir, out_dir, batch_id=None, progress_cb=None):
 
         fps = 16 if use_wan else 24
         w, h = 480, 832
-        steps = 40
+        steps = 40 if is_14b else 30
         cfg = 3.5 if use_wan else 3.0
-        log(f"Motion model ({results['env'].get('motion_model')}) loaded in {time.time() - t:.1f}s")
+        log(f"Motion model ({results['env'].get('motion_model')}) loaded in {time.time() - t:.1f}s, steps={steps}")
 
         def handle(j):
             if torch.cuda.is_available():
