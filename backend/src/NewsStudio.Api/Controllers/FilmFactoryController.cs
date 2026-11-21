@@ -158,13 +158,13 @@ public class FilmFactoryController : ControllerBase
     /// minutes, so it runs in the background; poll the episode status.
     /// </summary>
     [HttpPost("episodes/{id:guid}/render")]
-    public async Task<IActionResult> RenderEpisode(Guid id, CancellationToken ct)
+    public async Task<IActionResult> RenderEpisode(Guid id, [FromQuery] bool force = false, CancellationToken ct = default)
     {
         var ep = await _filmFactoryService.GetEpisodeDetailAsync(id, ct);
         if (ep == null) return NotFound(new { message = "Không tìm thấy tập phim." });
         try
         {
-            await _productionCoordinator.TriggerEpisodeRenderAsync(id, ct);
+            await _productionCoordinator.TriggerEpisodeRenderAsync(id, force, ct);
         }
         catch (InvalidOperationException ex)
         {

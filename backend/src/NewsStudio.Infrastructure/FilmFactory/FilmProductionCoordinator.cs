@@ -142,7 +142,7 @@ public class FilmProductionCoordinator : IFilmProductionCoordinator
         }
     }
 
-    public async Task TriggerEpisodeRenderAsync(Guid episodeId, CancellationToken ct = default)
+    public async Task TriggerEpisodeRenderAsync(Guid episodeId, bool force = false, CancellationToken ct = default)
     {
         using (var scope = _scopeFactory.CreateScope())
         {
@@ -153,7 +153,7 @@ public class FilmProductionCoordinator : IFilmProductionCoordinator
             // GPU batches legitimately run for hours, so they get a much longer allowance.
             var gpuBusy = ep.Status is FilmGpuService.StatusQueued or FilmGpuService.StatusRendering or "GpuDone";
             var busy = gpuBusy || ep.Status is "Queued" or "Scripting" or "VisualAssetsGenerating" or "VoiceGenerating" or "FilmEditing" or "QualityCheck";
-            if (busy && ep.UpdatedAtUtc > DateTime.UtcNow.AddMinutes(gpuBusy ? -12 * 60 : -15))
+            if (!force && busy && ep.UpdatedAtUtc > DateTime.UtcNow.AddMinutes(gpuBusy ? -12 * 60 : -15))
                 throw new InvalidOperationException($"Tập {ep.EpisodeNumber} đang được dựng ({ep.Status}).");
             ep.Status = "Queued";
             ep.ErrorMessage = null;

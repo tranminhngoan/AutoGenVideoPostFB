@@ -502,7 +502,7 @@ class GpuRequestHandler(BaseHTTPRequestHandler):
                     except Exception:
                         st = {"batch_id": batch_id, "state": "running", "detail": "Reading results..."}
                 else:
-                    st = {"batch_id": batch_id, "state": "queued", "detail": "Waiting in queue..."}
+                    st = {"batch_id": batch_id, "state": "failed", "detail": "Batch not found on worker (worker was restarted or batch does not exist)."}
 
             self.send_json(200, st)
             return

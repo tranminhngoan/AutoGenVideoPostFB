@@ -94,7 +94,7 @@ public interface IFilmProductionCoordinator
     /// <summary>
     /// Đưa 1 tập vào hàng đợi dựng (chạy nền): viết kịch bản nếu chưa có, tạo hình + giọng, ghép MP4.
     /// </summary>
-    Task TriggerEpisodeRenderAsync(Guid episodeId, CancellationToken ct = default);
+    Task TriggerEpisodeRenderAsync(Guid episodeId, bool force = false, CancellationToken ct = default);
 
     /// <summary>
     /// Job nền dựng 1 tập phim.

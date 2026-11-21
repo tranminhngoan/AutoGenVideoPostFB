@@ -69,8 +69,14 @@ public class FilmGpuService
 
     private async Task CheckRunningAsync(FilmEpisode episode, CancellationToken ct)
     {
+        if (string.IsNullOrWhiteSpace(episode.GpuBatchRef))
+        {
+            await FailAsync(episode, "Mất thông tin batch GPU (GpuBatchRef trống). Cần ấn dựng lại tập này.", ct);
+            return;
+        }
+
         var maxHours = _configuration.GetValue("Film:Gpu:MaxHours", 11.5);
-        var (state, detail) = await _backend.GetStateAsync(episode.GpuBatchRef ?? "", ct);
+        var (state, detail) = await _backend.GetStateAsync(episode.GpuBatchRef, ct);
         if (state is GpuBatchState.Queued or GpuBatchState.Running)
         {
             if (episode.GpuSubmittedAtUtc < DateTime.UtcNow.AddHours(-maxHours))

@@ -235,9 +235,19 @@ public class RunPodGpuBackend : IFilmGpuBackend
 
     public async Task<(GpuBatchState State, string Detail)> GetStateAsync(string reference, CancellationToken ct)
     {
+        if (string.IsNullOrWhiteSpace(reference))
+        {
+            return (GpuBatchState.Failed, "Reference batch rỗng.");
+        }
+
         var batchId = reference.StartsWith("runpod:", StringComparison.OrdinalIgnoreCase)
             ? reference["runpod:".Length..]
             : reference.Split(':').ElementAtOrDefault(1) ?? reference;
+
+        if (string.IsNullOrWhiteSpace(batchId))
+        {
+            return (GpuBatchState.Failed, "Batch ID rỗng.");
+        }
 
         var baseUrl = await GetEffectiveBaseUrlAsync(ct);
         if (string.IsNullOrWhiteSpace(baseUrl))
@@ -257,6 +267,10 @@ public class RunPodGpuBackend : IFilmGpuBackend
             if (!response.IsSuccessStatusCode)
             {
                 var err = await response.Content.ReadAsStringAsync(ct);
+                if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+                {
+                    return (GpuBatchState.Failed, $"Không tìm thấy batch trên GPU worker (HTTP 404): {err}");
+                }
                 return (GpuBatchState.Running, $"Chờ kết nối lại với RunPod (HTTP {(int)response.StatusCode}: {err})");
             }
 
@@ -271,6 +285,7 @@ public class RunPodGpuBackend : IFilmGpuBackend
                 "complete" or "done" or "success" => (GpuBatchState.Complete, detail),
                 "failed" or "error" => (GpuBatchState.Failed, detail),
                 "queued" => (GpuBatchState.Queued, detail),
+                "idle" or "not_found" => (GpuBatchState.Failed, string.IsNullOrWhiteSpace(detail) ? "Máy GPU RunPod đang rảnh (batch không tồn tại hoặc máy đã khởi động lại)" : detail),
                 _ => (GpuBatchState.Running, detail)
             };
         }
