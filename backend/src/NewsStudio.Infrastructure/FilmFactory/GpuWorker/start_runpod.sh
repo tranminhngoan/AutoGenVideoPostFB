@@ -15,6 +15,8 @@ fuser -k 8888/tcp 2>/dev/null || pkill -9 -f jupyter 2>/dev/null || true
 
 # Bulletproof storage: wipe leftover root cache & link /root/.cache -> /workspace/.cache
 rm -rf /root/.cache /tmp/* 2>/dev/null || true
+rm -rf /workspace/.cache/huggingface/hub/models--Wan-AI* 2>/dev/null || true
+rm -rf /workspace/.cache/tmp/* 2>/dev/null || true
 mkdir -p /workspace/.cache/huggingface/hub /workspace/.cache/torch /workspace/.cache/tmp
 ln -sfn /workspace/.cache /root/.cache
 export HF_HOME=/workspace/.cache/huggingface

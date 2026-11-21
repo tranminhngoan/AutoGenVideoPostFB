@@ -272,7 +272,25 @@ def process_batch(in_dir, out_dir, batch_id=None, progress_cb=None):
         if not any(j.get("type") == "motion" for j in jobs):
             return
         from diffusers.utils import export_to_video
-        use_wan = os.environ.get("MOTION_MODEL", "wan" if VRAM_GB >= 23 else "ltx") == "wan"
+
+        # Clean up any incomplete downloads from previous runs to recover disk space
+        for inc in glob.glob(os.path.join(CACHE_DIR, "huggingface", "**", "*.incomplete"), recursive=True):
+            try:
+                os.remove(inc)
+            except Exception:
+                pass
+
+        free_gb = shutil.disk_usage(WORKSPACE_DIR).free / (1024**3)
+        forced_motion = os.environ.get("MOTION_MODEL")
+        if forced_motion == "wan":
+            use_wan = True
+        elif forced_motion == "ltx":
+            use_wan = False
+        else:
+            # Wan 14B model requires ~34 GB. Only attempt Wan if >= 45 GB free space is available!
+            use_wan = (VRAM_GB >= 23 and free_gb >= 45.0)
+
+        log(f"Motion model check: {free_gb:.1f} GB disk free. Selected: {'Wan 2.1 (14B)' if use_wan else 'LTX-Video (4.5B)'}")
         t = time.time()
         pipe = None
 
@@ -302,6 +320,9 @@ def process_batch(in_dir, out_dir, batch_id=None, progress_cb=None):
             pipe = LTXImageToVideoPipeline.from_pretrained(ltx_model, torch_dtype=DTYPE, cache_dir=hf_cache)
             pipe.vae.enable_tiling()
             results["env"]["motion_model"] = ltx_model
+
+        if pipe is None:
+            raise RuntimeError("Could not load any video motion model (Wan or LTX-Video).")
 
         pipe.enable_model_cpu_offload()
         fps = 16 if use_wan else 24
@@ -430,10 +451,14 @@ class GpuRequestHandler(BaseHTTPRequestHandler):
         qs = urllib.parse.parse_qs(url.query)
 
         if url.path in ("/", "/health"):
+            free_gb = round(shutil.disk_usage(WORKSPACE_DIR).free / (1024**3), 1)
+            total_gb = round(shutil.disk_usage(WORKSPACE_DIR).total / (1024**3), 1)
             data = {
                 "status": "ok",
                 "gpu": gpu.name if gpu else "cpu",
                 "vram_gb": round(VRAM_GB, 1),
+                "disk_free_gb": free_gb,
+                "disk_total_gb": total_gb,
                 "current_batch": server_state.current_batch,
                 "queued_batches": server_state.queue.qsize()
             }
