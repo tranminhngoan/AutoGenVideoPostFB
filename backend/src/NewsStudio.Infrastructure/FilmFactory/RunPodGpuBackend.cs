@@ -47,13 +47,41 @@ public class RunPodGpuBackend : IFilmGpuBackend
     }
 
     /// <summary>Exposed port inside the RunPod pod (defaults to 8888 for standard RunPod HTTP proxy).</summary>
-    public int Port => _configuration.GetValue("Film:Gpu:RunPod:Port", 8888);
+    public int Port
+    {
+        get
+        {
+            var p = _configuration.GetValue<int?>("Film:Gpu:RunPod:Port") ??
+                    (int.TryParse(Environment.GetEnvironmentVariable("RUNPOD_PORT"), out var envP) ? envP : 8888);
+            if (p == 19123) return 8888; // 19123 là cổng của Web Terminal, tự động chuyển về 8888 để kết nối chính xác vào Film Worker
+            return p;
+        }
+    }
 
     private static string? _runtimePodId;
 
     public static void SetRuntimePodId(string? podId)
     {
-        _runtimePodId = string.IsNullOrWhiteSpace(podId) ? null : podId.Trim();
+        if (string.IsNullOrWhiteSpace(podId))
+        {
+            _runtimePodId = null;
+            return;
+        }
+        var trimmed = podId.Trim();
+        if (trimmed.Contains(".proxy.runpod.net", StringComparison.OrdinalIgnoreCase))
+        {
+            try
+            {
+                var host = trimmed.StartsWith("http", StringComparison.OrdinalIgnoreCase) ? new Uri(trimmed).Host : trimmed;
+                var parts = host.Split('.')[0].Split('-');
+                if (parts.Length > 0 && !string.IsNullOrWhiteSpace(parts[0]))
+                {
+                    trimmed = parts[0];
+                }
+            }
+            catch { }
+        }
+        _runtimePodId = trimmed;
     }
 
     public static string? GetRuntimePodId() => _runtimePodId;
