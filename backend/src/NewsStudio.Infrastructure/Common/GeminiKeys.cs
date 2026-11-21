@@ -70,7 +70,11 @@ public static class GeminiKeys
     private static string? Read(IConfiguration configuration, string settingKey, string environmentVariable)
     {
         var configured = configuration[settingKey];
-        return configured != null ? NonEmpty(configured) : NonEmpty(Environment.GetEnvironmentVariable(environmentVariable));
+        if (configured != null) return NonEmpty(configured);
+        var env = Environment.GetEnvironmentVariable(environmentVariable);
+        if (env != null) return NonEmpty(env);
+        var altEnv = Environment.GetEnvironmentVariable(settingKey.Replace(":", "__"));
+        return altEnv != null ? NonEmpty(altEnv) : null;
     }
 
     public static bool HasAny(IConfiguration configuration) => Paid(configuration) != null || FreeKeys(configuration).Count > 0;

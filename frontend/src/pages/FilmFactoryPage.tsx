@@ -122,6 +122,16 @@ export function FilmFactoryPage() {
 
   // Data states
   const [pages, setPages] = useState<FilmPageDto[]>([]);
+  const distinctPages = useMemo(() => {
+    const map = new Map<string, FilmPageDto>();
+    for (const p of pages) {
+      const key = p.linkedFacebookAccountId || p.id;
+      if (!map.has(key)) {
+        map.set(key, p);
+      }
+    }
+    return Array.from(map.values());
+  }, [pages]);
   const [projects, setProjects] = useState<FilmProjectDto[]>([]);
   const [selectedProject, setSelectedProject] = useState<FilmProjectDetailDto | null>(null);
   const [selectedEpisode, setSelectedEpisode] = useState<FilmEpisodeDetailDto | null>(null);
@@ -162,6 +172,18 @@ export function FilmFactoryPage() {
     targetDurationMinutes: 2.5,
     autoProduceAll: true,
   });
+
+  // Synchronize createForm.filmPageId with distinctPages
+  useEffect(() => {
+    if (distinctPages.length > 0 && (!createForm.filmPageId || !distinctPages.some((p) => p.id === createForm.filmPageId))) {
+      setCreateForm((prev) => ({
+        ...prev,
+        filmPageId: distinctPages[0].id,
+        genre: distinctPages[0].primaryGenre || prev.genre,
+        visualArtStyle: distinctPages[0].visualArtStyle || prev.visualArtStyle,
+      }));
+    }
+  }, [distinctPages]);
 
   // Load Pages
   const loadPages = async () => {
@@ -408,7 +430,7 @@ export function FilmFactoryPage() {
               <span className="truncate">Facebook Film Pages</span>
             </div>
             <div className="mt-1.5 sm:mt-2 text-base sm:text-xl font-semibold text-fg">
-              {pages.length} Kênh Kết Nối
+              {distinctPages.length} Kênh Kết Nối
             </div>
             <div className="mt-1 text-[11px] text-fg-muted line-clamp-1">Tự động đăng Reels lên Page</div>
           </Card>
@@ -1005,7 +1027,7 @@ export function FilmFactoryPage() {
               {
                 id: 'pages',
                 label: 'Kênh Facebook Phim Đã Kết Nối',
-                count: pages.length,
+                count: distinctPages.length,
               },
             ]}
             value={activeMainTab}
@@ -1163,7 +1185,7 @@ export function FilmFactoryPage() {
                 </Button>
               </div>
 
-              {pages.length === 0 ? (
+              {distinctPages.length === 0 ? (
                 <EmptyState
                   icon={<Tv />}
                   title="Chưa có Facebook Page nào được kết nối"
@@ -1180,7 +1202,7 @@ export function FilmFactoryPage() {
                 />
               ) : (
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-                  {pages.map((p) => (
+                  {distinctPages.map((p) => (
                     <Card key={p.id} className="relative overflow-hidden border-line hover:border-line-strong transition-all">
                       <div
                         className="h-1.5 w-full"
@@ -1362,7 +1384,7 @@ export function FilmFactoryPage() {
         title="Khai Hoả Series Phim Mới (AI Showrunner)"
       >
         <form onSubmit={handleCreateProject} className="space-y-4">
-          {pages.length === 0 ? (
+          {distinctPages.length === 0 ? (
             <div className="rounded-md border border-warning/40 bg-warning/10 p-3 text-xs text-fg flex items-center justify-between">
               <span>Chưa có Facebook Page nào được kết nối.</span>
               <Button size="sm" variant="primary" onClick={() => { setShowCreateModal(false); setShowConnectFbModal(true); }}>
@@ -1375,7 +1397,7 @@ export function FilmFactoryPage() {
                 value={createForm.filmPageId}
                 onChange={(e) => {
                   const pid = e.target.value;
-                  const p = pages.find((x) => x.id === pid);
+                  const p = distinctPages.find((x) => x.id === pid) || pages.find((x) => x.id === pid);
                   setCreateForm((prev) => ({
                     ...prev,
                     filmPageId: pid,
@@ -1384,9 +1406,9 @@ export function FilmFactoryPage() {
                   }));
                 }}
               >
-                {pages.map((p) => (
+                {distinctPages.map((p) => (
                   <option key={p.id} value={p.id}>
-                    {p.linkedFacebookPageName ? `${p.linkedFacebookPageName} (FB Page)` : p.name}
+                    {p.linkedFacebookPageName ? `${p.linkedFacebookPageName} (Facebook Page)` : p.name}
                   </option>
                 ))}
               </Select>

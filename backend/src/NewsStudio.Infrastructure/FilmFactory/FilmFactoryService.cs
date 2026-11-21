@@ -114,9 +114,6 @@ public class FilmFactoryService : IFilmFactoryService
             }
         };
 
-        // Gán FacebookAccount mặc định nếu có
-        var existingFb = await _context.FacebookAccounts.FirstOrDefaultAsync(f => f.IsActive, ct);
-
         var existingPages = await _context.FilmPages.ToListAsync(ct);
         var existingNumbers = existingPages.Select(p => p.PageNumber).ToHashSet();
 
@@ -124,10 +121,7 @@ public class FilmFactoryService : IFilmFactoryService
         {
             if (!existingNumbers.Contains(def.PageNumber))
             {
-                if (existingFb != null)
-                {
-                    def.LinkedFacebookAccountId = existingFb.Id;
-                }
+                def.LinkedFacebookAccountId = null;
                 _context.FilmPages.Add(def);
                 existingNumbers.Add(def.PageNumber);
             }
@@ -149,6 +143,18 @@ public class FilmFactoryService : IFilmFactoryService
         var existingNumbers = existingPages.Select(p => p.PageNumber).ToHashSet();
         int currentMaxNumber = existingPages.Count > 0 ? existingPages.Max(p => p.PageNumber) : 0;
         bool hasChanges = false;
+
+        // Dọn dẹp liên kết trùng lặp trong lịch sử: Mỗi tài khoản Facebook chỉ gắn duy nhất 1 Kênh Phim
+        var seenAccounts = new HashSet<Guid>();
+        foreach (var page in existingPages.Where(p => p.LinkedFacebookAccountId != null))
+        {
+            if (!seenAccounts.Add(page.LinkedFacebookAccountId!.Value))
+            {
+                // Gỡ liên kết thừa để kênh quay lại làm kênh độc lập, không hiển thị trùng tên Facebook Page
+                page.LinkedFacebookAccountId = null;
+                hasChanges = true;
+            }
+        }
 
         foreach (var fb in activeFbAccounts)
         {
@@ -220,7 +226,25 @@ public class FilmFactoryService : IFilmFactoryService
 
         var pages = await query.OrderBy(p => p.PageNumber).ToListAsync(ct);
 
-        return pages.Select(p => new FilmPageDto
+        // Khử trùng lặp chắc chắn theo Facebook Account ID
+        var distinctPages = new List<FilmPage>();
+        var distinctFbSeen = new HashSet<Guid>();
+        foreach (var p in pages)
+        {
+            if (p.LinkedFacebookAccountId.HasValue)
+            {
+                if (distinctFbSeen.Add(p.LinkedFacebookAccountId.Value))
+                {
+                    distinctPages.Add(p);
+                }
+            }
+            else
+            {
+                distinctPages.Add(p);
+            }
+        }
+
+        return distinctPages.Select(p => new FilmPageDto
         {
             Id = p.Id,
             PageNumber = p.PageNumber,
