@@ -18,17 +18,20 @@ public class FilmFactoryController : ControllerBase
     private readonly IFilmFactoryService _filmFactoryService;
     private readonly IFilmProductionCoordinator _productionCoordinator;
     private readonly IFilmRendererService _rendererService;
+    private readonly IFilmShowrunnerService _showrunnerService;
     private readonly IConfiguration _configuration;
 
     public FilmFactoryController(
         IFilmFactoryService filmFactoryService,
         IFilmProductionCoordinator productionCoordinator,
         IFilmRendererService rendererService,
+        IFilmShowrunnerService showrunnerService,
         IConfiguration configuration)
     {
         _filmFactoryService = filmFactoryService;
         _productionCoordinator = productionCoordinator;
         _rendererService = rendererService;
+        _showrunnerService = showrunnerService;
         _configuration = configuration;
     }
 
@@ -136,6 +139,85 @@ public class FilmFactoryController : ControllerBase
 
         await _productionCoordinator.TriggerFullAutoProductionAsync(id, ct);
         return Accepted(new { message = "Đã kích hoạt quy trình sản xuất tự động cho series 10 tập.", projectId = id });
+    }
+
+    [HttpPost("projects/{id:guid}/story-bible/generate")]
+    public async Task<ActionResult<FilmProjectDetailDto>> GenerateStoryBibleOnly(Guid id, CancellationToken ct)
+    {
+        var project = await _filmFactoryService.GetProjectByIdAsync(id, ct);
+        if (project == null) return NotFound(new { message = "Không tìm thấy dự án phim." });
+
+        await _showrunnerService.DevelopStoryBibleAsync(id, ct);
+        await _showrunnerService.GenerateCharactersAndLocationsAsync(id, ct);
+
+        var updated = await _filmFactoryService.GetProjectByIdAsync(id, ct);
+        return Ok(updated);
+    }
+
+    [HttpGet("characters/{id:guid}/portrait")]
+    public async Task<IActionResult> GetCharacterPortrait(Guid id, CancellationToken ct)
+    {
+        var c = await _filmFactoryService.GetCharacterByIdAsync(id, ct);
+        if (c == null || string.IsNullOrWhiteSpace(c.FrontReferenceImageUrl) || !System.IO.File.Exists(c.FrontReferenceImageUrl))
+        {
+            return NotFound(new { message = "Chưa có ảnh chân dung cho nhân vật này." });
+        }
+
+        var ext = Path.GetExtension(c.FrontReferenceImageUrl).ToLowerInvariant();
+        var mime = ext switch
+        {
+            ".png" => "image/png",
+            ".webp" => "image/webp",
+            _ => "image/jpeg"
+        };
+        return PhysicalFile(c.FrontReferenceImageUrl, mime);
+    }
+
+    [HttpPost("characters/{id:guid}/portrait/generate")]
+    public async Task<ActionResult<FilmCharacterDto>> GenerateCharacterPortrait(Guid id, CancellationToken ct)
+    {
+        var c = await _filmFactoryService.GetCharacterByIdAsync(id, ct);
+        if (c == null) return NotFound(new { message = "Không tìm thấy nhân vật." });
+
+        var updated = await _filmFactoryService.GenerateCharacterPortraitAsync(id, ct);
+        return Ok(updated);
+    }
+
+    [HttpPost("characters/{id:guid}/portrait/upload")]
+    [Consumes("multipart/form-data")]
+    public async Task<ActionResult<FilmCharacterDto>> UploadCharacterPortrait(Guid id, IFormFile file, CancellationToken ct)
+    {
+        if (file == null || file.Length == 0)
+            return BadRequest(new { message = "Vui lòng chọn file ảnh để tải lên." });
+
+        var ext = Path.GetExtension(file.FileName).ToLowerInvariant();
+        if (ext != ".jpg" && ext != ".jpeg" && ext != ".png" && ext != ".webp")
+            return BadRequest(new { message = "Định dạng file không hỗ trợ. Vui lòng tải file ảnh JPG, PNG hoặc WebP." });
+
+        var c = await _filmFactoryService.GetCharacterByIdAsync(id, ct);
+        if (c == null) return NotFound(new { message = "Không tìm thấy nhân vật." });
+
+        var root = Path.Combine(NewsStudio.Infrastructure.Common.TempStorage.GetRoot(_configuration), "film_factory", "characters");
+        Directory.CreateDirectory(root);
+        var targetPath = Path.Combine(root, $"{id}_uploaded_{DateTime.UtcNow.Ticks}{ext}");
+
+        using (var stream = new FileStream(targetPath, FileMode.Create))
+        {
+            await file.CopyToAsync(stream, ct);
+        }
+
+        var updated = await _filmFactoryService.SetCharacterPortraitPathAsync(id, targetPath, ct);
+        return Ok(updated);
+    }
+
+    [HttpPut("characters/{id:guid}")]
+    public async Task<ActionResult<FilmCharacterDto>> UpdateCharacter(Guid id, [FromBody] UpdateFilmCharacterRequestDto request, CancellationToken ct)
+    {
+        var c = await _filmFactoryService.GetCharacterByIdAsync(id, ct);
+        if (c == null) return NotFound(new { message = "Không tìm thấy nhân vật." });
+
+        var updated = await _filmFactoryService.UpdateCharacterAsync(id, request, ct);
+        return Ok(updated);
     }
 
     [HttpGet("projects/{id:guid}/cost")]

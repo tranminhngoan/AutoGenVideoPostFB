@@ -129,7 +129,7 @@ public class FilmRendererService : IFilmRendererService
 
             var episodeDir = Directory.CreateDirectory(Path.Combine(Root, "episodes")).FullName;
             var output = Path.Combine(episodeDir, $"episode_{episode.EpisodeNumber}_{episode.Id}.mp4");
-            await ConcatAsync(files, output, episode.Id, ct);
+            await ConcatAsync(files, output, episode, ct);
 
             await SetStatusAsync(episode, "QualityCheck", ct);
             var (score, duration) = await InspectAsync(output, shots.Any(s => s.DialogueText != null), shots.Sum(s => s.DurationSeconds), ct);
@@ -415,24 +415,44 @@ public class FilmRendererService : IFilmRendererService
 
     // ─────────────────────────────── Assembly & QA ───────────────────────────────
 
-    private async Task ConcatAsync(IReadOnlyList<string> files, string output, Guid episodeId, CancellationToken ct)
+    private async Task ConcatAsync(IReadOnlyList<string> files, string output, FilmEpisode episode, CancellationToken ct)
     {
-        var list = Path.Combine(Path.GetDirectoryName(output)!, $"concat_{episodeId}.txt");
+        var list = Path.Combine(Path.GetDirectoryName(output)!, $"concat_{episode.Id}.txt");
         var sb = new StringBuilder();
         foreach (var f in files) sb.Append("file '").Append(f.Replace("\\", "/").Replace("'", "'\\''")).Append("'\n");
         await File.WriteAllTextAsync(list, sb.ToString(), new UTF8Encoding(false), ct);
 
         if (File.Exists(output)) File.Delete(output);
-        // Every shot is encoded with identical settings, so the picture is copied as-is; sound is re-encoded once
-        // so the joins are seamless.
+
+        var brandName = episode.FilmProject?.FilmPage?.Name;
+        if (string.IsNullOrWhiteSpace(brandName)) brandName = episode.FilmProject?.Title;
+        if (string.IsNullOrWhiteSpace(brandName)) brandName = "FilmFactory";
+
+        var cleanBrand = Regex.Replace(brandName, @"[^\w\d]", "");
+        var brandTag = "@" + (cleanBrand.Length > 20 ? cleanBrand[..20] : cleanBrand);
+
+        // Anti-reup & watermark filter pipeline:
+        // 1. Watermark: sleek translucent pill badge at top right (safe from TikTok/Reels UI)
+        // 2. Anti-reup micro-timing: setpts=PTS/1.001 (video) and atempo=1.001 (audio) breaks automated duplicate hash scrapers
+        // 3. Cinematic micro-color grading: eq=contrast=1.02:saturation=1.03:brightness=0.005
+        var vFilter = $"setpts=PTS/1.001,eq=contrast=1.02:saturation=1.03:brightness=0.005,drawtext=text='{brandTag}':x=w-tw-40:y=80:fontsize=26:fontcolor=white@0.85:box=1:boxcolor=black@0.4:boxborderw=8";
+        var aFilter = "atempo=1.001";
+        var titleMeta = (episode.Title ?? $"Episode {episode.EpisodeNumber}").Replace("\"", "\\\"");
+        var artistMeta = brandTag.Replace("\"", "\\\"");
+
+        var metaArgs = $"-metadata title=\"{titleMeta}\" -metadata artist=\"{artistMeta}\" -metadata copyright=\"Copyright (C) {artistMeta}. All Rights Reserved.\" -metadata comment=\"AI Film Factory Anti-Reup Protected\"";
+
         var (code, _, err) = await RunAsync(_ffmpeg,
-            $"-hide_banner -y -f concat -safe 0 -i \"{list}\" -c:v copy -c:a aac -b:a 160k -ar 48000 -ac 2 -movflags +faststart \"{output}\"", ct);
+            $"-hide_banner -y -f concat -safe 0 -i \"{list}\" -vf \"{vFilter}\" -af \"{aFilter}\" " +
+            $"-c:v libx264 -preset veryfast -crf 20 -pix_fmt yuv420p -r {Fps} -c:a aac -b:a 160k -ar 48000 -ac 2 " +
+            $"{metaArgs} -movflags +faststart \"{output}\"", ct);
+
         if (code != 0 || !File.Exists(output))
         {
-            _logger.LogWarning("Stream-copy concat failed, re-encoding: {Err}", Tail(err));
+            _logger.LogWarning("Watermarked concat failed ({Err}), falling back to direct concat", Tail(err));
             (code, _, err) = await RunAsync(_ffmpeg,
                 $"-hide_banner -y -f concat -safe 0 -i \"{list}\" -c:v libx264 -preset veryfast -crf 21 -pix_fmt yuv420p -r {Fps} " +
-                $"-c:a aac -b:a 160k -ar 48000 -ac 2 -movflags +faststart \"{output}\"", ct);
+                $"-c:a aac -b:a 160k -ar 48000 -ac 2 {metaArgs} -movflags +faststart \"{output}\"", ct);
         }
         try { File.Delete(list); } catch { /* best effort */ }
 
@@ -473,6 +493,7 @@ public class FilmRendererService : IFilmRendererService
     private async Task<FilmEpisode> LoadEpisodeAsync(Guid episodeId, CancellationToken ct) =>
         await _context.FilmEpisodes
             .Include(e => e.FilmProject).ThenInclude(p => p!.Characters)
+            .Include(e => e.FilmProject).ThenInclude(p => p!.FilmPage)
             .Include(e => e.Scenes).ThenInclude(s => s.Shots)
             .FirstOrDefaultAsync(e => e.Id == episodeId, ct)
         ?? throw new ArgumentException("Không tìm thấy tập phim.");

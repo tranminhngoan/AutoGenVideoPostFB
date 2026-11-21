@@ -4,11 +4,13 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using NewsStudio.Application.Common.Interfaces;
 using NewsStudio.Application.DTOs;
 using NewsStudio.Application.Interfaces;
 using NewsStudio.Domain.Entities;
+using NewsStudio.Infrastructure.Common;
 
 namespace NewsStudio.Infrastructure.FilmFactory;
 
@@ -16,15 +18,23 @@ public class FilmFactoryService : IFilmFactoryService
 {
     private readonly IApplicationDbContext _context;
     private readonly IFilmCostController _costController;
+    private readonly FilmGeminiClient _gemini;
+    private readonly IConfiguration _configuration;
     private readonly ILogger<FilmFactoryService> _logger;
+
+    private string Root => Path.Combine(TempStorage.GetRoot(_configuration), "film_factory");
 
     public FilmFactoryService(
         IApplicationDbContext context,
         IFilmCostController costController,
+        FilmGeminiClient gemini,
+        IConfiguration configuration,
         ILogger<FilmFactoryService> logger)
     {
         _context = context;
         _costController = costController;
+        _gemini = gemini;
+        _configuration = configuration;
         _logger = logger;
     }
 
@@ -598,6 +608,104 @@ public class FilmFactoryService : IFilmFactoryService
             SideReferenceImageUrl = c.SideReferenceImageUrl,
             FullBodyReferenceImageUrl = c.FullBodyReferenceImageUrl
         }).ToList();
+    }
+
+    public async Task<FilmCharacterDto?> GetCharacterByIdAsync(Guid characterId, CancellationToken ct = default)
+    {
+        var c = await _context.FilmCharacters.AsNoTracking().FirstOrDefaultAsync(x => x.Id == characterId, ct);
+        if (c == null) return null;
+
+        return new FilmCharacterDto
+        {
+            Id = c.Id,
+            FilmProjectId = c.FilmProjectId,
+            CharacterId = c.CharacterId,
+            Name = c.Name,
+            Role = c.Role,
+            Age = c.Age,
+            Gender = c.Gender,
+            PhysicalAppearance = c.PhysicalAppearance,
+            Hairstyle = c.Hairstyle,
+            DefaultCostume = c.DefaultCostume,
+            Personality = c.Personality,
+            EmotionalTrait = c.EmotionalTrait,
+            VoiceModel = c.VoiceModel,
+            ConsistencyPrompt = c.ConsistencyPrompt,
+            FrontReferenceImageUrl = c.FrontReferenceImageUrl,
+            SideReferenceImageUrl = c.SideReferenceImageUrl,
+            FullBodyReferenceImageUrl = c.FullBodyReferenceImageUrl
+        };
+    }
+
+    public async Task<FilmCharacterDto> UpdateCharacterAsync(Guid characterId, UpdateFilmCharacterRequestDto request, CancellationToken ct = default)
+    {
+        var c = await _context.FilmCharacters.FirstOrDefaultAsync(x => x.Id == characterId, ct)
+            ?? throw new ArgumentException("Không tìm thấy nhân vật.");
+
+        if (!string.IsNullOrWhiteSpace(request.Name)) c.Name = request.Name.Trim();
+        if (!string.IsNullOrWhiteSpace(request.Role)) c.Role = request.Role.Trim();
+        if (request.Age.HasValue && request.Age.Value > 0) c.Age = request.Age.Value;
+        if (!string.IsNullOrWhiteSpace(request.Gender)) c.Gender = request.Gender.Trim();
+        if (request.PhysicalAppearance != null) c.PhysicalAppearance = request.PhysicalAppearance.Trim();
+        if (request.Hairstyle != null) c.Hairstyle = request.Hairstyle.Trim();
+        if (request.DefaultCostume != null) c.DefaultCostume = request.DefaultCostume.Trim();
+        if (request.Personality != null) c.Personality = request.Personality.Trim();
+        if (request.EmotionalTrait != null) c.EmotionalTrait = request.EmotionalTrait.Trim();
+        if (!string.IsNullOrWhiteSpace(request.VoiceModel)) c.VoiceModel = request.VoiceModel.Trim();
+        if (!string.IsNullOrWhiteSpace(request.ConsistencyPrompt)) c.ConsistencyPrompt = request.ConsistencyPrompt.Trim();
+
+        c.UpdatedAtUtc = DateTime.UtcNow;
+        await _context.SaveChangesAsync(ct);
+
+        _logger.LogInformation("Updated character {Name} ({Id})", c.Name, c.Id);
+        return (await GetCharacterByIdAsync(characterId, ct))!;
+    }
+
+    public async Task<FilmCharacterDto> SetCharacterPortraitPathAsync(Guid characterId, string imagePath, CancellationToken ct = default)
+    {
+        var c = await _context.FilmCharacters.FirstOrDefaultAsync(x => x.Id == characterId, ct)
+            ?? throw new ArgumentException("Không tìm thấy nhân vật.");
+
+        c.FrontReferenceImageUrl = imagePath;
+        c.UpdatedAtUtc = DateTime.UtcNow;
+        await _context.SaveChangesAsync(ct);
+
+        _logger.LogInformation("Saved reference portrait for character {Name} ({Id}) -> {Path}", c.Name, c.Id, imagePath);
+        return (await GetCharacterByIdAsync(characterId, ct))!;
+    }
+
+    public async Task<FilmCharacterDto> GenerateCharacterPortraitAsync(Guid characterId, CancellationToken ct = default)
+    {
+        var c = await _context.FilmCharacters
+            .Include(x => x.FilmProject)
+            .FirstOrDefaultAsync(x => x.Id == characterId, ct)
+            ?? throw new ArgumentException("Không tìm thấy nhân vật.");
+
+        var project = c.FilmProject ?? throw new InvalidOperationException("Nhân vật không thuộc dự án phim nào.");
+
+        await _costController.CanExecutePaidTaskAsync(project.Id, _gemini.EstimatedImageCostUsd, ct);
+
+        var prompt = $"Ultra-detailed cinematic character reference portrait, waist-up framing, facing front looking directly at camera, neutral balanced facial expression, professional studio dark grey background, soft natural studio lighting. " +
+                     $"{c.ConsistencyPrompt}. Style: {project.VisualArtStyle}, photorealistic 8k, sharp focus, perfect anatomy, highly consistent facial features, no text, no watermark, no artifacts.";
+
+        _logger.LogInformation("Generating AI portrait anchor for character {Name} ({Id}) with prompt: {Prompt}", c.Name, c.Id, prompt);
+
+        var result = await _gemini.GenerateImageAsync(prompt, "3:4", Array.Empty<FilmGeminiClient.ReferenceImage>(), ct);
+
+        var dir = Directory.CreateDirectory(Path.Combine(Root, "characters")).FullName;
+        var path = Path.Combine(dir, $"{c.Id}_{DateTime.UtcNow.Ticks}.jpg");
+
+        await File.WriteAllBytesAsync(path, result.Bytes, ct);
+
+        await _costController.RecordCostAsync(project.Id, null, null, "Gemini", "ImageGen", result.Tokens, result.CostUsd, result.FreeKey,
+            $"Tạo ảnh mẫu nhân vật {c.Name}", ct);
+
+        c.FrontReferenceImageUrl = path;
+        c.UpdatedAtUtc = DateTime.UtcNow;
+        await _context.SaveChangesAsync(ct);
+
+        _logger.LogInformation("AI generated portrait anchor for {Name} saved at {Path}", c.Name, path);
+        return (await GetCharacterByIdAsync(characterId, ct))!;
     }
 
     public async Task<List<FilmLocationDto>> GetLocationsAsync(Guid projectId, CancellationToken ct = default)

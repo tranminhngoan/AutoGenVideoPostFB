@@ -144,13 +144,19 @@ public class FilmShowrunnerService : IFilmShowrunnerService
     {
         var episodes = Math.Clamp(project.TargetEpisodes, 1, 20);
         var minutes = Math.Max(1, project.TargetDurationPerEpisodeSeconds / 60);
-        var system = "Bạn là AI Showrunner và Đạo diễn Phim Trưởng chuyên nghiệp, viết phim truyền hình ngắn tiếng Việt. Chỉ trả về JSON hợp lệ.";
+        var system = "Bạn là AI Showrunner và Giám đốc Biên kịch chuyên các series phim truyền hình kịch tính, gay cấn triệu view tiếng Việt. Chỉ trả về JSON hợp lệ.";
         var user = $@"Phát triển ý tưởng phim sau thành một series gồm đúng {episodes} TẬP, mỗi tập khoảng {minutes} PHÚT.
-YÊU CẦU:
-1. {episodes} tập là MỘT CÂU CHUYỆN LIÊN HOÀN, tập sau nối tiếp hậu quả của tập trước.
-2. Mỗi tập có mở đầu thu hút, xung đột, cao trào và kết thúc lửng (cliffhanger), riêng tập cuối khép lại câu chuyện.
-3. Phong cách hình ảnh: {project.VisualArtStyle}. Thể loại: {project.Genre}.
-4. Tên nhân vật, bối cảnh phải nhất quán xuyên suốt.
+YÊU CẦU ĐIỆN ẢNH CHUYÊN NGHIỆP:
+1. MẠCH PHIM LIỀN MẠCH TUYỆT ĐỐI (SERIALIZED CONTINUITY):
+   - {episodes} tập là MỘT BỘ PHIM LIÊN HOÀN. Tập sau BẮT BUỘC tiếp nối trực tiếp từ đúng khoảnh khắc kết thúc của tập trước, không nhảy cóc thời gian vô lý.
+2. CLIFFHANGER KẾT THÚC TẬP 1 PHẢI CỰC KỲ GÂY CẤN & KHIẾN KHÁN GIẢ TỨC TỐI (HIGH-STAKES SUSPENSE):
+   - Tập 1 là tập quyết định giữ chân người xem: Đoạn kết của Tập 1 PHẢI là một tình huống nghẹt thở, cú twist bàng hoàng, hoặc một hiểm hoạ sinh tử ập xuống khiến người xem 'tức', bất ngờ và BẮT BUỘC phải tìm ngay Tập 2 để xem tiếp!
+3. TẬP 2 TIẾP NỐI NGAY LẬP TỨC:
+   - Mở đầu Tập 2 (openingHook) PHẢI bắt đầu ngay tại hiện trường và giây phút của Cliffhanger Tập 1 để giải quyết sự việc nguy cấp đó trước khi mở ra biến cố mới.
+4. MỌI TẬP TỪ TẬP 2 ĐẾN TẬP {episodes - 1}:
+   - Mỗi tập đều có xung đột leo thang và kết thúc bằng EndingCliffhanger gay cấn. Riêng tập cuối ({episodes}) mới giải quyết trọn vẹn số phận nhân vật.
+5. Phong cách hình ảnh: {project.VisualArtStyle}. Thể loại: {project.Genre}.
+6. Tên nhân vật, tính cách, bối cảnh phải nhất quán 100% xuyên suốt toàn bộ các tập.
 
 TÊN SERIES: {project.Title}
 Ý TƯỞNG CỐT LÕI: {project.Logline}
@@ -160,7 +166,7 @@ Trả về JSON:
   ""logline"": ""..."", ""genre"": ""{project.Genre}"", ""worldRules"": ""..."", ""timePeriod"": ""..."",
   ""geographicSetting"": ""..."", ""mainConflict"": ""..."", ""keyMysteriesAndTwists"": ""..."",
   ""climaxResolution"": ""..."", ""overallArcOutline"": ""..."",
-  ""episodes"": [ {{ ""episodeNumber"": 1, ""title"": ""..."", ""synopsis"": ""5-8 câu diễn biến cụ thể"", ""openingHook"": ""..."", ""endingCliffhanger"": ""..."" }} ]
+  ""episodes"": [ {{ ""episodeNumber"": 1, ""title"": ""..."", ""synopsis"": ""5-8 câu diễn biến kịch tính cụ thể"", ""openingHook"": ""Mở đầu giật gân cuốn hút"", ""endingCliffhanger"": ""Khúc nghẹt thở cực điểm bắt buộc người xem xem tập kế"" }} ]
 }}";
 
         var result = await _gemini.GenerateJsonAsync(system, user, 16384, 0.8, ct);
@@ -371,6 +377,13 @@ Trả về JSON:
             .Where(e => e.EpisodeNumber != episode.EpisodeNumber)
             .Select(e => $"- Tập {e.EpisodeNumber} \"{e.Title}\": {e.Synopsis} (kết: {e.EndingCliffhanger})"));
 
+        var prevEp = project.Episodes.FirstOrDefault(e => e.EpisodeNumber == episode.EpisodeNumber - 1);
+        var continuityBridge = prevEp != null
+            ? $"\nCẦU NỐI CAO TRÀO BẮT BUỘC TỪ TẬP TRƯỚC (TẬP {prevEp.EpisodeNumber}):\n" +
+              $"- Tập {prevEp.EpisodeNumber} kết thúc bằng CLIFFHANGER: \"{prevEp.EndingCliffhanger}\".\n" +
+              $"- YÊU CẦU NỐI TIẾP: Scene 1, Shot 1 của Tập {episode.EpisodeNumber} BẮT BUỘC PHẢI BẮT ĐẦU NGAY TẠI HIỆN TRƯỜNG VÀ ĐÚNG KHOẢNH KHẮC CAO TRÀO ĐÓ! Các nhân vật phản ứng tức thì với tình huống nghẹt thở của cliffhanger trước, không nhảy cóc thời gian, tạo cảm giác mạch phim liên tục 100%.\n"
+            : "";
+
         var system = "Bạn là biên kịch kiêm đạo diễn hình ảnh cho phim ngắn tiếng Việt dạng 'ảnh điện ảnh chuyển động + lồng tiếng'. Chỉ trả về JSON hợp lệ.";
         var filmingStyle = isFullMotion
             ? $"MỌI SHOT (100%) đều là CLIP CHUYỂN ĐỘNG THẬT 3-5 giây (Wan 2.2), KHÔNG DÙNG ẢNH TĨNH. Mỗi shot đi kèm chuyển động tự nhiên và 1 câu thoại lồng tiếng tương ứng."
@@ -396,7 +409,7 @@ TẬP CẦN VIẾT — Tập {episode.EpisodeNumber}: {episode.Title}
 Diễn biến: {episode.Synopsis}
 Mở đầu: {episode.OpeningHook}
 Kết thúc: {episode.EndingCliffhanger}
-
+{continuityBridge}
 CÁCH PHIM ĐƯỢC DỰNG: {filmingStyle} Vì vậy:
 - Tổng cộng ĐÚNG {frames} frame cho cả tập (mỗi cảnh 1-3 frame). Mỗi frame được 2-4 shot dùng lại, các shot liền nhau dùng chung frame nên đổi camera.
 - 26-40 shot. Tổng số chữ của tất cả ""line"" khoảng {targetWords} từ (để tập dài ~{target / 60} phút).
@@ -405,7 +418,10 @@ CÁCH PHIM ĐƯỢC DỰNG: {filmingStyle} Vì vậy:
 - Frame ""prompt"" viết bằng TIẾNG ANH, tối đa 70 từ, tự đủ nghĩa (máy vẽ không biết gì ngoài câu này): bắt đầu bằng cỡ cảnh + nhân vật chính, rồi hành động, biểu cảm, bối cảnh, ánh sáng, thời điểm; mô tả ngắn ngoại hình nhân vật có mặt (tuổi, giới tính, tóc, trang phục theo mô tả EN ở trên), KHÔNG dùng tên riêng; KHÔNG thêm từ phong cách (hệ thống tự thêm). Ghi rõ thời điểm và ánh sáng ngay đầu prompt (vd: ""night, dark street lit by red neon""). Ít nhất 80% frame chỉ có 1 nhân vật nhìn thấy mặt (máy vẽ hay trộn mặt khi có 2 người); cảnh hai người dùng góc qua vai: một người quay lưng chỉ thấy vai và tóc, người kia nhìn rõ mặt.
 - ""motion"": true cho khoảng {motionPct}% số shot — {motionRule}
 - Khi ""motion"" true: thêm ""motionPrompt"" TIẾNG ANH tối đa 35 từ mô tả chuyển động của nhân vật và máy quay trong 4-5 giây, không thêm người/vật mới; và ""line"" của shot đó tối đa 12 từ (hoặc speaker ""none"").
-- Nội dung bám đúng diễn biến tập, mở bằng phần Mở đầu và kết bằng cliffhanger; không bạo lực máu me chi tiết.
+- Nội dung bám đúng diễn biến tập:
+  + Mở đầu bằng phần Mở đầu { (prevEp != null ? "(nối tiếp ngay cliffhanger tập trước)" : "") }
+  + KẾT THÚC TẬP (CLIFFHANGER NGHẸT THỞ): Shot cuối cùng của Cảnh cuối cùng BẮT BUỘC dừng lại đúng ở: '{episode.EndingCliffhanger}'. Tạo một hình ảnh dừng lại đầy ám ảnh, một cú twist, tiếng động bất ngờ hoặc mối nguy hiểm ập tới giật gân người xem!
+  + Không bạo lực máu me chi tiết.
 - ""camera"": một trong {string.Join(", ", CameraMoves)}.
 
 Trả về JSON:

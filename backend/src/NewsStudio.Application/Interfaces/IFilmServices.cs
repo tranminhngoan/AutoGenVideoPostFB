@@ -20,6 +20,10 @@ public interface IFilmFactoryService
 
     Task<FilmStoryBibleDto?> GetStoryBibleAsync(Guid projectId, CancellationToken ct = default);
     Task<List<FilmCharacterDto>> GetCharactersAsync(Guid projectId, CancellationToken ct = default);
+    Task<FilmCharacterDto?> GetCharacterByIdAsync(Guid characterId, CancellationToken ct = default);
+    Task<FilmCharacterDto> UpdateCharacterAsync(Guid characterId, UpdateFilmCharacterRequestDto request, CancellationToken ct = default);
+    Task<FilmCharacterDto> SetCharacterPortraitPathAsync(Guid characterId, string imagePath, CancellationToken ct = default);
+    Task<FilmCharacterDto> GenerateCharacterPortraitAsync(Guid characterId, CancellationToken ct = default);
     Task<List<FilmLocationDto>> GetLocationsAsync(Guid projectId, CancellationToken ct = default);
     Task<List<FilmEpisodeDto>> GetEpisodesAsync(Guid projectId, CancellationToken ct = default);
     Task<FilmEpisodeDetailDto?> GetEpisodeDetailAsync(Guid episodeId, CancellationToken ct = default);

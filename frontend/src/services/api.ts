@@ -771,6 +771,47 @@ export const api = {
     });
     if (!res.ok) throw new Error(await apiError(res, 'Kết nối Facebook Page thất bại'));
     return await res.json();
+  },
+
+  getCharacterPortraitUrl(characterId: string): string {
+    return `${API_BASE}/film-factory/characters/${characterId}/portrait`;
+  },
+
+  async generateCharacterPortrait(characterId: string): Promise<FilmCharacterDto> {
+    const res = await fetch(`${API_BASE}/film-factory/characters/${characterId}/portrait/generate`, {
+      method: 'POST',
+    });
+    if (!res.ok) throw new Error(await apiError(res, 'Tạo ảnh mẫu nhân vật thất bại'));
+    return await res.json();
+  },
+
+  async uploadCharacterPortrait(characterId: string, file: File): Promise<FilmCharacterDto> {
+    const formData = new FormData();
+    formData.append('file', file);
+    const res = await fetch(`${API_BASE}/film-factory/characters/${characterId}/portrait/upload`, {
+      method: 'POST',
+      body: formData,
+    });
+    if (!res.ok) throw new Error(await apiError(res, 'Tải ảnh chân dung thất bại'));
+    return await res.json();
+  },
+
+  async updateFilmCharacter(characterId: string, data: Partial<FilmCharacterDto>): Promise<FilmCharacterDto> {
+    const res = await fetch(`${API_BASE}/film-factory/characters/${characterId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) throw new Error(await apiError(res, 'Cập nhật nhân vật thất bại'));
+    return await res.json();
+  },
+
+  async generateStoryBibleOnly(projectId: string): Promise<FilmProjectDetailDto> {
+    const res = await fetch(`${API_BASE}/film-factory/projects/${projectId}/story-bible/generate`, {
+      method: 'POST',
+    });
+    if (!res.ok) throw new Error(await apiError(res, 'Tạo kịch bản & nhân vật thất bại'));
+    return await res.json();
   }
 };
 

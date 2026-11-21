@@ -125,6 +125,21 @@ public class FilmCharacterDto
     public string? FullBodyReferenceImageUrl { get; set; }
 }
 
+public class UpdateFilmCharacterRequestDto
+{
+    public string? Name { get; set; }
+    public string? Role { get; set; }
+    public int? Age { get; set; }
+    public string? Gender { get; set; }
+    public string? PhysicalAppearance { get; set; }
+    public string? Hairstyle { get; set; }
+    public string? DefaultCostume { get; set; }
+    public string? Personality { get; set; }
+    public string? EmotionalTrait { get; set; }
+    public string? VoiceModel { get; set; }
+    public string? ConsistencyPrompt { get; set; }
+}
+
 public class FilmLocationDto
 {
     public Guid Id { get; set; }

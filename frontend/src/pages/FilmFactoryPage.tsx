@@ -30,7 +30,10 @@ import {
   ExternalLink,
   Cpu,
   HardDrive,
-  Zap
+  Zap,
+  Copy,
+  Check,
+  Upload
 } from 'lucide-react';
 import {
   Button,
@@ -163,6 +166,13 @@ export function FilmFactoryPage() {
   const [userTokenResult, setUserTokenResult] = useState<UserTokenPagesResultDto | null>(null);
   const [selectedUserTokenPages, setSelectedUserTokenPages] = useState<string[]>([]);
   const [connectingUserToken, setConnectingUserToken] = useState(false);
+
+  // Character portrait states
+  const [generatingPortraitId, setGeneratingPortraitId] = useState<string | null>(null);
+  const [uploadingPortraitId, setUploadingPortraitId] = useState<string | null>(null);
+  const [copiedPromptId, setCopiedPromptId] = useState<string | null>(null);
+  const [portraitTimestamps, setPortraitTimestamps] = useState<Record<string, number>>({});
+  const [generatingStoryBible, setGeneratingStoryBible] = useState(false);
 
   // Existing Facebook Accounts from database
   const [existingFbAccounts, setExistingFbAccounts] = useState<FacebookAccountDto[]>([]);
@@ -499,6 +509,65 @@ export function FilmFactoryPage() {
     }
   };
 
+  const handleCopyPrompt = (characterId: string, promptText: string) => {
+    navigator.clipboard.writeText(promptText);
+    setCopiedPromptId(characterId);
+    setTimeout(() => setCopiedPromptId(null), 2500);
+  };
+
+  const handleGeneratePortrait = async (characterId: string) => {
+    try {
+      setGeneratingPortraitId(characterId);
+      const updated = await api.generateCharacterPortrait(characterId);
+      setPortraitTimestamps(prev => ({ ...prev, [characterId]: Date.now() }));
+      if (selectedProject) {
+        setSelectedProject({
+          ...selectedProject,
+          characters: selectedProject.characters.map(c => c.id === characterId ? updated : c)
+        });
+      }
+      toast.success(`Đã tạo ảnh mẫu thành công cho ${updated.name}`);
+    } catch (err: any) {
+      toast.error(`Tạo ảnh chân dung thất bại: ${err.message}`);
+    } finally {
+      setGeneratingPortraitId(null);
+    }
+  };
+
+  const handleUploadPortrait = async (characterId: string, file: File) => {
+    try {
+      setUploadingPortraitId(characterId);
+      const updated = await api.uploadCharacterPortrait(characterId, file);
+      setPortraitTimestamps(prev => ({ ...prev, [characterId]: Date.now() }));
+      if (selectedProject) {
+        setSelectedProject({
+          ...selectedProject,
+          characters: selectedProject.characters.map(c => c.id === characterId ? updated : c)
+        });
+      }
+      toast.success(`Đã tải ảnh mẫu thành công cho ${updated.name}`);
+    } catch (err: any) {
+      toast.error(`Tải ảnh chân dung thất bại: ${err.message}`);
+    } finally {
+      setUploadingPortraitId(null);
+    }
+  };
+
+  const handleGenerateStoryBibleOnly = async () => {
+    if (!selectedProjectId) return;
+    try {
+      setGeneratingStoryBible(true);
+      const updated = await api.generateStoryBibleOnly(selectedProjectId);
+      setSelectedProject(updated);
+      setWorkbenchTab('characters');
+      toast.success('Đã lên kịch bản và danh sách nhân vật!');
+    } catch (err: any) {
+      toast.error(`Tạo kịch bản & nhân vật thất bại: ${err.message}`);
+    } finally {
+      setGeneratingStoryBible(false);
+    }
+  };
+
   return (
     <div className="space-y-6 pb-12">
       {/* ── Page Header Standard ── */}
@@ -669,11 +738,22 @@ export function FilmFactoryPage() {
 
                   {/* Actions for this series */}
                   <div className="flex flex-wrap items-center gap-2 self-start pt-1">
+                    {(!selectedProject.storyBible || selectedProject.characters.length === 0) && (
+                      <Button
+                        variant="secondary"
+                        icon={generatingStoryBible ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4 text-amber-400" />}
+                        loading={generatingStoryBible}
+                        disabled={generatingStoryBible || producing}
+                        onClick={handleGenerateStoryBibleOnly}
+                      >
+                        Lên kịch bản & nhân vật trước
+                      </Button>
+                    )}
                     <Button
                       variant="primary"
                       icon={producing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
                       loading={producing}
-                      disabled={producing}
+                      disabled={producing || generatingStoryBible}
                       onClick={() => handleTriggerProduce(selectedProject.id)}
                     >
                       Dựng toàn bộ {selectedProject.targetEpisodes} tập
@@ -1142,43 +1222,198 @@ export function FilmFactoryPage() {
 
           {/* ── SUB-TAB: CHARACTERS ── */}
           {workbenchTab === 'characters' && (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {selectedProject.characters.map((c) => (
-                <Card key={c.id} className="p-4 space-y-3">
-                  <div className="flex items-center justify-between border-b border-line pb-2.5">
-                    <div className="flex items-center gap-2.5">
-                      {c.frontReferenceImageUrl ? (
-                        <img
-                          src={c.frontReferenceImageUrl}
-                          alt={c.name}
-                          className="h-10 w-10 rounded-full object-cover border border-line"
-                        />
-                      ) : (
-                        <div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center font-bold text-sm text-fg border border-line">
-                          {c.name.substring(0, 1)}
-                        </div>
-                      )}
-                      <div>
-                        <h4 className="font-semibold text-fg text-sm">{c.name}</h4>
-                        <span className="text-[11px] text-fg-subtle">{c.role} · {c.age} tuổi</span>
-                      </div>
-                    </div>
-                    <span className="rounded bg-muted px-2 py-0.5 text-[11px] text-fg-muted font-mono">{c.characterId}</span>
-                  </div>
+            <div className="space-y-4">
+              {/* Notice guide banner */}
+              <div className="rounded-lg border border-blue-500/30 bg-blue-500/10 p-4 text-xs text-fg flex items-start gap-3">
+                <Sparkles className="h-5 w-5 text-blue-400 shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <h5 className="font-semibold text-blue-300 text-sm">
+                    Studio Khóa Diện Mạo Diễn Viên (Character Consistency & Face Anchor)
+                  </h5>
+                  <p className="text-fg-muted leading-relaxed">
+                    Để nhân vật giữ nguyên 100% khuôn mặt, vóc dáng và thần thái xuyên suốt mọi tập phim, mỗi nhân vật cần có 1 ảnh chân dung mốc chuẩn.
+                    Bạn có thể bấm <strong>"Tạo ảnh mẫu với AI"</strong> để hệ thống tự tạo, hoặc bấm <strong>"Sao chép Prompt"</strong> dán vào Gemini tạo ảnh rồi bấm <strong>"Tải ảnh lên"</strong>. Khi render Wan 2.1, hệ thống sẽ tự động khóa khuôn mặt theo ảnh này!
+                  </p>
+                </div>
+              </div>
 
-                  <div className="text-xs space-y-1.5 text-fg-muted">
-                    <div><strong className="text-fg">Ngoại hình:</strong> {c.physicalAppearance}</div>
-                    <div><strong className="text-fg">Trang phục:</strong> {c.defaultCostume}</div>
-                    <div><strong className="text-fg">Tính cách:</strong> {c.personality}</div>
-                    <div><strong className="text-fg">Giọng đọc:</strong> <span className="font-mono text-fg">{c.voiceModel}</span></div>
-                  </div>
-
-                  <div className="rounded bg-muted/70 p-2 text-[10px] font-mono text-fg-subtle break-words">
-                    <span className="text-fg font-semibold block mb-0.5">Visual Anchor Prompt:</span>
-                    {c.consistencyPrompt}
-                  </div>
+              {selectedProject.characters.length === 0 ? (
+                <Card className="p-8 text-center space-y-3">
+                  <Users className="h-10 w-10 text-fg-muted mx-auto" />
+                  <h4 className="font-semibold text-fg">Chưa có danh sách nhân vật</h4>
+                  <p className="text-xs text-fg-muted max-w-md mx-auto">
+                    Dự án chưa có hồ sơ kịch bản và nhân vật. Hãy bấm tạo kịch bản & nhân vật để AI lên dàn diễn viên trước.
+                  </p>
+                  <Button
+                    onClick={handleGenerateStoryBibleOnly}
+                    disabled={generatingStoryBible}
+                  >
+                    {generatingStoryBible ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                        Đang tạo kịch bản & nhân vật...
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="h-4 w-4 mr-2" />
+                        Tạo Kịch Bản & Nhân Vật với AI
+                      </>
+                    )}
+                  </Button>
                 </Card>
-              ))}
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                  {selectedProject.characters.map((c) => {
+                    const hasPortrait = !!c.frontReferenceImageUrl;
+                    const isGenThis = generatingPortraitId === c.id;
+                    const isUpThis = uploadingPortraitId === c.id;
+                    const isCopied = copiedPromptId === c.id;
+                    const portraitSrc = `/api/film-factory/characters/${c.id}/portrait?t=${portraitTimestamps[c.id] || ''}`;
+
+                    return (
+                      <Card key={c.id} className="flex flex-col justify-between overflow-hidden border-line">
+                        <div className="p-4 space-y-3.5">
+                          {/* Header: Name, Role, ID */}
+                          <div className="flex items-start justify-between gap-2 border-b border-line pb-2.5">
+                            <div>
+                              <h4 className="font-semibold text-fg text-base">{c.name}</h4>
+                              <span className="text-xs text-fg-subtle">{c.role} · {c.gender} · {c.age} tuổi</span>
+                            </div>
+                            <span className="rounded bg-muted px-2 py-0.5 text-[11px] text-fg-muted font-mono">{c.characterId}</span>
+                          </div>
+
+                          {/* Big Portrait Frame */}
+                          <div className="relative aspect-[3/4] w-full rounded-lg overflow-hidden bg-muted/60 border border-line flex items-center justify-center group">
+                            {hasPortrait ? (
+                              <img
+                                src={portraitSrc}
+                                alt={c.name}
+                                className="w-full h-full object-cover transition-transform group-hover:scale-105 duration-300"
+                              />
+                            ) : (
+                              <div className="text-center p-4 space-y-2">
+                                <div className="h-12 w-12 rounded-full bg-muted mx-auto flex items-center justify-center font-bold text-lg text-fg border border-line">
+                                  {c.name.substring(0, 1)}
+                                </div>
+                                <div className="text-xs text-fg-muted font-medium">Chưa có ảnh chân dung mốc</div>
+                                <div className="text-[11px] text-fg-subtle">Bấm tạo ảnh AI hoặc tải ảnh lên bên dưới</div>
+                              </div>
+                            )}
+
+                            {/* Status Overlay Badge */}
+                            <div className="absolute top-2.5 left-2.5">
+                              {hasPortrait ? (
+                                <Badge tone="success" dot className="bg-emerald-950/80 backdrop-blur-sm border border-emerald-500/40 text-emerald-200">
+                                  <CheckCircle2 className="h-3 w-3 mr-1 inline" />
+                                  Đã khóa khuôn mặt
+                                </Badge>
+                              ) : (
+                                <Badge tone="warning" dot className="bg-amber-950/80 backdrop-blur-sm border border-amber-500/40 text-amber-200">
+                                  <AlertTriangle className="h-3 w-3 mr-1 inline" />
+                                  Chưa có ảnh mẫu
+                                </Badge>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Character Specs */}
+                          <div className="text-xs space-y-1.5 text-fg-muted bg-muted/30 p-2.5 rounded-md border border-line/60">
+                            <div><strong className="text-fg">Ngoại hình:</strong> {c.physicalAppearance}</div>
+                            <div><strong className="text-fg">Trang phục:</strong> {c.defaultCostume}</div>
+                            <div><strong className="text-fg">Tính cách:</strong> {c.personality}</div>
+                            <div><strong className="text-fg">Giọng đọc:</strong> <span className="font-mono text-fg text-[11px] bg-muted px-1.5 py-0.5 rounded border border-line">{c.voiceModel}</span></div>
+                          </div>
+
+                          {/* Prompt Box with Quick Copy */}
+                          <div className="space-y-1.5">
+                            <div className="flex items-center justify-between text-[11px]">
+                              <span className="text-fg font-semibold flex items-center gap-1">
+                                <Sparkles className="h-3 w-3 text-amber-400" />
+                                Visual Anchor Prompt (EN):
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => handleCopyPrompt(c.id, c.consistencyPrompt)}
+                                className={cn(
+                                  "flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium transition-colors border",
+                                  isCopied
+                                    ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40"
+                                    : "bg-muted hover:bg-muted/80 text-fg-muted hover:text-fg border-line"
+                                )}
+                              >
+                                {isCopied ? (
+                                  <>
+                                    <Check className="h-3 w-3 text-emerald-400" />
+                                    Đã chép prompt!
+                                  </>
+                                ) : (
+                                  <>
+                                    <Copy className="h-3 w-3" />
+                                    Sao chép Prompt
+                                  </>
+                                )}
+                              </button>
+                            </div>
+                            <div className="rounded bg-muted/70 p-2 text-[10px] font-mono text-fg-subtle break-words max-h-24 overflow-y-auto border border-line/60">
+                              {c.consistencyPrompt}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Bottom Actions: Generate with AI or Upload Custom */}
+                        <div className="p-3 bg-muted/20 border-t border-line grid grid-cols-2 gap-2">
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            className="w-full text-xs"
+                            disabled={isGenThis || isUpThis}
+                            onClick={() => handleGeneratePortrait(c.id)}
+                          >
+                            {isGenThis ? (
+                              <>
+                                <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />
+                                Đang vẽ...
+                              </>
+                            ) : (
+                              <>
+                                <Sparkles className="h-3.5 w-3.5 text-blue-400 mr-1.5" />
+                                Tạo ảnh mẫu AI
+                              </>
+                            )}
+                          </Button>
+
+                          <label className={cn(
+                            "flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md border border-line bg-muted/50 hover:bg-muted text-xs font-medium cursor-pointer transition-colors text-fg",
+                            (isGenThis || isUpThis) && "opacity-50 pointer-events-none"
+                          )}>
+                            {isUpThis ? (
+                              <>
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                <span>Đang tải...</span>
+                              </>
+                            ) : (
+                              <>
+                                <Upload className="h-3.5 w-3.5 text-emerald-400" />
+                                <span>Tải ảnh lên</span>
+                              </>
+                            )}
+                            <input
+                              type="file"
+                              accept="image/png,image/jpeg,image/webp"
+                              className="hidden"
+                              onChange={(e) => {
+                                const file = e.target.files?.[0];
+                                if (file) handleUploadPortrait(c.id, file);
+                                e.target.value = '';
+                              }}
+                            />
+                          </label>
+                        </div>
+                      </Card>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           )}
 
