@@ -870,8 +870,8 @@ export function FilmFactoryPage() {
             <div className="space-y-4">
               <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
                 {selectedProject.episodes.map((ep) => {
-                  const isEpBusy = BUSY_EPISODE_STATUSES.includes(ep.status) || renderingEpisodeId === ep.id;
-                  const isCompleted = ep.status === 'Completed' || !!ep.outputVideoPath;
+                  const isCompleted = ep.status === 'Completed' || (!!ep.outputVideoPath && ep.status !== 'VoiceGenerating' && ep.status !== 'Queued' && ep.status !== 'GpuQueued' && ep.status !== 'GpuRendering');
+                  const isEpBusy = !isCompleted && (BUSY_EPISODE_STATUSES.includes(ep.status) || renderingEpisodeId === ep.id);
                   const isFailed = ep.status === 'Failed';
                   const isPending = ep.status === 'Pending';
                   const isScriptReady = ep.status === 'ScriptReady';

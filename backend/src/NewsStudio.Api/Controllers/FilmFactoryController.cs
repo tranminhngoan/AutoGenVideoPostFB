@@ -297,9 +297,22 @@ public class FilmFactoryController : ControllerBase
 
         if (db != null)
         {
-            var activeEp = await Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.FirstOrDefaultAsync(
-                db.FilmEpisodes.Where(e => e.Status == "GpuRendering" || e.Status == "GpuQueued" || e.Status == "VoiceGenerating"),
-                ct);
+            int? batchEpNum = null;
+            if (!string.IsNullOrWhiteSpace(currentBatch) && currentBatch.StartsWith("ep", StringComparison.OrdinalIgnoreCase))
+            {
+                var numPart = currentBatch[2..].Split('-')[0];
+                if (int.TryParse(numPart, out var n)) batchEpNum = n;
+            }
+
+            var activeEp = batchEpNum.HasValue
+                ? await Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.FirstOrDefaultAsync(
+                    db.FilmEpisodes.Where(e => e.EpisodeNumber == batchEpNum.Value), ct)
+                : await Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.FirstOrDefaultAsync(
+                    db.FilmEpisodes
+                        .Where(e => e.Status == "GpuRendering" || e.Status == "GpuQueued" || e.Status == "VoiceGenerating" || e.Status == "Queued")
+                        .OrderBy(e => e.Status == "GpuRendering" ? 0 : e.Status == "GpuQueued" ? 1 : e.Status == "VoiceGenerating" ? 2 : 3)
+                        .ThenBy(e => e.EpisodeNumber),
+                    ct);
 
             if (activeEp != null)
             {
