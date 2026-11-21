@@ -754,6 +754,20 @@ export const api = {
     return await res.json();
   },
 
+  async stopRunPodGpu(podId?: string): Promise<{ success: boolean; message: string; desiredStatus?: string }> {
+    const url = podId ? `${API_BASE}/film-factory/gpu/stop?podId=${encodeURIComponent(podId)}` : `${API_BASE}/film-factory/gpu/stop`;
+    const res = await fetch(url, { method: 'POST' });
+    if (!res.ok) throw new Error(await apiError(res, 'Dừng GPU thất bại'));
+    return await res.json();
+  },
+
+  async startRunPodGpu(podId?: string): Promise<{ success: boolean; message: string; desiredStatus?: string }> {
+    const url = podId ? `${API_BASE}/film-factory/gpu/start?podId=${encodeURIComponent(podId)}` : `${API_BASE}/film-factory/gpu/start`;
+    const res = await fetch(url, { method: 'POST' });
+    if (!res.ok) throw new Error(await apiError(res, 'Khởi động GPU thất bại'));
+    return await res.json();
+  },
+
   async setRunPodPodId(podId: string): Promise<void> {
     const res = await fetch(`${API_BASE}/film-factory/gpu/runpod/pod`, {
       method: 'POST',
@@ -1485,7 +1499,10 @@ export interface RunPodGpuLiveStatus {
   configured: boolean;
   baseUrl: string;
   podId: string | null;
+  podName?: string | null;
+  podDesiredStatus?: string | null;
   hasApiKey: boolean;
+  canManageLifecycle?: boolean;
   online: boolean;
   pingDetail: string | null;
   gpu?: string | null;

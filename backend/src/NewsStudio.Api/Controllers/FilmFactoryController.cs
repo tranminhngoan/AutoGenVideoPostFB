@@ -425,12 +425,24 @@ public class FilmFactoryController : ControllerBase
             }
         }
 
+        string? podDesiredStatus = null;
+        string? podName = null;
+        if (hasApiKey)
+        {
+            var lifecycle = await runpod.GetPodLifecycleStatusAsync(podId, ct);
+            podDesiredStatus = lifecycle.Status;
+            podName = lifecycle.Name;
+        }
+
         return Ok(new
         {
             configured = runpod.IsConfigured || !string.IsNullOrWhiteSpace(baseUrl),
             baseUrl,
             podId,
+            podName,
+            podDesiredStatus,
             hasApiKey,
+            canManageLifecycle = hasApiKey,
             online,
             pingDetail,
             gpu,
@@ -447,6 +459,34 @@ public class FilmFactoryController : ControllerBase
             activeEpisodeStatus,
             isStalled
         });
+    }
+
+    /// <summary>
+    /// Master control to STOP the RunPod GPU pod directly from the UI, stopping per-hour billing.
+    /// </summary>
+    [HttpPost("gpu/stop")]
+    public async Task<IActionResult> StopGpu([FromQuery] string? podId, CancellationToken ct)
+    {
+        var runpod = HttpContext.RequestServices.GetService<NewsStudio.Infrastructure.FilmFactory.RunPodGpuBackend>();
+        if (runpod == null) return BadRequest(new { success = false, message = "RunPod backend chưa được đăng ký." });
+
+        var (success, msg, desiredStatus) = await runpod.StopPodAsync(podId, ct);
+        if (!success) return BadRequest(new { success = false, message = msg });
+        return Ok(new { success = true, message = msg, desiredStatus });
+    }
+
+    /// <summary>
+    /// Master control to START / RESUME the RunPod GPU pod directly from the UI.
+    /// </summary>
+    [HttpPost("gpu/start")]
+    public async Task<IActionResult> StartGpu([FromQuery] string? podId, CancellationToken ct)
+    {
+        var runpod = HttpContext.RequestServices.GetService<NewsStudio.Infrastructure.FilmFactory.RunPodGpuBackend>();
+        if (runpod == null) return BadRequest(new { success = false, message = "RunPod backend chưa được đăng ký." });
+
+        var (success, msg, desiredStatus) = await runpod.ResumePodAsync(podId, ct);
+        if (!success) return BadRequest(new { success = false, message = msg });
+        return Ok(new { success = true, message = msg, desiredStatus });
     }
 
     public class SetPodIdRequest

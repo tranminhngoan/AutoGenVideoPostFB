@@ -188,6 +188,156 @@ public class RunPodGpuBackend : IFilmGpuBackend
         return null;
     }
 
+    public async Task<(string? Id, string? Status, string? Name)> GetPodLifecycleStatusAsync(string? targetPodId = null, CancellationToken ct = default)
+    {
+        var apiKey = ApiKey;
+        if (string.IsNullOrWhiteSpace(apiKey)) return (null, null, null);
+
+        var idToMatch = targetPodId ?? _runtimePodId ?? _cachedDiscoveredPodId ?? PodId;
+
+        try
+        {
+            var uri = $"https://api.runpod.io/graphql?api_key={Uri.EscapeDataString(apiKey)}";
+            var req = new HttpRequestMessage(HttpMethod.Post, uri);
+            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+            req.Content = System.Net.Http.Json.JsonContent.Create(new { query = "query { myself { pods { id name desiredStatus } } }" });
+
+            var res = await _httpClient.SendAsync(req, ct);
+            if (!res.IsSuccessStatusCode) return (null, null, null);
+
+            var json = await res.Content.ReadAsStringAsync(ct);
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.TryGetProperty("data", out var data) &&
+                data.TryGetProperty("myself", out var myself) &&
+                myself.TryGetProperty("pods", out var pods) &&
+                pods.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var pod in pods.EnumerateArray())
+                {
+                    var id = pod.TryGetProperty("id", out var i) ? i.GetString() : null;
+                    var status = pod.TryGetProperty("desiredStatus", out var s) ? s.GetString() : null;
+                    var name = pod.TryGetProperty("name", out var n) ? n.GetString() : null;
+
+                    if (!string.IsNullOrWhiteSpace(idToMatch) && string.Equals(id, idToMatch, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return (id, status, name);
+                    }
+                    if (string.IsNullOrWhiteSpace(idToMatch) && string.Equals(status, "RUNNING", StringComparison.OrdinalIgnoreCase))
+                    {
+                        return (id, status, name);
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Lỗi kiểm tra trạng thái Pod từ RunPod GraphQL API.");
+        }
+        return (null, null, null);
+    }
+
+    public async Task<(bool Success, string Message, string? DesiredStatus)> StopPodAsync(string? targetPodId = null, CancellationToken ct = default)
+    {
+        var apiKey = ApiKey;
+        if (string.IsNullOrWhiteSpace(apiKey)) return (false, "Chưa cấu hình RUNPOD_API_KEY.", null);
+
+        var id = targetPodId ?? _runtimePodId ?? _cachedDiscoveredPodId ?? PodId;
+        if (string.IsNullOrWhiteSpace(id)) return (false, "Chưa xác định được Pod ID để dừng.", null);
+
+        try
+        {
+            var uri = $"https://api.runpod.io/graphql?api_key={Uri.EscapeDataString(apiKey)}";
+            var req = new HttpRequestMessage(HttpMethod.Post, uri);
+            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+            req.Content = System.Net.Http.Json.JsonContent.Create(new
+            {
+                query = $"mutation {{ podStop(input: {{ podId: \"{id}\" }}) {{ id desiredStatus }} }}"
+            });
+
+            var res = await _httpClient.SendAsync(req, ct);
+            var json = await res.Content.ReadAsStringAsync(ct);
+
+            if (!res.IsSuccessStatusCode)
+            {
+                return (false, $"RunPod API báo lỗi HTTP {(int)res.StatusCode}: {json}", null);
+            }
+
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.TryGetProperty("errors", out var errors) && errors.GetArrayLength() > 0)
+            {
+                var errDetail = errors[0].TryGetProperty("message", out var m) ? m.GetString() : "Lỗi GraphQL RunPod";
+                return (false, $"RunPod GraphQL lỗi: {errDetail}", null);
+            }
+
+            if (doc.RootElement.TryGetProperty("data", out var data) &&
+                data.TryGetProperty("podStop", out var podStop) &&
+                podStop.TryGetProperty("desiredStatus", out var ds))
+            {
+                var status = ds.GetString();
+                _logger.LogInformation("Đã dừng Pod {Id} thành công (DesiredStatus: {Status})", id, status);
+                return (true, $"Đã dừng máy GPU ({id}) thành công. Tiền thuê máy đã ngừng tính!", status);
+            }
+
+            return (true, $"Đã gửi lệnh dừng Pod ({id}) lên RunPod.", "STOPPED");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Lỗi khi dừng Pod {Id}", id);
+            return (false, $"Lỗi kết nối tới RunPod: {ex.Message}", null);
+        }
+    }
+
+    public async Task<(bool Success, string Message, string? DesiredStatus)> ResumePodAsync(string? targetPodId = null, CancellationToken ct = default)
+    {
+        var apiKey = ApiKey;
+        if (string.IsNullOrWhiteSpace(apiKey)) return (false, "Chưa cấu hình RUNPOD_API_KEY.", null);
+
+        var id = targetPodId ?? _runtimePodId ?? _cachedDiscoveredPodId ?? PodId;
+        if (string.IsNullOrWhiteSpace(id)) return (false, "Chưa xác định được Pod ID để bật.", null);
+
+        try
+        {
+            var uri = $"https://api.runpod.io/graphql?api_key={Uri.EscapeDataString(apiKey)}";
+            var req = new HttpRequestMessage(HttpMethod.Post, uri);
+            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+            req.Content = System.Net.Http.Json.JsonContent.Create(new
+            {
+                query = $"mutation {{ podResume(input: {{ podId: \"{id}\", gpuCount: 1 }}) {{ id desiredStatus }} }}"
+            });
+
+            var res = await _httpClient.SendAsync(req, ct);
+            var json = await res.Content.ReadAsStringAsync(ct);
+
+            if (!res.IsSuccessStatusCode)
+            {
+                return (false, $"RunPod API báo lỗi HTTP {(int)res.StatusCode}: {json}", null);
+            }
+
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.TryGetProperty("errors", out var errors) && errors.GetArrayLength() > 0)
+            {
+                var errDetail = errors[0].TryGetProperty("message", out var m) ? m.GetString() : "Lỗi GraphQL RunPod";
+                return (false, $"RunPod GraphQL lỗi: {errDetail}", null);
+            }
+
+            if (doc.RootElement.TryGetProperty("data", out var data) &&
+                data.TryGetProperty("podResume", out var podResume) &&
+                podResume.TryGetProperty("desiredStatus", out var ds))
+            {
+                var status = ds.GetString();
+                _logger.LogInformation("Đã khởi động Pod {Id} thành công (DesiredStatus: {Status})", id, status);
+                return (true, $"Đã bật lại máy GPU ({id}) thành công. Máy đang khởi động lại...", status);
+            }
+
+            return (true, $"Đã gửi lệnh bật lại Pod ({id}) lên RunPod.", "RUNNING");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Lỗi khi bật lại Pod {Id}", id);
+            return (false, $"Lỗi kết nối tới RunPod: {ex.Message}", null);
+        }
+    }
+
     public async Task<string> SubmitAsync(string bundleDir, string batchId, CancellationToken ct)
     {
         var baseUrl = await GetEffectiveBaseUrlAsync(ct);

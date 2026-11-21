@@ -33,7 +33,9 @@ import {
   Zap,
   Copy,
   Check,
-  Upload
+  Upload,
+  Power,
+  PowerOff
 } from 'lucide-react';
 import {
   Button,
@@ -227,6 +229,8 @@ export function FilmFactoryPage() {
   const [editingPodId, setEditingPodId] = useState(false);
   const [podInput, setPodInput] = useState('');
   const [savingPodId, setSavingPodId] = useState(false);
+  const [stoppingGpu, setStoppingGpu] = useState(false);
+  const [startingGpu, setStartingGpu] = useState(false);
 
   const loadGpuStatus = async () => {
     try {
@@ -235,6 +239,39 @@ export function FilmFactoryPage() {
       if (st.podId && !podInput) setPodInput(st.podId);
     } catch {
       // ignore
+    }
+  };
+
+  const handleStopGpu = async () => {
+    const isBusy = gpuStatus?.state === 'busy' || gpuStatus?.activeEpisodeStatus === 'GpuRendering';
+    const confirmMsg = isBusy
+      ? 'GPU đang render tập phim dở dang. Dừng máy sẽ hủy tiến trình render hiện tại.\n\nBạn có chắc chắn muốn DỪNG GPU để lập tức ngừng tính tiền ($2.22/h) không?'
+      : 'Bạn có chắc chắn muốn DỪNG máy GPU RunPod?\n\n(Hệ thống sẽ ngừng tính tiền $2.22/h ngay lập tức, toàn bộ dữ liệu ổ cứng vẫn được bảo lưu).';
+
+    if (!window.confirm(confirmMsg)) return;
+
+    try {
+      setStoppingGpu(true);
+      const res = await api.stopRunPodGpu(gpuStatus?.podId || undefined);
+      toast.success(res.message || 'Đã dừng GPU RunPod thành công!');
+      await loadGpuStatus();
+    } catch (err: any) {
+      toast.error(err.message || 'Lỗi khi dừng GPU');
+    } finally {
+      setStoppingGpu(false);
+    }
+  };
+
+  const handleStartGpu = async () => {
+    try {
+      setStartingGpu(true);
+      const res = await api.startRunPodGpu(gpuStatus?.podId || undefined);
+      toast.success(res.message || 'Đã gửi lệnh bật lại GPU RunPod! Đang khởi động...');
+      await loadGpuStatus();
+    } catch (err: any) {
+      toast.error(err.message || 'Lỗi khi bật lại GPU');
+    } finally {
+      setStartingGpu(false);
     }
   };
 
@@ -808,6 +845,33 @@ export function FilmFactoryPage() {
                   </div>
 
                   <div className="flex items-center gap-2">
+                    {/* Master GPU Switch: Start / Stop to save money */}
+                    {gpuStatus?.hasApiKey && (
+                      (gpuStatus.online || gpuStatus.podDesiredStatus === 'RUNNING') ? (
+                        <Button
+                          size="sm"
+                          variant="danger"
+                          icon={<PowerOff className="h-3.5 w-3.5" />}
+                          loading={stoppingGpu}
+                          onClick={handleStopGpu}
+                          title="Dừng máy GPU trên RunPod để lập tức ngừng tính tiền $2.22/giờ (Ổ cứng và dữ liệu vẫn được giữ nguyên)"
+                        >
+                          Dừng GPU (Tiết Kiệm Tiền)
+                        </Button>
+                      ) : (
+                        <Button
+                          size="sm"
+                          variant="primary"
+                          icon={<Play className="h-3.5 w-3.5" />}
+                          loading={startingGpu}
+                          onClick={handleStartGpu}
+                          title="Bật lại máy GPU trên RunPod để tiếp tục dựng phim"
+                        >
+                          Bật Lại GPU
+                        </Button>
+                      )
+                    )}
+
                     {editingPodId ? (
                       <div className="flex items-center gap-1.5">
                         <input
