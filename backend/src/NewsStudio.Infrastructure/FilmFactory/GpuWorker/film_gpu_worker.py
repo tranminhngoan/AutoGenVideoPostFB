@@ -533,16 +533,35 @@ class GpuRequestHandler(BaseHTTPRequestHandler):
 
 
 def run_server(port=8000):
-    log(f"Starting Film GPU Worker HTTP Server on port {port}...")
+    ports = [port]
+    if 19123 not in ports:
+        ports.append(19123)
+    if 8000 not in ports:
+        ports.append(8000)
+
+    log(f"Starting Film GPU Worker HTTP Server on ports: {ports}...")
     t = threading.Thread(target=worker_loop, daemon=True)
     t.start()
-    server = ThreadedHTTPServer(("0.0.0.0", port), GpuRequestHandler)
-    log(f"Server is ready and listening on http://0.0.0.0:{port}")
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        log("Server shutting down...")
-        server.server_close()
+
+    servers = []
+    for p in ports:
+        try:
+            srv = ThreadedHTTPServer(("0.0.0.0", p), GpuRequestHandler)
+            servers.append(srv)
+            log(f"Server is ready and listening on http://0.0.0.0:{p}")
+            if len(servers) > 1:
+                th = threading.Thread(target=srv.serve_forever, daemon=True)
+                th.start()
+        except Exception as e:
+            log(f"Port {p} busy or error: {e}")
+
+    if servers:
+        try:
+            servers[0].serve_forever()
+        except KeyboardInterrupt:
+            log("Server shutting down...")
+            for s in servers:
+                s.server_close()
 
 
 # ─────────────────────────────── Entry Point ───────────────────────────────

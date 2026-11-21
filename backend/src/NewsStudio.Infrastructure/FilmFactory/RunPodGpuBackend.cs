@@ -46,8 +46,8 @@ public class RunPodGpuBackend : IFilmGpuBackend
         }
     }
 
-    /// <summary>Exposed port inside the RunPod pod (default 8000).</summary>
-    public int Port => _configuration.GetValue("Film:Gpu:RunPod:Port", 8000);
+    /// <summary>Exposed port inside the RunPod pod (defaults to 19123 or 8000).</summary>
+    public int Port => _configuration.GetValue("Film:Gpu:RunPod:Port", 19123);
 
     /// <summary>Explicit endpoint URL or automatic RunPod proxy URL.</summary>
     public string BaseUrl
