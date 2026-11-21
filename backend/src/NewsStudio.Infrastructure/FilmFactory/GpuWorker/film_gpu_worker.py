@@ -38,12 +38,17 @@ os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 WORKSPACE_DIR = os.environ.get("WORKSPACE_DIR", "/workspace" if os.path.isdir("/workspace") else os.getcwd())
 CACHE_DIR = os.path.join(WORKSPACE_DIR, ".cache")
 try:
-    os.makedirs(os.path.join(CACHE_DIR, "huggingface"), exist_ok=True)
+    os.makedirs(os.path.join(CACHE_DIR, "huggingface", "hub"), exist_ok=True)
     os.makedirs(os.path.join(CACHE_DIR, "torch"), exist_ok=True)
     os.makedirs(os.path.join(CACHE_DIR, "tmp"), exist_ok=True)
-    os.environ.setdefault("HF_HOME", os.path.join(CACHE_DIR, "huggingface"))
-    os.environ.setdefault("TORCH_HOME", os.path.join(CACHE_DIR, "torch"))
-    os.environ.setdefault("TMPDIR", os.path.join(CACHE_DIR, "tmp"))
+    os.environ["HF_HOME"] = os.path.join(CACHE_DIR, "huggingface")
+    os.environ["HF_HUB_CACHE"] = os.path.join(CACHE_DIR, "huggingface", "hub")
+    os.environ["TORCH_HOME"] = os.path.join(CACHE_DIR, "torch")
+    os.environ["TMPDIR"] = os.path.join(CACHE_DIR, "tmp")
+    os.environ["TEMP"] = os.path.join(CACHE_DIR, "tmp")
+    os.environ["TMP"] = os.path.join(CACHE_DIR, "tmp")
+    import tempfile
+    tempfile.tempdir = os.path.join(CACHE_DIR, "tmp")
 except Exception:
     pass
 
@@ -155,10 +160,11 @@ def process_batch(in_dir, out_dir, batch_id=None, progress_cb=None):
 
         t = time.time()
         model_id = spec.get("image_model", "SG161222/RealVisXL_V5.0")
+        hf_cache = os.path.join(CACHE_DIR, "huggingface", "hub")
         try:
-            pipe = StableDiffusionXLPipeline.from_pretrained(model_id, torch_dtype=torch.float16, variant="fp16")
+            pipe = StableDiffusionXLPipeline.from_pretrained(model_id, torch_dtype=torch.float16, variant="fp16", cache_dir=hf_cache)
         except Exception:
-            pipe = StableDiffusionXLPipeline.from_pretrained(model_id, torch_dtype=torch.float16)
+            pipe = StableDiffusionXLPipeline.from_pretrained(model_id, torch_dtype=torch.float16, cache_dir=hf_cache)
 
         pipe.scheduler = DPMSolverMultistepScheduler.from_config(
             pipe.scheduler.config, use_karras_sigmas=True, algorithm_type="sde-dpmsolver++"
@@ -174,7 +180,8 @@ def process_batch(in_dir, out_dir, batch_id=None, progress_cb=None):
                     "h94/IP-Adapter",
                     subfolder="sdxl_models",
                     weight_name="ip-adapter-plus-face_sdxl_vit-h.safetensors",
-                    image_encoder_folder="models/image_encoder"
+                    image_encoder_folder="models/image_encoder",
+                    cache_dir=hf_cache
                 )
                 has_ip = True
                 log("IP-Adapter Plus Face loaded successfully.")
@@ -269,17 +276,17 @@ def process_batch(in_dir, out_dir, batch_id=None, progress_cb=None):
         t = time.time()
         pipe = None
 
+        hf_cache = os.path.join(CACHE_DIR, "huggingface", "hub")
         if use_wan:
             from diffusers import WanImageToVideoPipeline
             wan_candidates = [
-                spec.get("wan_model", "Wan-AI/Wan2.1-I2V-1.3B-480P-Diffusers"),
-                "Wan-AI/Wan2.1-I2V-14B-480P-Diffusers",
+                spec.get("wan_model", "Wan-AI/Wan2.1-I2V-14B-480P-Diffusers"),
                 "Wan-AI/Wan2.2-I2V-A14B-Diffusers"
             ]
             for candidate in wan_candidates:
                 try:
                     log(f"Loading Wan video model: {candidate} ...")
-                    pipe = WanImageToVideoPipeline.from_pretrained(candidate, torch_dtype=torch.bfloat16)
+                    pipe = WanImageToVideoPipeline.from_pretrained(candidate, torch_dtype=torch.bfloat16, cache_dir=hf_cache)
                     results["env"]["motion_model"] = candidate
                     break
                 except Exception as e:
@@ -292,7 +299,7 @@ def process_batch(in_dir, out_dir, batch_id=None, progress_cb=None):
             from diffusers import LTXImageToVideoPipeline
             ltx_model = spec.get("ltx_model", "Lightricks/LTX-Video-0.9.5")
             log(f"Loading LTX video model: {ltx_model} ...")
-            pipe = LTXImageToVideoPipeline.from_pretrained(ltx_model, torch_dtype=DTYPE)
+            pipe = LTXImageToVideoPipeline.from_pretrained(ltx_model, torch_dtype=DTYPE, cache_dir=hf_cache)
             pipe.vae.enable_tiling()
             results["env"]["motion_model"] = ltx_model
 
