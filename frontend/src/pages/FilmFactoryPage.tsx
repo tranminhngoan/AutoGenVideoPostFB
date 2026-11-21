@@ -35,7 +35,10 @@ import {
   Check,
   Upload,
   Power,
-  PowerOff
+  PowerOff,
+  Activity,
+  Mic,
+  Image as ImageIcon
 } from 'lucide-react';
 import {
   Button,
@@ -119,6 +122,27 @@ function getStatusPercent(status: string): number {
   }
 }
 
+function calculateDynamicEpisodeProgress(status: string, batchDetail?: string | null): number {
+  if (status === 'Completed') return 100;
+  if (status === 'GpuDone' || status === 'FilmEditing' || status === 'QualityCheck') return 95;
+  if (status === 'GpuRendering' && batchDetail) {
+    const motionMatch = batchDetail.match(/Stage motion:\s*(\d+)\/(\d+)/i);
+    if (motionMatch) {
+      const cur = parseInt(motionMatch[1], 10);
+      const total = parseInt(motionMatch[2], 10) || 26;
+      return Math.min(92, Math.round(65 + (cur / total) * 27));
+    }
+    const imageMatch = batchDetail.match(/Stage image:\s*(\d+)\/(\d+)/i);
+    if (imageMatch) {
+      const cur = parseInt(imageMatch[1], 10);
+      const total = parseInt(imageMatch[2], 10) || 16;
+      return Math.min(65, Math.round(45 + (cur / total) * 20));
+    }
+    return 75;
+  }
+  return getStatusPercent(status);
+}
+
 export function FilmFactoryPage() {
   const toast = useToast();
 
@@ -147,6 +171,7 @@ export function FilmFactoryPage() {
   const [selectedProject, setSelectedProject] = useState<FilmProjectDetailDto | null>(null);
   const [selectedEpisode, setSelectedEpisode] = useState<FilmEpisodeDetailDto | null>(null);
   const [previewVideoEpisode, setPreviewVideoEpisode] = useState<FilmEpisodeDto | null>(null);
+  const [trackingEpisode, setTrackingEpisode] = useState<FilmEpisodeDto | null>(null);
   const [costSummary, setCostSummary] = useState<FilmCostSummaryDto | null>(null);
 
   // Loading states
@@ -940,6 +965,33 @@ export function FilmFactoryPage() {
                         <div className="flex items-center gap-2">
                           <Button
                             size="sm"
+                            variant="primary"
+                            icon={<Activity className="h-3.5 w-3.5" />}
+                            onClick={() => {
+                              const found = selectedProject?.episodes.find(e => e.id === gpuStatus.activeEpisodeId);
+                              setTrackingEpisode(found || {
+                                id: gpuStatus.activeEpisodeId!,
+                                filmProjectId: selectedProject?.id || '',
+                                episodeNumber: gpuStatus.activeEpisodeNumber || 2,
+                                title: gpuStatus.activeEpisodeTitle || `Tập ${gpuStatus.activeEpisodeNumber}`,
+                                synopsis: '',
+                                openingHook: '',
+                                endingCliffhanger: '',
+                                targetDurationSeconds: 180,
+                                actualDurationSeconds: 0,
+                                status: gpuStatus.activeEpisodeStatus || 'GpuRendering',
+                                estimatedCostUsd: 0,
+                                actualCostUsd: 0,
+                                qualityScore: 0,
+                                scenesCount: 4,
+                                shotsCount: 26,
+                              } as FilmEpisodeDto);
+                            }}
+                          >
+                            Xem Tiến Độ Chi Tiết
+                          </Button>
+                          <Button
+                            size="sm"
                             variant="secondary"
                             icon={<RotateCw className="h-3 w-3" />}
                             onClick={() => handleRenderEpisode(gpuStatus.activeEpisodeId!, true)}
@@ -1083,14 +1135,25 @@ export function FilmFactoryPage() {
                                 <Loader2 className="h-3.5 w-3.5 animate-spin text-fg" />
                                 {EPISODE_STATUS_LABELS[ep.status] || ep.status}
                               </span>
-                              <span className="text-[11px] text-fg-subtle">
-                                {getStatusPercent(ep.status)}%
-                              </span>
+                              <div className="flex items-center gap-2">
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  className="h-6 px-2 text-[11px] text-accent hover:text-accent-strong flex items-center gap-1"
+                                  onClick={() => setTrackingEpisode(ep)}
+                                >
+                                  <Activity className="h-3 w-3" />
+                                  Xem tiến độ
+                                </Button>
+                                <span className="text-[11px] text-fg-subtle font-mono font-medium">
+                                  {calculateDynamicEpisodeProgress(ep.status, ((gpuStatus?.activeEpisodeId === ep.id) || (gpuStatus?.currentBatch && gpuStatus.currentBatch.startsWith(`ep${ep.episodeNumber}-`))) ? gpuStatus?.batchDetail : null)}%
+                                </span>
+                              </div>
                             </div>
                             <div className="h-1.5 w-full bg-line rounded-full overflow-hidden">
                               <div
                                 className="h-full bg-fg animate-pulse rounded-full transition-all duration-500"
-                                style={{ width: `${getStatusPercent(ep.status)}%` }}
+                                style={{ width: `${calculateDynamicEpisodeProgress(ep.status, ((gpuStatus?.activeEpisodeId === ep.id) || (gpuStatus?.currentBatch && gpuStatus.currentBatch.startsWith(`ep${ep.episodeNumber}-`))) ? gpuStatus?.batchDetail : null)}%` }}
                               />
                             </div>
                             {((gpuStatus?.activeEpisodeId === ep.id) || (gpuStatus?.currentBatch && gpuStatus.currentBatch.startsWith(`ep${ep.episodeNumber}-`))) && gpuStatus?.batchDetail ? (
@@ -1177,6 +1240,15 @@ export function FilmFactoryPage() {
                         </span>
 
                         <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            icon={<Activity className="h-3 w-3 text-fg-subtle" />}
+                            onClick={() => setTrackingEpisode(ep)}
+                          >
+                            Tiến độ
+                          </Button>
+
                           <Button
                             size="sm"
                             variant="ghost"
@@ -2357,6 +2429,273 @@ export function FilmFactoryPage() {
           </div>
         </Modal>
       )}
+
+      {/* ── MODAL: DETAILED EPISODE PRODUCTION PIPELINE TRACKER ── */}
+      {trackingEpisode && (() => {
+        const isThisEpActive = (gpuStatus?.activeEpisodeId === trackingEpisode.id) || 
+          (!!gpuStatus?.currentBatch && gpuStatus.currentBatch.startsWith(`ep${trackingEpisode.episodeNumber}-`));
+        const currentDetail = isThisEpActive ? gpuStatus?.batchDetail : null;
+        const totalProgress = calculateDynamicEpisodeProgress(trackingEpisode.status, currentDetail);
+
+        const motionMatch = currentDetail?.match(/Stage motion:\s*(\d+)\/(\d+)/i);
+        const imageMatch = currentDetail?.match(/Stage image:\s*(\d+)\/(\d+)/i);
+
+        // Stage 1: Script & Story Bible
+        const step1Done = trackingEpisode.status !== 'Draft' && trackingEpisode.status !== 'Pending';
+        // Stage 2: Voice acting (EdgeTTS)
+        const step2Active = trackingEpisode.status === 'VoiceGenerating';
+        const step2Done = ['GpuQueued', 'GpuRendering', 'GpuDone', 'FilmEditing', 'QualityCheck', 'Completed'].includes(trackingEpisode.status);
+        // Stage 3: Visual Frame Generation (SDXL)
+        const step3Active = isThisEpActive && imageMatch != null;
+        const step3Done = motionMatch != null || ['GpuDone', 'FilmEditing', 'QualityCheck', 'Completed'].includes(trackingEpisode.status);
+        // Stage 4: Motion Video Generation (Wan 2.1 14B)
+        const step4Active = isThisEpActive && motionMatch != null;
+        const step4Done = ['GpuDone', 'FilmEditing', 'QualityCheck', 'Completed'].includes(trackingEpisode.status);
+        // Stage 5: Assembly & Anti-Reup
+        const step5Active = ['GpuDone', 'FilmEditing', 'QualityCheck'].includes(trackingEpisode.status);
+        const step5Done = trackingEpisode.status === 'Completed';
+
+        return (
+          <Modal
+            open={!!trackingEpisode}
+            onClose={() => setTrackingEpisode(null)}
+            title={`Tiến Độ Sản Xuất: Tập ${trackingEpisode.episodeNumber} - ${trackingEpisode.title}`}
+          >
+            <div className="space-y-4 text-xs">
+              {/* Overall Progress Header */}
+              <div className="rounded-lg bg-surface border border-line p-4 space-y-3 shadow-sm">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-xs text-fg-subtle font-medium uppercase tracking-wider">
+                      Tiến Trình Sản Xuất Tổng Thể
+                    </div>
+                    <div className="text-xl sm:text-2xl font-bold text-fg flex items-center gap-2 mt-0.5">
+                      {totalProgress}%
+                      <span className="text-xs font-normal text-fg-subtle">
+                        ({EPISODE_STATUS_LABELS[trackingEpisode.status] || trackingEpisode.status})
+                      </span>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-emerald-500/10 text-emerald-500 border border-emerald-500/20">
+                      <Cpu className="h-3 w-3" />
+                      {gpuStatus?.gpu || 'NVIDIA A100 SXM 80GB'}
+                    </span>
+                    <div className="text-[11px] text-fg-subtle mt-1 font-mono">
+                      VRAM: {gpuStatus?.vramGb || 80}GB | Trống: {gpuStatus?.diskFreeGb || 203}GB
+                    </div>
+                  </div>
+                </div>
+
+                <div className="h-2.5 w-full bg-line rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-emerald-500 rounded-full transition-all duration-700 ease-out"
+                    style={{ width: `${totalProgress}%` }}
+                  />
+                </div>
+
+                {currentDetail && (
+                  <div className="text-[11px] text-accent font-medium flex items-center gap-1.5 bg-accent/10 px-2.5 py-1.5 rounded border border-accent/20">
+                    <span className="w-2 h-2 rounded-full bg-accent animate-ping" />
+                    <span>Chi tiết GPU thời gian thực: {currentDetail}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* 5-Step Pipeline Breakdown */}
+              <div className="space-y-2.5">
+                <div className="font-semibold text-fg text-xs flex items-center gap-1.5">
+                  <Layers className="h-4 w-4 text-accent" />
+                  Quy Trình 5 Bước Sản Xuất Điện Ảnh Tự Động:
+                </div>
+
+                {/* Bước 1 */}
+                <div className={cn(
+                  "p-3 rounded-lg border transition-all space-y-1.5",
+                  step1Done ? "bg-emerald-500/5 border-emerald-500/20 text-fg" : "bg-muted/30 border-line text-fg-muted"
+                )}>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 font-semibold text-xs">
+                      {step1Done ? (
+                        <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" />
+                      ) : (
+                        <Clock className="h-4 w-4 text-fg-subtle shrink-0" />
+                      )}
+                      <span>Bước 1: Kịch bản & Biên kịch AI Showrunner</span>
+                    </div>
+                    <span className="text-[11px] font-mono font-medium text-emerald-500">100%</span>
+                  </div>
+                  <p className="text-[11px] text-fg-subtle pl-6">
+                    Đã hoàn thành Story Bible, 4 cảnh, các câu thoại diễn xuất, mở đầu (Hook) và kết nút thắt (Cliffhanger).
+                  </p>
+                </div>
+
+                {/* Bước 2 */}
+                <div className={cn(
+                  "p-3 rounded-lg border transition-all space-y-1.5",
+                  step2Done ? "bg-emerald-500/5 border-emerald-500/20 text-fg" :
+                  step2Active ? "bg-accent/5 border-accent/30 text-fg" : "bg-muted/30 border-line text-fg-muted"
+                )}>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 font-semibold text-xs">
+                      {step2Done ? (
+                        <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" />
+                      ) : step2Active ? (
+                        <Loader2 className="h-4 w-4 animate-spin text-accent shrink-0" />
+                      ) : (
+                        <Clock className="h-4 w-4 text-fg-subtle shrink-0" />
+                      )}
+                      <span>Bước 2: Thu âm & Lồng tiếng nhân vật Việt Nam (EdgeTTS)</span>
+                    </div>
+                    <span className="text-[11px] font-mono font-medium text-emerald-500">
+                      {step2Done ? '100%' : (step2Active ? 'Đang thu âm...' : '0%')}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-fg-subtle pl-6">
+                    {step2Done
+                      ? 'Đã thu âm lồng tiếng xong toàn bộ câu thoại của từng nhân vật theo đúng ngữ điệu và giới tính.'
+                      : step2Active ? 'Đang chuyển đổi văn bản sang giọng đọc tự nhiên (tiếng Sài Gòn, miền Tây, miền Bắc)...' : 'Chờ thực thi'}
+                  </p>
+                </div>
+
+                {/* Bước 3 */}
+                <div className={cn(
+                  "p-3 rounded-lg border transition-all space-y-1.5",
+                  step3Done ? "bg-emerald-500/5 border-emerald-500/20 text-fg" :
+                  step3Active ? "bg-accent/5 border-accent/30 text-fg" : "bg-muted/30 border-line text-fg-muted"
+                )}>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 font-semibold text-xs">
+                      {step3Done ? (
+                        <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" />
+                      ) : step3Active ? (
+                        <Loader2 className="h-4 w-4 animate-spin text-accent shrink-0" />
+                      ) : (
+                        <Clock className="h-4 w-4 text-fg-subtle shrink-0" />
+                      )}
+                      <span>Bước 3: Dựng khung hình nghệ thuật 4K (Stage 1: SDXL Base)</span>
+                    </div>
+                    <span className="text-[11px] font-mono font-medium text-emerald-500">
+                      {step3Done ? '100% (Xong 16/16 shots)' : (imageMatch ? `${imageMatch[1]}/${imageMatch[2]} shots (${Math.round(parseInt(imageMatch[1])/parseInt(imageMatch[2])*100)}%)` : 'Chờ tới lượt')}
+                    </span>
+                  </div>
+                  <div className="pl-6 space-y-1">
+                    <p className="text-[11px] text-fg-subtle">
+                      Khởi tạo ảnh bối cảnh siêu thực với Character Consistency Visual Prompts và Upscale 2x sắc nét.
+                    </p>
+                    {step3Active && imageMatch && (
+                      <div className="h-1.5 w-full bg-line rounded-full overflow-hidden mt-1">
+                        <div
+                          className="h-full bg-accent rounded-full"
+                          style={{ width: `${Math.round(parseInt(imageMatch[1])/parseInt(imageMatch[2])*100)}%` }}
+                        />
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Bước 4 */}
+                <div className={cn(
+                  "p-3 rounded-lg border transition-all space-y-1.5",
+                  step4Done ? "bg-emerald-500/5 border-emerald-500/20 text-fg" :
+                  step4Active ? "bg-accent/5 border-accent/30 text-fg" : "bg-muted/30 border-line text-fg-muted"
+                )}>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 font-semibold text-xs">
+                      {step4Done ? (
+                        <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" />
+                      ) : step4Active ? (
+                        <Loader2 className="h-4 w-4 animate-spin text-accent shrink-0" />
+                      ) : (
+                        <Clock className="h-4 w-4 text-fg-subtle shrink-0" />
+                      )}
+                      <span>Bước 4: Tạo chuyển động điện ảnh diễn viên (Stage 2: Wan 2.1 14B)</span>
+                    </div>
+                    <span className="text-[11px] font-mono font-medium text-emerald-500">
+                      {step4Done ? '100% (Hoàn thành)' : (motionMatch ? `Clip ${motionMatch[1]}/${motionMatch[2]} (${Math.round(parseInt(motionMatch[1])/parseInt(motionMatch[2])*100)}%)` : 'Chờ xong bước 3')}
+                    </span>
+                  </div>
+                  <div className="pl-6 space-y-1">
+                    <p className="text-[11px] text-fg-subtle">
+                      Chạy trực tiếp trong 80GB VRAM trên A100 SXM (~60s/clip), xuất 81 khung hình mượt mà, chân thực như phim quay.
+                    </p>
+                    {step4Active && motionMatch && (
+                      <div className="h-1.5 w-full bg-line rounded-full overflow-hidden mt-1">
+                        <div
+                          className="h-full bg-accent rounded-full transition-all duration-500"
+                          style={{ width: `${Math.round(parseInt(motionMatch[1])/parseInt(motionMatch[2])*100)}%` }}
+                        />
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Bước 5 */}
+                <div className={cn(
+                  "p-3 rounded-lg border transition-all space-y-1.5",
+                  step5Done ? "bg-emerald-500/5 border-emerald-500/20 text-fg" :
+                  step5Active ? "bg-accent/5 border-accent/30 text-fg" : "bg-muted/30 border-line text-fg-muted"
+                )}>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 font-semibold text-xs">
+                      {step5Done ? (
+                        <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" />
+                      ) : step5Active ? (
+                        <Loader2 className="h-4 w-4 animate-spin text-accent shrink-0" />
+                      ) : (
+                        <Clock className="h-4 w-4 text-fg-subtle shrink-0" />
+                      )}
+                      <span>Bước 5: Hậu kỳ, Ghép Audio & Chống Reup Bản Quyền</span>
+                    </div>
+                    <span className="text-[11px] font-mono font-medium text-emerald-500">
+                      {step5Done ? '100%' : (step5Active ? 'Đang xuất MP4...' : 'Chờ hoàn tất')}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-fg-subtle pl-6">
+                    {step5Done
+                      ? 'Video MP4 1080p đã xuất xưởng thành công! Đã hòa âm nhạc nền, phủ watermark @PageName và chèn siêu dữ liệu chống reup.'
+                      : step5Active ? 'Đang hòa âm tiếng thoại + nhạc nền, phủ watermark @PageName và đóng gói MP4 1080p 30fps...' : 'Chờ xong bước 4'}
+                  </p>
+                </div>
+              </div>
+
+              {/* Live GPU Terminal Card */}
+              <div className="rounded-lg bg-black/90 p-3.5 text-[11px] font-mono text-emerald-400 space-y-1.5 border border-line shadow-inner">
+                <div className="flex items-center justify-between text-neutral-400 text-[10px] pb-1 border-b border-neutral-800">
+                  <span className="flex items-center gap-1.5 font-sans font-semibold text-neutral-300">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
+                    Bảng Điều Khiển GPU Worker Thời Gian Thực
+                  </span>
+                  <span>Cập nhật liên tục 3-4s</span>
+                </div>
+                <div>[GPU] {gpuStatus?.gpu || 'NVIDIA A100-SXM4-80GB'} | VRAM: {gpuStatus?.vramGb || 80} GB</div>
+                <div>[DISK] Dung lượng trống: {gpuStatus?.diskFreeGb || 203} GB / {gpuStatus?.diskTotalGb || 220} GB</div>
+                <div>[BATCH] ID: {gpuStatus?.currentBatch || 'Không có'}</div>
+                <div>[DETAIL] {currentDetail || (gpuStatus?.activeEpisodeStatus ? `Trạng thái: ${EPISODE_STATUS_LABELS[gpuStatus.activeEpisodeStatus] || gpuStatus.activeEpisodeStatus}` : 'Đang xử lý ngầm...')}</div>
+              </div>
+
+              {/* Modal Actions */}
+              <div className="flex items-center justify-between pt-2 border-t border-line">
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  icon={<RotateCw className="h-3.5 w-3.5" />}
+                  onClick={loadGpuStatus}
+                >
+                  Làm mới dữ liệu
+                </Button>
+                <Button
+                  size="sm"
+                  variant="primary"
+                  onClick={() => setTrackingEpisode(null)}
+                >
+                  Đóng
+                </Button>
+              </div>
+            </div>
+          </Modal>
+        );
+      })()}
     </div>
   );
 }
