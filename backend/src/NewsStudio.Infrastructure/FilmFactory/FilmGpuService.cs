@@ -336,6 +336,10 @@ public class FilmGpuService
             s.MotionVideoPath = dest;
             s.RenderStatus = "Pending";
         }
+        if (motionErrors.Count > 0)
+        {
+            throw new InvalidOperationException($"Lỗi GPU không tạo được chuyển động video ({motionErrors.Count}/{shots.Count(s => s.UseMotion)} clips): {motionErrors.First()}");
+        }
         await _context.SaveChangesAsync(ct);
 
         try { Directory.Delete(Path.Combine(Root, "gpu", batchId), true); } catch { /* best effort */ }

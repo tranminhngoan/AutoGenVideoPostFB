@@ -329,7 +329,24 @@ def process_batch(in_dir, out_dir, batch_id=None, progress_cb=None):
         if pipe is None:
             raise RuntimeError("Could not load any video motion model (Wan or LTX-Video).")
 
-        pipe.enable_model_cpu_offload()
+        # Crucial for 24GB GPUs (RTX 3090/4090): sequential cpu offload and VAE tiling prevents CUDA OOM
+        if use_wan:
+            try:
+                pipe.enable_sequential_cpu_offload()
+                log("Enabled sequential CPU offload for Wan video model (safe for 24GB VRAM).")
+            except Exception as e_off:
+                log(f"Sequential cpu offload error ({e_off}), falling back to model cpu offload...")
+                pipe.enable_model_cpu_offload()
+            if hasattr(pipe, "vae"):
+                if hasattr(pipe.vae, "enable_tiling"):
+                    pipe.vae.enable_tiling()
+                if hasattr(pipe.vae, "enable_slicing"):
+                    pipe.vae.enable_slicing()
+        else:
+            pipe.enable_model_cpu_offload()
+            if hasattr(pipe, "vae") and hasattr(pipe.vae, "enable_tiling"):
+                pipe.vae.enable_tiling()
+
         fps = 16 if use_wan else 24
         w, h = 480, 832
         steps = 40
@@ -337,6 +354,10 @@ def process_batch(in_dir, out_dir, batch_id=None, progress_cb=None):
         log(f"Motion model ({results['env'].get('motion_model')}) loaded in {time.time() - t:.1f}s")
 
         def handle(j):
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            gc.collect()
+
             jw, jh = j.get("width", w), j.get("height", h)
             # Ensure dimensions divisible by 16 for Wan / LTX
             jw = (jw // 16) * 16
