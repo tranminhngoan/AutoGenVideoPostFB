@@ -162,10 +162,10 @@ public class FilmGeminiClient
                     continue;
                 }
 
-                if (key.IsFree) GeminiKeys.MarkFreeRefused(model, response.StatusCode, reason);
+                if (key.IsFree) GeminiKeys.MarkFreeRefused(key, model, response.StatusCode, reason);
                 if (key.IsFree && i < keys.Count - 1)
                 {
-                    _logger.LogInformation("Gemini free key refused for {Model} (HTTP {Code}); using paid key.", model, code);
+                    _logger.LogInformation("Gemini free key ({Label}) refused for {Model} (HTTP {Code}); trying next key.", key.Label, model, code);
                     break;
                 }
                 throw new InvalidOperationException($"Gemini ({model}) từ chối yêu cầu — HTTP {code}: {reason}");
