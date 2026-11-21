@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import {
   Film,
   Sparkles,
@@ -15,17 +15,38 @@ import {
   CheckCircle2,
   Clock,
   Layers,
-  Sliders,
-  ExternalLink,
   ChevronRight,
   BookOpen,
   Users,
   MapPin,
-  Flame,
   AlertCircle,
-  Download
+  AlertTriangle,
+  Download,
+  ArrowLeft,
+  Loader2,
+  RefreshCw,
+  Info
 } from 'lucide-react';
-import { Button, Card, Dot, Modal, cn } from '../components/ui';
+import {
+  Button,
+  Card,
+  CardHeader,
+  CardBody,
+  Badge,
+  Modal,
+  PageHeader,
+  IconButton,
+  ProgressBar,
+  Input,
+  Textarea,
+  Select,
+  Field,
+  Checkbox,
+  EmptyState,
+  Skeleton,
+  Tabs,
+  cn
+} from '../components/ui';
 import {
   api,
   FilmPageDto,
@@ -38,35 +59,67 @@ import {
 } from '../services/api';
 import { useToast } from '../components/feedback';
 
-const BUSY_EPISODE_STATUSES = ['Queued', 'Scripting', 'VisualAssetsGenerating', 'VoiceGenerating', 'GpuQueued', 'GpuRendering', 'GpuDone', 'FilmEditing', 'QualityCheck'];
+const BUSY_EPISODE_STATUSES = [
+  'Queued',
+  'Scripting',
+  'VisualAssetsGenerating',
+  'VoiceGenerating',
+  'GpuQueued',
+  'GpuRendering',
+  'GpuDone',
+  'FilmEditing',
+  'QualityCheck'
+];
+
 const BUSY_PROJECT_STATUSES = ['ShowrunnerPlanning', 'BibleReady'];
 
 const EPISODE_STATUS_LABELS: Record<string, string> = {
-  Pending: 'Chưa viết kịch bản',
-  ScriptReady: 'Đã có kịch bản',
+  Pending: 'Chưa dựng',
+  ScriptReady: 'Kịch bản sẵn sàng',
   Queued: 'Đang chờ dựng…',
   Scripting: 'Đang viết kịch bản…',
-  VisualAssetsGenerating: 'Đang vẽ khung hình…',
-  VoiceGenerating: 'Đang lồng tiếng…',
-  GpuQueued: 'Chờ máy GPU…',
-  GpuRendering: 'GPU đang vẽ ảnh & clip…',
-  GpuDone: 'GPU xong, đang ghép…',
-  FilmEditing: 'Đang dựng video…',
-  QualityCheck: 'Đang kiểm tra…',
+  VisualAssetsGenerating: 'Đang tạo nhân vật & bối cảnh…',
+  VoiceGenerating: 'Đang lồng tiếng tiếng Việt…',
+  GpuQueued: 'Chờ xếp hàng GPU…',
+  GpuRendering: 'GPU Wan 2.2 đang dựng video…',
+  GpuDone: 'GPU hoàn tất, đang ghép…',
+  FilmEditing: 'Đang biên tập & render video…',
+  QualityCheck: 'Đang kiểm tra chất lượng…',
   Completed: 'Hoàn tất',
-  Failed: 'Lỗi',
+  Failed: 'Lỗi dựng',
 };
+
+function getStatusPercent(status: string): number {
+  switch (status) {
+    case 'Queued': return 10;
+    case 'Scripting': return 25;
+    case 'VisualAssetsGenerating': return 40;
+    case 'VoiceGenerating': return 55;
+    case 'GpuQueued': return 65;
+    case 'GpuRendering': return 80;
+    case 'GpuDone': return 90;
+    case 'FilmEditing': return 95;
+    case 'QualityCheck': return 98;
+    case 'Completed': return 100;
+    default: return 0;
+  }
+}
 
 export function FilmFactoryPage() {
   const toast = useToast();
 
-  // Navigation tabs
-  const [activeTab, setActiveTab] = useState<'pages' | 'projects' | 'detail' | 'cost'>('projects');
+  // Navigation: main overview tab ('projects' | 'pages')
+  const [activeMainTab, setActiveMainTab] = useState<'projects' | 'pages'>('projects');
 
-  // Data
+  // Currently opened project id (null means we're on the list view)
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+
+  // Workbench sub-tab
+  const [workbenchTab, setWorkbenchTab] = useState<'episodes' | 'story' | 'characters' | 'locations' | 'cost'>('episodes');
+
+  // Data states
   const [pages, setPages] = useState<FilmPageDto[]>([]);
   const [projects, setProjects] = useState<FilmProjectDto[]>([]);
-  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [selectedProject, setSelectedProject] = useState<FilmProjectDetailDto | null>(null);
   const [selectedEpisode, setSelectedEpisode] = useState<FilmEpisodeDetailDto | null>(null);
   const [previewVideoEpisode, setPreviewVideoEpisode] = useState<FilmEpisodeDto | null>(null);
@@ -78,6 +131,10 @@ export function FilmFactoryPage() {
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [producing, setProducing] = useState(false);
   const [renderingEpisodeId, setRenderingEpisodeId] = useState<string | null>(null);
+
+  // Deletion state & modal
+  const [deletingProject, setDeletingProject] = useState<{ id: string; title: string } | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   // Create Project Modal
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -91,9 +148,6 @@ export function FilmFactoryPage() {
     budgetLimitUsd: 5.0,
     autoProduceAll: true,
   });
-
-  // Series Detail Workbench Tab
-  const [detailTab, setDetailTab] = useState<'story' | 'characters' | 'locations' | 'episodes' | 'cost'>('episodes');
 
   // Load Pages
   const loadPages = async () => {
@@ -117,9 +171,6 @@ export function FilmFactoryPage() {
       setLoadingProjects(true);
       const data = await api.getFilmProjects();
       setProjects(data);
-      if (data.length > 0 && !selectedProjectId) {
-        setSelectedProjectId(data[0].id);
-      }
     } catch (err: any) {
       toast.error(err.message || 'Lỗi tải danh sách dự án phim');
     } finally {
@@ -151,14 +202,18 @@ export function FilmFactoryPage() {
   useEffect(() => {
     if (selectedProjectId) {
       loadProjectDetail(selectedProjectId);
+    } else {
+      setSelectedProject(null);
+      setCostSummary(null);
     }
   }, [selectedProjectId]);
 
-  // Poll while the server is writing or rendering something for this project
+  // Polling while server is processing
   const projectBusy =
     !!selectedProject &&
     (BUSY_PROJECT_STATUSES.includes(selectedProject.status) ||
       selectedProject.episodes.some((e) => BUSY_EPISODE_STATUSES.includes(e.status)));
+
   useEffect(() => {
     if (!selectedProjectId || !projectBusy) return;
     const timer = window.setInterval(async () => {
@@ -166,12 +221,25 @@ export function FilmFactoryPage() {
         const data = await api.getFilmProjectDetail(selectedProjectId);
         setSelectedProject(data);
         setCostSummary(data.costSummary);
+        // Also refresh projects list in background to sync count
+        const projs = await api.getFilmProjects();
+        setProjects(projs);
       } catch {
-        // keep the last known state; the next tick retries
+        // Keep last state on failure
       }
-    }, 8000);
+    }, 5000);
     return () => window.clearInterval(timer);
   }, [selectedProjectId, projectBusy]);
+
+  // Refresh All
+  const handleRefreshAll = async () => {
+    await Promise.all([
+      loadPages(),
+      loadProjects(),
+      selectedProjectId ? loadProjectDetail(selectedProjectId) : Promise.resolve(),
+    ]);
+    toast.success('Đã làm mới dữ liệu');
+  };
 
   // Handle Create Project
   const handleCreateProject = async (e: React.FormEvent) => {
@@ -188,7 +256,7 @@ export function FilmFactoryPage() {
       setShowCreateModal(false);
       await loadProjects();
       setSelectedProjectId(created.id);
-      setActiveTab('detail');
+      setWorkbenchTab('episodes');
     } catch (err: any) {
       toast.error(err.message || 'Tạo dự án phim thất bại');
     } finally {
@@ -196,7 +264,7 @@ export function FilmFactoryPage() {
     }
   };
 
-  // Trigger Produce
+  // Trigger Produce All
   const handleTriggerProduce = async (id: string) => {
     try {
       setProducing(true);
@@ -211,12 +279,12 @@ export function FilmFactoryPage() {
     }
   };
 
-  // Render Episode — runs in the background on the server (several minutes); the page polls for progress.
+  // Render Single Episode
   const handleRenderEpisode = async (episodeId: string) => {
     try {
       setRenderingEpisodeId(episodeId);
       const res = await api.renderFilmEpisode(episodeId);
-      toast.success(`${res.message} Quá trình mất vài phút, trang sẽ tự cập nhật.`);
+      toast.success(`${res.message} Quá trình diễn ra tự động trong nền.`);
       if (selectedProjectId) {
         await loadProjectDetail(selectedProjectId);
       }
@@ -237,594 +305,521 @@ export function FilmFactoryPage() {
     }
   };
 
+  // Confirm Delete Project
+  const handleConfirmDelete = async () => {
+    if (!deletingProject) return;
+    try {
+      setIsDeleting(true);
+      await api.deleteFilmProject(deletingProject.id);
+      toast.success(`Đã xóa vĩnh viễn series "${deletingProject.title}"`);
+      // If currently inside deleted project, close it
+      if (selectedProjectId === deletingProject.id) {
+        setSelectedProjectId(null);
+        setSelectedProject(null);
+      }
+      setDeletingProject(null);
+      await loadProjects();
+    } catch (err: any) {
+      toast.error(err.message || 'Xóa dự án phim thất bại');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   return (
     <div className="space-y-6 pb-12">
-      {/* ── Luxury Tech Top Header ── */}
-      <div className="relative overflow-hidden rounded-xl border border-indigo-500/20 bg-gradient-to-r from-slate-950 via-indigo-950/40 to-slate-950 p-6 shadow-2xl backdrop-blur-xl">
-        <div className="absolute -right-10 -top-10 h-48 w-48 rounded-full bg-indigo-500/10 blur-3xl" />
-        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div className="space-y-1.5">
-            <div className="inline-flex items-center gap-2 rounded-full border border-indigo-400/30 bg-indigo-500/10 px-3 py-1 text-xs font-semibold uppercase tracking-wider text-indigo-300">
-              <Sparkles className="h-3.5 w-3.5 text-amber-400" />
-              AI Film Factory v2.0 · 5 Film Pages · 10 Tập × 5 Phút
-            </div>
-            <h1 className="text-2xl font-bold tracking-tight text-white md:text-3xl">
-              Hệ Thống Tự Động Sản Xuất Phim Người Thật AI
-            </h1>
-            <p className="max-w-2xl text-sm text-slate-300">
-              Showrunner AI đa tác tử: Kịch bản 10 tập, giữ vững tính nhất quán nhân vật, EdgeTTS diễn xuất tiếng Việt,
-              và dựng phim điện ảnh tốc độ cao với mức ngân sách tuyệt đối &lt; $5.00/Series.
-            </p>
+      {/* ── Page Header Standard ── */}
+      <PageHeader
+        title={
+          <div className="flex items-center gap-2.5">
+            <span>AI Film Factory</span>
+            <Badge tone="info" className="text-[11px] font-normal">v2.0</Badge>
           </div>
-
-          <div className="flex flex-wrap items-center gap-3">
-            <Button
-              variant="secondary"
-              icon={<RotateCw className={cn('h-4 w-4', (loadingProjects || loadingPages) && 'animate-spin')} />}
-              onClick={() => {
-                loadPages();
-                loadProjects();
-                if (selectedProjectId) loadProjectDetail(selectedProjectId);
-              }}
+        }
+        description="Hệ thống tự động sản xuất phim nhiều tập với AI Showrunner, giữ nhất quán nhân vật và Wan 2.2 / RunPod GPU."
+        actions={
+          <div className="flex items-center gap-2">
+            <IconButton
+              label="Làm mới dữ liệu"
+              onClick={handleRefreshAll}
+              className="border border-line-strong bg-surface shadow-card"
             >
-              Làm mới
-            </Button>
+              <RefreshCw className={cn('h-4 w-4', (loadingProjects || loadingPages || loadingDetail) && 'animate-spin')} />
+            </IconButton>
             <Button
-              variant="accent"
-              className="bg-indigo-600 font-semibold text-white hover:bg-indigo-500 shadow-lg shadow-indigo-600/30"
+              variant="primary"
               icon={<Plus className="h-4 w-4" />}
               onClick={() => setShowCreateModal(true)}
             >
-              Khai Hoả Series Mới
+              Khai hoả Series Mới
             </Button>
           </div>
-        </div>
+        }
+      />
 
-        {/* Quick Stats Ribbon */}
-        <div className="mt-6 grid grid-cols-2 gap-3 border-t border-slate-800/80 pt-4 md:grid-cols-4">
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-indigo-500/20 text-indigo-400">
-              <Tv className="h-5 w-5" />
+      {/* ── Top Metric Stats (Always visible when in list view) ── */}
+      {!selectedProjectId && (
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <Card className="p-4">
+            <div className="flex items-center gap-2 text-xs text-fg-subtle">
+              <Tv className="h-4 w-4 text-fg-muted" />
+              <span>Kênh Phim Hoạt Động</span>
             </div>
-            <div>
-              <div className="text-xs text-slate-400">Film Pages Hoạt Động</div>
-              <div className="text-base font-bold text-white">{pages.length} / 5 Kênh Phim</div>
+            <div className="mt-2 text-xl font-semibold text-fg">
+              {pages.length} / 5 Kênh
             </div>
-          </div>
+            <div className="mt-1 text-[11px] text-fg-muted">Drama, Sci-Fi, Mystery, Comedy, Action</div>
+          </Card>
 
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-amber-500/20 text-amber-400">
-              <Film className="h-5 w-5" />
+          <Card className="p-4">
+            <div className="flex items-center gap-2 text-xs text-fg-subtle">
+              <Film className="h-4 w-4 text-fg-muted" />
+              <span>Tổng Series Phim</span>
             </div>
-            <div>
-              <div className="text-xs text-slate-400">Tổng Series Phim</div>
-              <div className="text-base font-bold text-white">{projects.length} Dự án</div>
+            <div className="mt-2 text-xl font-semibold text-fg">
+              {projects.length} Series
             </div>
-          </div>
+            <div className="mt-1 text-[11px] text-fg-muted">Showrunner quản lý cốt truyện</div>
+          </Card>
 
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-emerald-500/20 text-emerald-400">
-              <Clapperboard className="h-5 w-5" />
+          <Card className="p-4">
+            <div className="flex items-center gap-2 text-xs text-fg-subtle">
+              <Clapperboard className="h-4 w-4 text-fg-muted" />
+              <span>Định Dạng Tiêu Chuẩn</span>
             </div>
-            <div>
-              <div className="text-xs text-slate-400">Định Dạng Chuẩn</div>
-              <div className="text-base font-bold text-white">10 Tập × 5 Phút (50 Phút)</div>
+            <div className="mt-2 text-xl font-semibold text-fg">
+              10 Tập × ~2.5 Phút
             </div>
-          </div>
+            <div className="mt-1 text-[11px] text-fg-muted">100% Motion Clips · Wan 2.2 GPU</div>
+          </Card>
 
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-cyan-500/20 text-cyan-400">
-              <ShieldCheck className="h-5 w-5" />
+          <Card className="p-4">
+            <div className="flex items-center gap-2 text-xs text-fg-subtle">
+              <ShieldCheck className="h-4 w-4 text-emerald-500" />
+              <span>Bảo Vệ Ngân Sách</span>
             </div>
-            <div>
-              <div className="text-xs text-slate-400">Bảo Vệ Ngân Sách</div>
-              <div className="text-base font-bold text-emerald-400">&lt; $5.00 / Series</div>
+            <div className="mt-2 text-xl font-semibold text-emerald-500">
+              &lt; $5.00 / Series
             </div>
-          </div>
-        </div>
-      </div>
-
-      {/* ── Navigation Tabs ── */}
-      <div className="flex border-b border-line">
-        <button
-          onClick={() => setActiveTab('projects')}
-          className={cn(
-            'flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors',
-            activeTab === 'projects'
-              ? 'border-indigo-500 text-indigo-500'
-              : 'border-transparent text-fg-muted hover:text-fg'
-          )}
-        >
-          <Clapperboard className="h-4 w-4" />
-          Dự án Series Phim ({projects.length})
-        </button>
-        <button
-          onClick={() => setActiveTab('pages')}
-          className={cn(
-            'flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors',
-            activeTab === 'pages'
-              ? 'border-indigo-500 text-indigo-500'
-              : 'border-transparent text-fg-muted hover:text-fg'
-          )}
-        >
-          <Tv className="h-4 w-4" />
-          5 Kênh Phim Chuyên Biệt ({pages.length})
-        </button>
-        {selectedProjectId && (
-          <button
-            onClick={() => setActiveTab('detail')}
-            className={cn(
-              'flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors',
-              activeTab === 'detail'
-                ? 'border-indigo-500 text-indigo-500'
-                : 'border-transparent text-fg-muted hover:text-fg'
-            )}
-          >
-            <Sparkles className="h-4 w-4" />
-            Studio Series: {selectedProject?.title || 'Đang mở'}
-          </button>
-        )}
-      </div>
-
-      {/* ── TAB 1: 5 FILM PAGES ── */}
-      {activeTab === 'pages' && (
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {pages.map((p) => (
-            <Card key={p.id} className="relative overflow-hidden border-line hover:border-indigo-500/50 transition-all">
-              <div
-                className="h-2 w-full"
-                style={{ backgroundColor: p.brandColorHex || '#6366F1' }}
-              />
-              <div className="p-5 space-y-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex items-center gap-3">
-                    <div
-                      className="flex h-12 w-12 items-center justify-center rounded-xl font-bold text-white shadow"
-                      style={{ backgroundColor: p.brandColorHex || '#6366F1' }}
-                    >
-                      P{p.pageNumber}
-                    </div>
-                    <div>
-                      <h3 className="font-semibold text-fg">{p.name}</h3>
-                      <div className="text-xs text-fg-subtle">{p.primaryGenre}</div>
-                    </div>
-                  </div>
-                  <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-500">
-                    Hoạt động
-                  </span>
-                </div>
-
-                <p className="text-xs text-fg-muted line-clamp-2">{p.description}</p>
-
-                <div className="space-y-1.5 rounded-lg bg-muted/60 p-3 text-xs">
-                  <div className="flex justify-between">
-                    <span className="text-fg-subtle">Phong cách:</span>
-                    <span className="font-medium text-fg">{p.visualArtStyle}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-fg-subtle">Giọng đọc chính:</span>
-                    <span className="font-medium text-fg">{p.defaultVoice}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-fg-subtle">Khung hình:</span>
-                    <span className="font-medium text-fg">{p.aspectRatio}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-fg-subtle">Tập hoàn thành:</span>
-                    <span className="font-medium text-emerald-500">{p.totalEpisodesCompleted} tập</span>
-                  </div>
-                </div>
-
-                <div className="flex items-center justify-between pt-2">
-                  <div className="text-xs text-fg-subtle">
-                    {p.linkedFacebookPageName ? (
-                      <span className="text-indigo-400 font-medium">FB: {p.linkedFacebookPageName}</span>
-                    ) : (
-                      'Chưa kết nối FB'
-                    )}
-                  </div>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => {
-                      setCreateForm((prev) => ({ ...prev, filmPageId: p.id, genre: p.primaryGenre }));
-                      setShowCreateModal(true);
-                    }}
-                  >
-                    Tạo Series &rarr;
-                  </Button>
-                </div>
-              </div>
-            </Card>
-          ))}
+            <div className="mt-1 text-[11px] text-fg-muted">Free Gemini TTS keys + Spot GPU</div>
+          </Card>
         </div>
       )}
 
-      {/* ── TAB 2: PROJECTS LIST ── */}
-      {activeTab === 'projects' && (
-        <div className="space-y-4">
-          {projects.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-line p-12 text-center">
-              <Film className="mx-auto h-12 w-12 text-fg-subtle" />
-              <h3 className="mt-4 text-base font-semibold text-fg">Chưa có series phim nào</h3>
-              <p className="mt-1 text-sm text-fg-subtle">
-                Hãy bấm "Khai Hoả Series Mới" để AI Showrunner tự động lên kịch bản 10 tập và sản xuất.
-              </p>
-              <Button
-                variant="accent"
-                className="mt-4 bg-indigo-600 text-white"
-                onClick={() => setShowCreateModal(true)}
-              >
-                Tạo Series Đầu Tiên
-              </Button>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 gap-4">
-              {projects.map((proj) => (
-                <Card
-                  key={proj.id}
-                  className={cn(
-                    'overflow-hidden border-line transition-all hover:border-indigo-500/40',
-                    selectedProjectId === proj.id && 'border-indigo-500/80 shadow-md ring-1 ring-indigo-500/20'
-                  )}
-                >
-                  <div className="p-5 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-                    <div className="space-y-2 flex-1">
-                      <div className="flex items-center gap-2">
-                        <span className="rounded bg-indigo-500/10 px-2 py-0.5 text-xs font-semibold text-indigo-400">
-                          {proj.filmPageName}
-                        </span>
-                        <span className="rounded bg-muted px-2 py-0.5 text-xs text-fg-subtle">
-                          {proj.genre}
-                        </span>
-                        <span
-                          className={cn(
-                            'rounded-full px-2 py-0.5 text-xs font-medium',
-                            proj.status === 'Completed'
-                              ? 'bg-emerald-500/10 text-emerald-400'
-                              : proj.status === 'Failed'
-                              ? 'bg-rose-500/10 text-rose-400'
-                              : 'bg-amber-500/10 text-amber-400'
-                          )}
-                        >
-                          {proj.status}
-                        </span>
-                      </div>
-
-                      <h3 className="text-lg font-bold text-fg">{proj.title}</h3>
-                      <p className="text-sm text-fg-muted max-w-3xl line-clamp-2">{proj.logline}</p>
-
-                      <div className="flex flex-wrap items-center gap-4 text-xs text-fg-subtle pt-1">
-                        <span>
-                          Tiến độ: <strong className="text-fg">{proj.completedEpisodesCount} / {proj.targetEpisodes} tập</strong> (Mỗi tập ~5 phút)
-                        </span>
-                        <span>
-                          Phong cách: <strong className="text-fg">{proj.visualArtStyle}</strong>
-                        </span>
-                        <span>
-                          Chi phí: <strong className="text-emerald-500">${proj.totalActualCostUsd.toFixed(4)}</strong> / ${proj.totalBudgetLimitUsd.toFixed(2)}
-                        </span>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-2 self-end md:self-center">
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        icon={<Eye className="h-4 w-4" />}
-                        onClick={() => {
-                          setSelectedProjectId(proj.id);
-                          setActiveTab('detail');
-                        }}
-                      >
-                        Vào Studio
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="accent"
-                        className="bg-indigo-600 text-white"
-                        icon={<Play className="h-4 w-4" />}
-                        loading={producing && selectedProjectId === proj.id}
-                        onClick={() => handleTriggerProduce(proj.id)}
-                      >
-                        Sản Xuất
-                      </Button>
-                    </div>
-                  </div>
-                </Card>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* ── TAB 3: PROJECT WORKBENCH (DETAIL) ── */}
-      {activeTab === 'detail' && selectedProject && (
+      {/* ══════════════════════════════════════════════════════════════════════
+          MODE A: PROJECT WORKBENCH / STUDIO (When a series is opened)
+          ══════════════════════════════════════════════════════════════════════ */}
+      {selectedProjectId && selectedProject ? (
         <div className="space-y-6">
-          {/* Workbench Top Bar */}
-          <div className="flex flex-col gap-3 rounded-lg border border-line bg-surface p-4 md:flex-row md:items-center md:justify-between">
-            <div>
-              <div className="flex items-center gap-2">
-                <h2 className="text-xl font-bold text-fg">{selectedProject.title}</h2>
-                <span className="rounded bg-indigo-500/10 px-2 py-0.5 text-xs font-semibold text-indigo-400">
-                  {selectedProject.filmPageName}
-                </span>
-                <span className="rounded bg-muted px-2 py-0.5 text-xs text-fg-muted">
-                  {selectedProject.status}
-                </span>
+          {/* Back Button & Project Header Card */}
+          <div>
+            <div className="mb-3">
+              <Button
+                variant="ghost"
+                size="sm"
+                icon={<ArrowLeft className="h-4 w-4" />}
+                onClick={() => setSelectedProjectId(null)}
+                className="text-fg-muted hover:text-fg"
+              >
+                Quay lại danh sách Series
+              </Button>
+            </div>
+
+            <Card className="overflow-hidden">
+              <div className="border-b border-line p-5">
+                <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                  <div className="space-y-2 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="rounded bg-muted px-2 py-0.5 text-xs font-semibold text-fg">
+                        {selectedProject.filmPageName}
+                      </span>
+                      <span className="rounded bg-muted px-2 py-0.5 text-xs text-fg-subtle">
+                        {selectedProject.genre}
+                      </span>
+                      <span className="rounded bg-muted px-2 py-0.5 text-xs text-fg-subtle">
+                        {selectedProject.visualArtStyle}
+                      </span>
+                      <Badge
+                        tone={
+                          selectedProject.status === 'Completed'
+                            ? 'success'
+                            : selectedProject.status === 'Failed'
+                              ? 'danger'
+                              : projectBusy
+                                ? 'warning'
+                                : 'neutral'
+                        }
+                        dot
+                        pulse={projectBusy}
+                      >
+                        {projectBusy ? 'Đang xử lý trong nền' : selectedProject.status}
+                      </Badge>
+                    </div>
+
+                    <h2 className="text-xl font-bold text-fg sm:text-2xl">{selectedProject.title}</h2>
+                    <p className="text-sm text-fg-muted max-w-3xl leading-relaxed">{selectedProject.logline}</p>
+
+                    <div className="flex flex-wrap items-center gap-6 pt-2 text-xs text-fg-subtle">
+                      <div>
+                        Tiến độ:{' '}
+                        <strong className="text-fg font-semibold">
+                          {selectedProject.completedEpisodesCount} / {selectedProject.targetEpisodes} tập hoàn thành
+                        </strong>
+                      </div>
+                      <div>
+                        Chi phí thực tế:{' '}
+                        <strong className="text-emerald-500 font-semibold">
+                          ${selectedProject.totalActualCostUsd.toFixed(4)}
+                        </strong>{' '}
+                        / ${selectedProject.totalBudgetLimitUsd.toFixed(2)} USD
+                      </div>
+                    </div>
+
+                    {/* Progress bar */}
+                    <div className="pt-2 max-w-md">
+                      <ProgressBar
+                        value={(selectedProject.completedEpisodesCount / (selectedProject.targetEpisodes || 10)) * 100}
+                        tone={selectedProject.completedEpisodesCount === selectedProject.targetEpisodes ? 'success' : 'info'}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Actions for this series */}
+                  <div className="flex flex-wrap items-center gap-2 self-start pt-1">
+                    <Button
+                      variant="primary"
+                      icon={producing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+                      loading={producing}
+                      disabled={producing}
+                      onClick={() => handleTriggerProduce(selectedProject.id)}
+                    >
+                      Dựng toàn bộ 10 tập
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      icon={<RotateCw className={cn('h-4 w-4', loadingDetail && 'animate-spin')} />}
+                      onClick={() => loadProjectDetail(selectedProject.id)}
+                    >
+                      Tải lại
+                    </Button>
+                    <Button
+                      variant="danger-soft"
+                      icon={<Trash2 className="h-4 w-4" />}
+                      onClick={() => setDeletingProject({ id: selectedProject.id, title: selectedProject.title })}
+                      title="Xóa series này"
+                    >
+                      Xóa Series
+                    </Button>
+                  </div>
+                </div>
               </div>
-              <p className="text-xs text-fg-subtle mt-0.5">
-                Chi phí thực tế: <span className="font-semibold text-emerald-400">${selectedProject.totalActualCostUsd.toFixed(4)}</span> / ${selectedProject.totalBudgetLimitUsd.toFixed(2)} USD
-              </p>
-            </div>
 
-            <div className="flex items-center gap-2">
-              <Button
-                variant="secondary"
-                size="sm"
-                icon={<RotateCw className="h-4 w-4" />}
-                onClick={() => loadProjectDetail(selectedProject.id)}
-              >
-                Tải lại
-              </Button>
-              <Button
-                variant="accent"
-                size="sm"
-                className="bg-indigo-600 text-white"
-                icon={<Play className="h-4 w-4" />}
-                loading={producing}
-                onClick={() => handleTriggerProduce(selectedProject.id)}
-              >
-                Chạy toàn bộ 10 tập
-              </Button>
-            </div>
+              {/* Busy Callout Banner */}
+              {projectBusy && (
+                <div className="flex items-center gap-3 bg-muted/60 px-5 py-3 text-xs text-fg border-b border-line">
+                  <Loader2 className="h-4 w-4 animate-spin text-fg shrink-0" />
+                  <div className="flex-1">
+                    <span className="font-semibold">Hệ thống đang sản xuất tự động trong nền:</span>{' '}
+                    GPU Wan 2.2 trên RunPod và AI Showrunner đang chạy độc lập. Trang tự động cập nhật mỗi 5 giây. Bạn không cần treo máy và có thể tắt trình duyệt an tâm.
+                  </div>
+                </div>
+              )}
+            </Card>
           </div>
 
-          {/* Workbench Inner Tabs */}
-          <div className="flex border-b border-line text-sm">
-            <button
-              onClick={() => setDetailTab('episodes')}
-              className={cn(
-                'flex items-center gap-2 border-b-2 px-4 py-2 font-medium',
-                detailTab === 'episodes'
-                  ? 'border-indigo-500 text-indigo-500'
-                  : 'border-transparent text-fg-muted hover:text-fg'
-              )}
-            >
-              <Clapperboard className="h-4 w-4" />
-              10 Tập Phim ({selectedProject.episodes.length}/10)
-            </button>
-            <button
-              onClick={() => setDetailTab('story')}
-              className={cn(
-                'flex items-center gap-2 border-b-2 px-4 py-2 font-medium',
-                detailTab === 'story'
-                  ? 'border-indigo-500 text-indigo-500'
-                  : 'border-transparent text-fg-muted hover:text-fg'
-              )}
-            >
-              <BookOpen className="h-4 w-4" />
-              Story Bible
-            </button>
-            <button
-              onClick={() => setDetailTab('characters')}
-              className={cn(
-                'flex items-center gap-2 border-b-2 px-4 py-2 font-medium',
-                detailTab === 'characters'
-                  ? 'border-indigo-500 text-indigo-500'
-                  : 'border-transparent text-fg-muted hover:text-fg'
-              )}
-            >
-              <Users className="h-4 w-4" />
-              Nhân Vật ({selectedProject.characters.length})
-            </button>
-            <button
-              onClick={() => setDetailTab('locations')}
-              className={cn(
-                'flex items-center gap-2 border-b-2 px-4 py-2 font-medium',
-                detailTab === 'locations'
-                  ? 'border-indigo-500 text-indigo-500'
-                  : 'border-transparent text-fg-muted hover:text-fg'
-              )}
-            >
-              <MapPin className="h-4 w-4" />
-              Bối Cảnh ({selectedProject.locations.length})
-            </button>
-            <button
-              onClick={() => setDetailTab('cost')}
-              className={cn(
-                'flex items-center gap-2 border-b-2 px-4 py-2 font-medium',
-                detailTab === 'cost'
-                  ? 'border-indigo-500 text-indigo-500'
-                  : 'border-transparent text-fg-muted hover:text-fg'
-              )}
-            >
-              <DollarSign className="h-4 w-4" />
-              Ngân Sách AI (${selectedProject.totalActualCostUsd.toFixed(4)})
-            </button>
-          </div>
+          {/* Workbench Tabs */}
+          <Tabs
+            items={[
+              {
+                id: 'episodes',
+                label: '10 Tập Phim',
+                count: `${selectedProject.completedEpisodesCount}/${selectedProject.episodes.length}`,
+              },
+              {
+                id: 'story',
+                label: 'Story Bible',
+              },
+              {
+                id: 'characters',
+                label: 'Nhân Vật',
+                count: selectedProject.characters.length,
+              },
+              {
+                id: 'locations',
+                label: 'Bối Cảnh',
+                count: selectedProject.locations.length,
+              },
+              {
+                id: 'cost',
+                label: 'Ngân Sách AI',
+                count: `$${selectedProject.totalActualCostUsd.toFixed(3)}`,
+              },
+            ]}
+            value={workbenchTab}
+            onChange={(v) => setWorkbenchTab(v as any)}
+          />
 
-          {/* ── DETAIL: 10 EPISODES GRID ── */}
-          {detailTab === 'episodes' && (
+          {/* ── SUB-TAB: 10 EPISODES ── */}
+          {workbenchTab === 'episodes' && (
             <div className="space-y-4">
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                {selectedProject.episodes.map((ep) => (
-                  <Card key={ep.id} className="p-4 border-line space-y-3">
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="flex items-center gap-2">
-                        <span className="flex h-7 w-7 items-center justify-center rounded bg-indigo-500/20 font-bold text-xs text-indigo-400">
-                          E{ep.episodeNumber}
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                {selectedProject.episodes.map((ep) => {
+                  const isEpBusy = BUSY_EPISODE_STATUSES.includes(ep.status) || renderingEpisodeId === ep.id;
+                  const isCompleted = ep.status === 'Completed' || !!ep.outputVideoPath;
+                  const isFailed = ep.status === 'Failed';
+                  const isPending = ep.status === 'Pending';
+                  const isScriptReady = ep.status === 'ScriptReady';
+
+                  return (
+                    <Card
+                      key={ep.id}
+                      className={cn(
+                        'flex flex-col justify-between transition-all border-line',
+                        isEpBusy && 'ring-1 ring-fg-muted/40 shadow-md',
+                        isCompleted && 'border-emerald-500/30'
+                      )}
+                    >
+                      <div className="p-5 space-y-3.5">
+                        {/* Top: Episode Number + Title + Status Badge */}
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex items-center gap-3">
+                            <span className="flex h-8 w-11 items-center justify-center rounded-md bg-muted font-bold text-xs text-fg tracking-wide shrink-0 border border-line">
+                              E{ep.episodeNumber < 10 ? `0${ep.episodeNumber}` : ep.episodeNumber}
+                            </span>
+                            <div>
+                              <h4 className="font-semibold text-fg text-sm sm:text-base leading-snug">
+                                {ep.title}
+                              </h4>
+                              <div className="text-[11px] text-fg-subtle mt-0.5">
+                                Thời lượng: ~{Math.round(ep.actualDurationSeconds || ep.targetDurationSeconds / 60 * 60)}s · {ep.scenesCount} cảnh · {ep.shotsCount} shots
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="shrink-0">
+                            {isCompleted ? (
+                              <Badge tone="success" dot>
+                                <CheckCircle2 className="h-3 w-3 mr-1 inline" />
+                                Hoàn tất
+                              </Badge>
+                            ) : isFailed ? (
+                              <Badge tone="danger" dot>
+                                <AlertTriangle className="h-3 w-3 mr-1 inline" />
+                                Lỗi
+                              </Badge>
+                            ) : isEpBusy ? (
+                              <Badge tone="info" dot pulse>
+                                <Loader2 className="h-3 w-3 animate-spin mr-1 inline" />
+                                {EPISODE_STATUS_LABELS[ep.status] || ep.status}
+                              </Badge>
+                            ) : isScriptReady ? (
+                              <Badge tone="info">Kịch bản sẵn sàng</Badge>
+                            ) : (
+                              <Badge tone="neutral">Chưa dựng</Badge>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Synopsis */}
+                        <p className="text-xs text-fg-muted leading-relaxed line-clamp-2">
+                          {ep.synopsis}
+                        </p>
+
+                        {/* Busy Active Progress Feedback */}
+                        {isEpBusy && (
+                          <div className="rounded-md border border-line bg-muted/60 p-3 space-y-2">
+                            <div className="flex items-center justify-between text-xs font-medium text-fg">
+                              <span className="flex items-center gap-2">
+                                <Loader2 className="h-3.5 w-3.5 animate-spin text-fg" />
+                                {EPISODE_STATUS_LABELS[ep.status] || ep.status}
+                              </span>
+                              <span className="text-[11px] text-fg-subtle">
+                                {getStatusPercent(ep.status)}%
+                              </span>
+                            </div>
+                            <div className="h-1.5 w-full bg-line rounded-full overflow-hidden">
+                              <div
+                                className="h-full bg-fg animate-pulse rounded-full transition-all duration-500"
+                                style={{ width: `${getStatusPercent(ep.status)}%` }}
+                              />
+                            </div>
+                            <p className="text-[11px] text-fg-subtle">
+                              GPU và AI đang xử lý ngầm, dữ liệu sẽ tự cập nhật khi hoàn thành.
+                            </p>
+                          </div>
+                        )}
+
+                        {/* Error Message Box */}
+                        {isFailed && ep.errorMessage && (
+                          <div className="rounded-md border border-danger/30 bg-danger/10 p-2.5 text-xs text-danger break-words">
+                            <div className="font-semibold flex items-center gap-1.5">
+                              <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+                              Lỗi trong quá trình dựng:
+                            </div>
+                            <div className="mt-1 text-[11px] opacity-90">{ep.errorMessage}</div>
+                          </div>
+                        )}
+
+                        {/* Hook & Cliffhanger */}
+                        <div className="rounded-md bg-muted/50 p-2.5 text-[11px] space-y-1.5 border border-line/60">
+                          <div className="text-fg-subtle">
+                            <span className="font-semibold text-fg">Mở đầu (Hook):</span> {ep.openingHook}
+                          </div>
+                          <div className="text-fg-subtle">
+                            <span className="font-semibold text-fg">Kết nút thắt (Cliffhanger):</span> {ep.endingCliffhanger}
+                          </div>
+                        </div>
+
+                        {/* Completed Video Preview Box */}
+                        {isCompleted && (
+                          <div className="rounded-lg border border-line bg-muted/30 p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                            <div className="flex items-center gap-2.5">
+                              <div
+                                className="flex h-10 w-10 items-center justify-center rounded-md bg-fg text-canvas cursor-pointer hover:opacity-90 shadow-sm shrink-0"
+                                onClick={() => setPreviewVideoEpisode(ep)}
+                                title="Bấm để phát video"
+                              >
+                                <Play className="h-5 w-5 fill-current ml-0.5" />
+                              </div>
+                              <div>
+                                <div className="text-xs font-semibold text-fg flex items-center gap-1.5">
+                                  <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
+                                  Video MP4 Hoàn Chỉnh
+                                </div>
+                                <div className="text-[11px] text-fg-subtle">
+                                  {Math.round(ep.actualDurationSeconds || ep.targetDurationSeconds)}s · QA: {Math.round(ep.qualityScore)}/100 · 30 FPS
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-2 self-end sm:self-center">
+                              <a
+                                href={api.getFilmEpisodeDownloadUrl(ep.id)}
+                                download
+                                className="inline-flex items-center gap-1 rounded-md border border-line-strong bg-surface px-2.5 py-1 text-xs font-medium text-fg hover:bg-muted shadow-card"
+                              >
+                                <Download className="h-3 w-3" />
+                                Tải MP4
+                              </a>
+                              <Button
+                                size="sm"
+                                variant="secondary"
+                                onClick={() => setPreviewVideoEpisode(ep)}
+                              >
+                                Xem trước
+                              </Button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Card Footer Actions */}
+                      <div className="flex items-center justify-between border-t border-line px-5 py-3 bg-muted/20">
+                        <span className="text-[11px] text-fg-subtle">
+                          Chi phí: <strong className="text-fg font-medium">${ep.actualCostUsd.toFixed(4)}</strong>
                         </span>
-                        <div>
-                          <h4 className="font-semibold text-fg text-sm">{ep.title}</h4>
-                          <span className="text-[11px] text-fg-subtle">
-                            Thời lượng mục tiêu: {Math.round(ep.targetDurationSeconds / 60)} phút ({ep.scenesCount} cảnh · {ep.shotsCount} shots)
-                          </span>
-                        </div>
-                      </div>
-                      <span
-                        className={cn(
-                          'rounded-full px-2 py-0.5 text-[11px] font-medium',
-                          ep.status === 'Completed'
-                            ? 'bg-emerald-500/10 text-emerald-400'
-                            : ep.status === 'Failed'
-                              ? 'bg-red-500/10 text-red-400'
-                              : 'bg-amber-500/10 text-amber-400'
-                        )}
-                      >
-                        {EPISODE_STATUS_LABELS[ep.status] ?? ep.status}
-                      </span>
-                    </div>
 
-                    <p className="text-xs text-fg-muted line-clamp-2">{ep.synopsis}</p>
-
-                    {ep.errorMessage ? (
-                      <div
-                        className={cn(
-                          'rounded border p-2 text-[11px] whitespace-pre-wrap break-words',
-                          ep.status === 'Failed'
-                            ? 'border-red-500/30 bg-red-500/10 text-red-400'
-                            : 'border-amber-500/30 bg-amber-500/10 text-amber-400'
-                        )}
-                      >
-                        {ep.errorMessage}
-                      </div>
-                    ) : null}
-
-                    <div className="rounded bg-muted/60 p-2 text-[11px] space-y-1">
-                      <div className="text-fg-subtle">
-                        <strong>Mở đầu:</strong> {ep.openingHook}
-                      </div>
-                      <div className="text-fg-subtle">
-                        <strong>Kết nút thắt:</strong> {ep.endingCliffhanger}
-                      </div>
-                    </div>
-
-                    {ep.outputVideoPath || ep.status === 'Completed' ? (
-                      <div className="relative group overflow-hidden rounded-lg bg-black border border-indigo-500/40 shadow-lg">
-                        <div
-                          className="aspect-[16/9] w-full bg-slate-950 flex flex-col items-center justify-center relative cursor-pointer hover:bg-slate-900 transition-colors"
-                          onClick={() => setPreviewVideoEpisode(ep)}
-                        >
-                          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-indigo-600/90 text-white shadow-xl transition-transform group-hover:scale-110">
-                            <Play className="h-6 w-6 ml-0.5 fill-white" />
-                          </div>
-                          <span className="mt-2 text-xs font-semibold text-white/95">
-                            Bấm để xem thử video tập {ep.episodeNumber}
-                          </span>
-                          <span className="text-[10px] text-slate-400">
-                            Thời lượng: ~{Math.round(ep.actualDurationSeconds || ep.targetDurationSeconds)}s · QA: {Math.round(ep.qualityScore)}/100
-                          </span>
-                        </div>
-                        <div className="p-2.5 bg-slate-900 border-t border-slate-800 flex items-center justify-between text-xs">
-                          <span className="text-emerald-400 font-medium flex items-center gap-1.5">
-                            <CheckCircle2 className="h-3.5 w-3.5" /> Video MP4 sẵn sàng
-                          </span>
-                          <div className="flex items-center gap-2">
-                            <a
-                              href={api.getFilmEpisodeDownloadUrl(ep.id)}
-                              download
-                              className="text-xs text-indigo-400 hover:text-indigo-300 font-medium inline-flex items-center gap-1"
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              <Download className="h-3 w-3" />
-                              Tải MP4
-                            </a>
-                            <button
-                              type="button"
-                              onClick={() => setPreviewVideoEpisode(ep)}
-                              className="rounded bg-indigo-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-indigo-500 shadow"
-                            >
-                              Xem trước
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    ) : null}
-
-                    <div className="flex items-center justify-between pt-2 border-t border-line">
-                      <span className="text-[11px] text-fg-subtle">
-                        Chi phí: ${ep.actualCostUsd.toFixed(4)}
-                      </span>
-                      <div className="flex items-center gap-2">
-                        {ep.outputVideoPath || ep.status === 'Completed' ? (
+                        <div className="flex items-center gap-2">
                           <Button
                             size="sm"
-                            variant="secondary"
-                            icon={<Eye className="h-3 w-3" />}
-                            onClick={() => setPreviewVideoEpisode(ep)}
+                            variant="ghost"
+                            onClick={() => handleViewEpisodeShots(ep.id)}
                           >
-                            Xem video
+                            Xem phân cảnh
                           </Button>
-                        ) : null}
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => handleViewEpisodeShots(ep.id)}
-                        >
-                          Xem phân cảnh
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          icon={<Play className="h-3 w-3" />}
-                          loading={renderingEpisodeId === ep.id || BUSY_EPISODE_STATUSES.includes(ep.status)}
-                          onClick={() => handleRenderEpisode(ep.id)}
-                        >
-                          {ep.outputVideoPath || ep.status === 'Completed' ? `Dựng lại E${ep.episodeNumber}` : `Dựng tập E${ep.episodeNumber}`}
-                        </Button>
+
+                          {isCompleted ? (
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              icon={<RotateCw className="h-3 w-3" />}
+                              onClick={() => handleRenderEpisode(ep.id)}
+                              disabled={isEpBusy}
+                            >
+                              Dựng lại
+                            </Button>
+                          ) : isEpBusy ? (
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              loading
+                              disabled
+                            >
+                              Đang dựng…
+                            </Button>
+                          ) : isFailed ? (
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              icon={<RotateCw className="h-3 w-3" />}
+                              onClick={() => handleRenderEpisode(ep.id)}
+                            >
+                              Thử lại
+                            </Button>
+                          ) : (
+                            <Button
+                              size="sm"
+                              variant="primary"
+                              icon={<Play className="h-3 w-3" />}
+                              onClick={() => handleRenderEpisode(ep.id)}
+                            >
+                              Dựng tập E{ep.episodeNumber}
+                            </Button>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  </Card>
-                ))}
+                    </Card>
+                  );
+                })}
               </div>
             </div>
           )}
 
-          {/* ── DETAIL: STORY BIBLE ── */}
-          {detailTab === 'story' && selectedProject.storyBible && (
+          {/* ── SUB-TAB: STORY BIBLE ── */}
+          {workbenchTab === 'story' && selectedProject.storyBible && (
             <div className="space-y-4">
-              <Card className="p-5 border-line space-y-4">
-                <h3 className="font-bold text-fg flex items-center gap-2">
-                  <BookOpen className="h-4 w-4 text-indigo-400" />
-                  Story Bible Tổng Thể
-                </h3>
+              <Card className="p-5 space-y-4">
+                <div className="flex items-center gap-2 border-b border-line pb-3">
+                  <BookOpen className="h-4 w-4 text-fg" />
+                  <h3 className="font-semibold text-fg text-sm">Story Bible Tổng Thể</h3>
+                </div>
+
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
                   <div className="space-y-1">
-                    <span className="text-fg-subtle font-semibold">Thể loại:</span>
-                    <p className="rounded bg-muted p-2 text-fg">{selectedProject.storyBible.genre}</p>
+                    <span className="text-fg-subtle font-medium">Thể loại:</span>
+                    <p className="rounded-md bg-muted p-2 text-fg">{selectedProject.storyBible.genre}</p>
                   </div>
                   <div className="space-y-1">
-                    <span className="text-fg-subtle font-semibold">Thời đại:</span>
-                    <p className="rounded bg-muted p-2 text-fg">{selectedProject.storyBible.timePeriod}</p>
+                    <span className="text-fg-subtle font-medium">Thời đại:</span>
+                    <p className="rounded-md bg-muted p-2 text-fg">{selectedProject.storyBible.timePeriod}</p>
                   </div>
                   <div className="space-y-1">
-                    <span className="text-fg-subtle font-semibold">Bối cảnh địa lý:</span>
-                    <p className="rounded bg-muted p-2 text-fg">{selectedProject.storyBible.geographicSetting}</p>
+                    <span className="text-fg-subtle font-medium">Bối cảnh địa lý:</span>
+                    <p className="rounded-md bg-muted p-2 text-fg">{selectedProject.storyBible.geographicSetting}</p>
                   </div>
                   <div className="space-y-1">
-                    <span className="text-fg-subtle font-semibold">Quy luật thế giới:</span>
-                    <p className="rounded bg-muted p-2 text-fg">{selectedProject.storyBible.worldRules}</p>
+                    <span className="text-fg-subtle font-medium">Quy luật thế giới:</span>
+                    <p className="rounded-md bg-muted p-2 text-fg">{selectedProject.storyBible.worldRules}</p>
                   </div>
                 </div>
 
                 <div className="space-y-1 text-xs">
-                  <span className="text-fg-subtle font-semibold">Xung đột chính:</span>
-                  <p className="rounded bg-muted p-2.5 text-fg leading-relaxed">
+                  <span className="text-fg-subtle font-medium">Xung đột chính:</span>
+                  <p className="rounded-md bg-muted p-2.5 text-fg leading-relaxed">
                     {selectedProject.storyBible.mainConflict}
                   </p>
                 </div>
 
                 <div className="space-y-1 text-xs">
-                  <span className="text-fg-subtle font-semibold">Bí mật & Nút thắt (Plot Twists):</span>
-                  <p className="rounded bg-muted p-2.5 text-fg leading-relaxed">
+                  <span className="text-fg-subtle font-medium">Bí mật & Nút thắt cốt truyện (Plot Twists):</span>
+                  <p className="rounded-md bg-muted p-2.5 text-fg leading-relaxed">
                     {selectedProject.storyBible.keyMysteriesAndTwists}
                   </p>
                 </div>
 
                 <div className="space-y-1 text-xs">
-                  <span className="text-fg-subtle font-semibold">Đỉnh điểm & Kết thúc:</span>
-                  <p className="rounded bg-muted p-2.5 text-fg leading-relaxed">
+                  <span className="text-fg-subtle font-medium">Cao trào & Kết thúc:</span>
+                  <p className="rounded-md bg-muted p-2.5 text-fg leading-relaxed">
                     {selectedProject.storyBible.climaxResolution}
                   </p>
                 </div>
@@ -832,33 +827,41 @@ export function FilmFactoryPage() {
             </div>
           )}
 
-          {/* ── DETAIL: CHARACTERS ── */}
-          {detailTab === 'characters' && (
+          {/* ── SUB-TAB: CHARACTERS ── */}
+          {workbenchTab === 'characters' && (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {selectedProject.characters.map((c) => (
-                <Card key={c.id} className="p-4 border-line space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <div className="h-8 w-8 rounded-full bg-indigo-500/20 flex items-center justify-center font-bold text-xs text-indigo-400">
-                        {c.name.substring(0, 1)}
-                      </div>
+                <Card key={c.id} className="p-4 space-y-3">
+                  <div className="flex items-center justify-between border-b border-line pb-2.5">
+                    <div className="flex items-center gap-2.5">
+                      {c.frontReferenceImageUrl ? (
+                        <img
+                          src={c.frontReferenceImageUrl}
+                          alt={c.name}
+                          className="h-10 w-10 rounded-full object-cover border border-line"
+                        />
+                      ) : (
+                        <div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center font-bold text-sm text-fg border border-line">
+                          {c.name.substring(0, 1)}
+                        </div>
+                      )}
                       <div>
                         <h4 className="font-semibold text-fg text-sm">{c.name}</h4>
                         <span className="text-[11px] text-fg-subtle">{c.role} · {c.age} tuổi</span>
                       </div>
                     </div>
-                    <span className="rounded bg-muted px-2 py-0.5 text-[11px] text-fg-muted">{c.characterId}</span>
+                    <span className="rounded bg-muted px-2 py-0.5 text-[11px] text-fg-muted font-mono">{c.characterId}</span>
                   </div>
 
-                  <div className="text-xs space-y-1 text-fg-muted">
-                    <div><strong>Ngoại hình:</strong> {c.physicalAppearance}</div>
-                    <div><strong>Trang phục:</strong> {c.defaultCostume}</div>
-                    <div><strong>Tính cách:</strong> {c.personality}</div>
-                    <div><strong>Giọng nói:</strong> <span className="font-mono text-indigo-400">{c.voiceModel}</span></div>
+                  <div className="text-xs space-y-1.5 text-fg-muted">
+                    <div><strong className="text-fg">Ngoại hình:</strong> {c.physicalAppearance}</div>
+                    <div><strong className="text-fg">Trang phục:</strong> {c.defaultCostume}</div>
+                    <div><strong className="text-fg">Tính cách:</strong> {c.personality}</div>
+                    <div><strong className="text-fg">Giọng đọc:</strong> <span className="font-mono text-fg">{c.voiceModel}</span></div>
                   </div>
 
-                  <div className="rounded bg-muted/60 p-2 text-[10px] font-mono text-fg-subtle">
-                    <span className="text-fg-muted font-bold block mb-0.5">Prompt đồng nhất khuôn mặt:</span>
+                  <div className="rounded bg-muted/70 p-2 text-[10px] font-mono text-fg-subtle break-words">
+                    <span className="text-fg font-semibold block mb-0.5">Visual Anchor Prompt:</span>
                     {c.consistencyPrompt}
                   </div>
                 </Card>
@@ -866,95 +869,362 @@ export function FilmFactoryPage() {
             </div>
           )}
 
-          {/* ── DETAIL: LOCATIONS ── */}
-          {detailTab === 'locations' && (
+          {/* ── SUB-TAB: LOCATIONS ── */}
+          {workbenchTab === 'locations' && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {selectedProject.locations.map((loc) => (
-                <Card key={loc.id} className="p-4 border-line space-y-2">
-                  <div className="flex justify-between items-center">
+                <Card key={loc.id} className="p-4 space-y-2.5">
+                  <div className="flex justify-between items-center border-b border-line pb-2">
                     <h4 className="font-semibold text-fg text-sm">{loc.name}</h4>
-                    <span className="rounded bg-muted px-2 py-0.5 text-[11px] text-fg-muted">{loc.locationId}</span>
+                    <span className="rounded bg-muted px-2 py-0.5 text-[11px] text-fg-muted font-mono">{loc.locationId}</span>
                   </div>
                   <div className="text-xs space-y-1 text-fg-muted">
-                    <div><strong>Kiến trúc:</strong> {loc.architectureStyle}</div>
-                    <div><strong>Ánh sáng & Không khí:</strong> {loc.lightingMood}</div>
-                    <div><strong>Thời điểm:</strong> {loc.timeOfDay}</div>
-                    <div><strong>Đạo cụ chính:</strong> {loc.keyProps}</div>
+                    <div><strong className="text-fg">Kiến trúc & Địa điểm:</strong> {loc.architectureStyle}</div>
+                    <div><strong className="text-fg">Ánh sáng & Tâm trạng:</strong> {loc.lightingMood}</div>
+                    <div><strong className="text-fg">Thời điểm:</strong> {loc.timeOfDay}</div>
+                    <div><strong className="text-fg">Đạo cụ chính:</strong> {loc.keyProps}</div>
                   </div>
                 </Card>
               ))}
             </div>
           )}
 
-          {/* ── DETAIL: COST & BUDGET MONITOR ── */}
-          {detailTab === 'cost' && costSummary && (
+          {/* ── SUB-TAB: COST & BUDGET MONITOR ── */}
+          {workbenchTab === 'cost' && costSummary && (
             <div className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <Card className="p-4 border-line">
-                  <div className="text-xs text-fg-subtle">Ngân sách cho phép</div>
+                <Card className="p-4">
+                  <div className="text-xs text-fg-subtle">Ngân sách giới hạn</div>
                   <div className="text-2xl font-bold text-fg mt-1">
                     ${costSummary.totalBudgetLimitUsd.toFixed(2)} USD
                   </div>
-                  <div className="text-xs text-emerald-400 mt-1">Giới hạn cứng bảo vệ chi phí</div>
+                  <div className="text-xs text-emerald-500 mt-1">Giới hạn bảo vệ chi phí tự động</div>
                 </Card>
 
-                <Card className="p-4 border-line">
+                <Card className="p-4">
                   <div className="text-xs text-fg-subtle">Đã sử dụng thực tế</div>
-                  <div className="text-2xl font-bold text-indigo-400 mt-1">
+                  <div className="text-2xl font-bold text-fg mt-1">
                     ${costSummary.totalSpentUsd.toFixed(4)} USD
                   </div>
                   <div className="text-xs text-fg-muted mt-1">
-                    Trạng thái: <strong className="text-emerald-400">{costSummary.budgetStatus}</strong>
+                    Trạng thái: <strong className="text-emerald-500">{costSummary.budgetStatus}</strong>
                   </div>
                 </Card>
 
-                <Card className="p-4 border-line">
-                  <div className="text-xs text-fg-subtle">Còn lại</div>
-                  <div className="text-2xl font-bold text-emerald-400 mt-1">
+                <Card className="p-4">
+                  <div className="text-xs text-fg-subtle">Ngân sách còn lại</div>
+                  <div className="text-2xl font-bold text-emerald-500 mt-1">
                     ${costSummary.remainingBudgetUsd.toFixed(4)} USD
                   </div>
                   <div className="text-xs text-fg-muted mt-1">Đủ hoàn tất chuỗi 10 tập</div>
                 </Card>
               </div>
 
-              <Card className="p-5 border-line space-y-3">
-                <h4 className="font-bold text-fg text-sm">Chi tiết khoản chi theo công nghệ</h4>
+              <Card className="p-5 space-y-3">
+                <h4 className="font-semibold text-fg text-sm border-b border-line pb-2">
+                  Chi tiết phân bổ chi phí công nghệ
+                </h4>
                 <div className="space-y-2 text-xs">
                   <div className="flex justify-between py-1.5 border-b border-line">
-                    <span className="text-fg-muted">AI Showrunner / Kịch bản (Gemini API):</span>
+                    <span className="text-fg-muted">AI Showrunner / Kịch bản (Gemini API 4 Free Keys):</span>
                     <span className="font-semibold text-fg">${costSummary.scriptCostUsd.toFixed(4)}</span>
                   </div>
                   <div className="flex justify-between py-1.5 border-b border-line">
-                    <span className="text-fg-muted">Tạo khung hình & Video visual (Hybrid Ken Burns):</span>
+                    <span className="text-fg-muted">Tạo khung hình & Video GPU Wan 2.2 (RunPod RTX 3090):</span>
                     <span className="font-semibold text-fg">${costSummary.visualCostUsd.toFixed(4)}</span>
                   </div>
                   <div className="flex justify-between py-1.5 border-b border-line">
-                    <span className="text-fg-muted">Giọng nói nhân vật (EdgeTTS Natural Vietnamese):</span>
-                    <span className="font-semibold text-emerald-400">$0.0000 (Miễn phí 100%)</span>
+                    <span className="text-fg-muted">Lồng tiếng nhân vật tiếng Việt (EdgeTTS):</span>
+                    <span className="font-semibold text-emerald-500">$0.0000 (Miễn phí 100%)</span>
                   </div>
                   <div className="flex justify-between py-1.5 border-b border-line">
-                    <span className="text-fg-muted">Dựng & Ghép phim 50 phút (FFmpeg CPU Engine):</span>
-                    <span className="font-semibold text-emerald-400">$0.0000 (Miễn phí 100%)</span>
+                    <span className="text-fg-muted">Ghép & Biên tập video (FFmpeg Engine):</span>
+                    <span className="font-semibold text-emerald-500">$0.0000 (Miễn phí 100%)</span>
                   </div>
                 </div>
               </Card>
             </div>
           )}
         </div>
+      ) : (
+        /* ══════════════════════════════════════════════════════════════════════
+            MODE B: OVERVIEW (SERIES LIST & 5 FILM PAGES)
+            ══════════════════════════════════════════════════════════════════════ */
+        <div className="space-y-6">
+          {/* Main Navigation Tabs */}
+          <Tabs
+            items={[
+              {
+                id: 'projects',
+                label: 'Dự án Series Phim',
+                count: projects.length,
+              },
+              {
+                id: 'pages',
+                label: '5 Kênh Phim Chuyên Biệt',
+                count: pages.length,
+              },
+            ]}
+            value={activeMainTab}
+            onChange={(v) => setActiveMainTab(v as any)}
+          />
+
+          {/* ── MAIN TAB: PROJECTS LIST ── */}
+          {activeMainTab === 'projects' && (
+            <div className="space-y-4">
+              {loadingProjects && projects.length === 0 ? (
+                <div className="space-y-3">
+                  {[1, 2].map((i) => (
+                    <Card key={i} className="p-6">
+                      <Skeleton className="h-6 w-1/3 mb-2" />
+                      <Skeleton className="h-4 w-2/3 mb-4" />
+                      <Skeleton className="h-8 w-1/4" />
+                    </Card>
+                  ))}
+                </div>
+              ) : projects.length === 0 ? (
+                <EmptyState
+                  icon={<Film />}
+                  title="Chưa có series phim nào"
+                  description="Hãy bấm 'Khai hoả Series Mới' để AI Showrunner tự động lên kịch bản 10 tập và chuẩn bị sản xuất."
+                  action={
+                    <Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={() => setShowCreateModal(true)}>
+                      Tạo Series Đầu Tiên
+                    </Button>
+                  }
+                />
+              ) : (
+                <div className="grid grid-cols-1 gap-4">
+                  {projects.map((proj) => {
+                    const isBusy = BUSY_PROJECT_STATUSES.includes(proj.status);
+                    return (
+                      <Card
+                        key={proj.id}
+                        className="overflow-hidden border-line hover:border-line-strong transition-all"
+                      >
+                        <div className="p-5 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                          <div className="space-y-2 flex-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="rounded bg-muted px-2 py-0.5 text-xs font-semibold text-fg">
+                                {proj.filmPageName}
+                              </span>
+                              <span className="rounded bg-muted px-2 py-0.5 text-xs text-fg-subtle">
+                                {proj.genre}
+                              </span>
+                              <Badge
+                                tone={
+                                  proj.status === 'Completed'
+                                    ? 'success'
+                                    : proj.status === 'Failed'
+                                      ? 'danger'
+                                      : isBusy
+                                        ? 'warning'
+                                        : 'neutral'
+                                }
+                                dot
+                                pulse={isBusy}
+                              >
+                                {proj.status}
+                              </Badge>
+                            </div>
+
+                            <h3 className="text-lg font-bold text-fg">{proj.title}</h3>
+                            <p className="text-sm text-fg-muted max-w-3xl line-clamp-2 leading-relaxed">
+                              {proj.logline}
+                            </p>
+
+                            <div className="flex flex-wrap items-center gap-5 text-xs text-fg-subtle pt-1">
+                              <span>
+                                Tiến độ:{' '}
+                                <strong className="text-fg font-medium">
+                                  {proj.completedEpisodesCount} / {proj.targetEpisodes} tập
+                                </strong>
+                              </span>
+                              <span>
+                                Phong cách: <strong className="text-fg font-medium">{proj.visualArtStyle}</strong>
+                              </span>
+                              <span>
+                                Chi phí:{' '}
+                                <strong className="text-emerald-500 font-medium">
+                                  ${proj.totalActualCostUsd.toFixed(4)}
+                                </strong>{' '}
+                                / ${proj.totalBudgetLimitUsd.toFixed(2)}
+                              </span>
+                            </div>
+
+                            <div className="pt-1 max-w-xs">
+                              <ProgressBar
+                                value={(proj.completedEpisodesCount / (proj.targetEpisodes || 10)) * 100}
+                                tone={proj.completedEpisodesCount === proj.targetEpisodes ? 'success' : 'info'}
+                              />
+                            </div>
+                          </div>
+
+                          {/* Action Buttons */}
+                          <div className="flex items-center gap-2 self-end md:self-center">
+                            <Button
+                              size="sm"
+                              variant="primary"
+                              icon={<Eye className="h-4 w-4" />}
+                              onClick={() => {
+                                setSelectedProjectId(proj.id);
+                                setWorkbenchTab('episodes');
+                              }}
+                            >
+                              Vào Studio
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              icon={<Play className="h-4 w-4" />}
+                              loading={producing && selectedProjectId === proj.id}
+                              onClick={() => handleTriggerProduce(proj.id)}
+                            >
+                              Dựng 10 tập
+                            </Button>
+                            <IconButton
+                              label="Xóa Series"
+                              className="text-danger hover:bg-danger/10 border border-transparent hover:border-danger/20"
+                              onClick={() => setDeletingProject({ id: proj.id, title: proj.title })}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </IconButton>
+                          </div>
+                        </div>
+                      </Card>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── MAIN TAB: 5 FILM PAGES ── */}
+          {activeMainTab === 'pages' && (
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+              {pages.map((p) => (
+                <Card key={p.id} className="relative overflow-hidden border-line hover:border-line-strong transition-all">
+                  <div
+                    className="h-1.5 w-full"
+                    style={{ backgroundColor: p.brandColorHex || '#4F46E5' }}
+                  />
+                  <div className="p-5 space-y-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-center gap-3">
+                        <div
+                          className="flex h-11 w-11 items-center justify-center rounded-lg font-bold text-white shadow-sm text-sm"
+                          style={{ backgroundColor: p.brandColorHex || '#4F46E5' }}
+                        >
+                          P{p.pageNumber}
+                        </div>
+                        <div>
+                          <h3 className="font-semibold text-fg text-sm">{p.name}</h3>
+                          <div className="text-xs text-fg-subtle">{p.primaryGenre}</div>
+                        </div>
+                      </div>
+                      <Badge tone="success" dot>Hoạt động</Badge>
+                    </div>
+
+                    <p className="text-xs text-fg-muted line-clamp-2 leading-relaxed">{p.description}</p>
+
+                    <div className="space-y-1.5 rounded-md bg-muted/60 p-3 text-xs border border-line">
+                      <div className="flex justify-between">
+                        <span className="text-fg-subtle">Phong cách:</span>
+                        <span className="font-medium text-fg">{p.visualArtStyle}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-fg-subtle">Giọng đọc chính:</span>
+                        <span className="font-medium text-fg">{p.defaultVoice}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-fg-subtle">Khung hình:</span>
+                        <span className="font-medium text-fg">{p.aspectRatio}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-fg-subtle">Tập hoàn thành:</span>
+                        <span className="font-medium text-emerald-500">{p.totalEpisodesCompleted} tập</span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between pt-1">
+                      <div className="text-xs text-fg-subtle">
+                        {p.linkedFacebookPageName ? (
+                          <span className="font-medium text-fg">FB: {p.linkedFacebookPageName}</span>
+                        ) : (
+                          'Chưa liên kết FB'
+                        )}
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => {
+                          setCreateForm((prev) => ({ ...prev, filmPageId: p.id, genre: p.primaryGenre }));
+                          setShowCreateModal(true);
+                        }}
+                      >
+                        Tạo Series &rarr;
+                      </Button>
+                    </div>
+                  </div>
+                </Card>
+              ))}
+            </div>
+          )}
+        </div>
       )}
+
+      {/* ── MODAL: CONFIRM DELETE SERIES ── */}
+      <Modal
+        open={!!deletingProject}
+        onClose={() => setDeletingProject(null)}
+        title="Xác nhận xóa Series Phim"
+      >
+        <div className="space-y-4">
+          <div className="rounded-md border border-danger/30 bg-danger/10 p-4 text-xs text-danger space-y-1.5">
+            <div className="flex items-center gap-2 font-semibold text-sm">
+              <AlertTriangle className="h-4 w-4 shrink-0" />
+              Cảnh báo hành động không thể khôi phục
+            </div>
+            <p className="leading-relaxed">
+              Bạn có chắc chắn muốn xóa vĩnh viễn series:
+            </p>
+            <p className="font-bold text-sm text-fg bg-surface/50 p-2 rounded border border-line">
+              {deletingProject?.title}
+            </p>
+            <p className="text-[11px] opacity-90 leading-relaxed">
+              Hành động này sẽ xóa toàn bộ 10 tập phim, kịch bản, các nhân vật, bối cảnh và tất cả video clip MP4 liên quan khỏi hệ thống.
+            </p>
+          </div>
+
+          <div className="flex justify-end gap-2 pt-2 border-t border-line">
+            <Button
+              variant="secondary"
+              onClick={() => setDeletingProject(null)}
+              disabled={isDeleting}
+            >
+              Hủy bỏ
+            </Button>
+            <Button
+              variant="danger"
+              icon={<Trash2 className="h-4 w-4" />}
+              loading={isDeleting}
+              onClick={handleConfirmDelete}
+            >
+              Xác nhận xóa vĩnh viễn
+            </Button>
+          </div>
+        </div>
+      </Modal>
 
       {/* ── MODAL: CREATE NEW SERIES ── */}
       <Modal
         open={showCreateModal}
         onClose={() => setShowCreateModal(false)}
-        title="Khai Hoả Series Phim 10 Tập (AI Showrunner)"
+        title="Khai Hoả Series Phim Mới (AI Showrunner)"
       >
         <form onSubmit={handleCreateProject} className="space-y-4">
-          <div>
-            <label className="block text-xs font-medium text-fg mb-1">
-              Chọn 1 trong 5 Film Page <span className="text-rose-500">*</span>
-            </label>
-            <select
+          <Field label={<span>Chọn 1 trong 5 Film Page <span className="text-danger">*</span></span>}>
+            <Select
               value={createForm.filmPageId}
               onChange={(e) => {
                 const pid = e.target.value;
@@ -966,99 +1236,83 @@ export function FilmFactoryPage() {
                   visualArtStyle: p ? p.visualArtStyle : prev.visualArtStyle,
                 }));
               }}
-              className="w-full rounded-md border border-line bg-surface px-3 py-2 text-sm text-fg focus:border-indigo-500 focus:outline-none"
             >
               {pages.map((p) => (
                 <option key={p.id} value={p.id}>
                   Kênh {p.pageNumber}: {p.name} ({p.primaryGenre})
                 </option>
               ))}
-            </select>
-          </div>
+            </Select>
+          </Field>
 
-          <div>
-            <label className="block text-xs font-medium text-fg mb-1">
-              Tên Series Phim <span className="text-rose-500">*</span>
-            </label>
-            <input
+          <Field label={<span>Tên Series Phim <span className="text-danger">*</span></span>}>
+            <Input
               type="text"
               placeholder="VD: Người Nhìn Thấu Tương Lai"
               value={createForm.title}
               onChange={(e) => setCreateForm((prev) => ({ ...prev, title: e.target.value }))}
-              className="w-full rounded-md border border-line bg-surface px-3 py-2 text-sm text-fg focus:border-indigo-500 focus:outline-none"
               required
             />
-          </div>
+          </Field>
 
-          <div>
-            <label className="block text-xs font-medium text-fg mb-1">
-              Ý tưởng phim hoặc chủ đề cốt truyện <span className="text-rose-500">*</span>
-            </label>
-            <textarea
+          <Field
+            label={<span>Ý tưởng cốt truyện / Logline <span className="text-danger">*</span></span>}
+            hint="Mô tả tóm tắt ý tưởng chính để AI Showrunner triển khai cốt truyện 10 tập."
+          >
+            <Textarea
               rows={4}
-              placeholder="VD: Một chàng trai nghèo phát hiện mình có khả năng nhìn thấy tương lai, nhưng mỗi lần thay đổi tương lai thì một người thân của anh biến mất..."
+              placeholder="VD: Một tài xế công nghệ phát hiện mình có thể nhìn trước tai nạn 30 giây, nhưng mỗi lần anh cứu người thì một ký ức thời thơ ấu của anh lại biến mất..."
               value={createForm.logline}
               onChange={(e) => setCreateForm((prev) => ({ ...prev, logline: e.target.value }))}
-              className="w-full rounded-md border border-line bg-surface px-3 py-2 text-sm text-fg focus:border-indigo-500 focus:outline-none"
               required
             />
-          </div>
+          </Field>
 
           <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-medium text-fg mb-1">Thể loại</label>
-              <input
+            <Field label="Thể loại">
+              <Input
                 type="text"
                 value={createForm.genre}
                 onChange={(e) => setCreateForm((prev) => ({ ...prev, genre: e.target.value }))}
-                className="w-full rounded-md border border-line bg-surface px-3 py-2 text-sm text-fg"
               />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-fg mb-1">Phong cách hình ảnh</label>
-              <input
+            </Field>
+            <Field label="Phong cách hình ảnh">
+              <Input
                 type="text"
                 value={createForm.visualArtStyle}
                 onChange={(e) => setCreateForm((prev) => ({ ...prev, visualArtStyle: e.target.value }))}
-                className="w-full rounded-md border border-line bg-surface px-3 py-2 text-sm text-fg"
               />
-            </div>
+            </Field>
           </div>
 
-          <div className="rounded-lg bg-indigo-500/10 border border-indigo-500/20 p-3 text-xs text-indigo-300 space-y-1">
-            <div className="flex items-center gap-1.5 font-semibold text-indigo-200">
-              <ShieldCheck className="h-4 w-4 text-emerald-400" />
-              Chính sách tự động hóa trọn gói:
+          <div className="rounded-md border border-line bg-muted/50 p-3 text-xs space-y-1">
+            <div className="flex items-center gap-1.5 font-semibold text-fg">
+              <ShieldCheck className="h-4 w-4 text-emerald-500" />
+              Chính sách tự động hóa chuẩn:
             </div>
-            <p>
-              • Quy mô mục tiêu: <strong>10 tập × 5 phút = 50 phút hoàn chỉnh</strong>.
+            <p className="text-fg-subtle">
+              • Cấu trúc: <strong>10 tập × ~2.5 phút = ~25 phút điện ảnh</strong>.
             </p>
-            <p>
-              • Ngân sách giới hạn: <strong>Tối đa $5.00 USD</strong> (Tự động chuyển sang chế độ tiết kiệm nếu chạm ngưỡng).
+            <p className="text-fg-subtle">
+              • Ngân sách bảo vệ: <strong>Tối đa $5.00 USD</strong> (luân phiên 4 Gemini free keys + RunPod RTX 3090).
             </p>
           </div>
 
-          <div className="flex items-center gap-2 pt-2">
-            <input
-              type="checkbox"
-              id="autoProduce"
-              checked={createForm.autoProduceAll}
-              onChange={(e) => setCreateForm((prev) => ({ ...prev, autoProduceAll: e.target.checked }))}
-              className="rounded border-line text-indigo-600 focus:ring-indigo-500"
+          <div className="pt-1">
+            <Checkbox
+              label="Tự động kích hoạt toàn bộ quy trình AI Showrunner ngay sau khi tạo"
+              checked={!!createForm.autoProduceAll}
+              onChange={(v) => setCreateForm((prev) => ({ ...prev, autoProduceAll: v }))}
             />
-            <label htmlFor="autoProduce" className="text-xs text-fg select-none">
-              Tự động kích hoạt toàn bộ quy trình AI Showrunner ngay sau khi tạo
-            </label>
           </div>
 
           <div className="flex justify-end gap-2 pt-3 border-t border-line">
-            <Button variant="ghost" onClick={() => setShowCreateModal(false)}>
+            <Button variant="secondary" onClick={() => setShowCreateModal(false)}>
               Hủy
             </Button>
             <Button
               type="submit"
-              variant="accent"
-              className="bg-indigo-600 text-white"
+              variant="primary"
               loading={producing}
             >
               Khai Hoả AI Showrunner
@@ -1072,17 +1326,17 @@ export function FilmFactoryPage() {
         <Modal
           open={!!selectedEpisode}
           onClose={() => setSelectedEpisode(null)}
-          title={`Phân Cảnh Chi Tiết: Tập ${selectedEpisode.episodeNumber} - ${selectedEpisode.title}`}
+          title={`Phân Cảnh: Tập ${selectedEpisode.episodeNumber} - ${selectedEpisode.title}`}
         >
           <div className="max-h-[70vh] overflow-y-auto space-y-4 pr-1">
-            <div className="text-xs text-fg-muted bg-muted p-3 rounded">
-              <strong>Tóm tắt:</strong> {selectedEpisode.synopsis}
+            <div className="text-xs text-fg-muted bg-muted p-3 rounded-md">
+              <strong className="text-fg">Tóm tắt:</strong> {selectedEpisode.synopsis}
             </div>
 
             {selectedEpisode.scenes.map((scene) => (
               <div key={scene.id} className="border border-line rounded-lg p-3 space-y-3 bg-surface">
                 <div className="flex justify-between items-center text-xs border-b border-line pb-2">
-                  <span className="font-bold text-fg">
+                  <span className="font-semibold text-fg">
                     Cảnh {scene.sceneNumber}: {scene.locationName}
                   </span>
                   <span className="text-fg-subtle">{scene.timeOfDay} · ~{Math.round(scene.estimatedDurationSeconds)}s</span>
@@ -1090,14 +1344,14 @@ export function FilmFactoryPage() {
 
                 <div className="space-y-2">
                   {scene.shots.map((shot) => (
-                    <div key={shot.id} className="rounded bg-muted/50 p-2 text-xs space-y-1">
+                    <div key={shot.id} className="rounded-md bg-muted/60 p-2.5 text-xs space-y-1 border border-line/60">
                       <div className="flex justify-between text-fg-subtle text-[11px]">
                         <span>Shot {shot.shotNumber} ({shot.shotType} · {shot.cameraMovement})</span>
-                        <span className="font-mono text-emerald-400">~{shot.durationSeconds.toFixed(1)}s</span>
+                        <span className="font-mono text-emerald-500">~{shot.durationSeconds.toFixed(1)}s</span>
                       </div>
                       {shot.dialogueText && (
-                        <div className="text-fg font-medium bg-muted/80 p-1.5 rounded">
-                          <strong className="text-indigo-400">{shot.speakerCharacterId}:</strong> "{shot.dialogueText}"
+                        <div className="text-fg font-medium bg-surface/70 p-1.5 rounded border border-line/40">
+                          <strong className="text-fg">{shot.speakerCharacterId}:</strong> "{shot.dialogueText}"
                         </div>
                       )}
                       <div className="text-fg-subtle text-[11px] truncate">
@@ -1117,29 +1371,29 @@ export function FilmFactoryPage() {
         <Modal
           open={!!previewVideoEpisode}
           onClose={() => setPreviewVideoEpisode(null)}
-          title={`Xem Thử Video: Tập ${previewVideoEpisode.episodeNumber} - ${previewVideoEpisode.title}`}
+          title={`Xem Video: Tập ${previewVideoEpisode.episodeNumber} - ${previewVideoEpisode.title}`}
         >
           <div className="space-y-4">
-            <div className="relative rounded-xl overflow-hidden bg-black shadow-2xl flex items-center justify-center border border-indigo-500/30">
+            <div className="relative rounded-lg overflow-hidden bg-black shadow-lg flex items-center justify-center border border-line">
               <video
                 key={previewVideoEpisode.id}
                 src={api.getFilmEpisodeVideoUrl(previewVideoEpisode.id)}
                 controls
                 autoPlay
                 playsInline
-                className="w-full max-h-[60vh] object-contain rounded-lg"
+                className="w-full max-h-[60vh] object-contain rounded-md"
               />
             </div>
 
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-lg bg-muted/60 p-3 text-xs">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-md bg-muted/60 p-3 text-xs border border-line">
               <div className="space-y-1">
                 <div className="font-semibold text-fg text-sm">
                   Tập {previewVideoEpisode.episodeNumber}: {previewVideoEpisode.title}
                 </div>
                 <p className="text-fg-subtle line-clamp-2 max-w-xl">{previewVideoEpisode.synopsis}</p>
-                <div className="text-[11px] text-emerald-400 font-medium pt-0.5 flex items-center gap-1.5">
+                <div className="text-[11px] text-emerald-500 font-medium pt-0.5 flex items-center gap-1.5">
                   <CheckCircle2 className="h-3.5 w-3.5" />
-                  Kiểm tra chất lượng: {Math.round(previewVideoEpisode.qualityScore)}/100 · {Math.round(previewVideoEpisode.actualDurationSeconds)}s · 30FPS H.264 / AAC
+                  Chất lượng QA: {Math.round(previewVideoEpisode.qualityScore)}/100 · {Math.round(previewVideoEpisode.actualDurationSeconds)}s · 30 FPS H.264
                 </div>
               </div>
 
@@ -1147,13 +1401,13 @@ export function FilmFactoryPage() {
                 <a
                   href={api.getFilmEpisodeDownloadUrl(previewVideoEpisode.id)}
                   download
-                  className="inline-flex items-center gap-1.5 rounded-md border border-line bg-surface px-3 py-2 text-xs font-semibold text-fg hover:bg-muted shadow-sm transition-colors"
+                  className="inline-flex items-center gap-1.5 rounded-md border border-line-strong bg-surface px-3 py-2 text-xs font-semibold text-fg hover:bg-muted shadow-card transition-colors"
                 >
-                  <Download className="h-3.5 w-3.5 text-indigo-400" />
-                  Tải MP4 về máy
+                  <Download className="h-3.5 w-3.5" />
+                  Tải MP4
                 </a>
                 <Button
-                  variant="ghost"
+                  variant="secondary"
                   size="sm"
                   onClick={() => setPreviewVideoEpisode(null)}
                 >
@@ -1167,4 +1421,5 @@ export function FilmFactoryPage() {
     </div>
   );
 }
+
 export default FilmFactoryPage;
