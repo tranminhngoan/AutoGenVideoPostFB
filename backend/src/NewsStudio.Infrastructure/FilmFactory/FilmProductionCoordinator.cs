@@ -51,6 +51,12 @@ public class FilmProductionCoordinator : IFilmProductionCoordinator
             return;
         }
 
+        if (project.Status == "InProduction")
+        {
+            _logger.LogWarning("Production Pipeline: Film project {Id} is already InProduction. Skipping duplicate pipeline run.", projectId);
+            return;
+        }
+
         try
         {
             _logger.LogInformation("=== FILM PRODUCTION: {Title} ({Id}) ===", project.Title, project.Id);
@@ -78,8 +84,10 @@ public class FilmProductionCoordinator : IFilmProductionCoordinator
                 // One refused or broken episode must not stop the other nine; it is marked Failed with the reason.
                 try
                 {
-                    await showrunner.WriteEpisodeScriptAsync(ep.Id, ct);
-                    await showrunner.CheckContinuityAsync(ep.Id, ct);
+                    using var epScope = _scopeFactory.CreateScope();
+                    var epShowrunner = epScope.ServiceProvider.GetRequiredService<IFilmShowrunnerService>();
+                    await epShowrunner.WriteEpisodeScriptAsync(ep.Id, ct);
+                    await epShowrunner.CheckContinuityAsync(ep.Id, ct);
                     scripted.Add(ep.Id);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)

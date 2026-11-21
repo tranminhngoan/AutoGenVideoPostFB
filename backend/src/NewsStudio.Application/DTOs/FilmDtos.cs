@@ -20,6 +20,7 @@ public class FilmPageDto
     public string AspectRatio { get; set; } = string.Empty;
     public Guid? LinkedFacebookAccountId { get; set; }
     public string? LinkedFacebookPageName { get; set; }
+    public string? LinkedFacebookPageId { get; set; }
     public int TotalProjectsCount { get; set; }
     public int TotalEpisodesCompleted { get; set; }
     public decimal TotalCostSpentUsd { get; set; }
@@ -52,6 +53,8 @@ public class CreateFilmProjectRequestDto
     public string? VisualArtStyle { get; set; }
     public string? AspectRatio { get; set; }
     public decimal BudgetLimitUsd { get; set; } = 5.0m;
+    public int TargetEpisodes { get; set; } = 5; // Số tập phim (mặc định 5 tập, từ 1 đến 20)
+    public double TargetDurationMinutes { get; set; } = 2.5; // Thời lượng mỗi tập (phút, mặc định 2.5 phút)
     public bool AutoProduceAll { get; set; } = true; // Tự động chạy toàn bộ quy trình ngay sau khi tạo
 }
 

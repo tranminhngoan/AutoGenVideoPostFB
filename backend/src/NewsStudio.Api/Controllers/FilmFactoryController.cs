@@ -61,6 +61,29 @@ public class FilmFactoryController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// Kết nối trực tiếp một Facebook Page thật cho Kênh Phim (tương tự như cài đặt Page cho tin tức).
+    /// </summary>
+    [HttpPost("pages/connect-facebook")]
+    public async Task<ActionResult<FilmPageDto>> ConnectFacebookPage(
+        [FromBody] ConnectFacebookPageRequestDto request,
+        [FromServices] IFacebookPublishingService facebookService,
+        CancellationToken ct)
+    {
+        try
+        {
+            var fbAccount = await facebookService.ConnectPageAsync(request, ct);
+            var pages = await _filmFactoryService.GetFilmPagesAsync(ct);
+            var page = pages.FirstOrDefault(p => p.LinkedFacebookAccountId == fbAccount.Id)
+                       ?? pages.FirstOrDefault();
+            return Ok(page);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+    }
+
     [HttpGet("projects")]
     public async Task<ActionResult<List<FilmProjectDto>>> GetProjects([FromQuery] Guid? pageId, CancellationToken ct)
     {

@@ -75,22 +75,48 @@ public class FilmShowrunnerService : IFilmShowrunnerService
         bible.FilmProjectId = projectId;
         _context.FilmStoryBibles.Add(bible);
 
-        var existingEpisodes = await _context.FilmEpisodes.Where(e => e.FilmProjectId == projectId).ToListAsync(ct);
-        if (existingEpisodes.Any())
+        var existingEpisodes = await _context.FilmEpisodes
+            .Where(e => e.FilmProjectId == projectId)
+            .OrderBy(e => e.EpisodeNumber)
+            .ToListAsync(ct);
+
+        var newEpisodes = ParseEpisodesFromJson(projectId, bible.EpisodesSummaryJson, project.TargetDurationPerEpisodeSeconds);
+
+        // Cập nhật trực tiếp trên các tập hiện có để giữ nguyên ID, tránh lỗi DbUpdateConcurrencyException
+        for (int i = 0; i < newEpisodes.Count; i++)
         {
-            // Money already spent stays on the project; only the links to the deleted episodes/shots go.
+            var parsed = newEpisodes[i];
+            if (i < existingEpisodes.Count)
+            {
+                var existing = existingEpisodes[i];
+                existing.EpisodeNumber = parsed.EpisodeNumber;
+                existing.Title = parsed.Title;
+                existing.Synopsis = parsed.Synopsis;
+                existing.OpeningHook = parsed.OpeningHook;
+                existing.EndingCliffhanger = parsed.EndingCliffhanger;
+                existing.TargetDurationSeconds = parsed.TargetDurationSeconds;
+                existing.Status = "Pending";
+                existing.ErrorMessage = null;
+                existing.UpdatedAtUtc = DateTime.UtcNow;
+            }
+            else
+            {
+                _context.FilmEpisodes.Add(parsed);
+            }
+        }
+
+        // Nếu số tập mới ít hơn số tập cũ, gỡ bỏ các tập dư thừa
+        if (existingEpisodes.Count > newEpisodes.Count)
+        {
+            var toRemove = existingEpisodes.Skip(newEpisodes.Count).ToList();
+            var removeIds = toRemove.Select(e => e.Id).ToList();
             foreach (var rec in await _context.FilmCostRecords
-                         .Where(c => c.FilmProjectId == projectId && (c.FilmEpisodeId != null || c.FilmShotId != null)).ToListAsync(ct))
+                         .Where(c => c.FilmEpisodeId != null && removeIds.Contains(c.FilmEpisodeId.Value)).ToListAsync(ct))
             {
                 rec.FilmEpisodeId = null;
                 rec.FilmShotId = null;
             }
-            _context.FilmEpisodes.RemoveRange(existingEpisodes);
-        }
-
-        foreach (var ep in ParseEpisodesFromJson(projectId, bible.EpisodesSummaryJson, project.TargetDurationPerEpisodeSeconds))
-        {
-            _context.FilmEpisodes.Add(ep);
+            _context.FilmEpisodes.RemoveRange(toRemove);
         }
 
         project.Status = "BibleReady";
@@ -411,13 +437,25 @@ Trả về JSON:
         var scenes = ParseEpisodeScript(result.Text, episode, project);
 
         var oldScenes = await _context.FilmScenes.Include(s => s.Shots).Where(s => s.FilmEpisodeId == episodeId).ToListAsync(ct);
-        var oldShotIds = oldScenes.SelectMany(s => s.Shots).Select(s => s.Id).ToList();
-        foreach (var rec in await _context.FilmCostRecords
-                     .Where(c => c.FilmShotId != null && oldShotIds.Contains(c.FilmShotId.Value)).ToListAsync(ct))
+        if (oldScenes.Count > 0)
         {
-            rec.FilmShotId = null;
+            var oldShots = oldScenes.SelectMany(s => s.Shots).ToList();
+            var oldShotIds = oldShots.Select(s => s.Id).ToList();
+            if (oldShotIds.Count > 0)
+            {
+                var linkedCosts = await _context.FilmCostRecords
+                    .Where(c => c.FilmShotId != null && oldShotIds.Contains(c.FilmShotId.Value)).ToListAsync(ct);
+                foreach (var rec in linkedCosts) rec.FilmShotId = null;
+                await _context.SaveChangesAsync(ct);
+
+                _context.FilmShots.RemoveRange(oldShots);
+                await _context.SaveChangesAsync(ct);
+            }
+
+            _context.FilmScenes.RemoveRange(oldScenes);
+            await _context.SaveChangesAsync(ct);
         }
-        _context.FilmScenes.RemoveRange(oldScenes);
+
         _context.FilmScenes.AddRange(scenes);
 
         episode.TargetDurationSeconds = target;

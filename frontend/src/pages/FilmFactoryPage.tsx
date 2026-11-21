@@ -25,7 +25,9 @@ import {
   ArrowLeft,
   Loader2,
   RefreshCw,
-  Info
+  Info,
+  Share2,
+  ExternalLink
 } from 'lucide-react';
 import {
   Button,
@@ -55,7 +57,8 @@ import {
   CreateFilmProjectRequestDto,
   FilmEpisodeDto,
   FilmEpisodeDetailDto,
-  FilmCostSummaryDto
+  FilmCostSummaryDto,
+  ConnectFacebookPageRequestDto
 } from '../services/api';
 import { useToast } from '../components/feedback';
 
@@ -136,16 +139,27 @@ export function FilmFactoryPage() {
   const [deletingProject, setDeletingProject] = useState<{ id: string; title: string } | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
 
-  // Create Project Modal
+  // Connect Real Facebook Page Modal
+  const [showConnectFbModal, setShowConnectFbModal] = useState(false);
+  const [connectingFb, setConnectingFb] = useState(false);
+  const [fbForm, setFbForm] = useState<ConnectFacebookPageRequestDto>({
+    pageId: '',
+    pageName: '',
+    pageAccessToken: '',
+  });
+
+  // Create Project Modal & Form
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [createForm, setCreateForm] = useState<CreateFilmProjectRequestDto>({
     filmPageId: '',
     title: '',
     logline: '',
-    genre: 'Sci-Fi / Thriller',
+    genre: 'Drama',
     visualArtStyle: 'Cinematic 35mm Realism',
     aspectRatio: '9:16',
     budgetLimitUsd: 5.0,
+    targetEpisodes: 5,
+    targetDurationMinutes: 2.5,
     autoProduceAll: true,
   });
 
@@ -159,7 +173,7 @@ export function FilmFactoryPage() {
         setCreateForm((prev) => ({ ...prev, filmPageId: data[0].id }));
       }
     } catch (err: any) {
-      toast.error(err.message || 'Lỗi tải danh sách Film Page');
+      toast.error(err.message || 'Lỗi tải danh sách Facebook Film Page');
     } finally {
       setLoadingPages(false);
     }
@@ -221,7 +235,6 @@ export function FilmFactoryPage() {
         const data = await api.getFilmProjectDetail(selectedProjectId);
         setSelectedProject(data);
         setCostSummary(data.costSummary);
-        // Also refresh projects list in background to sync count
         const projs = await api.getFilmProjects();
         setProjects(projs);
       } catch {
@@ -241,18 +254,39 @@ export function FilmFactoryPage() {
     toast.success('Đã làm mới dữ liệu');
   };
 
+  // Handle Connect Real Facebook Page
+  const handleConnectFacebook = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!fbForm.pageId.trim() || !fbForm.pageName.trim() || !fbForm.pageAccessToken.trim()) {
+      toast.info('Vui lòng nhập đầy đủ Page ID, Tên Page và Page Access Token');
+      return;
+    }
+    try {
+      setConnectingFb(true);
+      await api.connectFilmFacebookPage(fbForm);
+      toast.success(`Đã kết nối thành công Facebook Page "${fbForm.pageName}"!`);
+      setShowConnectFbModal(false);
+      setFbForm({ pageId: '', pageName: '', pageAccessToken: '' });
+      await loadPages();
+    } catch (err: any) {
+      toast.error(err.message || 'Kết nối Facebook Page thất bại');
+    } finally {
+      setConnectingFb(false);
+    }
+  };
+
   // Handle Create Project
   const handleCreateProject = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!createForm.title.trim() || !createForm.logline.trim() || !createForm.filmPageId) {
-      toast.info('Vui lòng nhập đầy đủ tiêu đề, ý tưởng và chọn Film Page');
+      toast.info('Vui lòng nhập đầy đủ tiêu đề, ý tưởng và chọn Facebook Page');
       return;
     }
 
     try {
       setProducing(true);
       const created = await api.createFilmProject(createForm);
-      toast.success(`Đã tạo series "${created.title}" và kích hoạt AI Showrunner!`);
+      toast.success(`Đã tạo series "${created.title}" gồm ${created.targetEpisodes} tập và kích hoạt AI Showrunner!`);
       setShowCreateModal(false);
       await loadProjects();
       setSelectedProjectId(created.id);
@@ -269,7 +303,7 @@ export function FilmFactoryPage() {
     try {
       setProducing(true);
       await api.produceFilmProject(id);
-      toast.success('Đã kích hoạt toàn bộ quy trình sản xuất phim 10 tập!');
+      toast.success('Đã kích hoạt quy trình sản xuất toàn bộ các tập phim!');
       await loadProjectDetail(id);
       await loadProjects();
     } catch (err: any) {
@@ -312,7 +346,6 @@ export function FilmFactoryPage() {
       setIsDeleting(true);
       await api.deleteFilmProject(deletingProject.id);
       toast.success(`Đã xóa vĩnh viễn series "${deletingProject.title}"`);
-      // If currently inside deleted project, close it
       if (selectedProjectId === deletingProject.id) {
         setSelectedProjectId(null);
         setSelectedProject(null);
@@ -336,7 +369,7 @@ export function FilmFactoryPage() {
             <Badge tone="info" className="text-[11px] font-normal">v2.0</Badge>
           </div>
         }
-        description="Hệ thống tự động sản xuất phim nhiều tập với AI Showrunner, giữ nhất quán nhân vật và Wan 2.2 / RunPod GPU."
+        description="Hệ thống tự động sản xuất phim nhiều tập: AI Showrunner, Wan 2.2 / RunPod GPU, và xuất bản trực tiếp lên Facebook Reels."
         actions={
           <div className="flex items-center gap-2">
             <IconButton
@@ -346,6 +379,13 @@ export function FilmFactoryPage() {
             >
               <RefreshCw className={cn('h-4 w-4', (loadingProjects || loadingPages || loadingDetail) && 'animate-spin')} />
             </IconButton>
+            <Button
+              variant="secondary"
+              icon={<Share2 className="h-4 w-4" />}
+              onClick={() => setShowConnectFbModal(true)}
+            >
+              Kết nối Facebook Page
+            </Button>
             <Button
               variant="primary"
               icon={<Plus className="h-4 w-4" />}
@@ -363,12 +403,12 @@ export function FilmFactoryPage() {
           <Card className="p-4">
             <div className="flex items-center gap-2 text-xs text-fg-subtle">
               <Tv className="h-4 w-4 text-fg-muted" />
-              <span>Kênh Phim Hoạt Động</span>
+              <span>Facebook Film Pages</span>
             </div>
             <div className="mt-2 text-xl font-semibold text-fg">
-              {pages.length} / 5 Kênh
+              {pages.length} Kênh Kết Nối
             </div>
-            <div className="mt-1 text-[11px] text-fg-muted">Drama, Sci-Fi, Mystery, Comedy, Action</div>
+            <div className="mt-1 text-[11px] text-fg-muted">Tự động đăng Reels lên Facebook Page</div>
           </Card>
 
           <Card className="p-4">
@@ -379,18 +419,18 @@ export function FilmFactoryPage() {
             <div className="mt-2 text-xl font-semibold text-fg">
               {projects.length} Series
             </div>
-            <div className="mt-1 text-[11px] text-fg-muted">Showrunner quản lý cốt truyện</div>
+            <div className="mt-1 text-[11px] text-fg-muted">Cốt truyện do AI Showrunner chỉ đạo</div>
           </Card>
 
           <Card className="p-4">
             <div className="flex items-center gap-2 text-xs text-fg-subtle">
               <Clapperboard className="h-4 w-4 text-fg-muted" />
-              <span>Định Dạng Tiêu Chuẩn</span>
+              <span>Quy Mô Linh Hoạt</span>
             </div>
             <div className="mt-2 text-xl font-semibold text-fg">
-              10 Tập × ~2.5 Phút
+              1 - 20 Tập / Series
             </div>
-            <div className="mt-1 text-[11px] text-fg-muted">100% Motion Clips · Wan 2.2 GPU</div>
+            <div className="mt-1 text-[11px] text-fg-muted">Tự chọn thời lượng (1 - 5 phút/tập)</div>
           </Card>
 
           <Card className="p-4">
@@ -401,7 +441,7 @@ export function FilmFactoryPage() {
             <div className="mt-2 text-xl font-semibold text-emerald-500">
               &lt; $5.00 / Series
             </div>
-            <div className="mt-1 text-[11px] text-fg-muted">Free Gemini TTS keys + Spot GPU</div>
+            <div className="mt-1 text-[11px] text-fg-muted">4 Free Gemini Keys + RunPod RTX 3090</div>
           </Card>
         </div>
       )}
@@ -461,10 +501,11 @@ export function FilmFactoryPage() {
 
                     <div className="flex flex-wrap items-center gap-6 pt-2 text-xs text-fg-subtle">
                       <div>
-                        Tiến độ:{' '}
+                        Quy mô:{' '}
                         <strong className="text-fg font-semibold">
                           {selectedProject.completedEpisodesCount} / {selectedProject.targetEpisodes} tập hoàn thành
-                        </strong>
+                        </strong>{' '}
+                        (~{Math.round(selectedProject.targetDurationPerEpisodeSeconds / 60 * 10) / 10} phút/tập)
                       </div>
                       <div>
                         Chi phí thực tế:{' '}
@@ -478,7 +519,7 @@ export function FilmFactoryPage() {
                     {/* Progress bar */}
                     <div className="pt-2 max-w-md">
                       <ProgressBar
-                        value={(selectedProject.completedEpisodesCount / (selectedProject.targetEpisodes || 10)) * 100}
+                        value={(selectedProject.completedEpisodesCount / (selectedProject.targetEpisodes || 1)) * 100}
                         tone={selectedProject.completedEpisodesCount === selectedProject.targetEpisodes ? 'success' : 'info'}
                       />
                     </div>
@@ -493,7 +534,7 @@ export function FilmFactoryPage() {
                       disabled={producing}
                       onClick={() => handleTriggerProduce(selectedProject.id)}
                     >
-                      Dựng toàn bộ 10 tập
+                      Dựng toàn bộ {selectedProject.targetEpisodes} tập
                     </Button>
                     <Button
                       variant="secondary"
@@ -532,7 +573,7 @@ export function FilmFactoryPage() {
             items={[
               {
                 id: 'episodes',
-                label: '10 Tập Phim',
+                label: `${selectedProject.episodes.length} Tập Phim`,
                 count: `${selectedProject.completedEpisodesCount}/${selectedProject.episodes.length}`,
               },
               {
@@ -559,7 +600,7 @@ export function FilmFactoryPage() {
             onChange={(v) => setWorkbenchTab(v as any)}
           />
 
-          {/* ── SUB-TAB: 10 EPISODES ── */}
+          {/* ── SUB-TAB: EPISODES ── */}
           {workbenchTab === 'episodes' && (
             <div className="space-y-4">
               <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -591,7 +632,7 @@ export function FilmFactoryPage() {
                                 {ep.title}
                               </h4>
                               <div className="text-[11px] text-fg-subtle mt-0.5">
-                                Thời lượng: ~{Math.round(ep.actualDurationSeconds || ep.targetDurationSeconds / 60 * 60)}s · {ep.scenesCount} cảnh · {ep.shotsCount} shots
+                                Thời lượng mục tiêu: ~{Math.round(ep.targetDurationSeconds / 60 * 10) / 10} phút ({ep.scenesCount} cảnh · {ep.shotsCount} shots)
                               </div>
                             </div>
                           </div>
@@ -916,7 +957,7 @@ export function FilmFactoryPage() {
                   <div className="text-2xl font-bold text-emerald-500 mt-1">
                     ${costSummary.remainingBudgetUsd.toFixed(4)} USD
                   </div>
-                  <div className="text-xs text-fg-muted mt-1">Đủ hoàn tất chuỗi 10 tập</div>
+                  <div className="text-xs text-fg-muted mt-1">Đủ hoàn tất các tập còn lại</div>
                 </Card>
               </div>
 
@@ -948,7 +989,7 @@ export function FilmFactoryPage() {
         </div>
       ) : (
         /* ══════════════════════════════════════════════════════════════════════
-            MODE B: OVERVIEW (SERIES LIST & 5 FILM PAGES)
+            MODE B: OVERVIEW (SERIES LIST & REAL FACEBOOK FILM PAGES)
             ══════════════════════════════════════════════════════════════════════ */
         <div className="space-y-6">
           {/* Main Navigation Tabs */}
@@ -961,7 +1002,7 @@ export function FilmFactoryPage() {
               },
               {
                 id: 'pages',
-                label: '5 Kênh Phim Chuyên Biệt',
+                label: 'Kênh Facebook Phim Đã Kết Nối',
                 count: pages.length,
               },
             ]}
@@ -986,7 +1027,7 @@ export function FilmFactoryPage() {
                 <EmptyState
                   icon={<Film />}
                   title="Chưa có series phim nào"
-                  description="Hãy bấm 'Khai hoả Series Mới' để AI Showrunner tự động lên kịch bản 10 tập và chuẩn bị sản xuất."
+                  description="Hãy bấm 'Khai hoả Series Mới' để AI Showrunner tự động lên cốt truyện và chuẩn bị sản xuất."
                   action={
                     <Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={() => setShowCreateModal(true)}>
                       Tạo Series Đầu Tiên
@@ -1035,10 +1076,11 @@ export function FilmFactoryPage() {
 
                             <div className="flex flex-wrap items-center gap-5 text-xs text-fg-subtle pt-1">
                               <span>
-                                Tiến độ:{' '}
+                                Quy mô:{' '}
                                 <strong className="text-fg font-medium">
                                   {proj.completedEpisodesCount} / {proj.targetEpisodes} tập
-                                </strong>
+                                </strong>{' '}
+                                (~{Math.round(proj.targetDurationPerEpisodeSeconds / 60 * 10) / 10} phút/tập)
                               </span>
                               <span>
                                 Phong cách: <strong className="text-fg font-medium">{proj.visualArtStyle}</strong>
@@ -1054,7 +1096,7 @@ export function FilmFactoryPage() {
 
                             <div className="pt-1 max-w-xs">
                               <ProgressBar
-                                value={(proj.completedEpisodesCount / (proj.targetEpisodes || 10)) * 100}
+                                value={(proj.completedEpisodesCount / (proj.targetEpisodes || 1)) * 100}
                                 tone={proj.completedEpisodesCount === proj.targetEpisodes ? 'success' : 'info'}
                               />
                             </div>
@@ -1080,7 +1122,7 @@ export function FilmFactoryPage() {
                               loading={producing && selectedProjectId === proj.id}
                               onClick={() => handleTriggerProduce(proj.id)}
                             >
-                              Dựng 10 tập
+                              Dựng {proj.targetEpisodes} tập
                             </Button>
                             <IconButton
                               label="Xóa Series"
@@ -1099,79 +1141,174 @@ export function FilmFactoryPage() {
             </div>
           )}
 
-          {/* ── MAIN TAB: 5 FILM PAGES ── */}
+          {/* ── MAIN TAB: REAL FACEBOOK FILM PAGES ── */}
           {activeMainTab === 'pages' && (
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-              {pages.map((p) => (
-                <Card key={p.id} className="relative overflow-hidden border-line hover:border-line-strong transition-all">
-                  <div
-                    className="h-1.5 w-full"
-                    style={{ backgroundColor: p.brandColorHex || '#4F46E5' }}
-                  />
-                  <div className="p-5 space-y-4">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex items-center gap-3">
-                        <div
-                          className="flex h-11 w-11 items-center justify-center rounded-lg font-bold text-white shadow-sm text-sm"
-                          style={{ backgroundColor: p.brandColorHex || '#4F46E5' }}
-                        >
-                          P{p.pageNumber}
+            <div className="space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-base font-semibold text-fg">Facebook Pages Kênh Phim</h3>
+                  <p className="text-xs text-fg-muted">
+                    Các trang Facebook thật đang kết nối. Video và Reels tạo từ Film Factory sẽ xuất bản trực tiếp lên trang này.
+                  </p>
+                </div>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  icon={<Plus className="h-4 w-4" />}
+                  onClick={() => setShowConnectFbModal(true)}
+                >
+                  Kết nối Facebook Page
+                </Button>
+              </div>
+
+              {pages.length === 0 ? (
+                <EmptyState
+                  icon={<Tv />}
+                  title="Chưa có Facebook Page nào được kết nối"
+                  description="Hãy kết nối ít nhất 1 Facebook Page thật (bằng Page ID và Access Token) để bắt đầu sản xuất phim."
+                  action={
+                    <Button
+                      variant="primary"
+                      icon={<Plus className="h-4 w-4" />}
+                      onClick={() => setShowConnectFbModal(true)}
+                    >
+                      Kết nối Facebook Page Ngay
+                    </Button>
+                  }
+                />
+              ) : (
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+                  {pages.map((p) => (
+                    <Card key={p.id} className="relative overflow-hidden border-line hover:border-line-strong transition-all">
+                      <div
+                        className="h-1.5 w-full"
+                        style={{ backgroundColor: p.brandColorHex || '#4F46E5' }}
+                      />
+                      <div className="p-5 space-y-4">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex items-center gap-3">
+                            <div
+                              className="flex h-11 w-11 items-center justify-center rounded-lg font-bold text-white shadow-sm text-sm"
+                              style={{ backgroundColor: p.brandColorHex || '#4F46E5' }}
+                            >
+                              P{p.pageNumber}
+                            </div>
+                            <div>
+                              <h3 className="font-semibold text-fg text-sm">{p.linkedFacebookPageName || p.name}</h3>
+                              <div className="text-xs text-fg-subtle">
+                                {p.linkedFacebookPageId ? `ID: ${p.linkedFacebookPageId}` : p.primaryGenre}
+                              </div>
+                            </div>
+                          </div>
+                          <Badge tone="success" dot>Đã liên kết FB</Badge>
                         </div>
-                        <div>
-                          <h3 className="font-semibold text-fg text-sm">{p.name}</h3>
-                          <div className="text-xs text-fg-subtle">{p.primaryGenre}</div>
+
+                        <p className="text-xs text-fg-muted line-clamp-2 leading-relaxed">{p.description}</p>
+
+                        <div className="space-y-1.5 rounded-md bg-muted/60 p-3 text-xs border border-line">
+                          <div className="flex justify-between">
+                            <span className="text-fg-subtle">Khung hình chuẩn:</span>
+                            <span className="font-medium text-fg">{p.aspectRatio} (Reels/Shorts)</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-fg-subtle">Tổng series đã tạo:</span>
+                            <span className="font-medium text-fg">{p.totalProjectsCount} series</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-fg-subtle">Tập phim hoàn thành:</span>
+                            <span className="font-medium text-emerald-500">{p.totalEpisodesCompleted} tập</span>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center justify-between pt-1">
+                          <span className="text-[11px] text-fg-subtle">
+                            Trạng thái: <strong className="text-emerald-500 font-medium">Hoạt động</strong>
+                          </span>
+                          <Button
+                            size="sm"
+                            variant="primary"
+                            onClick={() => {
+                              setCreateForm((prev) => ({ ...prev, filmPageId: p.id, genre: p.primaryGenre }));
+                              setShowCreateModal(true);
+                            }}
+                          >
+                            Tạo Series cho Page này &rarr;
+                          </Button>
                         </div>
                       </div>
-                      <Badge tone="success" dot>Hoạt động</Badge>
-                    </div>
-
-                    <p className="text-xs text-fg-muted line-clamp-2 leading-relaxed">{p.description}</p>
-
-                    <div className="space-y-1.5 rounded-md bg-muted/60 p-3 text-xs border border-line">
-                      <div className="flex justify-between">
-                        <span className="text-fg-subtle">Phong cách:</span>
-                        <span className="font-medium text-fg">{p.visualArtStyle}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-fg-subtle">Giọng đọc chính:</span>
-                        <span className="font-medium text-fg">{p.defaultVoice}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-fg-subtle">Khung hình:</span>
-                        <span className="font-medium text-fg">{p.aspectRatio}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-fg-subtle">Tập hoàn thành:</span>
-                        <span className="font-medium text-emerald-500">{p.totalEpisodesCompleted} tập</span>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center justify-between pt-1">
-                      <div className="text-xs text-fg-subtle">
-                        {p.linkedFacebookPageName ? (
-                          <span className="font-medium text-fg">FB: {p.linkedFacebookPageName}</span>
-                        ) : (
-                          'Chưa liên kết FB'
-                        )}
-                      </div>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => {
-                          setCreateForm((prev) => ({ ...prev, filmPageId: p.id, genre: p.primaryGenre }));
-                          setShowCreateModal(true);
-                        }}
-                      >
-                        Tạo Series &rarr;
-                      </Button>
-                    </div>
-                  </div>
-                </Card>
-              ))}
+                    </Card>
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </div>
       )}
+
+      {/* ── MODAL: CONNECT REAL FACEBOOK PAGE ── */}
+      <Modal
+        open={showConnectFbModal}
+        onClose={() => setShowConnectFbModal(false)}
+        title="Kết nối Facebook Page thật cho Kênh Phim"
+      >
+        <form onSubmit={handleConnectFacebook} className="space-y-4">
+          <p className="text-xs text-fg-muted leading-relaxed">
+            Nhập thông tin kết nối Facebook Page của bạn (tương tự như cài đặt trang báo). Hệ thống sẽ dùng trang này để quản lý và xuất bản các tập phim ngắn.
+          </p>
+
+          <Field
+            label={<span>Facebook Page ID <span className="text-danger">*</span></span>}
+            hint="Dãy số ID của trang Facebook (VD: 109283746152839)."
+          >
+            <Input
+              type="text"
+              placeholder="VD: 109283746152839"
+              value={fbForm.pageId}
+              onChange={(e) => setFbForm((prev) => ({ ...prev, pageId: e.target.value }))}
+              required
+            />
+          </Field>
+
+          <Field
+            label={<span>Tên Facebook Page <span className="text-danger">*</span></span>}
+            hint="Tên hiển thị của trang Facebook."
+          >
+            <Input
+              type="text"
+              placeholder="VD: Phim Ngắn Điện Ảnh HD"
+              value={fbForm.pageName}
+              onChange={(e) => setFbForm((prev) => ({ ...prev, pageName: e.target.value }))}
+              required
+            />
+          </Field>
+
+          <Field
+            label={<span>Page Access Token <span className="text-danger">*</span></span>}
+            hint="Mã truy cập trang (Page Token) bắt đầu bằng EAAG... có quyền đăng Reels."
+          >
+            <Textarea
+              rows={3}
+              placeholder="EAAG..."
+              value={fbForm.pageAccessToken}
+              onChange={(e) => setFbForm((prev) => ({ ...prev, pageAccessToken: e.target.value }))}
+              required
+            />
+          </Field>
+
+          <div className="flex justify-end gap-2 pt-3 border-t border-line">
+            <Button variant="secondary" onClick={() => setShowConnectFbModal(false)}>
+              Hủy
+            </Button>
+            <Button
+              type="submit"
+              variant="primary"
+              loading={connectingFb}
+            >
+              Kết nối Facebook Page
+            </Button>
+          </div>
+        </form>
+      </Modal>
 
       {/* ── MODAL: CONFIRM DELETE SERIES ── */}
       <Modal
@@ -1192,7 +1329,7 @@ export function FilmFactoryPage() {
               {deletingProject?.title}
             </p>
             <p className="text-[11px] opacity-90 leading-relaxed">
-              Hành động này sẽ xóa toàn bộ 10 tập phim, kịch bản, các nhân vật, bối cảnh và tất cả video clip MP4 liên quan khỏi hệ thống.
+              Hành động này sẽ xóa toàn bộ các tập phim, kịch bản, các nhân vật, bối cảnh và tất cả video clip MP4 liên quan khỏi hệ thống.
             </p>
           </div>
 
@@ -1216,34 +1353,43 @@ export function FilmFactoryPage() {
         </div>
       </Modal>
 
-      {/* ── MODAL: CREATE NEW SERIES ── */}
+      {/* ── MODAL: CREATE NEW SERIES (FLEXIBLE EPISODES & DURATION) ── */}
       <Modal
         open={showCreateModal}
         onClose={() => setShowCreateModal(false)}
         title="Khai Hoả Series Phim Mới (AI Showrunner)"
       >
         <form onSubmit={handleCreateProject} className="space-y-4">
-          <Field label={<span>Chọn 1 trong 5 Film Page <span className="text-danger">*</span></span>}>
-            <Select
-              value={createForm.filmPageId}
-              onChange={(e) => {
-                const pid = e.target.value;
-                const p = pages.find((x) => x.id === pid);
-                setCreateForm((prev) => ({
-                  ...prev,
-                  filmPageId: pid,
-                  genre: p ? p.primaryGenre : prev.genre,
-                  visualArtStyle: p ? p.visualArtStyle : prev.visualArtStyle,
-                }));
-              }}
-            >
-              {pages.map((p) => (
-                <option key={p.id} value={p.id}>
-                  Kênh {p.pageNumber}: {p.name} ({p.primaryGenre})
-                </option>
-              ))}
-            </Select>
-          </Field>
+          {pages.length === 0 ? (
+            <div className="rounded-md border border-warning/40 bg-warning/10 p-3 text-xs text-fg flex items-center justify-between">
+              <span>Chưa có Facebook Page nào được kết nối.</span>
+              <Button size="sm" variant="primary" onClick={() => { setShowCreateModal(false); setShowConnectFbModal(true); }}>
+                Kết nối Page ngay
+              </Button>
+            </div>
+          ) : (
+            <Field label={<span>Chọn Facebook Page Kênh Phim <span className="text-danger">*</span></span>}>
+              <Select
+                value={createForm.filmPageId}
+                onChange={(e) => {
+                  const pid = e.target.value;
+                  const p = pages.find((x) => x.id === pid);
+                  setCreateForm((prev) => ({
+                    ...prev,
+                    filmPageId: pid,
+                    genre: p ? p.primaryGenre : prev.genre,
+                    visualArtStyle: p ? p.visualArtStyle : prev.visualArtStyle,
+                  }));
+                }}
+              >
+                {pages.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.linkedFacebookPageName ? `${p.linkedFacebookPageName} (FB Page)` : p.name}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+          )}
 
           <Field label={<span>Tên Series Phim <span className="text-danger">*</span></span>}>
             <Input
@@ -1257,7 +1403,7 @@ export function FilmFactoryPage() {
 
           <Field
             label={<span>Ý tưởng cốt truyện / Logline <span className="text-danger">*</span></span>}
-            hint="Mô tả tóm tắt ý tưởng chính để AI Showrunner triển khai cốt truyện 10 tập."
+            hint="Mô tả tóm tắt ý tưởng chính để AI Showrunner phát triển cốt truyện xuyên suốt các tập."
           >
             <Textarea
               rows={4}
@@ -1267,6 +1413,33 @@ export function FilmFactoryPage() {
               required
             />
           </Field>
+
+          {/* Cấu hình linh hoạt: Số tập và Thời lượng mỗi tập */}
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Số tập phim (1 - 20 tập)" hint="Linh hoạt số lượng tập phim bạn muốn tạo.">
+              <Input
+                type="number"
+                min={1}
+                max={20}
+                value={createForm.targetEpisodes || 5}
+                onChange={(e) => setCreateForm((prev) => ({ ...prev, targetEpisodes: parseInt(e.target.value) || 5 }))}
+                required
+              />
+            </Field>
+
+            <Field label="Thời lượng mỗi tập" hint="Thời lượng mục tiêu cho từng tập video.">
+              <Select
+                value={String(createForm.targetDurationMinutes || 2.5)}
+                onChange={(e) => setCreateForm((prev) => ({ ...prev, targetDurationMinutes: parseFloat(e.target.value) || 2.5 }))}
+              >
+                <option value="1">1 phút (Siêu ngắn / Reels)</option>
+                <option value="2">2 phút (Tiêu chuẩn)</option>
+                <option value="2.5">2.5 phút (Chuẩn Wan 2.2)</option>
+                <option value="3">3 phút (Kịch tính)</option>
+                <option value="5">5 phút (Tập dài)</option>
+              </Select>
+            </Field>
+          </div>
 
           <div className="grid grid-cols-2 gap-3">
             <Field label="Thể loại">
@@ -1291,7 +1464,7 @@ export function FilmFactoryPage() {
               Chính sách tự động hóa chuẩn:
             </div>
             <p className="text-fg-subtle">
-              • Cấu trúc: <strong>10 tập × ~2.5 phút = ~25 phút điện ảnh</strong>.
+              • Quy mô cấu hình: <strong>{createForm.targetEpisodes || 5} tập × ~{createForm.targetDurationMinutes || 2.5} phút/tập</strong>.
             </p>
             <p className="text-fg-subtle">
               • Ngân sách bảo vệ: <strong>Tối đa $5.00 USD</strong> (luân phiên 4 Gemini free keys + RunPod RTX 3090).

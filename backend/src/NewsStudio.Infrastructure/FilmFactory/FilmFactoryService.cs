@@ -136,14 +136,65 @@ public class FilmFactoryService : IFilmFactoryService
 
     public async Task<List<FilmPageDto>> GetFilmPagesAsync(CancellationToken ct = default)
     {
-        await SeedDefaultFilmPagesAsync(ct);
+        // 1. Đồng bộ các FacebookAccount thực tế đang kết nối trong hệ thống thành FilmPage
+        var activeFbAccounts = await _context.FacebookAccounts
+            .Where(f => f.IsActive)
+            .OrderBy(f => f.CreatedAtUtc)
+            .ToListAsync(ct);
 
-        var pages = await _context.FilmPages
+        foreach (var fb in activeFbAccounts)
+        {
+            var existing = await _context.FilmPages.FirstOrDefaultAsync(p => p.LinkedFacebookAccountId == fb.Id, ct);
+            if (existing == null)
+            {
+                var nextNumber = (await _context.FilmPages.MaxAsync(p => (int?)p.PageNumber, ct) ?? 0) + 1;
+                _context.FilmPages.Add(new FilmPage
+                {
+                    PageNumber = nextNumber,
+                    Name = fb.PageName,
+                    Description = $"Kênh phim chính thức kết nối với Facebook Page {fb.PageName} (ID: {fb.PageId})",
+                    PrimaryGenre = "Drama",
+                    VisualArtStyle = "Cinematic 35mm Realism",
+                    BrandColorHex = "#4F46E5",
+                    DefaultVoice = "vi-VN-NamMinhNeural",
+                    Language = "vi-VN",
+                    TargetAudience = "Khán giả đại chúng yêu thích phim ngắn điện ảnh",
+                    AspectRatio = "9:16",
+                    LinkedFacebookAccountId = fb.Id,
+                    Status = fb.Status,
+                    IsActive = fb.IsActive
+                });
+            }
+            else
+            {
+                existing.Name = fb.PageName;
+                existing.Status = fb.Status;
+                existing.IsActive = fb.IsActive;
+            }
+        }
+
+        await _context.SaveChangesAsync(ct);
+
+        // Nếu chưa từng có Facebook Page nào được kết nối, seed các kênh mặc định
+        var hasRealPages = await _context.FilmPages.AnyAsync(p => p.LinkedFacebookAccountId != null, ct);
+        if (!hasRealPages)
+        {
+            await SeedDefaultFilmPagesAsync(ct);
+        }
+
+        var query = _context.FilmPages
             .Include(p => p.LinkedFacebookAccount)
             .Include(p => p.Projects)
                 .ThenInclude(pr => pr.Episodes)
-            .OrderBy(p => p.PageNumber)
-            .ToListAsync(ct);
+            .AsQueryable();
+
+        // Ưu tiên hiển thị các Page thực tế đã liên kết Facebook
+        if (hasRealPages)
+        {
+            query = query.Where(p => p.LinkedFacebookAccountId != null);
+        }
+
+        var pages = await query.OrderBy(p => p.PageNumber).ToListAsync(ct);
 
         return pages.Select(p => new FilmPageDto
         {
@@ -162,6 +213,7 @@ public class FilmFactoryService : IFilmFactoryService
             AspectRatio = p.AspectRatio,
             LinkedFacebookAccountId = p.LinkedFacebookAccountId,
             LinkedFacebookPageName = p.LinkedFacebookAccount?.PageName,
+            LinkedFacebookPageId = p.LinkedFacebookAccount?.PageId,
             TotalProjectsCount = p.Projects.Count,
             TotalEpisodesCompleted = p.Projects.SelectMany(pr => pr.Episodes).Count(e => e.Status == "Completed"),
             TotalCostSpentUsd = Math.Round(p.Projects.Sum(pr => pr.TotalActualCostUsd), 4),
@@ -378,6 +430,9 @@ public class FilmFactoryService : IFilmFactoryService
             ? $"Series: {request.Logline.Split('\n')[0].Trim().Take(50)}..."
             : request.Title.Trim();
 
+        var targetEpisodes = Math.Clamp(request.TargetEpisodes > 0 ? request.TargetEpisodes : 5, 1, 20);
+        var durationSeconds = (int)Math.Round((request.TargetDurationMinutes > 0 ? request.TargetDurationMinutes : 2.5) * 60);
+
         var project = new FilmProject
         {
             FilmPageId = request.FilmPageId,
@@ -387,16 +442,33 @@ public class FilmFactoryService : IFilmFactoryService
             VisualArtStyle = request.VisualArtStyle ?? page.VisualArtStyle,
             AspectRatio = request.AspectRatio ?? page.AspectRatio,
             TotalBudgetLimitUsd = request.BudgetLimitUsd > 0 ? request.BudgetLimitUsd : 5.0m,
-            TargetEpisodes = 10,
-            TargetDurationPerEpisodeSeconds = 300,
+            TargetEpisodes = targetEpisodes,
+            TargetDurationPerEpisodeSeconds = durationSeconds,
             Status = "Draft"
         };
 
         _context.FilmProjects.Add(project);
+
+        // Khởi tạo trước các tập tương ứng với targetEpisodes và durationSeconds
+        for (int i = 1; i <= targetEpisodes; i++)
+        {
+            _context.FilmEpisodes.Add(new FilmEpisode
+            {
+                FilmProjectId = project.Id,
+                EpisodeNumber = i,
+                Title = $"Tập {i}",
+                Synopsis = $"Tập {i} của series {title}",
+                OpeningHook = "Mở đầu kịch tính...",
+                EndingCliffhanger = "Nút thắt bất ngờ...",
+                TargetDurationSeconds = durationSeconds,
+                Status = "Pending"
+            });
+        }
+
         await _context.SaveChangesAsync(ct);
 
-        _logger.LogInformation("Created new AI Film Project {Id}: {Title} on Page {Page}",
-            project.Id, project.Title, page.Name);
+        _logger.LogInformation("Created new AI Film Project {Id}: {Title} on Page {Page} ({Episodes} eps x {Duration}s)",
+            project.Id, project.Title, page.Name, targetEpisodes, durationSeconds);
 
         return new FilmProjectDto
         {
@@ -411,9 +483,9 @@ public class FilmFactoryService : IFilmFactoryService
             Status = project.Status,
             TotalBudgetLimitUsd = project.TotalBudgetLimitUsd,
             TotalActualCostUsd = 0m,
-            TargetEpisodes = 10,
+            TargetEpisodes = targetEpisodes,
             CompletedEpisodesCount = 0,
-            TargetDurationPerEpisodeSeconds = 300,
+            TargetDurationPerEpisodeSeconds = durationSeconds,
             CreatedAtUtc = project.CreatedAtUtc
         };
     }

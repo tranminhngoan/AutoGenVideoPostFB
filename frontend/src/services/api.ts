@@ -739,6 +739,16 @@ export const api = {
 
   getFilmEpisodeDownloadUrl(episodeId: string): string {
     return `${API_BASE}/film-factory/episodes/${episodeId}/download`;
+  },
+
+  async connectFilmFacebookPage(data: ConnectFacebookPageRequestDto): Promise<FilmPageDto> {
+    const res = await fetch(`${API_BASE}/film-factory/pages/connect-facebook`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) throw new Error(await apiError(res, 'Kết nối Facebook Page thất bại'));
+    return await res.json();
   }
 };
 
@@ -1424,6 +1434,7 @@ export interface FilmPageDto {
   aspectRatio: string;
   linkedFacebookAccountId?: string | null;
   linkedFacebookPageName?: string | null;
+  linkedFacebookPageId?: string | null;
   totalProjectsCount: number;
   totalEpisodesCompleted: number;
   totalCostSpentUsd: number;
@@ -1454,6 +1465,8 @@ export interface CreateFilmProjectRequestDto {
   visualArtStyle?: string;
   aspectRatio?: string;
   budgetLimitUsd?: number;
+  targetEpisodes?: number;
+  targetDurationMinutes?: number;
   autoProduceAll?: boolean;
 }
 
