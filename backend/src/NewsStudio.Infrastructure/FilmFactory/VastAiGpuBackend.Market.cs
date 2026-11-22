@@ -89,6 +89,53 @@ public partial class VastAiGpuBackend
         }
     }
 
+    private long? _serverAccountId;
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, (bool Ok, DateTime At)> KeyChecks = new();
+
+    /// <summary>
+    /// True when <paramref name="givenKey"/> is the configured key or any other API key of the same Vast account
+    /// (users often create a new key instead of finding the one stored on the server). Vast is asked which account
+    /// each key belongs to; answers are cached (10 min ok / 1 min refused) by key hash.
+    /// </summary>
+    public async Task<bool> IsSameAccountKeyAsync(string givenKey, CancellationToken ct = default)
+    {
+        var expected = ApiKey;
+        if (string.IsNullOrWhiteSpace(expected) || string.IsNullOrWhiteSpace(givenKey)) return false;
+        var g = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(givenKey.Trim()));
+        if (System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(g,
+                System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(expected))))
+            return true;
+
+        var hash = Convert.ToHexString(g);
+        if (KeyChecks.TryGetValue(hash, out var c) && DateTime.UtcNow - c.At < (c.Ok ? TimeSpan.FromMinutes(10) : TimeSpan.FromMinutes(1)))
+            return c.Ok;
+
+        _serverAccountId ??= await AccountIdForKeyAsync(expected, ct);
+        var givenId = await AccountIdForKeyAsync(givenKey.Trim(), ct);
+        var ok = _serverAccountId != null && givenId == _serverAccountId;
+        KeyChecks[hash] = (ok, DateTime.UtcNow);
+        return ok;
+    }
+
+    private async Task<long?> AccountIdForKeyAsync(string key, CancellationToken ct)
+    {
+        try
+        {
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(TimeSpan.FromSeconds(10));
+            using var req = new HttpRequestMessage(HttpMethod.Get, $"{ApiBase}/users/current/");
+            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
+            using var res = await _httpClient.SendAsync(req, cts.Token);
+            if (!res.IsSuccessStatusCode) return null;
+            using var doc = JsonDocument.Parse(await res.Content.ReadAsStringAsync(cts.Token));
+            return doc.RootElement.TryGetProperty("id", out var id) && id.TryGetInt64(out var v) ? v : null;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException or JsonException)
+        {
+            return null;
+        }
+    }
+
     public static VastAccount ParseAccount(string json)
     {
         using var doc = JsonDocument.Parse(json);

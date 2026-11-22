@@ -33,6 +33,6 @@
   </ItemGroup>
   <ItemGroup>
     <!-- Python worker shipped with the app and uploaded to the GPU backend (Kaggle / rented GPU) for each batch. -->
-    <None Include="FilmFactory/GpuWorker/film_gpu_worker.py" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Update="FilmFactory/GpuWorker/*.py;FilmFactory/GpuWorker/*.sh" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

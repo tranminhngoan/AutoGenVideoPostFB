@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Copy, Cpu, HardDrive, MapPin, RotateCw, Search, ShoppingCart, Trash2, Wifi } from 'lucide-react';
 import { CreditCard } from 'lucide-react';
 import { Badge, Button, ButtonLink, Checkbox, Drawer, EmptyState, Field, Input, Select, Skeleton, cn } from './ui';
@@ -358,6 +358,14 @@ export function VastRentDrawer({ open, onClose, onRented }: { open: boolean; onC
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [rentingId, setRentingId] = useState<number | null>(null);
+  const [needKeyFor, setNeedKeyFor] = useState<VastOffer | null>(null);
+  const [keyInput, setKeyInput] = useState('');
+  const [keyError, setKeyError] = useState<string | null>(null);
+  const keyBoxRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (needKeyFor) keyBoxRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [needKeyFor]);
 
   const search = async () => {
     setSearching(true);
@@ -387,6 +395,34 @@ export function VastRentDrawer({ open, onClose, onRented }: { open: boolean; onC
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
+  const doRent = async (o: VastOffer) => {
+    setRentingId(o.id);
+    try {
+      const r = await api.rentVastOffer(o.id, diskGb);
+      toast.success(r.message);
+      setNeedKeyFor(null);
+      onRented?.();
+      onClose();
+    } catch (e: any) {
+      if (e.needsVastKey) {
+        // ask for the key right here, then retry this same machine
+        setNeedKeyFor(o);
+        setKeyError(getVastControlKey() ? e.message : null);
+      } else {
+        toast.error(e.message);
+      }
+    } finally {
+      setRentingId(null);
+    }
+  };
+
+  const unlockAndRent = async () => {
+    if (!keyInput.trim() || !needKeyFor) return;
+    setVastControlKey(keyInput);
+    setKeyInput('');
+    await doRent(needKeyFor);
+  };
+
   const rent = async (o: VastOffer) => {
     const ok = await confirm({
       title: `Thuê máy ${o.gpuName} (#${o.id})?`,
@@ -397,22 +433,34 @@ export function VastRentDrawer({ open, onClose, onRented }: { open: boolean; onC
       confirmLabel: 'Thuê máy',
     });
     if (!ok) return;
-    setRentingId(o.id);
-    try {
-      const r = await api.rentVastOffer(o.id, diskGb);
-      toast.success(r.message);
-      onRented?.();
-      onClose();
-    } catch (e: any) {
-      toast.error(e.message);
-    } finally {
-      setRentingId(null);
-    }
+    await doRent(o);
   };
 
   return (
     <Drawer open={open} onClose={onClose} title="Thuê máy GPU mới" subtitle="10 máy hợp nhất với Film Factory — xếp theo chi phí một lần dựng">
       <div className="space-y-4">
+        {needKeyFor && (
+          <div ref={keyBoxRef} className="space-y-2 rounded-lg border border-warning/40 bg-warning/[0.07] p-3 text-xs">
+            <p className="font-medium text-fg">Dán Vast API key để thuê máy {needKeyFor.gpuName} · {needKeyFor.location}</p>
+            <p className="text-fg-muted">
+              Lấy ở cloud.vast.ai/manage-keys (khoá nào của tài khoản anh cũng được). Khoá chỉ lưu trên trình duyệt này; dán xong app tự thuê lại máy này.
+            </p>
+            {keyError && <p className="text-danger">{keyError}</p>}
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <Input
+                type="password"
+                autoComplete="off"
+                placeholder="Vast API key"
+                value={keyInput}
+                onChange={(e) => setKeyInput(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && unlockAndRent()}
+              />
+              <Button variant="primary" size="sm" className="shrink-0" loading={rentingId !== null} disabled={!keyInput.trim()} onClick={unlockAndRent}>
+                Mở khoá & thuê
+              </Button>
+            </div>
+          </div>
+        )}
         {requirements.length > 0 && <RequirementsPanel requirements={requirements} />}
         <div className="space-y-2 rounded-lg border border-line bg-subtle p-3">
           <p className="text-[13px] font-medium text-fg">Loại GPU</p>
