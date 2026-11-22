@@ -554,7 +554,7 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
             ) : (
               <p className="text-xs text-fg-muted">
                 Mỗi shot được tạo bằng <b>Grok Imagine 1.5 Lite</b> ở <b>{video.resolution}</b> — tính tiền theo {video.resolution} ({usd(price[video.resolution] ?? perSecond, 3)}/giây)
-                — có hình + tiếng + lời thoại khớp miệng; sau đó ghép với nhạc nền và phóng lên 1080p trên server (miễn phí). Còn {pendingSeconds}s chưa tạo, ước tính{' '}
+                — mỗi shot là một <b>đoạn video chuyển động như phim</b> (nhân vật diễn, nói thoại khớp miệng, có tiếng động), không phải ảnh tĩnh; sau đó các đoạn được ghép liền với nhạc nền và phóng lên 1080p trên server (miễn phí). Còn {pendingSeconds}s chưa tạo, ước tính{' '}
                 <b>{usd(pendingCost)}</b>
                 {remaining != null && <> · ngân sách tháng còn <b>{usd(remaining)}</b></>}.
               </p>
