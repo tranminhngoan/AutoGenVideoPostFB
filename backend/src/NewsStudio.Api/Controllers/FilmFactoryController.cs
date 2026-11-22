@@ -733,6 +733,42 @@ public class FilmFactoryController : ControllerBase
     }
 
     /// <summary>
+    /// Voice line n (1-based) of the fixed 30 s test scene (FilmTestScene), synthesised with the film's Gemini voices.
+    /// Only these fixed lines can be produced, and each is cached on disk, so the endpoint cannot spend the Gemini key
+    /// on arbitrary text.
+    /// </summary>
+    [HttpGet("gpu/test-scene/voice/{n:int}")]
+    public async Task<IActionResult> GetTestSceneVoice(int n, [FromServices] ITtsFactory ttsFactory, CancellationToken ct)
+    {
+        var lines = NewsStudio.Infrastructure.FilmFactory.FilmTestScene.Lines;
+        if (n < 1 || n > lines.Count) return NotFound(new { message = $"Cảnh test chỉ có {lines.Count} câu thoại." });
+        var (voice, text) = lines[n - 1];
+
+        var dir = Path.Combine(NewsStudio.Infrastructure.Common.TempStorage.GetRoot(_configuration), "film_factory", "test_scene");
+        Directory.CreateDirectory(dir);
+        var cached = Path.Combine(dir, $"line_{n}_{voice.Replace(':', '_')}.wav");
+        if (!System.IO.File.Exists(cached))
+        {
+            try
+            {
+                var result = await ttsFactory.GetTtsService("Gemini").SynthesizeSpeechWithSubtitlesAsync(new TtsSynthesisRequest
+                {
+                    ProjectId = Guid.Empty,
+                    Text = text,
+                    Voice = voice,
+                    Speed = "+0%"
+                }, ct);
+                System.IO.File.Copy(result.AudioFilePath, cached, overwrite: true);
+            }
+            catch (InvalidOperationException ex)
+            {
+                return StatusCode(StatusCodes.Status502BadGateway, new { message = ex.Message });
+            }
+        }
+        return PhysicalFile(Path.GetFullPath(cached), "audio/wav", $"line_{n}.wav");
+    }
+
+    /// <summary>
     /// Phục vụ mã nguồn Python film_gpu_worker.py để các máy GPU (Vast.ai, RunPod) tải về bằng 1 lệnh curl tiện lợi.
     /// </summary>
     [HttpGet("gpu/worker-script")]

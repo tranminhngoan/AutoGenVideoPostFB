@@ -59,6 +59,31 @@ TESTS = {
             {"frame": "fA", "silent": 2.0, "motion": "she listens, exhales and looks away briefly"},
         ],
     },
+    # 30 s scene (FilmTestScene on the server: GET /api/film-factory/gpu/test-scene/voice/1..5).
+    # Shot / reverse shot, one visible face per frame, small purposeful motion matched to each line.
+    "D": {
+        "chars": {"a": CHAR_A, "b": CHAR_B},
+        "frames": {
+            "fA1": ("a", f"medium close-up of a {CHAR_A}, standing in a cozy apartment living room at night, warm lamp light, "
+                         "looking slightly left of camera at someone, hurt and disappointed expression, "
+                         "a small birthday cake with lit candles softly out of focus on the table behind her"),
+            "fA2": ("a", f"close-up of a {CHAR_A}, cozy apartment living room at night, warm lamp light, "
+                         "looking slightly left of camera, eyes glistening, tired expression"),
+            "fB1": ("b", f"medium close-up of a {CHAR_B}, just arrived home at night in office clothes, standing near the apartment door, "
+                         "warm lamp light, looking slightly right of camera at someone, guilty expression"),
+            "fB2": ("b", f"close-up of a {CHAR_B}, apartment entrance at night, warm lamp light, "
+                         "looking slightly right of camera, sincere apologetic expression"),
+        },
+        "shots": [
+            {"frame": "fA1", "voice": 0, "motion": "she speaks with disappointment, slight frown, small shake of the head, eyes on him"},
+            {"frame": "fB1", "silent": 2.5, "motion": "he lowers his eyes guiltily, swallows, then looks back up at her"},
+            {"frame": "fB2", "voice": 1, "motion": "he apologizes softly, regretful expression, slight shrug of the shoulders"},
+            {"frame": "fA2", "voice": 2, "motion": "she answers firmly, chin slightly raised, eyes glistening, steady gaze"},
+            {"frame": "fB1", "voice": 3, "motion": "he nods earnestly and leans forward slightly, sincere expression"},
+            {"frame": "fA2", "silent": 2.5, "motion": "she exhales and looks away for a moment, her expression softening"},
+            {"frame": "fA1", "voice": 4, "motion": "she speaks quietly with a faint tired smile, looking back at him"},
+        ],
+    },
 }
 
 
