@@ -112,6 +112,17 @@ public class StudioTests
         clip.CostUsd.Should().Be(0.24m);
     }
 
+    [Theory]
+    [InlineData(402, "Payment required")]
+    [InlineData(403, "forbidden")]
+    [InlineData(429, "You have run out of credits")] // a spent balance must stop the run, not be retried as "busy"
+    public async Task Grok_unpaid_account_stops_the_run(int status, string message)
+    {
+        var xai = new FakeXai { StartStatus = (System.Net.HttpStatusCode)status, StartError = message };
+        var act = () => Client(xai).GenerateAsync("p", null, "9:16", "720p", 5, CancellationToken.None);
+        (await act.Should().ThrowAsync<VideoAccountException>()).Which.Message.Should().Contain("Tạo các clip còn thiếu");
+    }
+
     [Fact]
     public async Task Grok_busy_is_transient()
     {
@@ -157,6 +168,7 @@ public class StudioTests
         public Dictionary<string, string> Old { get; } = new();
         public int Starts { get; private set; }
         public System.Net.HttpStatusCode StartStatus { get; set; } = System.Net.HttpStatusCode.OK;
+        public string StartError { get; set; } = "busy";
         public string StartBody { get; private set; } = "";
         public List<string> AuthHeaders { get; } = new();
 
@@ -174,7 +186,7 @@ public class StudioTests
                 Starts++;
                 StartBody = await request.Content!.ReadAsStringAsync(ct);
                 if (StartStatus != System.Net.HttpStatusCode.OK)
-                    return new HttpResponseMessage(StartStatus) { Content = new StringContent("""{"error":"busy"}""") };
+                    return new HttpResponseMessage(StartStatus) { Content = new StringContent(JsonSerializer.Serialize(new { error = StartError })) };
                 return Json("""{"request_id":"r1"}""");
             }
             if (request.Method == HttpMethod.Get && url == "https://api.x.ai/v1/videos/r1")

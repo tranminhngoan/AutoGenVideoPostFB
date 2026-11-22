@@ -490,6 +490,7 @@ Trả về JSON:
         var failed = new List<string>();
         var done = 0;
         var ordered = v.Shots.OrderBy(s => s.Index).ToList();
+        string? accountProblem = null;
 
         foreach (var shot in todo)
         {
@@ -556,6 +557,14 @@ Trả về JSON:
                     await _db.SaveChangesAsync(ct);
                     break;
                 }
+                catch (VideoAccountException ex)
+                {
+                    // out of credits / key refused: every next shot would fail the same way — stop the whole run
+                    shot.Status = "Pending";
+                    shot.ErrorMessage = null;
+                    accountProblem = ex.Message;
+                    break;
+                }
                 catch (VideoRejectedException ex)
                 {
                     // refused / filtered (moderation, invalid argument): retrying the same prompt only spends money
@@ -591,8 +600,19 @@ Trả về JSON:
                     break;
                 }
             }
+            if (accountProblem != null) break;
             if (shot.Status != "Done") failed.Add($"shot {shot.Index}: {shot.ErrorMessage}");
             await _db.SaveChangesAsync(ct);
+        }
+
+        if (accountProblem != null)
+        {
+            var made = v.Shots.Count(s => s.ClipBlobId != null && s.Status == "Done");
+            v.Status = "Failed";
+            v.Progress = null;
+            v.ErrorMessage = $"Dừng ở {made}/{v.Shots.Count} clip: {accountProblem}";
+            await _db.SaveChangesAsync(ct);
+            return;
         }
 
         if (failed.Count > 0)

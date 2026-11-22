@@ -10,6 +10,15 @@ namespace NewsStudio.Infrastructure.Studio;
 /// <summary>The picture a clip starts from (image-to-video). JPEG already cropped to the clip's frame.</summary>
 public sealed record StartFrame(byte[] Data, string MimeType);
 
+/// <summary>
+/// The xAI account can't pay (credits used up, spending limit, bad / revoked key): every further clip would be refused
+/// too, so the run stops at once. Nothing was billed. After topping up, "Tạo các clip còn thiếu" carries on.
+/// </summary>
+public sealed class VideoAccountException : InvalidOperationException
+{
+    public VideoAccountException(string message) : base(message) { }
+}
+
 /// <summary>xAI was busy or failed before producing anything billable (HTTP 429/5xx, internal error): safe to retry.</summary>
 public sealed class VideoTransientException : InvalidOperationException
 {
@@ -221,9 +230,11 @@ public class GrokVideoClient
             var reason = ErrorText(text);
             var code = (int)res.StatusCode;
             _logger.LogWarning("xAI video HTTP {Status}: {Reason}", code, reason);
+            if (code is 401 or 402 or 403 || IsAccountProblem(reason))
+                throw new VideoAccountException(
+                    $"Tài khoản xAI không thanh toán được (HTTP {code}: {reason}). Clip đã tạo vẫn được giữ — nạp thêm tiền ở console.x.ai " +
+                    "(hoặc kiểm tra khoá XAI_API_KEY) rồi bấm \"Tạo các clip còn thiếu\" để làm tiếp, không mất tiền phần đã xong.");
             if (code is 429 or >= 500) throw new VideoTransientException($"xAI đang bận / lỗi tạm thời (HTTP {code}): {reason}");
-            if (code is 401 or 402 or 403)
-                throw new VideoRejectedException($"xAI từ chối (HTTP {code}): {reason} — kiểm tra khoá XAI_API_KEY và số dư tài khoản xAI.");
             throw new VideoRejectedException($"xAI từ chối yêu cầu (HTTP {code}): {reason}");
         }
         using var doc = JsonDocument.Parse(text);
@@ -256,6 +267,11 @@ public class GrokVideoClient
                 throw new InvalidOperationException($"Quá {MaxWait.TotalMinutes:0} phút xAI chưa trả clip {requestId} — bấm tạo lại shot sau ít phút (sẽ lấy tiếp clip này, không trả tiền lần nữa).");
         }
     }
+
+    /// <summary>Error text that means "no money left" rather than "busy" (xAI may answer 429 for a spent balance).</summary>
+    public static bool IsAccountProblem(string reason) =>
+        new[] { "credit", "balance", "billing", "insufficient", "spending limit", "payment", "exhausted", "quota" }
+            .Any(w => reason.Contains(w, StringComparison.OrdinalIgnoreCase));
 
     private static string ErrorText(string body)
     {
