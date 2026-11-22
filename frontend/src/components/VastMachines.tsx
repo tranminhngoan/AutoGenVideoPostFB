@@ -1,8 +1,59 @@
 import { useEffect, useState } from 'react';
 import { Copy, Cpu, HardDrive, MapPin, RotateCw, Search, ShoppingCart, Trash2, Wifi } from 'lucide-react';
-import { Badge, Button, Checkbox, Drawer, EmptyState, Field, Input, Select, Skeleton, cn } from './ui';
+import { CreditCard } from 'lucide-react';
+import { Badge, Button, ButtonLink, Checkbox, Drawer, EmptyState, Field, Input, Select, Skeleton, cn } from './ui';
 import { useConfirm, useToast } from './feedback';
-import { api, VastInstance, VastOffer } from '../services/api';
+import { api, VastAccount, VastInstance, VastOffer } from '../services/api';
+
+/** Typical RTX PRO 6000 price incl. 200 GB disk (Nov 2026 search) — only for the "hours left" estimate when nothing runs. */
+const TYPICAL_PRICE_PER_HOUR = 1.5;
+const LOW_CREDIT_USD = 5;
+
+/**
+ * Remaining Vast credit and how long it lasts, with a button to Vast's own billing page.
+ * The app never takes payment details or charges anything; topping up happens on cloud.vast.ai.
+ */
+function VastCredit({ account, error, runningPerHour }: { account: VastAccount | null; error: string | null; runningPerHour: number }) {
+  if (error) return <p className="text-xs text-danger">{error}</p>;
+  if (!account) return <Skeleton className="h-12 w-full" />;
+  const credit = account.credit ?? account.balance ?? null;
+  const rate = runningPerHour > 0 ? runningPerHour : TYPICAL_PRICE_PER_HOUR;
+  const hours = credit != null && credit > 0 ? credit / rate : 0;
+  const low = credit != null && credit < LOW_CREDIT_USD;
+
+  return (
+    <div className={cn('flex flex-col gap-2 rounded-lg border p-3 text-xs sm:flex-row sm:items-center sm:justify-between',
+      low ? 'border-warning/40 bg-warning/[0.07]' : 'border-line bg-subtle')}>
+      <div className="min-w-0">
+        <div className="flex items-baseline gap-2">
+          <span className="text-fg-muted">Số dư Vast.ai</span>
+          <span className={cn('text-lg font-bold', low ? 'text-warning' : 'text-fg')}>{credit == null ? '—' : usd(credit)}</span>
+        </div>
+        <div className="text-fg-muted">
+          {credit == null
+            ? 'Vast không trả về số dư.'
+            : runningPerHour > 0
+              ? `≈ ${hours.toFixed(1)} giờ nữa với máy đang chạy (${usd(runningPerHour, 3)}/h)`
+              : `≈ ${hours.toFixed(1)} giờ GPU với máy ~${usd(TYPICAL_PRICE_PER_HOUR)}/h`}
+          {account.autoBillingEnabled && ' · tự nạp khi thấp đang bật'}
+        </div>
+        {low && <div className="mt-1 font-medium text-warning">Sắp hết tiền — khi về $0 Vast tự dừng máy và có thể xoá dữ liệu trên máy.</div>}
+      </div>
+      <ButtonLink
+        href={account.billingUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        size="sm"
+        variant={low ? 'primary' : 'secondary'}
+        icon={<CreditCard className="h-3.5 w-3.5" />}
+        className="w-full sm:w-auto"
+        title="Mở trang thanh toán của Vast.ai trong tab mới"
+      >
+        Nạp tiền
+      </ButtonLink>
+    </div>
+  );
+}
 
 const usd = (v: number | null | undefined, digits = 2) => (v == null ? '—' : `$${v.toFixed(digits)}`);
 
@@ -37,10 +88,15 @@ export function VastInstanceList({ refreshKey, onChanged }: { refreshKey?: numbe
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [destroyingId, setDestroyingId] = useState<string | null>(null);
+  const [account, setAccount] = useState<VastAccount | null>(null);
+  const [accountError, setAccountError] = useState<string | null>(null);
 
   const load = async () => {
     setLoading(true);
     setError(null);
+    api.getVastAccount()
+      .then((a) => { setAccount(a); setAccountError(null); })
+      .catch((e: any) => setAccountError(e.message));
     try {
       const r = await api.listVastInstances();
       setInstances(r.instances);
@@ -102,6 +158,11 @@ export function VastInstanceList({ refreshKey, onChanged }: { refreshKey?: numbe
 
   return (
     <div className="space-y-2">
+      <VastCredit
+        account={account}
+        error={accountError}
+        runningPerHour={(instances ?? []).filter((i) => i.status.toLowerCase() === 'running').reduce((sum, i) => sum + (i.pricePerHour ?? 0), 0)}
+      />
       <div className="flex items-center justify-between gap-2">
         <h3 className="text-xs font-semibold text-fg">
           Máy Vast.ai của bạn {instances && <span className="font-normal text-fg-subtle">({instances.length})</span>}

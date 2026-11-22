@@ -34,8 +34,36 @@ public record VastInstanceInfo(
     double? StoragePerMonth, double? DiskGb, string? PublicIp, int? WorkerPort, string? SshCommand,
     string? Label, string? Location, DateTimeOffset? StartedAt);
 
+/// <summary>Money on the Vast.ai account (only these numbers leave the server — never the key or email).</summary>
+public record VastAccount(double? Credit, double? Balance, double? AutoBillingThreshold, bool AutoBillingEnabled);
+
 public partial class VastAiGpuBackend
 {
+    /// <summary>Vast.ai's own page for adding credit (the user pays there; this app never charges anything).</summary>
+    public const string BillingUrl = "https://cloud.vast.ai/billing/";
+
+    /// <summary>GET /api/v0/users/current (no v1 yet). The response also holds api_key/email; only money fields are kept.</summary>
+    public async Task<VastAccount> GetAccountAsync(CancellationToken ct = default)
+    {
+        var apiKey = ApiKey ?? throw new InvalidOperationException("Chưa cấu hình VAST_API_KEY trên server.");
+        using var req = new HttpRequestMessage(HttpMethod.Get, $"{ApiBase}/users/current");
+        req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+        using var res = await _httpClient.SendAsync(req, ct);
+        var json = await res.Content.ReadAsStringAsync(ct);
+        if (!res.IsSuccessStatusCode)
+            throw new InvalidOperationException($"Vast.ai không trả về số dư (HTTP {(int)res.StatusCode}).");
+        return ParseAccount(json);
+    }
+
+    public static VastAccount ParseAccount(string json)
+    {
+        using var doc = JsonDocument.Parse(json);
+        var x = doc.RootElement;
+        double? N(string name) => x.TryGetProperty(name, out var v) && v.ValueKind is JsonValueKind.Number or JsonValueKind.String ? Num(x, name) : null;
+        var enabled = x.TryGetProperty("balance_threshold_enabled", out var e) && e.ValueKind == JsonValueKind.True;
+        return new VastAccount(N("credit"), N("balance"), N("balance_threshold"), enabled);
+    }
+
     private const string ApiBase = "https://console.vast.ai/api/v0";
 
     /// <summary>

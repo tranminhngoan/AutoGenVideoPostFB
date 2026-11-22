@@ -92,6 +92,20 @@ public class VastMarketTests
     }
 
     [Fact]
+    public void Account_keeps_only_the_money_fields()
+    {
+        var a = VastAiGpuBackend.ParseAccount("""
+            {"id": 1, "email": "someone@example.com", "api_key": "secret", "ssh_key": "ssh-ed25519 AAA",
+             "credit": 23.456, "balance": 0.0, "balance_threshold": 5, "balance_threshold_enabled": true}
+            """);
+
+        a.Credit.Should().BeApproximately(23.456, 1e-9);
+        a.Balance.Should().Be(0);
+        a.AutoBillingEnabled.Should().BeTrue();
+        JsonSerializer.Serialize(a).Should().NotContain("secret").And.NotContain("example.com");
+    }
+
+    [Fact]
     public void Instances_show_status_ssh_and_monthly_storage()
     {
         const string json = """

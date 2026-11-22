@@ -633,6 +633,30 @@ public class FilmFactoryController : ControllerBase
         }
     }
 
+    /// <summary>Remaining Vast.ai credit, plus Vast's own billing page where the user tops up.</summary>
+    [HttpGet("gpu/vast/account")]
+    public async Task<IActionResult> GetVastAccount(CancellationToken ct)
+    {
+        var vast = HttpContext.RequestServices.GetService<NewsStudio.Infrastructure.FilmFactory.VastAiGpuBackend>();
+        if (vast == null) return BadRequest(new { message = "Chưa đăng ký Vast.ai backend." });
+        try
+        {
+            var a = await vast.GetAccountAsync(ct);
+            return Ok(new
+            {
+                credit = a.Credit,
+                balance = a.Balance,
+                autoBillingEnabled = a.AutoBillingEnabled,
+                autoBillingThreshold = a.AutoBillingThreshold,
+                billingUrl = NewsStudio.Infrastructure.FilmFactory.VastAiGpuBackend.BillingUrl
+            });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return StatusCode(502, new { message = ex.Message });
+        }
+    }
+
     /// <summary>All instances on the Vast.ai account (running, stopped, loading) with their storage cost.</summary>
     [HttpGet("gpu/vast/instances")]
     public async Task<IActionResult> ListVastInstances(CancellationToken ct)

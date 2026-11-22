@@ -788,6 +788,12 @@ export const api = {
     return await res.json();
   },
 
+  async getVastAccount(): Promise<VastAccount> {
+    const res = await fetch(`${API_BASE}/film-factory/gpu/vast/account`);
+    if (!res.ok) throw new Error(await apiError(res, 'Không đọc được số dư Vast.ai'));
+    return await res.json();
+  },
+
   async listVastInstances(): Promise<{ activeInstanceId?: string | null; instances: VastInstance[] }> {
     const res = await fetch(`${API_BASE}/film-factory/gpu/vast/instances`);
     if (!res.ok) throw new Error(await apiError(res, 'Không tải được danh sách máy đang thuê'));
@@ -1578,6 +1584,16 @@ export interface VastOfferSearchResult {
   diskGb: number;
   modelDownloadGb: number;
   offers: VastOffer[];
+}
+
+export interface VastAccount {
+  /** Remaining Vast credit in $. */
+  credit?: number | null;
+  balance?: number | null;
+  autoBillingEnabled: boolean;
+  autoBillingThreshold?: number | null;
+  /** Vast's own billing page — top-ups happen there, never in this app. */
+  billingUrl: string;
 }
 
 export interface VastInstance {
