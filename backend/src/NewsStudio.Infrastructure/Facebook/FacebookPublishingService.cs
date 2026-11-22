@@ -1077,6 +1077,16 @@ public class FacebookPublishingService : IFacebookPublishingService
         return postBody.GetProperty("id").GetString()!;
     }
 
+    public async Task<(string VideoId, string PostId)> PublishVideoFileAsync(Guid facebookAccountId, string videoPath, string caption,
+        double durationSeconds, CancellationToken cancellationToken = default)
+    {
+        if (!File.Exists(videoPath)) throw new InvalidOperationException("Không tìm thấy file video để đăng.");
+        var (pageId, token) = await PageTokenAsync(facebookAccountId, cancellationToken);
+        return durationSeconds <= 90
+            ? await ExecuteMetaReelsPublishAsync(pageId, token, videoPath, caption, cancellationToken)
+            : await ExecuteMetaStandardVideoPublishAsync(pageId, token, videoPath, caption, cancellationToken);
+    }
+
     public async Task<string> PublishVideoStoryAsync(Guid facebookAccountId, string videoPath, CancellationToken cancellationToken = default)
     {
         var (pageId, token) = await PageTokenAsync(facebookAccountId, cancellationToken);

@@ -24,6 +24,12 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
     public DbSet<FacebookPost> FacebookPosts => Set<FacebookPost>();
     public DbSet<VideoMetric> VideoMetrics => Set<VideoMetric>();
     public DbSet<SystemSetting> SystemSettings => Set<SystemSetting>();
+    public DbSet<StudioBlob> StudioBlobs => Set<StudioBlob>();
+    public DbSet<StudioAsset> StudioAssets => Set<StudioAsset>();
+    public DbSet<StudioMusicTrack> StudioMusicTracks => Set<StudioMusicTrack>();
+    public DbSet<StudioVideo> StudioVideos => Set<StudioVideo>();
+    public DbSet<StudioShot> StudioShots => Set<StudioShot>();
+    public DbSet<StudioCostRecord> StudioCostRecords => Set<StudioCostRecord>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
     public DbSet<TrendingArticle> TrendingArticles => Set<TrendingArticle>();
     public DbSet<AutoPostSettings> AutoPostSettings => Set<AutoPostSettings>();
@@ -567,6 +573,67 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
                   .WithMany()
                   .HasForeignKey(e => e.FilmPageId)
                   .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ───────── Omni Studio ─────────
+        modelBuilder.Entity<StudioBlob>(entity =>
+        {
+            entity.ToTable("StudioBlobs");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.MimeType).HasMaxLength(100);
+        });
+        modelBuilder.Entity<StudioAsset>(entity =>
+        {
+            entity.ToTable("StudioAssets");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Name).HasMaxLength(200).IsRequired();
+            entity.Property(e => e.Kind).HasMaxLength(30);
+            entity.Property(e => e.Description).HasMaxLength(2000);
+            entity.Property(e => e.MimeType).HasMaxLength(100);
+        });
+        modelBuilder.Entity<StudioMusicTrack>(entity =>
+        {
+            entity.ToTable("StudioMusicTracks");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Name).HasMaxLength(200).IsRequired();
+            entity.Property(e => e.Mood).HasMaxLength(300);
+            entity.Property(e => e.MimeType).HasMaxLength(100);
+        });
+        modelBuilder.Entity<StudioVideo>(entity =>
+        {
+            entity.ToTable("StudioVideos");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Title).HasMaxLength(300).IsRequired();
+            entity.Property(e => e.AspectRatio).HasMaxLength(10);
+            entity.Property(e => e.Resolution).HasMaxLength(10);
+            entity.Property(e => e.MusicMode).HasMaxLength(20);
+            entity.Property(e => e.Status).HasMaxLength(30);
+            entity.Property(e => e.Progress).HasMaxLength(500);
+            entity.Property(e => e.EstimatedCostUsd).HasPrecision(18, 6);
+            entity.Property(e => e.ActualCostUsd).HasPrecision(18, 6);
+            entity.HasIndex(e => e.CreatedAtUtc);
+            entity.HasMany(e => e.Shots).WithOne(s => s.StudioVideo!).HasForeignKey(s => s.StudioVideoId).OnDelete(DeleteBehavior.Cascade);
+        });
+        modelBuilder.Entity<StudioShot>(entity =>
+        {
+            entity.ToTable("StudioShots");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Status).HasMaxLength(30);
+            entity.Property(e => e.Camera).HasMaxLength(500);
+            entity.Property(e => e.Speaker).HasMaxLength(200);
+            entity.Property(e => e.InteractionId).HasMaxLength(300);
+            entity.Property(e => e.CostUsd).HasPrecision(18, 6);
+            entity.HasIndex(e => new { e.StudioVideoId, e.Index });
+        });
+        modelBuilder.Entity<StudioCostRecord>(entity =>
+        {
+            entity.ToTable("StudioCostRecords");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Kind).HasMaxLength(30);
+            entity.Property(e => e.Model).HasMaxLength(100);
+            entity.Property(e => e.CostUsd).HasPrecision(18, 6);
+            entity.HasIndex(e => e.CreatedAtUtc);
+            entity.HasIndex(e => e.StudioVideoId);
         });
     }
 

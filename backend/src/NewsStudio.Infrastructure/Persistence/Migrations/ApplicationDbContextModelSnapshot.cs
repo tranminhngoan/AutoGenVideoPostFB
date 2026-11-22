@@ -1106,8 +1106,7 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("LinkedFacebookAccountId");
 
-                    b.HasIndex("PageNumber")
-                        .IsUnique();
+                    b.HasIndex("PageNumber");
 
                     b.ToTable("FilmPages", (string)null);
                 });
@@ -1584,6 +1583,348 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                     b.HasIndex("VideoProjectId");
 
                     b.ToTable("ProcessingJobs", (string)null);
+                });
+
+            modelBuilder.Entity("NewsStudio.Domain.Entities.StudioAsset", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("BlobId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Description")
+                        .IsRequired()
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
+
+                    b.Property<string>("MimeType")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<long>("SizeBytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime?>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("StudioAssets", (string)null);
+                });
+
+            modelBuilder.Entity("NewsStudio.Domain.Entities.StudioBlob", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<byte[]>("Data")
+                        .IsRequired()
+                        .HasColumnType("bytea");
+
+                    b.Property<string>("MimeType")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<long>("SizeBytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime?>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("StudioBlobs", (string)null);
+                });
+
+            modelBuilder.Entity("NewsStudio.Domain.Entities.StudioCostRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<decimal>("CostUsd")
+                        .HasPrecision(18, 6)
+                        .HasColumnType("numeric(18,6)");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
+
+                    b.Property<string>("Model")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("Note")
+                        .HasColumnType("text");
+
+                    b.Property<double?>("Seconds")
+                        .HasColumnType("double precision");
+
+                    b.Property<Guid?>("StudioShotId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("StudioVideoId")
+                        .HasColumnType("uuid");
+
+                    b.Property<long?>("Tokens")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime?>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CreatedAtUtc");
+
+                    b.HasIndex("StudioVideoId");
+
+                    b.ToTable("StudioCostRecords", (string)null);
+                });
+
+            modelBuilder.Entity("NewsStudio.Domain.Entities.StudioMusicTrack", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("BlobId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<double>("DurationSeconds")
+                        .HasColumnType("double precision");
+
+                    b.Property<DateTime?>("LastUsedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("MimeType")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("Mood")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<long>("SizeBytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime?>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("UseCount")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("StudioMusicTracks", (string)null);
+                });
+
+            modelBuilder.Entity("NewsStudio.Domain.Entities.StudioShot", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Action")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("AssetIdsJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("Attempts")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Camera")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<Guid?>("ClipBlobId")
+                        .HasColumnType("uuid");
+
+                    b.Property<decimal>("CostUsd")
+                        .HasPrecision(18, 6)
+                        .HasColumnType("numeric(18,6)");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Dialogue")
+                        .HasColumnType("text");
+
+                    b.Property<int>("DurationSeconds")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("ErrorMessage")
+                        .HasColumnType("text");
+
+                    b.Property<int>("Index")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("InteractionId")
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)");
+
+                    b.Property<string>("Sound")
+                        .HasColumnType("text");
+
+                    b.Property<string>("Speaker")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
+
+                    b.Property<Guid>("StudioVideoId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("StudioVideoId", "Index");
+
+                    b.ToTable("StudioShots", (string)null);
+                });
+
+            modelBuilder.Entity("NewsStudio.Domain.Entities.StudioVideo", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<decimal>("ActualCostUsd")
+                        .HasPrecision(18, 6)
+                        .HasColumnType("numeric(18,6)");
+
+                    b.Property<string>("AspectRatio")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)");
+
+                    b.Property<string>("AssetIdsJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Caption")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ErrorMessage")
+                        .HasColumnType("text");
+
+                    b.Property<decimal>("EstimatedCostUsd")
+                        .HasPrecision(18, 6)
+                        .HasColumnType("numeric(18,6)");
+
+                    b.Property<Guid?>("FacebookAccountId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("FinalBlobId")
+                        .HasColumnType("uuid");
+
+                    b.Property<double?>("FinalDurationSeconds")
+                        .HasColumnType("double precision");
+
+                    b.Property<string>("MusicMode")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<Guid?>("MusicTrackId")
+                        .HasColumnType("uuid");
+
+                    b.Property<double>("MusicVolume")
+                        .HasColumnType("double precision");
+
+                    b.Property<string>("PlanNotes")
+                        .HasColumnType("text");
+
+                    b.Property<string>("Progress")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<DateTime?>("PublishedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("PublishedPostId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("Resolution")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)");
+
+                    b.Property<string>("Script")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
+
+                    b.Property<string>("StyleNotes")
+                        .HasColumnType("text");
+
+                    b.Property<int>("TargetDurationSeconds")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)");
+
+                    b.Property<DateTime?>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CreatedAtUtc");
+
+                    b.ToTable("StudioVideos", (string)null);
                 });
 
             modelBuilder.Entity("NewsStudio.Domain.Entities.SystemSetting", b =>
@@ -2363,6 +2704,17 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                     b.Navigation("VideoProject");
                 });
 
+            modelBuilder.Entity("NewsStudio.Domain.Entities.StudioShot", b =>
+                {
+                    b.HasOne("NewsStudio.Domain.Entities.StudioVideo", "StudioVideo")
+                        .WithMany("Shots")
+                        .HasForeignKey("StudioVideoId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("StudioVideo");
+                });
+
             modelBuilder.Entity("NewsStudio.Domain.Entities.VideoAsset", b =>
                 {
                     b.HasOne("NewsStudio.Domain.Entities.VideoProject", "VideoProject")
@@ -2492,6 +2844,11 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                 });
 
             modelBuilder.Entity("NewsStudio.Domain.Entities.FilmScene", b =>
+                {
+                    b.Navigation("Shots");
+                });
+
+            modelBuilder.Entity("NewsStudio.Domain.Entities.StudioVideo", b =>
                 {
                     b.Navigation("Shots");
                 });

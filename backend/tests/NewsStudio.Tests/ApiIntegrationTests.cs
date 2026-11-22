@@ -95,66 +95,98 @@ public class ApiIntegrationTests : IClassFixture<WebApplicationFactory<Program>>
         fb.TryGetProperty("pageAccessToken", out _).Should().BeFalse(); // No token exposed!
     }
 
-    // ───────────── GPU control guard ─────────────
-    // The API has no login, so endpoints that spend money on the Vast account (rent, start, destroy…) must refuse
-    // callers without the account's own Vast API key. The key is set on this shared host for the duration of a test
-    // (a second test host would re-freeze Serilog's bootstrap logger). Nothing reaches Vast: the guard answers first.
+    // ───────────── Omni Studio guard ─────────────
+    // No login exists, so anything that spends money or writes data needs X-Studio-Key = the server's paid Gemini key.
+    // The key is set on this shared host only for the test (a second test host would re-freeze Serilog's logger).
 
-    private const string VastKey = "test-vast-key-123";
+    private const string StudioKey = "test-gemini-paid-key";
 
-    private async Task WithVastKey(Func<Task> test)
+    private async Task WithStudioKey(Func<Task> test)
     {
         var config = (Microsoft.Extensions.Configuration.IConfiguration)_factory.Services.GetService(typeof(Microsoft.Extensions.Configuration.IConfiguration))!;
-        var before = config["Film:Gpu:VastAi:ApiKey"];
-        config["Film:Gpu:VastAi:ApiKey"] = VastKey;
+        var before = config["Ai:Gemini:ApiKey"];
+        config["Ai:Gemini:ApiKey"] = StudioKey;
         try { await test(); }
-        finally { config["Film:Gpu:VastAi:ApiKey"] = before; }
+        finally { config["Ai:Gemini:ApiKey"] = before; }
     }
 
-    private static HttpRequestMessage GpuRequest(string method, string url, string body, string? key)
+    private static HttpRequestMessage StudioRequest(string method, string url, string body, string? key)
     {
         var req = new HttpRequestMessage(new HttpMethod(method), url);
         if (body.Length > 0) req.Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json");
-        if (key != null) req.Headers.Add("X-Vast-Key", key);
+        if (key != null) req.Headers.Add("X-Studio-Key", key);
         return req;
     }
 
-    public static IEnumerable<object[]> GuardedGpuCalls() => new[]
+    public static IEnumerable<object[]> GuardedStudioCalls() => new[]
     {
-        new object[] { "POST", "/api/film-factory/gpu/vast/rent", "{\"offerId\":1,\"diskGb\":200}" },
-        new object[] { "DELETE", "/api/film-factory/gpu/vast/instances/123", "" },
-        new object[] { "POST", "/api/film-factory/gpu/start", "" },
-        new object[] { "POST", "/api/film-factory/gpu/stop", "" },
-        new object[] { "POST", "/api/film-factory/gpu/instance", "{\"target\":\"http://attacker.example:8888\"}" },
-        new object[] { "GET", "/api/film-factory/gpu/vast/instances", "" },
-        new object[] { "GET", "/api/film-factory/gpu/vast/account", "" },
+        new object[] { "POST", "/api/studio/videos", "{\"title\":\"x\"}" },
+        new object[] { "POST", "/api/studio/videos/00000000-0000-0000-0000-000000000001/generate", "" },
+        new object[] { "POST", "/api/studio/videos/00000000-0000-0000-0000-000000000001/plan", "" },
+        new object[] { "POST", "/api/studio/videos/00000000-0000-0000-0000-000000000001/publish", "{}" },
+        new object[] { "DELETE", "/api/studio/videos/00000000-0000-0000-0000-000000000001", "" },
+        new object[] { "PUT", "/api/studio/settings/budget", "{\"monthlyBudgetUsd\":1000}" },
+        new object[] { "DELETE", "/api/studio/music/00000000-0000-0000-0000-000000000001", "" },
     };
 
     [Theory]
-    [MemberData(nameof(GuardedGpuCalls))]
-    public Task GpuControl_WithoutTheVastKey_IsRefused(string method, string url, string body) => WithVastKey(async () =>
+    [MemberData(nameof(GuardedStudioCalls))]
+    public Task Studio_WithoutTheKey_IsRefused(string method, string url, string body) => WithStudioKey(async () =>
     {
-        var none = await _client.SendAsync(GpuRequest(method, url, body, null));
+        var none = await _client.SendAsync(StudioRequest(method, url, body, null));
         none.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
-        (await none.Content.ReadAsStringAsync()).Should().Contain("needsVastKey");
+        (await none.Content.ReadAsStringAsync()).Should().Contain("needsStudioKey");
 
-        var wrong = await _client.SendAsync(GpuRequest(method, url, body, "guess"));
+        var wrong = await _client.SendAsync(StudioRequest(method, url, body, "guess"));
         wrong.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
     });
 
     [Fact]
-    public Task GpuControl_WithTheRightKey_PassesTheGuard() => WithVastKey(async () =>
+    public Task Studio_WithTheKey_PassesTheGuard() => WithStudioKey(async () =>
     {
-        // invalid offer id: past the guard the controller itself answers 400, proving the key was accepted
-        var res = await _client.SendAsync(GpuRequest("POST", "/api/film-factory/gpu/vast/rent", "{\"offerId\":0,\"diskGb\":200}", VastKey));
-        res.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        // unknown video: past the guard the service answers 404, proving the key was accepted
+        var res = await _client.SendAsync(StudioRequest("POST", "/api/studio/videos/00000000-0000-0000-0000-000000000001/plan", "", StudioKey));
+        res.StatusCode.Should().Be(HttpStatusCode.NotFound);
     });
 
     [Fact]
-    public Task GpuOfferSearch_IsPublic() => WithVastKey(async () =>
+    public Task Studio_SavingShots_InsertsAndUpdatesThem() => WithStudioKey(async () =>
     {
-        // public market data: validation runs (diskGb out of range -> 400), not the guard (401)
-        var res = await _client.GetAsync("/api/film-factory/gpu/vast/offers?diskGb=1");
-        res.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        // regression: new shots carry their Guid from construction, so attaching them through the video's
+        // navigation made EF issue an UPDATE (0 rows → 500) instead of an INSERT
+        var created = await _client.SendAsync(StudioRequest("POST", "/api/studio/videos",
+            "{\"title\":\"Thử shot\",\"script\":\"Anh Hai: Ê Út Tèo!\",\"targetDurationSeconds\":20}", StudioKey));
+        created.StatusCode.Should().Be(HttpStatusCode.OK);
+        var id = JsonDocument.Parse(await created.Content.ReadAsStringAsync()).RootElement.GetProperty("id").GetString();
+
+        var saved = await _client.SendAsync(StudioRequest("PUT", $"/api/studio/videos/{id}/shots",
+            "[{\"durationSeconds\":8,\"action\":\"He waves\",\"camera\":\"medium shot\",\"speaker\":\"Anh Hai\",\"dialogue\":\"Ê Út Tèo!\",\"assetIds\":[]}," +
+            "{\"durationSeconds\":40,\"action\":\"Fish grilling\",\"camera\":\"close-up\",\"assetIds\":[]}]", StudioKey));
+        saved.StatusCode.Should().Be(HttpStatusCode.OK);
+        var video = JsonDocument.Parse(await saved.Content.ReadAsStringAsync()).RootElement;
+        var shots = video.GetProperty("shots").EnumerateArray().ToList();
+        shots.Should().HaveCount(2);
+        shots[1].GetProperty("durationSeconds").GetInt32().Should().Be(15); // clamped to Omni's max
+        video.GetProperty("status").GetString().Should().Be("Planned");
+
+        // edit the first shot (by id), drop the second, add a new one
+        var firstId = shots[0].GetProperty("id").GetString();
+        var edited = await _client.SendAsync(StudioRequest("PUT", $"/api/studio/videos/{id}/shots",
+            $"[{{\"id\":\"{firstId}\",\"durationSeconds\":6,\"action\":\"He waves and laughs\",\"camera\":\"medium shot\",\"assetIds\":[]}}," +
+            "{\"durationSeconds\":5,\"action\":\"Glasses clink\",\"camera\":\"close-up\",\"assetIds\":[]}]", StudioKey));
+        edited.StatusCode.Should().Be(HttpStatusCode.OK);
+        var after = JsonDocument.Parse(await edited.Content.ReadAsStringAsync()).RootElement.GetProperty("shots").EnumerateArray().ToList();
+        after.Should().HaveCount(2);
+        after[0].GetProperty("id").GetString().Should().Be(firstId);
+        after[0].GetProperty("durationSeconds").GetInt32().Should().Be(6);
+
+        (await _client.SendAsync(StudioRequest("DELETE", $"/api/studio/videos/{id}", "", StudioKey))).StatusCode.Should().Be(HttpStatusCode.NoContent);
+    });
+
+    [Fact]
+    public Task Studio_ReadsStayOpen() => WithStudioKey(async () =>
+    {
+        (await _client.GetAsync("/api/studio/videos")).StatusCode.Should().Be(HttpStatusCode.OK);
+        (await _client.GetAsync("/api/studio/costs")).StatusCode.Should().Be(HttpStatusCode.OK);
     });
 }

@@ -1,0 +1,255 @@
+/* Omni Studio API client. Writes need the X-Studio-Key header (the server's paid Gemini key), asked once and kept
+   only in this browser's localStorage. Media URLs (images, music, clips, final video) need no key. */
+
+const BASE = '/api/studio';
+const KEY_STORAGE = 'studio.accessKey';
+
+export function getStudioKey(): string {
+  try {
+    return localStorage.getItem(KEY_STORAGE) || '';
+  } catch {
+    return '';
+  }
+}
+
+export function setStudioKey(key: string | null) {
+  try {
+    if (key) localStorage.setItem(KEY_STORAGE, key.trim());
+    else localStorage.removeItem(KEY_STORAGE);
+  } catch {
+    /* private mode: just not remembered */
+  }
+}
+
+export class StudioError extends Error {
+  needsKey: boolean;
+  constructor(message: string, needsKey = false) {
+    super(message);
+    this.needsKey = needsKey;
+  }
+}
+
+async function call<T>(method: string, path: string, body?: unknown, isForm = false): Promise<T> {
+  const headers: Record<string, string> = {};
+  const key = getStudioKey();
+  if (key) headers['X-Studio-Key'] = key;
+  if (body !== undefined && !isForm) headers['Content-Type'] = 'application/json';
+  const res = await fetch(`${BASE}${path}`, {
+    method,
+    headers,
+    body: body === undefined ? undefined : isForm ? (body as FormData) : JSON.stringify(body),
+  });
+  if (res.status === 204) return undefined as T;
+  const text = await res.text();
+  let data: any = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    data = null;
+  }
+  if (!res.ok) {
+    const msg = data?.message || data?.title || text || `Lỗi HTTP ${res.status}`;
+    throw new StudioError(msg, res.status === 401 && !!data?.needsStudioKey);
+  }
+  return data as T;
+}
+
+// ───────── types ─────────
+
+export type AssetKind = 'Character' | 'Location' | 'Prop';
+
+export interface StudioAsset {
+  id: string;
+  name: string;
+  kind: AssetKind;
+  description: string;
+  sizeBytes: number;
+  createdAtUtc: string;
+}
+
+export interface StudioMusic {
+  id: string;
+  name: string;
+  mood: string;
+  durationSeconds: number;
+  sizeBytes: number;
+  useCount: number;
+  createdAtUtc: string;
+}
+
+export type VideoStatus = 'Draft' | 'Planning' | 'Planned' | 'Generating' | 'Composing' | 'Ready' | 'Publishing' | 'Published' | 'Failed';
+
+export interface StudioShot {
+  id: string;
+  index: number;
+  durationSeconds: number;
+  action: string;
+  camera: string;
+  speaker?: string | null;
+  dialogue?: string | null;
+  sound?: string | null;
+  assetIds: string[];
+  status: 'Pending' | 'Generating' | 'Done' | 'Failed';
+  hasClip: boolean;
+  costUsd: number;
+  estimatedCostUsd: number;
+  attempts: number;
+  errorMessage?: string | null;
+}
+
+export interface StudioVideoSummary {
+  id: string;
+  title: string;
+  facebookAccountId?: string | null;
+  pageName?: string | null;
+  targetDurationSeconds: number;
+  status: VideoStatus;
+  progress?: string | null;
+  shotCount: number;
+  estimatedCostUsd: number;
+  actualCostUsd: number;
+  hasFinal: boolean;
+  createdAtUtc: string;
+  publishedAtUtc?: string | null;
+}
+
+export interface StudioVideo extends StudioVideoSummary {
+  script: string;
+  aspectRatio: '9:16' | '16:9';
+  resolution: '360p' | '720p' | '1080p' | '4k';
+  styleNotes?: string | null;
+  assetIds: string[];
+  musicMode: 'Auto' | 'Manual' | 'None';
+  musicTrackId?: string | null;
+  musicName?: string | null;
+  musicVolume: number;
+  planNotes?: string | null;
+  caption?: string | null;
+  finalDurationSeconds?: number | null;
+  errorMessage?: string | null;
+  publishedPostId?: string | null;
+  shots: StudioShot[];
+}
+
+export interface StudioVideoInput {
+  title?: string;
+  facebookAccountId?: string | null;
+  script?: string;
+  targetDurationSeconds?: number;
+  aspectRatio?: string;
+  resolution?: string;
+  styleNotes?: string;
+  assetIds?: string[];
+  musicMode?: string;
+  musicTrackId?: string | null;
+  musicVolume?: number;
+  caption?: string;
+}
+
+export interface StudioShotInput {
+  id?: string;
+  durationSeconds: number;
+  action: string;
+  camera: string;
+  speaker?: string | null;
+  dialogue?: string | null;
+  sound?: string | null;
+  assetIds: string[];
+}
+
+export interface StudioCosts {
+  monthSpentUsd: number;
+  monthlyBudgetUsd: number;
+  monthRemainingUsd: number;
+  allTimeSpentUsd: number;
+  monthVideoSeconds: number;
+  pricePerSecondUsd: Record<string, number>;
+  videos: { id: string; title: string; costUsd: number; createdAtUtc: string }[];
+  recent: { createdAtUtc: string; kind: string; model: string; seconds?: number | null; costUsd: number; note?: string | null; videoTitle?: string | null }[];
+}
+
+export interface StudioSettings {
+  monthlyBudgetUsd: number;
+  omniConfigured: boolean;
+  videoModel: string;
+}
+
+export interface StudioPage {
+  id: string;
+  pageName: string;
+  isActive: boolean;
+}
+
+// ───────── calls ─────────
+
+const empty = (id?: string | null) => (id ? id : '00000000-0000-0000-0000-000000000000');
+
+export const studio = {
+  checkAccess: () => call<{ ok: boolean }>('GET', '/access'),
+  settings: () => call<StudioSettings>('GET', '/settings'),
+  setBudget: (monthlyBudgetUsd: number) => call<StudioSettings>('PUT', '/settings/budget', { monthlyBudgetUsd }),
+  pages: () => call<StudioPage[]>('GET', '/pages'),
+
+  assets: () => call<StudioAsset[]>('GET', '/assets'),
+  addAsset: (file: File, name: string, kind: AssetKind, description: string) => {
+    const f = new FormData();
+    f.append('file', file);
+    f.append('name', name);
+    f.append('kind', kind);
+    f.append('description', description);
+    return call<StudioAsset>('POST', '/assets', f, true);
+  },
+  updateAsset: (id: string, patch: { name?: string; kind?: AssetKind; description?: string }) => call<StudioAsset>('PUT', `/assets/${id}`, patch),
+  deleteAsset: (id: string) => call<void>('DELETE', `/assets/${id}`),
+  assetImageUrl: (id: string) => `${BASE}/assets/${id}/image`,
+
+  music: () => call<StudioMusic[]>('GET', '/music'),
+  addMusic: (file: File, name: string, mood: string) => {
+    const f = new FormData();
+    f.append('file', file);
+    f.append('name', name);
+    f.append('mood', mood);
+    return call<StudioMusic>('POST', '/music', f, true);
+  },
+  updateMusic: (id: string, patch: { name?: string; mood?: string }) => call<StudioMusic>('PUT', `/music/${id}`, patch),
+  deleteMusic: (id: string) => call<void>('DELETE', `/music/${id}`),
+  musicAudioUrl: (id: string) => `${BASE}/music/${id}/audio`,
+
+  videos: () => call<StudioVideoSummary[]>('GET', '/videos'),
+  video: (id: string) => call<StudioVideo>('GET', `/videos/${id}`),
+  createVideo: (input: StudioVideoInput) => call<StudioVideo>('POST', '/videos', { ...input, facebookAccountId: input.facebookAccountId ?? undefined }),
+  updateVideo: (id: string, input: StudioVideoInput) =>
+    call<StudioVideo>('PUT', `/videos/${id}`, {
+      ...input,
+      facebookAccountId: input.facebookAccountId === undefined ? undefined : empty(input.facebookAccountId),
+      musicTrackId: input.musicTrackId === undefined ? undefined : empty(input.musicTrackId),
+    }),
+  deleteVideo: (id: string) => call<void>('DELETE', `/videos/${id}`),
+  plan: (id: string) => call<StudioVideo>('POST', `/videos/${id}/plan`),
+  saveShots: (id: string, shots: StudioShotInput[]) => call<StudioVideo>('PUT', `/videos/${id}/shots`, shots),
+  generate: (id: string) => call<StudioVideo>('POST', `/videos/${id}/generate`),
+  generateShot: (id: string, shotId: string) => call<StudioVideo>('POST', `/videos/${id}/shots/${shotId}/generate`),
+  compose: (id: string) => call<StudioVideo>('POST', `/videos/${id}/compose`),
+  publish: (id: string, caption: string) => call<StudioVideo>('POST', `/videos/${id}/publish`, { caption }),
+  purgeClips: (id: string) => call<StudioVideo>('POST', `/videos/${id}/purge-clips`),
+  finalUrl: (id: string, download = false) => `${BASE}/videos/${id}/final${download ? '?download=true' : ''}`,
+  clipUrl: (shotId: string) => `${BASE}/shots/${shotId}/clip`,
+
+  costs: () => call<StudioCosts>('GET', '/costs'),
+};
+
+export const usd = (v: number | null | undefined, digits = 2) => (v == null ? '—' : `$${v.toFixed(digits)}`);
+
+export const STATUS_LABEL: Record<VideoStatus, string> = {
+  Draft: 'Nháp',
+  Planning: 'Đang lập kế hoạch',
+  Planned: 'Đã có kế hoạch',
+  Generating: 'Đang tạo clip',
+  Composing: 'Đang ghép video',
+  Ready: 'Sẵn sàng đăng',
+  Publishing: 'Đang đăng',
+  Published: 'Đã đăng',
+  Failed: 'Lỗi',
+};
+
+export const BUSY: VideoStatus[] = ['Planning', 'Generating', 'Composing', 'Publishing'];

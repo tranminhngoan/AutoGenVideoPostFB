@@ -87,8 +87,8 @@ function SidebarContent({
     { id: 'articles', path: '/articles', label: 'Bài báo', icon: Newspaper },
     { id: 'activity', path: '/activity', label: 'Hoạt động', icon: History },
   ];
-  const filmFactory: NavItem[] = [
-    { id: 'film-factory', path: '/film-factory', label: 'AI Film Factory', icon: Clapperboard },
+  const studio: NavItem[] = [
+    { id: 'studio', path: '/studio', label: 'Omni Studio', icon: Clapperboard },
   ];
   const secondary: NavItem[] = [{ id: 'settings', path: '/settings', label: 'Cài đặt', icon: Settings }];
 
@@ -142,9 +142,9 @@ function SidebarContent({
       <nav className="mt-5 flex-1 space-y-0.5 overflow-y-auto px-3">
         {main.map(renderItem)}
         <div className="!mt-5 mb-1.5 px-2.5 text-xs font-semibold uppercase tracking-wider text-indigo-400">
-          AI Film Factory
+          Video AI (Gemini Omni)
         </div>
-        {filmFactory.map(renderItem)}
+        {studio.map(renderItem)}
         <div className="!mt-5 mb-1.5 px-2.5 text-xs font-medium text-fg-subtle">Hệ thống</div>
         {secondary.map(renderItem)}
       </nav>
@@ -232,7 +232,7 @@ export function Layout({
             onClick={() => setMobileOpen(true)}
             className={cn(
               'flex h-full flex-col items-center justify-center gap-0.5 text-[11px] transition-colors',
-              ['auto-post', 'articles', 'activity', 'settings', 'film-factory'].includes(active) ? 'font-medium text-fg' : 'text-fg-muted'
+              ['auto-post', 'articles', 'activity', 'settings', 'studio'].includes(active) ? 'font-medium text-fg' : 'text-fg-muted'
             )}
           >
             <MenuIcon className="h-5 w-5" />

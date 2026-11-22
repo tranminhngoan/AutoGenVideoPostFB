@@ -1,3 +1,2 @@
-# Files that run on the Linux GPU box must keep LF endings even on Windows checkouts
+# Shell scripts keep LF endings even on Windows checkouts
 *.sh text eol=lf
-backend/src/NewsStudio.Infrastructure/FilmFactory/GpuWorker/** text eol=lf

@@ -35,6 +35,13 @@ public interface IFacebookPublishingService
     /// <summary>Reads again which Instagram account is linked to every connected page; returns the pages.</summary>
     Task<List<FacebookAccountDto>> RefreshInstagramAsync(CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Publishes a finished video file to a connected page: as a Reel when it is 90 s or shorter, otherwise as a normal
+    /// page video. Returns (video id, post id).
+    /// </summary>
+    Task<(string VideoId, string PostId)> PublishVideoFileAsync(Guid facebookAccountId, string videoPath, string caption, double durationSeconds,
+        CancellationToken cancellationToken = default);
+
     /// <summary>One post on the page's wall with several pictures (in order) and a text; returns the post id.</summary>
     Task<string> PublishPhotoPostAsync(Guid facebookAccountId, IReadOnlyList<string> imagePaths, string message, CancellationToken cancellationToken = default);
 

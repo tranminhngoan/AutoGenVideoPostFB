@@ -15,6 +15,7 @@ using NewsStudio.Infrastructure.Review;
 using NewsStudio.Infrastructure.Facebook;
 using NewsStudio.Infrastructure.Services;
 using NewsStudio.Infrastructure.FilmFactory;
+using NewsStudio.Infrastructure.Studio;
 
 namespace NewsStudio.Infrastructure;
 
@@ -132,48 +133,9 @@ public static class DependencyInjection
                 AutomaticDecompression = System.Net.DecompressionMethods.All
             });
 
-        // AI Film Factory Subsystem
+        // Omni Studio (Gemini Omni video) — registered in AddStudioServices below
         services.AddHttpClient<FilmGeminiClient>();
-        services.AddHttpClient<RunPodGpuBackend>(c => c.Timeout = TimeSpan.FromMinutes(10));
-        services.AddHttpClient<VastAiGpuBackend>(c => c.Timeout = TimeSpan.FromMinutes(10));
-        services.AddSingleton<KaggleGpuBackend>();
-        services.AddSingleton<RunPodGpuBackend>();
-        services.AddSingleton<VastAiGpuBackend>();
-        // Active backend = configured choice, switchable at runtime (renting a Vast machine in the app selects Vast).
-        services.AddSingleton(sp => new ActiveFilmGpuBackend(
-            ConfiguredGpuBackend(sp), sp.GetRequiredService<VastAiGpuBackend>(), sp.GetRequiredService<RunPodGpuBackend>(),
-            sp.GetRequiredService<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>()));
-        services.AddSingleton<IFilmGpuBackend>(sp => sp.GetRequiredService<ActiveFilmGpuBackend>());
-
-        static IFilmGpuBackend ConfiguredGpuBackend(IServiceProvider sp)
-        {
-            var config = sp.GetRequiredService<IConfiguration>();
-            var pref = config["Film:Gpu:Backend"] ?? Environment.GetEnvironmentVariable("FILM_GPU_BACKEND");
-            var vast = sp.GetRequiredService<VastAiGpuBackend>();
-            var runpod = sp.GetRequiredService<RunPodGpuBackend>();
-            var kaggle = sp.GetRequiredService<KaggleGpuBackend>();
-
-            if (string.Equals(pref, "VastAi", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(pref, "Vast", StringComparison.OrdinalIgnoreCase))
-                return vast;
-
-            if (string.Equals(pref, "RunPod", StringComparison.OrdinalIgnoreCase))
-                return runpod;
-
-            if (string.Equals(pref, "Kaggle", StringComparison.OrdinalIgnoreCase))
-                return kaggle;
-
-            // Tự động ưu tiên VastAi nếu có cấu hình VAST_API_KEY / VAST_ENDPOINT_URL
-            if (vast.IsConfigured) return vast;
-            if (runpod.IsConfigured) return runpod;
-            return kaggle;
-        }
-        services.AddScoped<FilmGpuService>();
-        services.AddScoped<IFilmCostController, FilmCostController>();
-        services.AddScoped<IFilmFactoryService, FilmFactoryService>();
-        services.AddScoped<IFilmShowrunnerService, FilmShowrunnerService>();
-        services.AddScoped<IFilmRendererService, FilmRendererService>();
-        services.AddScoped<IFilmProductionCoordinator, FilmProductionCoordinator>();
+        services.AddStudioServices();
 
         return services;
     }

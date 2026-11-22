@@ -39,5 +39,13 @@ public interface IApplicationDbContext
     DbSet<FilmCostRecord> FilmCostRecords { get; }
     DbSet<FilmPublishingRecord> FilmPublishingRecords { get; }
 
+    // Omni Studio (Gemini Omni video)
+    DbSet<StudioBlob> StudioBlobs { get; }
+    DbSet<StudioAsset> StudioAssets { get; }
+    DbSet<StudioMusicTrack> StudioMusicTracks { get; }
+    DbSet<StudioVideo> StudioVideos { get; }
+    DbSet<StudioShot> StudioShots { get; }
+    DbSet<StudioCostRecord> StudioCostRecords { get; }
+
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

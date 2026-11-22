@@ -292,10 +292,7 @@ try
                 "facebook-stats-sync",
                 s => s.SyncAsync(false, CancellationToken.None),
                 "7,37 * * * *");
-            recurring.AddOrUpdate<NewsStudio.Infrastructure.FilmFactory.FilmGpuService>(
-                "film-gpu-tick",
-                s => s.TickAsync(CancellationToken.None),
-                "*/2 * * * *");
+            recurring.RemoveIfExists("film-gpu-tick"); // GPU film pipeline removed (Omni Studio replaces it)
             recurring.AddOrUpdate<NewsStudio.Application.Interfaces.IDailyDigestService>(
                 "daily-digest",
                 s => s.TickAsync(CancellationToken.None),
