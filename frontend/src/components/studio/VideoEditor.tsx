@@ -506,11 +506,18 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
             <div className="flex items-center gap-2 text-sm font-semibold text-fg">
               <Film className="h-4 w-4" /> 3. Tạo video
             </div>
-            <p className="text-xs text-fg-muted">
-              Mỗi shot được tạo bằng <b>Grok Imagine 1.5 Lite</b> (hình + tiếng + lời thoại khớp miệng), rồi ghép lại với nhạc nền và xuất 1080p. Còn {pendingSeconds}s chưa tạo, ước tính{' '}
-              <b>{usd(pendingCost)}</b>
-              {remaining != null && <> · ngân sách tháng còn <b>{usd(remaining)}</b></>}.
-            </p>
+            {video.shots.length === 0 ? (
+              <p className="rounded-lg border border-warning/40 bg-warning/[0.06] px-3 py-2 text-xs text-fg">
+                Chưa có shot nào — bấm <b>"Lập kế hoạch bằng AI"</b> ở mục 2 (hoặc thêm shot tay rồi <b>Lưu kế hoạch</b>) trước, rồi mới tạo video được.
+              </p>
+            ) : (
+              <p className="text-xs text-fg-muted">
+                Mỗi shot được tạo bằng <b>Grok Imagine 1.5 Lite</b> ở <b>{video.resolution}</b> — tính tiền theo {video.resolution} ({usd(price[video.resolution] ?? perSecond, 3)}/giây)
+                — có hình + tiếng + lời thoại khớp miệng; sau đó ghép với nhạc nền và phóng lên 1080p trên server (miễn phí). Còn {pendingSeconds}s chưa tạo, ước tính{' '}
+                <b>{usd(pendingCost)}</b>
+                {remaining != null && <> · ngân sách tháng còn <b>{usd(remaining)}</b></>}.
+              </p>
+            )}
             <div className="flex flex-wrap gap-2">
               <Button variant="primary" icon={<Sparkles className="h-4 w-4" />} loading={busy === 'generate'} disabled={locked || shots.length === 0} onClick={generate}>
                 {video.shots.some((s) => s.hasClip) ? 'Tạo các clip còn thiếu' : 'Tạo video'}
