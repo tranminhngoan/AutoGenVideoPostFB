@@ -46,13 +46,38 @@ public partial class VastAiGpuBackend
     public async Task<VastAccount> GetAccountAsync(CancellationToken ct = default)
     {
         var apiKey = ApiKey ?? throw new InvalidOperationException("Chưa cấu hình VAST_API_KEY trên server.");
-        using var req = new HttpRequestMessage(HttpMethod.Get, $"{ApiBase}/users/current");
-        req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
-        using var res = await _httpClient.SendAsync(req, ct);
-        var json = await res.Content.ReadAsStringAsync(ct);
-        if (!res.IsSuccessStatusCode)
-            throw new InvalidOperationException($"Vast.ai không trả về số dư (HTTP {(int)res.StatusCode}).");
-        return ParseAccount(json);
+        var status = 0;
+        var error = "";
+        foreach (var path in new[] { "/users/current/", "/users/current" }) // docs show no slash, the CLI's apiurl adds none; try both
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Get, $"{ApiBase}{path}");
+            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+            using var res = await _httpClient.SendAsync(req, ct);
+            var json = await res.Content.ReadAsStringAsync(ct);
+            if (res.IsSuccessStatusCode) return ParseAccount(json);
+            status = (int)res.StatusCode;
+            error = VastErrorText(json);
+        }
+        var hint = status is 401 or 403
+            ? " Khoá API trên Railway có thể chỉ được cấp quyền quản lý máy, không có quyền xem tài khoản/số dư — tạo khoá mới đủ quyền (user/billing read) ở cloud.vast.ai/manage-keys."
+            : "";
+        throw new InvalidOperationException($"Vast.ai không trả về số dư (HTTP {status}{(error.Length > 0 ? ": " + error : "")}).{hint}");
+    }
+
+    /// <summary>Vast's error message ("msg"/"error"), never the raw body (a success body would hold the key/email).</summary>
+    private static string VastErrorText(string json)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var r = doc.RootElement;
+            var msg = Str(r, "msg") ?? Str(r, "detail") ?? Str(r, "error");
+            return msg == null ? "" : Trim(msg);
+        }
+        catch (JsonException)
+        {
+            return "";
+        }
     }
 
     public static VastAccount ParseAccount(string json)
