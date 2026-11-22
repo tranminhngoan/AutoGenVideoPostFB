@@ -243,7 +243,7 @@ export const studio = {
 export const usd = (v: number | null | undefined, digits = 2) => (v == null ? '—' : `$${v.toFixed(digits)}`);
 
 export const STATUS_LABEL: Record<VideoStatus, string> = {
-  Draft: 'Nháp',
+  Draft: 'Chưa lập kế hoạch',
   Planning: 'Đang lập kế hoạch',
   Planned: 'Đã có kế hoạch',
   Generating: 'Đang tạo clip',

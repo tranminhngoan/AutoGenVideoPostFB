@@ -40,7 +40,7 @@ export function estimateScriptSeconds(script: string): { seconds: number; lines:
 export const fmtDuration = (s: number) => (s >= 60 ? `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}` : `${Math.round(s)}s`);
 const RESOLUTIONS: { id: string; label: string }[] = [
   { id: '720p', label: '720p (khuyên dùng)' },
-  { id: '480p', label: '480p (nháp, rẻ nhất)' },
+  { id: '480p', label: '480p (xem thử, rẻ nhất)' },
   { id: '1080p', label: '1080p (model tự upscale từ 720p, đắt gấp ~5)' },
 ];
 /** xAI bills each input image; a clip starting from a picture (asset or previous clip's last frame) pays it once. */
@@ -174,7 +174,7 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
     guarded('save', async () => {
       if (isNew) {
         const v = await studio.createVideo({ ...form, targetDurationSeconds: Math.max(1, scriptEstimate.seconds) });
-        toast.success('Đã tạo video nháp');
+        toast.success('Đã lưu video — bước tiếp theo: bấm "Lập kế hoạch bằng AI" ở mục 2 (chưa tốn tiền tạo clip).');
         navigate(`/studio/videos/${v.id}`);
       } else {
         applyVideo(await studio.updateVideo(videoId!, { ...form, caption, targetDurationSeconds: Math.max(1, scriptEstimate.seconds) }), !shotsDirty);
@@ -378,8 +378,13 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
         </div>
         <div className="flex flex-wrap gap-2">
           <Button variant="primary" icon={<Save className="h-4 w-4" />} loading={busy === 'save'} disabled={locked} onClick={saveDetails}>
-            {isNew ? 'Tạo video nháp' : 'Lưu thông tin'}
+            {isNew ? 'Lưu và sang bước lập kế hoạch' : 'Lưu thông tin'}
           </Button>
+          {isNew && (
+            <span className="self-center text-xs text-fg-muted">
+              Chưa tốn tiền. Các bước: lưu → lập kế hoạch shot (vài xu) → <b>tạo video thật</b> ở mục 3 (tính tiền theo giây) → đăng Page.
+            </span>
+          )}
           {!isNew && (
             <Button variant="danger-soft" icon={<Trash2 className="h-4 w-4" />} loading={busy === 'delete'} disabled={locked} onClick={remove}>
               Xoá video
