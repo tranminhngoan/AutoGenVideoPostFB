@@ -105,6 +105,45 @@ public class StudioMedia
         }
     }
 
+    /// <summary>
+    /// The Page watermark (round brand-kit logo + Page name on a translucent pill) as a transparent PNG at
+    /// <paramref name="outputPng"/>, drawn by Scripts/generate_studio_watermark.py with Pillow.
+    /// </summary>
+    public async Task CreateWatermarkAsync(string pageName, byte[]? logo, string outputPng, CancellationToken ct)
+    {
+        var python = FFmpegRendererService.FindPythonExecutable()
+                     ?? throw new InvalidOperationException("Không tìm thấy Python để vẽ watermark tên Page.");
+        var script = FFmpegRendererService.FindScriptPath("generate_studio_watermark.py")
+                     ?? throw new InvalidOperationException("Thiếu script generate_studio_watermark.py.");
+        var args = $"\"{script}\" --output \"{outputPng}\" --name \"{Quote(pageName)}\"";
+        if (logo is { Length: > 0 })
+        {
+            var logoPath = Path.Combine(Path.GetDirectoryName(outputPng)!, "brand_logo.img");
+            await File.WriteAllBytesAsync(logoPath, logo, ct);
+            args += $" --logo-image \"{logoPath}\"";
+        }
+        var (code, _, err) = await RunAsync(python, args, ct);
+        if (code != 0 || !File.Exists(outputPng)) throw new InvalidOperationException($"Không vẽ được watermark tên Page: {Tail(err)}");
+    }
+
+    /// <summary>
+    /// FFmpeg overlay that moves the watermark every 7 s between top-left, top-right and lower-left — all inside the
+    /// Reels safe zone (clear of Facebook's header, action column and caption) — so it can't be cropped out in one go.
+    /// </summary>
+    public static string WatermarkFilter(string aspectRatio)
+    {
+        var (mx, top, low) = aspectRatio == "16:9" ? ("W*0.04", "H*0.06", "H*0.80") : ("W*0.11", "H*0.085", "H*0.70");
+        const string slot = "mod(floor(t/7),3)";
+        return $"[1:v]format=rgba,colorchannelmixer=aa=0.85[wm];" +
+               $"[0:v][wm]overlay=x='if(eq({slot},1),W-w-{mx},{mx})':y='if(eq({slot},2),{low},{top})':eval=frame,format=yuv420p[v]";
+    }
+
+    private static string Quote(string s) => s.Replace("\\", "\\\\").Replace("\"", "\\\"");
+
+    private static string MetadataArgs(string? brand) => string.IsNullOrWhiteSpace(brand)
+        ? ""
+        : $" -metadata artist=\"{Quote(brand)}\" -metadata copyright=\"© {Quote(brand)}\" -metadata comment=\"Video gốc của Page {Quote(brand)} trên Facebook\"";
+
     public async Task<double> ProbeSecondsAsync(string path, CancellationToken ct)
     {
         var (_, output, _) = await RunAsync(_ffprobe, $"-v error -show_entries format=duration -of csv=p=0 \"{path}\"", ct);
@@ -135,11 +174,14 @@ public class StudioMedia
     /// <summary>
     /// Joins the clips in order (every clip re-encoded to the same size, 30 fps, 48 kHz stereo — a clip without sound
     /// gets silence, so joins never drift) and, when a music file is given, loops it under the whole video at
-    /// <paramref name="musicVolume"/>, ducked while people speak, with a fade in/out. Returns the duration in seconds.
+    /// <paramref name="musicVolume"/>, ducked while people speak, with a fade in/out. With <paramref name="watermarkPng"/>
+    /// the Page watermark is burned in (moving, see <see cref="WatermarkFilter"/>); <paramref name="brand"/> also goes
+    /// into the file's metadata. Returns the duration in seconds.
     /// </summary>
     public async Task<double> ComposeAsync(IReadOnlyList<string> clips, string? music, double musicVolume,
-        string aspectRatio, string resolution, string output, CancellationToken ct)
+        string aspectRatio, string resolution, string output, CancellationToken ct, string? watermarkPng = null, string? brand = null)
     {
+        var meta = MetadataArgs(brand);
         if (clips.Count == 0) throw new InvalidOperationException("Chưa có clip nào để ghép.");
         var (w, h) = FrameSize(aspectRatio, resolution);
         var dir = TempDir();
@@ -166,9 +208,19 @@ public class StudioMedia
             foreach (var p in parts) sb.Append("file '").Append(p.Replace("\\", "/").Replace("'", "'\\''")).Append("'\n");
             await File.WriteAllTextAsync(list, sb.ToString(), new UTF8Encoding(false), ct);
 
-            var joined = music == null ? output : Path.Combine(dir, "joined.mp4");
-            var (jc, _, jerr) = await RunAsync(_ffmpeg, $"-hide_banner -y -f concat -safe 0 -i \"{list}\" -c copy -movflags +faststart \"{joined}\"", ct);
+            var joined = music == null && watermarkPng == null ? output : Path.Combine(dir, "joined.mp4");
+            var (jc, _, jerr) = await RunAsync(_ffmpeg, $"-hide_banner -y -f concat -safe 0 -i \"{list}\" -c copy{meta} -movflags +faststart \"{joined}\"", ct);
             if (jc != 0 || !File.Exists(joined)) throw new InvalidOperationException($"FFmpeg không ghép được các clip: {Tail(jerr)}");
+
+            if (watermarkPng != null)
+            {
+                var marked = music == null ? output : Path.Combine(dir, "marked.mp4");
+                var (wc, _, werr) = await RunAsync(_ffmpeg,
+                    $"-hide_banner -y -i \"{joined}\" -i \"{watermarkPng}\" -filter_complex \"{WatermarkFilter(aspectRatio)}\" " +
+                    $"-map \"[v]\" -map 0:a -c:v libx264 -preset veryfast -crf 18 -c:a copy{meta} -movflags +faststart \"{marked}\"", ct);
+                if (wc != 0 || !File.Exists(marked)) throw new InvalidOperationException($"FFmpeg không gắn được watermark tên Page: {Tail(werr)}");
+                joined = marked;
+            }
 
             var duration = await ProbeSecondsAsync(joined, ct);
             if (music != null)
@@ -183,7 +235,7 @@ public class StudioMedia
                     "[voice][ducked]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[a]";
                 var (mc, _, merr) = await RunAsync(_ffmpeg,
                     $"-hide_banner -y -i \"{joined}\" -stream_loop -1 -i \"{music}\" -filter_complex \"{filter}\" " +
-                    $"-map 0:v -map \"[a]\" -c:v copy -c:a aac -b:a 192k -ar 48000 -t {d} -movflags +faststart \"{output}\"", ct);
+                    $"-map 0:v -map \"[a]\" -c:v copy -c:a aac -b:a 192k -ar 48000 -t {d}{meta} -movflags +faststart \"{output}\"", ct);
                 if (mc != 0 || !File.Exists(output)) throw new InvalidOperationException($"FFmpeg không trộn được nhạc nền: {Tail(merr)}");
                 duration = await ProbeSecondsAsync(output, ct);
             }

@@ -275,7 +275,7 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
           <Clapperboard className="h-4 w-4" /> 1. Thông tin video
         </div>
         <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Page sẽ đăng">
+          <Field label="Page sẽ đăng" hint="Tên Page (và logo trong brand kit) được gắn chìm lên video, tự đổi vị trí mỗi 7 giây để chống reup. Đổi Page sau khi ghép thì video tự ghép lại.">
             <Select value={form.facebookAccountId ?? ''} onChange={(e) => setForm({ ...form, facebookAccountId: e.target.value || null })} disabled={locked}>
               <option value="">— Chọn Page —</option>
               {pages.map((p) => (

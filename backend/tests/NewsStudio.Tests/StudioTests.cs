@@ -257,6 +257,61 @@ public class StudioTests
         }
     }
 
+    [Fact]
+    public async Task Compose_burns_in_the_page_watermark_and_tags_the_file()
+    {
+        var ffmpeg = StudioMedia.LocateFfmpeg();
+        if (ffmpeg == null) return;
+        var dir = StudioMedia.TempDir();
+        try
+        {
+            var media = new StudioMedia(new ConfigurationBuilder().Build());
+            var wm = Path.Combine(dir, "wm.png");
+            try { await media.CreateWatermarkAsync("Miền Tây Quê Tôi", null, wm, CancellationToken.None); }
+            catch (InvalidOperationException ex) when (ex.Message.Contains("Python")) { return; } // no Python here
+            File.Exists(wm).Should().BeTrue();
+
+            async Task<string> Run(string args)
+            {
+                using var p = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(ffmpeg, "-hide_banner -y " + args)
+                    { UseShellExecute = false, RedirectStandardError = true, StandardErrorEncoding = System.Text.Encoding.UTF8 })!;
+                var err = await p.StandardError.ReadToEndAsync();
+                await p.WaitForExitAsync();
+                p.ExitCode.Should().Be(0, err);
+                return err;
+            }
+            var clip = Path.Combine(dir, "black.mp4"); // plain black clip: any bright pixel in a corner is the watermark
+            await Run($"-loglevel error -f lavfi -i color=black:size=720x1280:rate=24 -f lavfi -i sine=f=300 -t 3 -c:v libx264 -pix_fmt yuv420p -c:a aac \"{clip}\"");
+
+            var output = Path.Combine(dir, "final.mp4");
+            await media.ComposeAsync(new[] { clip }, null, 0.15, "9:16", "1080p", output, CancellationToken.None, wm, "Miền Tây Quê Tôi");
+
+            // top-left slot during the first 7 s is brighter than an untouched black area of the same frame
+            async Task<double> Brightness(string crop)
+            {
+                var stats = await Run($"-ss 1 -i \"{output}\" -frames:v 1 -vf \"crop={crop},signalstats,metadata=print\" -f null -");
+                var m = System.Text.RegularExpressions.Regex.Match(stats, @"YAVG=([\d.]+)");
+                m.Success.Should().BeTrue(stats);
+                return double.Parse(m.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture);
+            }
+            (await Brightness("300:60:130:168")).Should().BeGreaterThan(await Brightness("300:60:390:900") + 10);
+
+            var probe = await Run($"-i \"{output}\" -f null -");
+            probe.Should().Contain("Miền Tây Quê Tôi");
+        }
+        finally
+        {
+            StudioMedia.TryDelete(dir);
+        }
+    }
+
+    [Fact]
+    public void Watermark_moves_between_three_safe_spots()
+    {
+        var f = StudioMedia.WatermarkFilter("9:16");
+        f.Should().Contain("mod(floor(t/7),3)").And.Contain("W-w-W*0.11").And.Contain("H*0.70").And.Contain("H*0.085");
+    }
+
     [Theory]
     [InlineData("9:16", "720p", 720, 1280)]
     [InlineData("9:16", "1080p", 1080, 1920)]

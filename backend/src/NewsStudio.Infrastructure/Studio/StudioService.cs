@@ -198,10 +198,21 @@ public class StudioService
 
     public async Task<StudioVideoDto> UpdateVideoAsync(Guid id, StudioVideoInputDto input, CancellationToken ct)
     {
-        var v = await _db.StudioVideos.FirstOrDefaultAsync(x => x.Id == id, ct) ?? throw new KeyNotFoundException("Không tìm thấy video.");
+        var v = await _db.StudioVideos.Include(x => x.Shots).FirstOrDefaultAsync(x => x.Id == id, ct) ?? throw new KeyNotFoundException("Không tìm thấy video.");
         EnsureNotBusy(v);
+        var pageBefore = v.FacebookAccountId;
         Apply(v, input);
+        // the final video carries the Page's name: a different Page means composing it again with the new watermark
+        var rebrand = v.FacebookAccountId != pageBefore && v.FinalBlobId != null && v.Status != "Published";
+        if (rebrand)
+        {
+            if (v.Shots.Count == 0 || v.Shots.Any(s => s.ClipBlobId == null))
+                throw new InvalidOperationException("Video đã ghép với tên Page cũ nhưng các clip đã bị xoá nên không ghép lại được tên Page mới. Hãy giữ Page cũ hoặc tạo video mới.");
+            v.Status = "Composing";
+            v.Progress = "Đổi Page — đang ghép lại video với tên Page mới…";
+        }
         await _db.SaveChangesAsync(ct);
+        if (rebrand) _jobs.Enqueue<StudioService>(s => s.RunComposeAsync(id, CancellationToken.None));
         return await GetVideoAsync(id, ct);
     }
 
@@ -670,9 +681,14 @@ Trả về JSON:
                 }
             }
 
+            // brand = the Page the video is for (moving watermark against re-uploads); same fallback as news videos
+            var (brand, logo) = await BrandAsync(v.FacebookAccountId, ct);
+            var watermark = Path.Combine(dir, "watermark.png");
+            await _media.CreateWatermarkAsync(brand, logo, watermark, ct);
+
             var output = Path.Combine(dir, "final.mp4");
             // delivered at 1080p whatever the clip resolution (Facebook keeps a sharper copy of 1080p uploads)
-            var duration = await _media.ComposeAsync(clips, musicPath, v.MusicVolume, v.AspectRatio, DeliveryResolution, output, ct);
+            var duration = await _media.ComposeAsync(clips, musicPath, v.MusicVolume, v.AspectRatio, DeliveryResolution, output, ct, watermark, brand);
             var bytes = await File.ReadAllBytesAsync(output, ct);
             if (v.FinalBlobId != null) await DeleteBlobAsync(v.FinalBlobId.Value, ct);
             var final = new StudioBlob { MimeType = "video/mp4", Data = bytes, SizeBytes = bytes.Length };
@@ -848,6 +864,18 @@ Trả về JSON:
 
     private async Task<List<StudioAsset>> LoadAssetsAsync(IReadOnlyCollection<Guid> ids, CancellationToken ct) =>
         ids.Count == 0 ? new List<StudioAsset>() : await _db.StudioAssets.AsNoTracking().Where(a => ids.Contains(a.Id)).ToListAsync(ct);
+
+    /// <summary>Page name (fallback Branding:Name, then "Trạm Tin 24/7") and the Page's brand-kit logo, if any.</summary>
+    private async Task<(string Name, byte[]? Logo)> BrandAsync(Guid? pageId, CancellationToken ct)
+    {
+        var name = pageId == null ? null
+            : await _db.FacebookAccounts.AsNoTracking().Where(a => a.Id == pageId).Select(a => a.PageName).FirstOrDefaultAsync(ct);
+        var logo = pageId == null ? null
+            : await _db.AutoPostSettings.AsNoTracking().Where(s => s.FacebookAccountId == pageId).Select(s => s.BrandLogo).FirstOrDefaultAsync(ct);
+        var brand = !string.IsNullOrWhiteSpace(name) ? name.Trim()
+            : _configuration["Branding:Name"] is { Length: > 0 } configured ? configured : "Trạm Tin 24/7";
+        return (brand, logo is { Length: > 0 } ? logo : null);
+    }
 
     private async Task<Dictionary<Guid, string>> PageNamesAsync(CancellationToken ct) =>
         await _db.FacebookAccounts.AsNoTracking().ToDictionaryAsync(a => a.Id, a => a.PageName, ct);
