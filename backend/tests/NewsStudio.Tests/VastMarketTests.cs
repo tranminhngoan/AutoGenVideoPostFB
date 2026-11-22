@@ -27,7 +27,8 @@ public class VastMarketTests
         o.ModelDownloadCostUsd.Should().BeApproximately(2.86, 0.01);     // 0.026 $/GB * 110 GB
         o.MaxDurationDays.Should().BeApproximately(26.6, 0.1);           // seconds -> days
         o.RamGb.Should().Be(126);
-        o.SessionCostUsd.Should().BeApproximately(6.23, 0.01);           // 3 h * 1.1222 + 2.86 download — the ranking key
+        // ranking key: (3 h + 0.26 h downloading 110 GB at 927 Mbps) * 1.1222 + 2.86 download fee
+        o.SessionCostUsd.Should().BeApproximately(6.53, 0.01);
     }
 
     [Fact]

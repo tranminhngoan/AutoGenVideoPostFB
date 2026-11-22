@@ -435,7 +435,7 @@ export function VastRentDrawer({ open, onClose, onRented }: { open: boolean; onC
         ) : (
           <ul className="space-y-2.5">
             <li className="text-xs text-fg-subtle">
-              Top {offers.length} máy. "Một lần dựng" = 3 giờ GPU + tải model ~{modelGb} GB. Giá đã gồm ổ {diskGb} GB.
+              Top {offers.length} máy. "Một lần dựng" = 3 giờ GPU + thời gian tải ~{modelGb} GB model (máy vẫn tính tiền lúc tải) + phí tải của host. Giá đã gồm ổ {diskGb} GB.
             </li>
             {offers.map((o, i) => (
               <li key={o.id} className="rounded-lg border border-line bg-surface p-3 text-xs">

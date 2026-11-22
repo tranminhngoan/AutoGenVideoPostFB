@@ -116,7 +116,7 @@ public partial class VastAiGpuBackend
     /// </summary>
     public static readonly IReadOnlyList<VastRequirement> Requirements = new VastRequirement[]
     {
-        new("gpuRamGb", "VRAM GPU", 80, 96, "GB", "Wan 2.1 14B phải nằm trọn trong VRAM (card 24 GB bị tràn bộ nhớ); LatentSync ~18 GB chạy sau Wan"),
+        new("gpuRamGb", "VRAM GPU", 80, 90, "GB", "Wan 2.1 14B phải nằm trọn trong VRAM (card 24 GB bị tràn bộ nhớ); LatentSync ~18 GB chạy sau Wan"),
         new("diskGb", "Ổ đĩa", 150, 200, "GB", "Model ~110 GB + môi trường + video tạm ≈ 125 GB"),
         new("downloadMbps", "Mạng tải về", 500, 1000, "Mbps", "Mỗi lần thuê phải tải ~110 GB model: 500 Mbps ≈ 30 phút, 1000 Mbps ≈ 15 phút"),
         new("uploadMbps", "Mạng tải lên", 100, 300, "Mbps", "Gửi khung hình và clip về server sau mỗi tập (vài trăm MB)"),
@@ -212,7 +212,8 @@ public partial class VastAiGpuBackend
                 HostId: (long)Num(x, "host_id"),
                 Verification: Str(x, "verification"),
                 DirectPorts: (int)Num(x, "direct_port_count"),
-                SessionCostUsd: Math.Round(Num(x, "dph_total") * SessionHours + downPerGb * ModelDownloadGb, 2)));
+                // GPU time includes the model download (the machine bills while it downloads) + the download fee
+                SessionCostUsd: Math.Round(Num(x, "dph_total") * (SessionHours + DownloadHours(Num(x, "inet_down"))) + downPerGb * ModelDownloadGb, 2)));
         }
         return list;
     }
@@ -384,6 +385,9 @@ public partial class VastAiGpuBackend
         _cachedDiscoveredUrl = null;
         _logger.LogInformation("Destroyed Vast.ai instance {Id}", instanceId);
     }
+
+    /// <summary>Hours to download the models at the host's advertised speed (real Hugging Face speed may be lower).</summary>
+    public static double DownloadHours(double downloadMbps) => downloadMbps > 0 ? ModelDownloadGb * 8000 / downloadMbps / 3600 : 1;
 
     private static bool ContainsInstance(JsonElement instances, string id) =>
         instances.EnumerateArray().Any(i => i.TryGetProperty("id", out var v) && string.Equals(v.ToString(), id, StringComparison.OrdinalIgnoreCase));
