@@ -61,7 +61,7 @@ export function CostPanel({ onAuthError }: { onAuthError: (e: unknown) => boolea
           <div className="mt-1 text-xl font-semibold text-fg">{usd(costs.allTimeSpentUsd)}</div>
         </Card>
         <Card className="p-3">
-          <div className="text-xs text-fg-muted">Giá Omni / giây video</div>
+          <div className="text-xs text-fg-muted">Giá Grok Imagine Lite / giây</div>
           <div className="mt-1 space-y-0.5 text-[12px] text-fg">
             {Object.entries(costs.pricePerSecondUsd).map(([r, p]) => (
               <div key={r} className="flex justify-between">
@@ -79,7 +79,7 @@ export function CostPanel({ onAuthError }: { onAuthError: (e: unknown) => boolea
         <div className="text-sm font-semibold text-fg">Trần ngân sách tháng cho Studio</div>
         <p className="text-xs text-fg-muted">
           Trước mỗi bước tốn tiền (lập kế hoạch, tạo clip), hệ thống kiểm tra trần này; vượt trần thì dừng và báo, không tự trừ tiếp. Đặt 0 nếu không
-          muốn giới hạn. Gemini tính tiền vào thẻ/tài khoản Google Cloud gắn với khoá API.
+          muốn giới hạn. Tiền tạo clip trừ vào số dư tài khoản xAI (console.x.ai); lập kế hoạch dùng Gemini. Ước tính có cộng phí ~$0.01 mỗi ảnh mở đầu.
         </p>
         <div className="flex max-w-sm items-end gap-2">
           <Field label="USD / tháng" className="flex-1">

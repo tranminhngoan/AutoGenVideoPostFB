@@ -3,7 +3,7 @@ using NewsStudio.Domain.Common;
 namespace NewsStudio.Domain.Entities;
 
 /// <summary>
-/// Binary content of the Omni Studio (reference images, music, generated clips, final videos). Kept in the database
+/// Binary content of the AI video studio (reference images, music, generated clips, final videos). Kept in the database
 /// because the hosting disk is wiped on every deploy; rows are loaded only when the bytes are actually needed.
 /// </summary>
 public class StudioBlob : BaseEntity
@@ -37,7 +37,7 @@ public class StudioMusicTrack : BaseEntity
     public DateTime? LastUsedAtUtc { get; set; }
 }
 
-/// <summary>One video to be generated with Gemini Omni and posted to a Facebook Page.</summary>
+/// <summary>One video to be generated with Grok Imagine and posted to a Facebook Page.</summary>
 public class StudioVideo : BaseEntity
 {
     public string Title { get; set; } = string.Empty;
@@ -69,7 +69,7 @@ public class StudioVideo : BaseEntity
     public ICollection<StudioShot> Shots { get; set; } = new List<StudioShot>();
 }
 
-/// <summary>One Omni clip (3–15 s) of a video.</summary>
+/// <summary>One generated clip (1–15 s) of a video.</summary>
 public class StudioShot : BaseEntity
 {
     public Guid StudioVideoId { get; set; }
@@ -82,6 +82,8 @@ public class StudioShot : BaseEntity
     public string? Dialogue { get; set; }
     public string? Sound { get; set; }
     public string AssetIdsJson { get; set; } = "[]";
+    /// <summary>Start from the last frame of the previous shot's clip (continuous take) instead of the first asset image.</summary>
+    public bool ContinueFromPrevious { get; set; }
 
     public string Status { get; set; } = "Pending"; // Pending, Generating, Done, Failed
     public Guid? ClipBlobId { get; set; }

@@ -95,8 +95,8 @@ public class ApiIntegrationTests : IClassFixture<WebApplicationFactory<Program>>
         fb.TryGetProperty("pageAccessToken", out _).Should().BeFalse(); // No token exposed!
     }
 
-    // ───────────── Omni Studio guard ─────────────
-    // No login exists, so anything that spends money or writes data needs X-Studio-Key = the server's paid Gemini key.
+    // ───────────── AI video studio guard ─────────────
+    // No login exists, so anything that spends money or writes data needs X-Studio-Key = the server's xAI / paid Gemini key.
     // The key is set on this shared host only for the test (a second test host would re-freeze Serilog's logger).
 
     private const string StudioKey = "test-gemini-paid-key";
@@ -160,13 +160,15 @@ public class ApiIntegrationTests : IClassFixture<WebApplicationFactory<Program>>
         var id = JsonDocument.Parse(await created.Content.ReadAsStringAsync()).RootElement.GetProperty("id").GetString();
 
         var saved = await _client.SendAsync(StudioRequest("PUT", $"/api/studio/videos/{id}/shots",
-            "[{\"durationSeconds\":8,\"action\":\"He waves\",\"camera\":\"medium shot\",\"speaker\":\"Anh Hai\",\"dialogue\":\"Ê Út Tèo!\",\"assetIds\":[]}," +
-            "{\"durationSeconds\":40,\"action\":\"Fish grilling\",\"camera\":\"close-up\",\"assetIds\":[]}]", StudioKey));
+            "[{\"durationSeconds\":8,\"action\":\"He waves\",\"camera\":\"medium shot\",\"speaker\":\"Anh Hai\",\"dialogue\":\"Ê Út Tèo!\",\"assetIds\":[],\"continueFromPrevious\":true}," +
+            "{\"durationSeconds\":40,\"action\":\"Fish grilling\",\"camera\":\"close-up\",\"assetIds\":[],\"continueFromPrevious\":true}]", StudioKey));
         saved.StatusCode.Should().Be(HttpStatusCode.OK);
         var video = JsonDocument.Parse(await saved.Content.ReadAsStringAsync()).RootElement;
         var shots = video.GetProperty("shots").EnumerateArray().ToList();
         shots.Should().HaveCount(2);
-        shots[1].GetProperty("durationSeconds").GetInt32().Should().Be(15); // clamped to Omni's max
+        shots[1].GetProperty("durationSeconds").GetInt32().Should().Be(15); // clamped to the model's max
+        shots[0].GetProperty("continueFromPrevious").GetBoolean().Should().BeFalse(); // the first shot has nothing to continue
+        shots[1].GetProperty("continueFromPrevious").GetBoolean().Should().BeTrue();
         video.GetProperty("status").GetString().Should().Be("Planned");
 
         // edit the first shot (by id), drop the second, add a new one

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   ArrowDown, ArrowUp, Clapperboard, Download, Film, Plus, RefreshCw, Save, Send, Sparkles, Trash2, Wand2,
 } from 'lucide-react';
-import { Badge, Button, Card, Field, Input, Select, Skeleton, Textarea, cn } from '../ui';
+import { Badge, Button, Card, Checkbox, Field, Input, Select, Skeleton, Textarea, cn } from '../ui';
 import { useConfirm, useToast } from '../feedback';
 import {
   BUSY, STATUS_LABEL, StudioAsset, StudioMusic, StudioPage, StudioShot, StudioShotInput, StudioVideo, StudioVideoInput, studio, usd,
@@ -13,10 +13,13 @@ import { AssetPicker } from './AssetLibrary';
 const DURATION_PRESETS = [15, 30, 45, 60, 90, 120];
 const RESOLUTIONS: { id: string; label: string }[] = [
   { id: '720p', label: '720p (khuyên dùng)' },
-  { id: '1080p', label: '1080p (upscale, đắt hơn ~50%)' },
-  { id: '360p', label: '360p (nháp, rẻ)' },
-  { id: '4k', label: '4K (upscale, đắt gấp 3)' },
+  { id: '480p', label: '480p (nháp, rẻ nhất)' },
+  { id: '1080p', label: '1080p (model tự upscale từ 720p, đắt gấp ~5)' },
 ];
+/** xAI bills each input image; a clip starting from a picture (asset or previous clip's last frame) pays it once. */
+const IMAGE_FEE = 0.01;
+const clampSecs = (n: number) => Math.min(15, Math.max(1, n || 0));
+const usesFrame = (s: { assetIds: string[]; continueFromPrevious?: boolean }) => !!s.continueFromPrevious || s.assetIds.length > 0;
 
 function statusTone(s: string): 'success' | 'warning' | 'danger' | 'info' | 'neutral' {
   if (s === 'Published' || s === 'Ready' || s === 'Done') return 'success';
@@ -28,7 +31,7 @@ function statusTone(s: string): 'success' | 'warning' | 'danger' | 'info' | 'neu
 
 const toInput = (s: StudioShot): StudioShotInput => ({
   id: s.id, durationSeconds: s.durationSeconds, action: s.action, camera: s.camera, speaker: s.speaker ?? '', dialogue: s.dialogue ?? '',
-  sound: s.sound ?? '', assetIds: s.assetIds,
+  sound: s.sound ?? '', assetIds: s.assetIds, continueFromPrevious: s.continueFromPrevious,
 });
 
 /** Create or work on one video: details → shot plan → clips → final video → Facebook. */
@@ -117,10 +120,14 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [video?.status]);
 
-  const perSecond = price[form.resolution ?? '720p'] ?? 0.07;
-  const shotSeconds = shots.reduce((s, x) => s + Math.min(15, Math.max(3, x.durationSeconds || 0)), 0);
-  const estimate = shotSeconds * perSecond;
-  const pendingSeconds = (video?.shots ?? []).filter((s) => !s.hasClip || s.status !== 'Done').reduce((s, x) => s + Math.min(15, Math.max(3, x.durationSeconds)), 0);
+  const perSecond = price[form.resolution ?? '720p'] ?? 0.03;
+  const shotCost = (x: { durationSeconds: number; assetIds: string[]; continueFromPrevious?: boolean }, rate = perSecond) =>
+    clampSecs(x.durationSeconds) * rate + (usesFrame(x) ? IMAGE_FEE : 0);
+  const shotSeconds = shots.reduce((s, x) => s + clampSecs(x.durationSeconds), 0);
+  const estimate = shots.reduce((s, x) => s + shotCost(x), 0);
+  const pendingShots = (video?.shots ?? []).filter((s) => !s.hasClip || s.status !== 'Done');
+  const pendingSeconds = pendingShots.reduce((s, x) => s + clampSecs(x.durationSeconds), 0);
+  const pendingCost = pendingShots.reduce((s, x) => s + shotCost(x), 0);
   const assetById = useMemo(() => new Map(assets.map((a) => [a.id, a])), [assets]);
 
   // ── actions ──
@@ -169,11 +176,12 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
     guarded('generate', async () => {
       if (shotsDirty) applyVideo(await studio.saveShots(videoId!, shots), true);
       const fresh = await studio.video(videoId!);
-      const secs = fresh.shots.filter((s) => !s.hasClip || s.status !== 'Done').reduce((s, x) => s + Math.min(15, Math.max(3, x.durationSeconds)), 0);
-      const cost = secs * (price[fresh.resolution] ?? perSecond);
+      const todo = fresh.shots.filter((s) => !s.hasClip || s.status !== 'Done');
+      const secs = todo.reduce((s, x) => s + clampSecs(x.durationSeconds), 0);
+      const cost = todo.reduce((s, x) => s + shotCost(x, price[fresh.resolution] ?? perSecond), 0);
       if (!(await confirm({
-        title: `Tạo ${fresh.shots.filter((s) => !s.hasClip || s.status !== 'Done').length} clip bằng Gemini Omni?`,
-        description: `Khoảng ${secs} giây video ở ${fresh.resolution}, ước tính ${usd(cost)} (Google tính theo giây). Clip đã tạo xong sẽ không tạo lại. Mỗi clip mất vài phút; trang tự cập nhật.`,
+        title: `Tạo ${todo.length} clip bằng Grok Imagine?`,
+        description: `Khoảng ${secs} giây video ở ${fresh.resolution}, ước tính ${usd(cost)} (xAI tính theo giây). Các clip được tạo lần lượt — shot "nối tiếp" lấy khung cuối của clip trước. Clip đã có sẽ không tạo lại. Mỗi clip mất vài phút; trang tự cập nhật.`,
         confirmLabel: `Tạo (~${usd(cost)})`,
       }))) return;
       applyVideo(await studio.generate(videoId!), true);
@@ -182,8 +190,10 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
   const regenerateShot = (s: StudioShotInput) =>
     guarded('shot-' + s.id, async () => {
       if (shotsDirty) applyVideo(await studio.saveShots(videoId!, shots), true);
-      const cost = Math.min(15, Math.max(3, s.durationSeconds)) * perSecond;
-      if (!(await confirm({ title: 'Tạo lại clip này?', description: `Khoảng ${usd(cost)}. Clip cũ bị thay; sau đó video được ghép lại.`, confirmLabel: 'Tạo lại' }))) return;
+      const cost = shotCost(s);
+      const next = shots[shots.findIndex((x) => x.id === s.id) + 1];
+      const warn = next?.continueFromPrevious ? ' Shot kế tiếp đang nối tiếp từ clip này — nên tạo lại cả shot đó để khớp hình.' : '';
+      if (!(await confirm({ title: 'Tạo lại clip này?', description: `Khoảng ${usd(cost)}. Clip cũ bị thay; sau đó video được ghép lại.${warn}`, confirmLabel: 'Tạo lại' }))) return;
       applyVideo(await studio.generateShot(videoId!, s.id!), true);
     });
 
@@ -230,7 +240,7 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
     setShotsDirty(true);
   };
   const addShot = () => {
-    setShots((list) => [...list, { durationSeconds: 8, action: '', camera: 'medium shot, static', speaker: '', dialogue: '', sound: '', assetIds: [] }]);
+    setShots((list) => [...list, { durationSeconds: 8, action: '', camera: 'medium shot, static', speaker: '', dialogue: '', sound: '', assetIds: [], continueFromPrevious: false }]);
     setShotsDirty(true);
   };
   const removeShot = (i: number) => {
@@ -300,7 +310,7 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
               <option value="16:9">Ngang 16:9</option>
             </Select>
           </Field>
-          <Field label="Độ phân giải" hint={`${usd(perSecond, 3)}/giây · ${form.targetDurationSeconds}s ≈ ${usd((form.targetDurationSeconds ?? 0) * perSecond)}`}>
+          <Field label="Độ phân giải clip" hint={`${usd(perSecond, 3)}/giây · ${form.targetDurationSeconds}s ≈ ${usd((form.targetDurationSeconds ?? 0) * perSecond)} · video cuối luôn xuất 1080p`}>
             <Select value={form.resolution} onChange={(e) => setForm({ ...form, resolution: e.target.value })} disabled={locked}>
               {RESOLUTIONS.map((r) => (
                 <option key={r.id} value={r.id}>{r.label}</option>
@@ -311,7 +321,7 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
         <Field label="Phong cách / ghi chú cho đạo diễn AI" optional hint="vd: giọng miền Tây, nắng chiều vàng, hài hước, máy quay cầm tay nhẹ">
           <Input value={form.styleNotes} onChange={(e) => setForm({ ...form, styleNotes: e.target.value })} disabled={locked} />
         </Field>
-        <Field label="Ảnh nhân vật & bối cảnh dùng trong video" hint="Chọn những ảnh trong kho sẽ xuất hiện; AI gán ảnh vào từng shot.">
+        <Field label="Ảnh nhân vật & bối cảnh dùng trong video" hint="Chọn những ảnh trong kho sẽ xuất hiện; AI chọn ảnh mở đầu cho từng shot. Ảnh có sẵn nhân vật đứng trong bối cảnh cho kết quả giống mặt nhất.">
           <AssetPicker assets={assets} value={form.assetIds ?? []} onChange={(ids) => setForm({ ...form, assetIds: ids })} />
         </Field>
         <div className="grid gap-3 sm:grid-cols-3">
@@ -396,8 +406,8 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
                       <div className="grid gap-3 lg:grid-cols-[1fr_200px]">
                         <div className="space-y-2">
                           <div className="grid gap-2 sm:grid-cols-[90px_1fr_2fr]">
-                            <Field label="Giây (3–15)">
-                              <Input type="number" min={3} max={15} value={s.durationSeconds} disabled={locked}
+                            <Field label="Giây (1–15)">
+                              <Input type="number" min={1} max={15} value={s.durationSeconds} disabled={locked}
                                 onChange={(e) => updateShot(i, { durationSeconds: Number(e.target.value) || 8 })} />
                             </Field>
                             <Field label="Người nói">
@@ -407,7 +417,7 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
                               <Input value={s.dialogue ?? ''} disabled={locked} onChange={(e) => updateShot(i, { dialogue: e.target.value })} />
                             </Field>
                           </div>
-                          <Field label="Hành động (tiếng Anh cho Omni hiểu tốt nhất)">
+                          <Field label="Hành động (tiếng Anh để model hiểu tốt nhất)">
                             <Textarea rows={2} value={s.action} disabled={locked} onChange={(e) => updateShot(i, { action: e.target.value })} />
                           </Field>
                           <div className="grid gap-2 sm:grid-cols-2">
@@ -418,10 +428,18 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
                               <Input value={s.sound ?? ''} disabled={locked} onChange={(e) => updateShot(i, { sound: e.target.value })} />
                             </Field>
                           </div>
-                          <Field label="Ảnh trong shot (tối đa 6)">
+                          {i > 0 && (
+                            <Checkbox checked={!!s.continueFromPrevious} disabled={locked} onChange={(c) => updateShot(i, { continueFromPrevious: c })}
+                              label="Nối tiếp từ khung cuối của shot trước"
+                              description="Cùng cảnh, cùng người: clip bắt đầu đúng chỗ clip trước dừng nên mặt nhân vật liền mạch. Bỏ chọn khi đổi góc máy / đổi cảnh." />
+                          )}
+                          <Field label={s.continueFromPrevious && i > 0 ? 'Ảnh mô tả (không dùng làm khung mở đầu vì đang nối tiếp)' : 'Ảnh mở đầu (ảnh chọn đầu tiên = khung hình đầu của clip; tối đa 3)'}>
                             <AssetPicker compact assets={assets.filter((a) => (form.assetIds ?? []).includes(a.id) || s.assetIds.includes(a.id))}
-                              value={s.assetIds} onChange={(ids) => updateShot(i, { assetIds: ids.slice(0, 6) })} />
+                              value={s.assetIds} onChange={(ids) => updateShot(i, { assetIds: ids.slice(0, 3) })} />
                           </Field>
+                          {!(s.continueFromPrevious && i > 0) && s.assetIds[0] && assetById.has(s.assetIds[0]) && (
+                            <p className="text-[11px] text-fg-muted">Khung mở đầu: <b>{assetById.get(s.assetIds[0])!.name}</b></p>
+                          )}
                           {s.assetIds.some((id) => !assetById.has(id)) && <p className="text-[11px] text-warning">Một ảnh của shot đã bị xoá khỏi kho.</p>}
                         </div>
                         <div>
@@ -457,8 +475,8 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
               <Film className="h-4 w-4" /> 3. Tạo video
             </div>
             <p className="text-xs text-fg-muted">
-              Mỗi shot được tạo bằng <b>Gemini Omni</b> (hình + tiếng + lời thoại), rồi ghép lại với nhạc nền. Còn {pendingSeconds}s chưa tạo, ước tính{' '}
-              <b>{usd(pendingSeconds * perSecond)}</b>
+              Mỗi shot được tạo bằng <b>Grok Imagine 1.5 Lite</b> (hình + tiếng + lời thoại khớp miệng), rồi ghép lại với nhạc nền và xuất 1080p. Còn {pendingSeconds}s chưa tạo, ước tính{' '}
+              <b>{usd(pendingCost)}</b>
               {remaining != null && <> · ngân sách tháng còn <b>{usd(remaining)}</b></>}.
             </p>
             <div className="flex flex-wrap gap-2">

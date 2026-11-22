@@ -6,7 +6,7 @@ public static class StudioRegistration
 {
     public static IServiceCollection AddStudioServices(this IServiceCollection services)
     {
-        services.AddHttpClient<GeminiOmniClient>(c => c.Timeout = TimeSpan.FromMinutes(15));
+        services.AddHttpClient<GrokVideoClient>(c => c.Timeout = TimeSpan.FromMinutes(5));
         services.AddSingleton<StudioMedia>();
         services.AddScoped<StudioService>();
         return services;

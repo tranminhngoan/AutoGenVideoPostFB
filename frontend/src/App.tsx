@@ -24,7 +24,7 @@ const TITLES: Record<string, string> = {
   articles: 'Bài báo',
   activity: 'Hoạt động',
   settings: 'Cài đặt',
-  studio: 'Omni Studio',
+  studio: 'Studio Video AI',
 };
 
 export function App() {
@@ -73,7 +73,7 @@ export function App() {
 
   useEffect(() => {
     const base = second && first === 'videos' ? 'Chi tiết video' : TITLES[active];
-    // (Omni Studio sets its own sub-page titles)
+    // (the video studio sets its own sub-page titles)
     document.title = base ? `${base} · Trạm Tin 24/7` : 'Trạm Tin 24/7';
   }, [active, first, second]);
 

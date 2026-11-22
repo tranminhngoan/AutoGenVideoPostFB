@@ -83,11 +83,11 @@ export function AssetLibrary({ onAuthError }: { onAuthError: (e: unknown) => boo
     <div className="space-y-5">
       <Card className="space-y-3 p-4">
         <div className="flex items-center gap-2 text-sm font-semibold text-fg">
-          <ImagePlus className="h-4 w-4" /> Thêm ảnh tham chiếu
+          <ImagePlus className="h-4 w-4" /> Thêm ảnh nhân vật / bối cảnh
         </div>
         <p className="text-xs text-fg-muted">
-          Omni dùng ảnh này để giữ đúng mặt nhân vật và bối cảnh trong mọi cảnh (tối đa 6 ảnh mỗi clip). Ảnh càng rõ và mô tả càng cụ thể thì video
-          càng giống. Ảnh có thể là ảnh AI anh tự tạo.
+          Mỗi clip bắt đầu từ <b>1 ảnh</b> rồi chuyển động tiếp, nên ảnh tốt nhất là ảnh có sẵn nhân vật đứng trong bối cảnh (vd: anh Hai ngồi
+          bên bếp than trước hàng ba), dọc 9:16 hoặc đủ rộng để cắt dọc. Ảnh AI anh tự tạo đều dùng được. Mô tả càng cụ thể thì video càng đúng.
         </p>
         <div className="grid gap-3 sm:grid-cols-[1fr_1fr_160px]">
           <Field label="Ảnh">
@@ -123,7 +123,7 @@ export function AssetLibrary({ onAuthError }: { onAuthError: (e: unknown) => boo
       {assets === null ? (
         <Skeleton className="h-40 w-full" />
       ) : shown.length === 0 ? (
-        <EmptyState title="Chưa có ảnh nào" description="Tải ảnh nhân vật và bối cảnh lên để Omni dựa vào đó dựng video." />
+        <EmptyState title="Chưa có ảnh nào" description="Tải ảnh nhân vật và bối cảnh lên để AI dựa vào đó dựng video." />
       ) : (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
           {shown.map((a) => (
@@ -148,7 +148,7 @@ export function AssetLibrary({ onAuthError }: { onAuthError: (e: unknown) => boo
       <Modal
         open={!!editing}
         onClose={() => setEditing(null)}
-        title="Sửa ảnh tham chiếu"
+        title="Sửa ảnh"
         footer={
           <>
             <Button variant="ghost" onClick={() => setEditing(null)}>Huỷ</Button>

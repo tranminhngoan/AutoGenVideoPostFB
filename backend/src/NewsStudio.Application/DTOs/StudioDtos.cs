@@ -32,6 +32,7 @@ public class StudioShotDto
     public string? Dialogue { get; set; }
     public string? Sound { get; set; }
     public List<Guid> AssetIds { get; set; } = new();
+    public bool ContinueFromPrevious { get; set; }
     public string Status { get; set; } = "Pending";
     public bool HasClip { get; set; }
     public decimal CostUsd { get; set; }
@@ -103,6 +104,7 @@ public class StudioShotInputDto
     public string? Dialogue { get; set; }
     public string? Sound { get; set; }
     public List<Guid> AssetIds { get; set; } = new();
+    public bool ContinueFromPrevious { get; set; }
 }
 
 public class StudioCostSummaryDto
@@ -139,6 +141,6 @@ public class StudioCostRecordDto
 public class StudioSettingsDto
 {
     public decimal MonthlyBudgetUsd { get; set; }
-    public bool OmniConfigured { get; set; }
+    public bool VideoConfigured { get; set; }
     public string VideoModel { get; set; } = string.Empty;
 }

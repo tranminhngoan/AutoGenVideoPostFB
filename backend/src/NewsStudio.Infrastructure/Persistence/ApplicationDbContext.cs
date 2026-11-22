@@ -575,7 +575,7 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
                   .OnDelete(DeleteBehavior.Cascade);
         });
 
-        // ───────── Omni Studio ─────────
+        // ───────── AI video studio ─────────
         modelBuilder.Entity<StudioBlob>(entity =>
         {
             entity.ToTable("StudioBlobs");

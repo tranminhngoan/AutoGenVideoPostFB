@@ -1,4 +1,4 @@
-/* Omni Studio API client. Writes need the X-Studio-Key header (the server's paid Gemini key), asked once and kept
+/* AI video studio API client (Grok Imagine). Writes need the X-Studio-Key header (the server's xAI or Gemini key), asked once and kept
    only in this browser's localStorage. Media URLs (images, music, clips, final video) need no key. */
 
 const BASE = '/api/studio';
@@ -89,6 +89,7 @@ export interface StudioShot {
   dialogue?: string | null;
   sound?: string | null;
   assetIds: string[];
+  continueFromPrevious: boolean;
   status: 'Pending' | 'Generating' | 'Done' | 'Failed';
   hasClip: boolean;
   costUsd: number;
@@ -116,7 +117,7 @@ export interface StudioVideoSummary {
 export interface StudioVideo extends StudioVideoSummary {
   script: string;
   aspectRatio: '9:16' | '16:9';
-  resolution: '360p' | '720p' | '1080p' | '4k';
+  resolution: '480p' | '720p' | '1080p';
   styleNotes?: string | null;
   assetIds: string[];
   musicMode: 'Auto' | 'Manual' | 'None';
@@ -155,6 +156,7 @@ export interface StudioShotInput {
   dialogue?: string | null;
   sound?: string | null;
   assetIds: string[];
+  continueFromPrevious?: boolean;
 }
 
 export interface StudioCosts {
@@ -170,7 +172,7 @@ export interface StudioCosts {
 
 export interface StudioSettings {
   monthlyBudgetUsd: number;
-  omniConfigured: boolean;
+  videoConfigured: boolean;
   videoModel: string;
 }
 

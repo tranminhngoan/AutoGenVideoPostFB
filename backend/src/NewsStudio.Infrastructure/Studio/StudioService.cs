@@ -14,18 +14,20 @@ using NewsStudio.Infrastructure.FilmFactory;
 namespace NewsStudio.Infrastructure.Studio;
 
 /// <summary>
-/// Omni Studio: script → shot plan (Gemini text) → one Gemini Omni clip per shot → joined with music → posted to a
-/// Facebook Page. Every paid call is recorded in StudioCostRecords and checked against the monthly studio budget
+/// AI video studio: script → shot plan (Gemini text) → one Grok Imagine clip per shot (each starting from an asset
+/// image or the previous clip's last frame) → joined with music and upscaled to 1080p → posted to a Facebook Page. Every paid call is recorded in StudioCostRecords and checked against the monthly studio budget
 /// before it is made. Files live in StudioBlobs (the host disk is wiped on deploy).
 /// </summary>
 public class StudioService
 {
     public const string BudgetKey = "Studio.MonthlyBudgetUsd";
+    public const string DeliveryResolution = "1080p";
+    public const int MaxShotAssets = 3;
     private const int MaxAttemptsPerRun = 2;
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
     private readonly IApplicationDbContext _db;
-    private readonly GeminiOmniClient _omni;
+    private readonly GrokVideoClient _video;
     private readonly FilmGeminiClient _gemini;
     private readonly StudioMedia _media;
     private readonly IFacebookPublishingService _facebook;
@@ -33,11 +35,11 @@ public class StudioService
     private readonly IConfiguration _configuration;
     private readonly ILogger<StudioService> _logger;
 
-    public StudioService(IApplicationDbContext db, GeminiOmniClient omni, FilmGeminiClient gemini, StudioMedia media,
+    public StudioService(IApplicationDbContext db, GrokVideoClient video, FilmGeminiClient gemini, StudioMedia media,
         IFacebookPublishingService facebook, IBackgroundJobClient jobs, IConfiguration configuration, ILogger<StudioService> logger)
     {
         _db = db;
-        _omni = omni;
+        _video = video;
         _gemini = gemini;
         _media = media;
         _facebook = facebook;
@@ -169,13 +171,13 @@ public class StudioService
         dto.FinalDurationSeconds = v.FinalDurationSeconds;
         dto.ErrorMessage = v.ErrorMessage;
         dto.PublishedPostId = v.PublishedPostId;
-        var price = _omni.PricePerSecond(v.Resolution);
         dto.Shots = v.Shots.OrderBy(s => s.Index).Select(s => new StudioShotDto
         {
             Id = s.Id, Index = s.Index, DurationSeconds = s.DurationSeconds, Action = s.Action, Camera = s.Camera,
-            Speaker = s.Speaker, Dialogue = s.Dialogue, Sound = s.Sound, AssetIds = Ids(s.AssetIdsJson), Status = s.Status,
+            Speaker = s.Speaker, Dialogue = s.Dialogue, Sound = s.Sound, AssetIds = Ids(s.AssetIdsJson),
+            ContinueFromPrevious = s.ContinueFromPrevious, Status = s.Status,
             HasClip = s.ClipBlobId != null, CostUsd = s.CostUsd, Attempts = s.Attempts, ErrorMessage = s.ErrorMessage,
-            EstimatedCostUsd = Math.Round(GeminiOmniClient.ClampSeconds(s.DurationSeconds) * price, 4)
+            EstimatedCostUsd = ShotCost(v, s)
         }).ToList();
         return dto;
     }
@@ -220,7 +222,7 @@ public class StudioService
         if (i.Script != null) v.Script = i.Script.Trim();
         if (i.TargetDurationSeconds != null) v.TargetDurationSeconds = Math.Clamp(i.TargetDurationSeconds.Value, 5, 600);
         if (i.AspectRatio != null) v.AspectRatio = i.AspectRatio == "16:9" ? "16:9" : "9:16";
-        if (i.Resolution != null) v.Resolution = i.Resolution is "360p" or "720p" or "1080p" or "4k" ? i.Resolution : "720p";
+        if (i.Resolution != null) v.Resolution = GrokVideoClient.NormalizeResolution(i.Resolution);
         if (i.StyleNotes != null) v.StyleNotes = i.StyleNotes.Trim();
         if (i.AssetIds != null) v.AssetIdsJson = JsonSerializer.Serialize(i.AssetIds.Distinct());
         if (i.MusicMode != null) v.MusicMode = i.MusicMode is "Manual" or "None" ? i.MusicMode : "Auto";
@@ -231,7 +233,7 @@ public class StudioService
 
     // ═══════════════════════════════ Planning ═══════════════════════════════
 
-    /// <summary>Asks Gemini to cut the script into Omni-sized shots (replaces the current shot list).</summary>
+    /// <summary>Asks Gemini to cut the script into clip-sized shots (replaces the current shot list).</summary>
     public async Task<StudioVideoDto> PlanAsync(Guid id, CancellationToken ct)
     {
         var v = await _db.StudioVideos.Include(x => x.Shots).FirstOrDefaultAsync(x => x.Id == id, ct) ?? throw new KeyNotFoundException("Không tìm thấy video.");
@@ -261,7 +263,8 @@ public class StudioService
                 // would make EF treat it as an existing row (UPDATE → "expected to affect 1 row").
                 _db.StudioShots.Add(new StudioShot
                 {
-                    StudioVideoId = v.Id, Index = index++, DurationSeconds = GeminiOmniClient.ClampSeconds(s.Duration),
+                    StudioVideoId = v.Id, ContinueFromPrevious = index > 1 && s.ContinueFromPrevious,
+                    Index = index++, DurationSeconds = GrokVideoClient.ClampSeconds(s.Duration),
                     Action = s.Action, Camera = s.Camera, Speaker = NullIfEmpty(s.Speaker), Dialogue = NullIfEmpty(s.Dialogue),
                     Sound = NullIfEmpty(s.Sound), AssetIdsJson = JsonSerializer.Serialize(s.AssetIds)
                 });
@@ -292,38 +295,47 @@ public class StudioService
     public static (string System, string User) BuildPlanPrompt(StudioVideo v, IReadOnlyList<StudioAsset> assets, IReadOnlyList<StudioMusicTrack> music)
     {
         var system =
-            "Bạn là đạo diễn phim ngắn người thật cho mạng xã hội. Bạn chia kịch bản thành các shot để model video Gemini Omni tạo " +
-            "(mỗi shot là 1 clip 3–15 giây có cả hình, tiếng động và lời thoại). Chỉ trả về JSON hợp lệ.";
+            "Bạn là đạo diễn phim ngắn người thật cho mạng xã hội. Bạn chia kịch bản thành các shot để model video Grok Imagine tạo " +
+            "(mỗi shot là 1 clip 2–15 giây có cả hình, tiếng động và lời thoại khớp miệng, bắt đầu từ 1 ảnh mở đầu). Chỉ trả về JSON hợp lệ.";
         var sb = new StringBuilder();
         sb.AppendLine($"KỊCH BẢN (giữ nguyên lời thoại):\n{v.Script}\n");
         sb.AppendLine($"Thời lượng mục tiêu: khoảng {v.TargetDurationSeconds} giây. Khung hình {(v.AspectRatio == "16:9" ? "ngang 16:9" : "dọc 9:16")}.");
         if (!string.IsNullOrWhiteSpace(v.StyleNotes)) sb.AppendLine($"Phong cách / ghi chú của người dùng: {v.StyleNotes}");
-        sb.AppendLine("\nẢNH THAM CHIẾU CÓ SẴN (chỉ dùng các id này):");
+        sb.AppendLine("\nẢNH CÓ SẴN (chỉ dùng các id này):");
         if (assets.Count == 0) sb.AppendLine("- (không có — mô tả nhân vật và bối cảnh thật chi tiết, nhất quán trong mọi shot)");
         foreach (var a in assets) sb.AppendLine($"- id={a.Id} | {a.Kind} | {a.Name} | {a.Description}");
         sb.AppendLine("\nKHO NHẠC NỀN (chọn 1 bài hợp không khí, hoặc null):");
         if (music.Count == 0) sb.AppendLine("- (trống)");
         foreach (var m in music) sb.AppendLine($"- id={m.Id} | {m.Name} | tâm trạng: {m.Mood} | {m.DurationSeconds:0}s");
         sb.AppendLine(@"
+CÁCH MODEL VIDEO HOẠT ĐỘNG:
+- Mỗi clip BẮT ĐẦU TỪ ĐÚNG 1 ẢNH rồi chuyển động tiếp. Model không có ảnh tham chiếu riêng cho từng nhân vật: nhân vật nào không có
+  trong ảnh mở đầu thì model tự vẽ (dễ sai mặt). Vì vậy ảnh mở đầu nên chứa những nhân vật xuất hiện trong shot.
+- ""assetIds"": id ĐẦU TIÊN là ẢNH MỞ ĐẦU của shot (ưu tiên ảnh có nhân vật đang nói đứng trong bối cảnh). Có thể thêm tối đa 2 id
+  khác chỉ để mô tả bằng chữ. Không có ảnh phù hợp thì để [].
+- ""continueFromPrevious"": true khi shot nối liền shot trước trong cùng 1 cảnh (cùng nơi, cùng người, máy gần như giữ góc) — clip sẽ
+  bắt đầu từ khung hình cuối của clip trước nên mặt nhân vật liền mạch. false khi đổi góc máy mạnh, đổi cảnh, hoặc là shot đầu.
+  Khi true thì ảnh mở đầu (assetIds) bị bỏ qua.
+
 QUY TẮC:
 - Tổng ""duration"" các shot gần bằng thời lượng mục tiêu (±10%). Mỗi shot 4–15 giây (số nguyên), tốt nhất 6–10 giây.
 - Tiếng Việt nói khoảng 2,5 chữ/giây: duration của shot có thoại >= số chữ / 2,5 + 1. Câu quá dài thì tách sang shot sau.
 - Mỗi shot tối đa 1 người nói. ""dialogue"" là câu thoại nguyên văn tiếng Việt trong kịch bản (không dịch, không thêm). Shot không thoại thì để null.
-- ""assetIds"": id các ảnh xuất hiện trong shot — tối đa 2 Character và 1 Location; tổng tối đa 6. Nhân vật nào có mặt thì phải đưa id của nhân vật đó.
 - ""action"", ""camera"", ""sound"" viết bằng TIẾNG ANH, cụ thể, dễ quay: ai làm gì, cảm xúc, cử chỉ nhỏ có chủ đích; cỡ cảnh + chuyển động máy; tiếng động môi trường (không nhạc).
-- Giữ liên tục: cùng bối cảnh, trang phục, đạo cụ, thời điểm trong ngày giữa các shot. Xen shot phản ứng / cận cảnh đạo cụ khi hợp lý.
+- Giữ liên tục: cùng bối cảnh, trang phục, đạo cụ, thời điểm trong ngày giữa các shot.
 - ""caption"": chú thích đăng Facebook bằng tiếng Việt, 1–3 câu cuốn hút + 2–4 hashtag.
 
 Trả về JSON:
 { ""caption"": ""..."", ""notes"": ""ghi chú đạo diễn ngắn bằng tiếng Việt"", ""musicTrackId"": ""id hoặc null"",
-  ""shots"": [ { ""duration"": 8, ""assetIds"": [""...""], ""action"": ""..."", ""camera"": ""..."", ""speaker"": ""tên hoặc null"", ""dialogue"": ""... hoặc null"", ""sound"": ""..."" } ] }");
+  ""shots"": [ { ""duration"": 8, ""assetIds"": [""...""], ""continueFromPrevious"": false, ""action"": ""..."", ""camera"": ""..."", ""speaker"": ""tên hoặc null"", ""dialogue"": ""... hoặc null"", ""sound"": ""..."" } ] }");
         return (system, sb.ToString());
     }
 
-    public sealed record PlannedShot(int Duration, List<Guid> AssetIds, string Action, string Camera, string? Speaker, string? Dialogue, string? Sound);
+    public sealed record PlannedShot(int Duration, List<Guid> AssetIds, string Action, string Camera, string? Speaker, string? Dialogue, string? Sound,
+        bool ContinueFromPrevious = false);
     public sealed record Plan(string? Caption, string? Notes, Guid? MusicTrackId, List<PlannedShot> Shots);
 
-    /// <summary>Reads the planner's JSON, keeping only known asset / music ids and Omni-valid durations.</summary>
+    /// <summary>Reads the planner's JSON, keeping only known asset / music ids and valid clip durations.</summary>
     public static Plan ParsePlan(string json, ISet<Guid> knownAssets, ISet<Guid> knownMusic)
     {
         var text = json.Trim();
@@ -347,8 +359,9 @@ Trả về JSON:
                         if (Guid.TryParse(x.GetString(), out var g) && knownAssets.Contains(g) && !ids.Contains(g)) ids.Add(g);
                 var action = S(s, "action") ?? "";
                 if (action.Length == 0 && string.IsNullOrWhiteSpace(S(s, "dialogue"))) continue;
-                shots.Add(new PlannedShot(GeminiOmniClient.ClampSeconds(duration), ids.Take(GeminiOmniClient.MaxReferenceImages).ToList(),
-                    action, S(s, "camera") ?? "", NullIfNull(S(s, "speaker")), NullIfNull(S(s, "dialogue")), NullIfNull(S(s, "sound"))));
+                var cont = shots.Count > 0 && s.TryGetProperty("continueFromPrevious", out var c) && c.ValueKind == JsonValueKind.True;
+                shots.Add(new PlannedShot(GrokVideoClient.ClampSeconds(duration), ids.Take(MaxShotAssets).ToList(),
+                    action, S(s, "camera") ?? "", NullIfNull(S(s, "speaker")), NullIfNull(S(s, "dialogue")), NullIfNull(S(s, "sound")), cont));
             }
         }
         if (shots.Count == 0) throw new InvalidOperationException("Gemini trả về kế hoạch không có shot nào.");
@@ -370,9 +383,10 @@ Trả về JSON:
             if (input.Id is { } sid && existing.TryGetValue(sid, out var found))
             {
                 shot = found;
-                var changed = shot.DurationSeconds != GeminiOmniClient.ClampSeconds(input.DurationSeconds) || shot.Action != input.Action.Trim()
+                var changed = shot.DurationSeconds != GrokVideoClient.ClampSeconds(input.DurationSeconds) || shot.Action != input.Action.Trim()
                               || shot.Camera != input.Camera.Trim() || shot.Dialogue != NullIfEmpty(input.Dialogue) || shot.Speaker != NullIfEmpty(input.Speaker)
-                              || shot.Sound != NullIfEmpty(input.Sound) || shot.AssetIdsJson != JsonSerializer.Serialize(input.AssetIds);
+                              || shot.Sound != NullIfEmpty(input.Sound) || shot.AssetIdsJson != JsonSerializer.Serialize(input.AssetIds)
+                              || shot.ContinueFromPrevious != (index > 1 && input.ContinueFromPrevious);
                 if (changed && shot.Status == "Done") shot.Status = "Pending"; // edited → the clip no longer matches; regenerate
             }
             else
@@ -382,13 +396,14 @@ Trả về JSON:
             }
             keep.Add(shot.Id);
             shot.Index = index++;
-            shot.DurationSeconds = GeminiOmniClient.ClampSeconds(input.DurationSeconds);
+            shot.ContinueFromPrevious = shot.Index > 1 && input.ContinueFromPrevious;
+            shot.DurationSeconds = GrokVideoClient.ClampSeconds(input.DurationSeconds);
             shot.Action = input.Action.Trim();
             shot.Camera = input.Camera.Trim();
             shot.Speaker = NullIfEmpty(input.Speaker);
             shot.Dialogue = NullIfEmpty(input.Dialogue);
             shot.Sound = NullIfEmpty(input.Sound);
-            shot.AssetIdsJson = JsonSerializer.Serialize(input.AssetIds.Distinct().Take(GeminiOmniClient.MaxReferenceImages));
+            shot.AssetIdsJson = JsonSerializer.Serialize(input.AssetIds.Distinct().Take(MaxShotAssets));
         }
         foreach (var gone in v.Shots.Where(s => !keep.Contains(s.Id)).ToList())
         {
@@ -402,22 +417,25 @@ Trả về JSON:
         return await GetVideoAsync(id, ct);
     }
 
-    private decimal EstimateVideoCost(StudioVideo v) =>
-        Math.Round(v.Shots.Sum(s => GeminiOmniClient.ClampSeconds(s.DurationSeconds)) * _omni.PricePerSecond(v.Resolution), 4);
+    private decimal EstimateVideoCost(StudioVideo v) => Math.Round(v.Shots.Sum(s => ShotCost(v, s)), 4);
+
+    /// <summary>Seconds × price, plus the input-image fee when the clip starts from a picture.</summary>
+    private decimal ShotCost(StudioVideo v, StudioShot s) =>
+        _video.EstimateCost(s.DurationSeconds, v.Resolution, s.ContinueFromPrevious || Ids(s.AssetIdsJson).Count > 0);
 
     // ═══════════════════════════════ Generation ═══════════════════════════════
 
     /// <summary>Queues clip generation for every shot without a clip (or only <paramref name="shotId"/>), then composing.</summary>
     public async Task<StudioVideoDto> StartGenerateAsync(Guid id, Guid? shotId, CancellationToken ct)
     {
-        if (!_omni.IsConfigured) throw new InvalidOperationException("Chưa có khoá Gemini trả phí (GEMINI_API_KEY) — Omni không có gói miễn phí.");
+        if (!_video.IsConfigured) throw new InvalidOperationException("Chưa có khoá xAI (biến XAI_API_KEY trên Railway) — chưa tạo được video.");
         var v = await _db.StudioVideos.Include(x => x.Shots).FirstOrDefaultAsync(x => x.Id == id, ct) ?? throw new KeyNotFoundException("Không tìm thấy video.");
         EnsureNotBusy(v);
         if (v.Shots.Count == 0) throw new InvalidOperationException("Video chưa có shot nào — hãy lập kế hoạch trước.");
 
         var todo = shotId != null ? v.Shots.Where(s => s.Id == shotId).ToList() : v.Shots.Where(s => s.Status != "Done" || s.ClipBlobId == null).ToList();
         if (shotId != null && todo.Count == 0) throw new KeyNotFoundException("Không tìm thấy shot.");
-        var cost = todo.Sum(s => GeminiOmniClient.ClampSeconds(s.DurationSeconds)) * _omni.PricePerSecond(v.Resolution);
+        var cost = todo.Sum(s => ShotCost(v, s));
         await EnsureBudgetAsync(cost, ct);
 
         foreach (var s in todo)
@@ -445,6 +463,7 @@ Trả về JSON:
         var assets = (await LoadAssetsAsync(v.Shots.SelectMany(s => Ids(s.AssetIdsJson)).Distinct().ToList(), ct)).ToDictionary(a => a.Id);
         var failed = new List<string>();
         var done = 0;
+        var ordered = v.Shots.OrderBy(s => s.Index).ToList();
 
         foreach (var shot in todo)
         {
@@ -452,10 +471,10 @@ Trả về JSON:
             shot.Status = "Generating";
             await _db.SaveChangesAsync(ct);
 
-            var seconds = GeminiOmniClient.ClampSeconds(shot.DurationSeconds);
+            var seconds = GrokVideoClient.ClampSeconds(shot.DurationSeconds);
             try
             {
-                await EnsureBudgetAsync(seconds * _omni.PricePerSecond(v.Resolution), ct);
+                await EnsureBudgetAsync(ShotCost(v, shot), ct);
             }
             catch (InvalidOperationException ex)
             {
@@ -465,45 +484,65 @@ Trả về JSON:
                 break; // budget reached: stop spending
             }
 
-            var refs = new List<OmniReference>();
-            foreach (var aid in Ids(shot.AssetIdsJson).Take(GeminiOmniClient.MaxReferenceImages))
-                if (assets.TryGetValue(aid, out var a) && await GetBlobAsync(a.BlobId, ct) is { } blob)
-                    refs.Add(new OmniReference(blob.Data, blob.MimeType));
-            var prompt = BuildShotPrompt(v, shot, assets);
+            StartFrame? frame;
+            bool continued;
+            try
+            {
+                (frame, continued) = await StartFrameAsync(v, ordered, shot, assets, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                shot.Status = "Failed";
+                shot.ErrorMessage = ex.Message;
+                failed.Add($"shot {shot.Index}: {ex.Message}");
+                await _db.SaveChangesAsync(ct);
+                continue;
+            }
+            var prompt = BuildShotPrompt(v, shot, assets, continued);
 
             for (var attempt = 1; attempt <= MaxAttemptsPerRun; attempt++)
             {
                 shot.Attempts++;
                 try
                 {
-                    var clip = await _omni.GenerateAsync(prompt, refs, v.AspectRatio, v.Resolution, seconds, ct);
+                    var clip = await _video.GenerateAsync(prompt, frame, v.AspectRatio, v.Resolution, seconds, ct);
                     if (shot.ClipBlobId != null) await DeleteBlobAsync(shot.ClipBlobId.Value, ct);
                     var b = new StudioBlob { MimeType = clip.MimeType, Data = clip.Video, SizeBytes = clip.Video.Length };
                     _db.StudioBlobs.Add(b);
                     shot.ClipBlobId = b.Id;
-                    shot.InteractionId = clip.InteractionId;
+                    shot.InteractionId = clip.RequestId;
                     shot.CostUsd += clip.CostUsd;
                     shot.Status = "Done";
                     shot.ErrorMessage = null;
                     v.ActualCostUsd += clip.CostUsd;
                     _db.StudioCostRecords.Add(new StudioCostRecord
                     {
-                        StudioVideoId = v.Id, StudioShotId = shot.Id, Kind = "Video", Model = _omni.Model, Seconds = clip.Seconds,
-                        CostUsd = clip.CostUsd, Note = $"shot {shot.Index}, {v.Resolution}"
+                        StudioVideoId = v.Id, StudioShotId = shot.Id, Kind = "Video", Model = _video.Model, Seconds = clip.Seconds,
+                        CostUsd = clip.CostUsd, Note = $"shot {shot.Index}, {v.Resolution}" + (frame == null ? "" : continued ? ", nối khung cuối" : ", từ ảnh")
                     });
                     await _db.SaveChangesAsync(ct);
                     break;
                 }
-                catch (OmniRejectedException ex)
+                catch (VideoRejectedException ex)
                 {
-                    // refused prompt (safety / invalid argument): retrying the same prompt only spends time
+                    // refused / filtered (moderation, invalid argument): retrying the same prompt only spends money
                     shot.Status = "Failed";
                     shot.ErrorMessage = ex.Message;
+                    if (ex.BilledUsd > 0)
+                    {
+                        shot.CostUsd += ex.BilledUsd;
+                        v.ActualCostUsd += ex.BilledUsd;
+                        _db.StudioCostRecords.Add(new StudioCostRecord
+                        {
+                            StudioVideoId = v.Id, StudioShotId = shot.Id, Kind = "Video", Model = _video.Model, Seconds = seconds,
+                            CostUsd = ex.BilledUsd, Note = $"shot {shot.Index}, bị lọc nội dung"
+                        });
+                    }
                     break;
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
-                    _logger.LogWarning(ex, "Omni shot {Index} attempt {Attempt} failed", shot.Index, attempt);
+                    _logger.LogWarning(ex, "Video shot {Index} attempt {Attempt} failed", shot.Index, attempt);
                     shot.Status = "Failed";
                     shot.ErrorMessage = ex.Message;
                     if (attempt < MaxAttemptsPerRun) await Task.Delay(TimeSpan.FromSeconds(10), ct);
@@ -524,19 +563,38 @@ Trả về JSON:
         await ComposeInternalAsync(v, ct);
     }
 
-    /// <summary>The text sent to Omni for one shot (reference images go first, in the order of the shot's asset ids).</summary>
-    public static string BuildShotPrompt(StudioVideo v, StudioShot shot, IReadOnlyDictionary<Guid, StudioAsset> assets)
+    /// <summary>
+    /// Picks the picture a shot starts from: the previous clip's last frame when the shot continues the take (and that
+    /// clip exists), otherwise its first asset image cropped to the video's frame; null → text-to-video.
+    /// </summary>
+    private async Task<(StartFrame? Frame, bool Continued)> StartFrameAsync(StudioVideo v, List<StudioShot> ordered, StudioShot shot,
+        IReadOnlyDictionary<Guid, StudioAsset> assets, CancellationToken ct)
+    {
+        if (shot.ContinueFromPrevious)
+        {
+            var prev = ordered.LastOrDefault(s => s.Index < shot.Index);
+            if (prev?.ClipBlobId is { } clipId && await GetBlobAsync(clipId, ct) is { } clip)
+                return (new StartFrame(await _media.LastFrameAsync(clip.Data, ct), "image/jpeg"), true);
+        }
+        foreach (var aid in Ids(shot.AssetIdsJson))
+            if (assets.TryGetValue(aid, out var a) && await GetBlobAsync(a.BlobId, ct) is { } blob)
+                return (new StartFrame(await _media.PrepareStartFrameAsync(blob.Data, v.AspectRatio, ct), "image/jpeg"), false);
+        return (null, false);
+    }
+
+    /// <summary>The text sent to the video model for one shot (the start frame, if any, goes with it).</summary>
+    public static string BuildShotPrompt(StudioVideo v, StudioShot shot, IReadOnlyDictionary<Guid, StudioAsset> assets, bool continued = false)
     {
         var used = Ids(shot.AssetIdsJson).Where(assets.ContainsKey).Select(id => assets[id]).ToList();
         var sb = new StringBuilder();
         sb.Append($"Live-action cinematic video, photorealistic, real people, {(v.AspectRatio == "16:9" ? "horizontal 16:9" : "vertical 9:16")} framing. ");
+        if (continued) sb.Append("Continue seamlessly from the starting image: same people, same faces, same clothes, same place and light. ");
+        else if (used.Count > 0) sb.Append("Start from the provided image and keep everyone's face, hair and clothes identical to it. ");
         var locations = used.Where(a => a.Kind == "Location").ToList();
         var people = used.Where(a => a.Kind == "Character").ToList();
         var props = used.Where(a => a.Kind == "Prop").ToList();
         if (locations.Count > 0) sb.Append("Setting: ").Append(string.Join("; ", locations.Select(l => $"{l.Name} — {l.Description}"))).Append(". ");
-        if (people.Count > 0)
-            sb.Append("Characters (keep exactly the same face, hair and clothes as in the reference images): ")
-              .Append(string.Join("; ", people.Select(p => $"{p.Name}: {p.Description}"))).Append(". ");
+        if (people.Count > 0) sb.Append("Characters: ").Append(string.Join("; ", people.Select(p => $"{p.Name}: {p.Description}"))).Append(". ");
         if (props.Count > 0) sb.Append("Props: ").Append(string.Join("; ", props.Select(p => $"{p.Name} — {p.Description}"))).Append(". ");
         sb.Append("Action: ").Append(shot.Action.TrimEnd('.')).Append(". ");
         if (!string.IsNullOrWhiteSpace(shot.Camera)) sb.Append("Camera: ").Append(shot.Camera.TrimEnd('.')).Append(". ");
@@ -613,7 +671,8 @@ Trả về JSON:
             }
 
             var output = Path.Combine(dir, "final.mp4");
-            var duration = await _media.ComposeAsync(clips, musicPath, v.MusicVolume, v.AspectRatio, v.Resolution, output, ct);
+            // delivered at 1080p whatever the clip resolution (Facebook keeps a sharper copy of 1080p uploads)
+            var duration = await _media.ComposeAsync(clips, musicPath, v.MusicVolume, v.AspectRatio, DeliveryResolution, output, ct);
             var bytes = await File.ReadAllBytesAsync(output, ct);
             if (v.FinalBlobId != null) await DeleteBlobAsync(v.FinalBlobId.Value, ct);
             var final = new StudioBlob { MimeType = "video/mp4", Data = bytes, SizeBytes = bytes.Length };
@@ -736,8 +795,8 @@ Trả về JSON:
     public async Task<StudioSettingsDto> GetSettingsAsync(CancellationToken ct) => new()
     {
         MonthlyBudgetUsd = await MonthlyBudgetAsync(ct),
-        OmniConfigured = _omni.IsConfigured,
-        VideoModel = _omni.Model
+        VideoConfigured = _video.IsConfigured,
+        VideoModel = _video.Model
     };
 
     private static DateTime MonthStartUtc() { var n = DateTime.UtcNow; return new DateTime(n.Year, n.Month, 1, 0, 0, 0, DateTimeKind.Utc); }
@@ -774,7 +833,7 @@ Trả về JSON:
             MonthRemainingUsd = budget <= 0 ? 0 : Math.Max(0, Math.Round(budget - month, 4)),
             AllTimeSpentUsd = Math.Round(await _db.StudioCostRecords.SumAsync(c => (decimal?)c.CostUsd, ct) ?? 0m, 4),
             MonthVideoSeconds = (int)Math.Round(await _db.StudioCostRecords.Where(c => c.CreatedAtUtc >= start && c.Kind == "Video").SumAsync(c => c.Seconds ?? 0, ct)),
-            PricePerSecondUsd = new[] { "360p", "720p", "1080p", "4k" }.ToDictionary(r => r, r => _omni.PricePerSecond(r)),
+            PricePerSecondUsd = GrokVideoClient.Resolutions.ToDictionary(r => r, r => _video.PricePerSecond(r)),
             Videos = titles.OrderByDescending(t => t.CreatedAtUtc).Take(100)
                 .Select(t => new StudioCostVideoDto { Id = t.Id, Title = t.Title, CostUsd = Math.Round(t.ActualCostUsd, 4), CreatedAtUtc = t.CreatedAtUtc }).ToList(),
             Recent = recent.Select(c => new StudioCostRecordDto

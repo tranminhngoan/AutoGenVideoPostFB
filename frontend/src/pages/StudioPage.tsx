@@ -12,7 +12,7 @@ import { navigate } from '../lib/router';
 type Tab = 'videos' | 'assets' | 'music' | 'costs';
 
 /**
- * Omni Studio: make real-people videos with Gemini Omni from a script + reference images + the music store, track
+ * AI video studio: make real-people videos with Grok Imagine from a script + start images + the music store, track
  * the cost, and post them to a Facebook Page. Routes: /studio[/assets|/music|/costs], /studio/new, /studio/videos/:id.
  */
 export function StudioPage({ segments }: { segments: string[] }) {
@@ -25,7 +25,7 @@ export function StudioPage({ segments }: { segments: string[] }) {
   const [settings, setSettings] = useState<StudioSettings | null>(null);
 
   useEffect(() => {
-    document.title = (creating ? 'Video mới' : editingId ? 'Chỉnh video' : 'Omni Studio') + ' · Trạm Tin 24/7';
+    document.title = (creating ? 'Video mới' : editingId ? 'Chỉnh video' : 'Studio Video AI') + ' · Trạm Tin 24/7';
   }, [creating, editingId]);
 
   useEffect(() => {
@@ -48,10 +48,10 @@ export function StudioPage({ segments }: { segments: string[] }) {
     <PageHeader
       title={
         <span className="flex items-center gap-2">
-          Omni Studio <Badge tone="info" className="text-[11px] font-normal">{settings?.videoModel ?? 'gemini-omni'}</Badge>
+          Studio Video AI <Badge tone="info" className="text-[11px] font-normal">{settings?.videoModel ?? 'grok-imagine'}</Badge>
         </span>
       }
-      description="Dựng video người thật bằng Gemini Omni: kịch bản + ảnh nhân vật/bối cảnh + kho nhạc → video → đăng Page. Chi phí theo giây video."
+      description="Dựng video người thật bằng Grok Imagine: kịch bản + ảnh nhân vật/bối cảnh + kho nhạc → video 1080p → đăng Page. Chi phí theo giây video."
       back={
         editingId || creating ? (
           <Button variant="ghost" size="sm" icon={<ArrowLeft className="h-4 w-4" />} onClick={() => navigate('/studio')}>
@@ -73,15 +73,15 @@ export function StudioPage({ segments }: { segments: string[] }) {
     <div className="space-y-5 pb-12">
       {header}
 
-      {settings && !settings.omniConfigured && (
+      {settings && !settings.videoConfigured && (
         <Card className="border-danger/30 bg-danger/[0.05] p-3 text-xs text-danger">
-          Server chưa có khoá Gemini trả phí (biến GEMINI_API_KEY). Omni không có gói miễn phí nên chưa tạo được video — thêm khoá đã bật thanh toán trên
-          Railway.
+          Server chưa có khoá xAI (biến XAI_API_KEY) nên chưa tạo được video — tạo khoá ở console.x.ai (tài khoản đã nạp tiền) rồi thêm biến này
+          trên Railway.
         </Card>
       )}
       {needsKey && <StudioUnlock onUnlocked={() => setNeedsKey(false)} />}
-      {!needsKey && !getStudioKey() && settings?.omniConfigured && (
-        <p className="text-xs text-fg-subtle">Mẹo: lần đầu thao tác, app sẽ hỏi khoá Gemini để mở khoá trên trình duyệt này.</p>
+      {!needsKey && !getStudioKey() && settings?.videoConfigured && (
+        <p className="text-xs text-fg-subtle">Mẹo: lần đầu thao tác, app sẽ hỏi khoá xAI để mở khoá trên trình duyệt này.</p>
       )}
 
       {creating ? (

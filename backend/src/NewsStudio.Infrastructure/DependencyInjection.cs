@@ -133,7 +133,7 @@ public static class DependencyInjection
                 AutomaticDecompression = System.Net.DecompressionMethods.All
             });
 
-        // Omni Studio (Gemini Omni video) — registered in AddStudioServices below
+        // AI video studio (Grok Imagine video) — registered in AddStudioServices below
         services.AddHttpClient<FilmGeminiClient>();
         services.AddStudioServices();
 

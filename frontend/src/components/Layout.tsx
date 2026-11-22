@@ -88,7 +88,7 @@ function SidebarContent({
     { id: 'activity', path: '/activity', label: 'Hoạt động', icon: History },
   ];
   const studio: NavItem[] = [
-    { id: 'studio', path: '/studio', label: 'Omni Studio', icon: Clapperboard },
+    { id: 'studio', path: '/studio', label: 'Studio Video AI', icon: Clapperboard },
   ];
   const secondary: NavItem[] = [{ id: 'settings', path: '/settings', label: 'Cài đặt', icon: Settings }];
 
@@ -142,7 +142,7 @@ function SidebarContent({
       <nav className="mt-5 flex-1 space-y-0.5 overflow-y-auto px-3">
         {main.map(renderItem)}
         <div className="!mt-5 mb-1.5 px-2.5 text-xs font-semibold uppercase tracking-wider text-indigo-400">
-          Video AI (Gemini Omni)
+          Video AI (Grok Imagine)
         </div>
         {studio.map(renderItem)}
         <div className="!mt-5 mb-1.5 px-2.5 text-xs font-medium text-fg-subtle">Hệ thống</div>

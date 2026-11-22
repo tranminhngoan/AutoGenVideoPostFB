@@ -112,7 +112,7 @@ public class Worker : BackgroundService
                 service => service.SyncAsync(false, CancellationToken.None),
                 "7,37 * * * *");
 
-            recurring.RemoveIfExists("film-gpu-tick"); // GPU film pipeline removed (Omni Studio replaces it)
+            recurring.RemoveIfExists("film-gpu-tick"); // GPU film pipeline removed (the AI video studio replaces it)
 
             // Daily "Điểm tin nóng" (one wall post + one Story per page, evening)
             recurring.AddOrUpdate<IDailyDigestService>(

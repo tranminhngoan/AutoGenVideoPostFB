@@ -32,15 +32,16 @@ public class StudioMedia
         var shortSide = resolution.ToLowerInvariant() switch
         {
             "360p" => 360,
+            "480p" => 480,
             "1080p" => 1080,
             "4k" => 2160,
             _ => 720
         };
-        var longSide = shortSide * 16 / 9;
+        var longSide = (int)Math.Round(shortSide * 16 / 9.0 / 2) * 2; // even, as H.264 needs (480p → 854)
         return aspectRatio == "16:9" ? (longSide, shortSide) : (shortSide, longSide);
     }
 
-    /// <summary>Re-encodes any uploaded picture to a JPEG of at most 1536 px on its long side (small Omni requests).</summary>
+    /// <summary>Re-encodes any uploaded picture to a JPEG of at most 1536 px on its long side.</summary>
     public async Task<byte[]> NormalizeImageAsync(byte[] data, string extension, CancellationToken ct)
     {
         var dir = TempDir();
@@ -52,6 +53,50 @@ public class StudioMedia
             var (code, _, err) = await RunAsync(_ffmpeg,
                 $"-hide_banner -y -i \"{input}\" -vf \"scale='if(gt(iw,ih),min(1536,iw),-2)':'if(gt(iw,ih),-2,min(1536,ih))'\" -frames:v 1 -q:v 3 \"{output}\"", ct);
             if (code != 0 || !File.Exists(output)) throw new InvalidOperationException($"Ảnh không hợp lệ hoặc không đọc được: {Tail(err)}");
+            return await File.ReadAllBytesAsync(output, ct);
+        }
+        finally
+        {
+            TryDelete(dir);
+        }
+    }
+
+    /// <summary>
+    /// The start frame sent to the video model: the picture scaled to cover the clip's frame and centre-cropped, so the
+    /// clip (whose shape follows the image) has exactly the video's aspect ratio and no black bars.
+    /// </summary>
+    public async Task<byte[]> PrepareStartFrameAsync(byte[] image, string aspectRatio, CancellationToken ct)
+    {
+        var (w, h) = FrameSize(aspectRatio, "720p");
+        var dir = TempDir();
+        try
+        {
+            var input = Path.Combine(dir, "in.img");
+            var output = Path.Combine(dir, "frame.jpg");
+            await File.WriteAllBytesAsync(input, image, ct);
+            var (code, _, err) = await RunAsync(_ffmpeg,
+                $"-hide_banner -y -i \"{input}\" -vf \"scale={w}:{h}:force_original_aspect_ratio=increase:flags=lanczos,crop={w}:{h},setsar=1\" -frames:v 1 -q:v 2 \"{output}\"", ct);
+            if (code != 0 || !File.Exists(output)) throw new InvalidOperationException($"Không chuẩn bị được ảnh mở đầu: {Tail(err)}");
+            return await File.ReadAllBytesAsync(output, ct);
+        }
+        finally
+        {
+            TryDelete(dir);
+        }
+    }
+
+    /// <summary>The last frame of a clip as a JPEG (start frame of the next shot when it continues the take).</summary>
+    public async Task<byte[]> LastFrameAsync(byte[] video, CancellationToken ct)
+    {
+        var dir = TempDir();
+        try
+        {
+            var input = Path.Combine(dir, "clip.mp4");
+            var output = Path.Combine(dir, "last.jpg");
+            await File.WriteAllBytesAsync(input, video, ct);
+            // seek close to the end and keep overwriting the picture: the file left is the final frame
+            var (code, _, err) = await RunAsync(_ffmpeg, $"-hide_banner -y -sseof -0.5 -i \"{input}\" -update 1 -q:v 2 \"{output}\"", ct);
+            if (code != 0 || !File.Exists(output)) throw new InvalidOperationException($"Không lấy được khung cuối của clip trước: {Tail(err)}");
             return await File.ReadAllBytesAsync(output, ct);
         }
         finally

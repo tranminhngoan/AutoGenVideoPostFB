@@ -11,8 +11,8 @@ using NewsStudio.Infrastructure.Studio;
 namespace NewsStudio.Api.Controllers;
 
 /// <summary>
-/// Omni Studio API. The app has no login, so every call that spends money or writes data needs X-Studio-Key equal to
-/// the server's paid Gemini key (or Security:AdminApiKey). Media downloads (images, music, clips, final video) stay
+/// AI video studio API (Grok Imagine). The app has no login, so every call that spends money or writes data needs
+/// X-Studio-Key equal to the server's xAI key, its paid Gemini key or Security:AdminApiKey. Media downloads (images, music, clips, final video) stay
 /// open so the page can show them in &lt;img&gt;/&lt;video&gt; tags.
 /// </summary>
 [ApiController]
@@ -38,7 +38,7 @@ public class StudioController : ControllerBase
     /// <summary>Null when allowed; otherwise a 401 the page turns into its unlock box.</summary>
     private IActionResult? Denied()
     {
-        var keys = new[] { GeminiKeys.Paid(_configuration), _configuration["Security:AdminApiKey"] }
+        var keys = new[] { GrokVideoClient.ApiKey(_configuration), GeminiKeys.Paid(_configuration), _configuration["Security:AdminApiKey"] }
             .Where(k => !string.IsNullOrWhiteSpace(k)).Select(k => k!.Trim()).ToList();
         if (keys.Count == 0) return null; // nothing configured to compare with (and nothing paid can run either)
         var given = Request.Headers.TryGetValue("X-Studio-Key", out var h) ? h.ToString().Trim() : "";
@@ -51,8 +51,8 @@ public class StudioController : ControllerBase
         {
             needsStudioKey = true,
             message = given.Length == 0
-                ? "Cần mở khoá Omni Studio bằng khoá Gemini API (khoá đang đặt trên Railway, chỉ lưu trên trình duyệt này)."
-                : "Khoá không khớp với khoá Gemini đang cấu hình trên server."
+                ? "Cần mở khoá Studio bằng khoá xAI (XAI_API_KEY) hoặc khoá Gemini đang đặt trên Railway (chỉ lưu trên trình duyệt này)."
+                : "Khoá không khớp với khoá xAI / Gemini đang cấu hình trên server."
         });
     }
 

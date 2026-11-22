@@ -1779,6 +1779,9 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                     b.Property<Guid?>("ClipBlobId")
                         .HasColumnType("uuid");
 
+                    b.Property<bool>("ContinueFromPrevious")
+                        .HasColumnType("boolean");
+
                     b.Property<decimal>("CostUsd")
                         .HasPrecision(18, 6)
                         .HasColumnType("numeric(18,6)");

@@ -32,15 +32,15 @@ export function StudioUnlock({ onUnlocked }: { onUnlocked: () => void }) {
   return (
     <Card className="space-y-3 border-warning/40 bg-warning/[0.06] p-4">
       <div className="flex items-center gap-2 text-sm font-semibold text-fg">
-        <KeyRound className="h-4 w-4" /> Mở khoá Omni Studio
+        <KeyRound className="h-4 w-4" /> Mở khoá Studio Video AI
       </div>
       <p className="text-xs text-fg-muted">
-        Dán <b>khoá Gemini API</b> đang đặt trên Railway (biến <code>GEMINI_API_KEY</code>, xem ở aistudio.google.com → API keys). Khoá chỉ lưu trên
-        trình duyệt này, để người lạ không dùng app tốn tiền của anh.
+        Dán <b>khoá xAI</b> đang đặt trên Railway (biến <code>XAI_API_KEY</code>, xem ở console.x.ai → API Keys) — hoặc khoá Gemini đang đặt ở đó.
+        Khoá chỉ lưu trên trình duyệt này, để người lạ không dùng app tốn tiền của anh.
       </p>
       {error && <p className="text-xs text-danger">{error}</p>}
       <div className="flex flex-col gap-2 sm:flex-row">
-        <Input type="password" autoComplete="off" placeholder="AIza..." value={key} onChange={(e) => setKey(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && unlock()} />
+        <Input type="password" autoComplete="off" placeholder="xai-..." value={key} onChange={(e) => setKey(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && unlock()} />
         <Button variant="primary" className="shrink-0" loading={checking} disabled={!key.trim()} onClick={unlock}>
           Mở khoá
         </Button>
