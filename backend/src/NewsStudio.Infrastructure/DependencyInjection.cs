@@ -141,7 +141,8 @@ public static class DependencyInjection
         services.AddSingleton<VastAiGpuBackend>();
         // Active backend = configured choice, switchable at runtime (renting a Vast machine in the app selects Vast).
         services.AddSingleton(sp => new ActiveFilmGpuBackend(
-            ConfiguredGpuBackend(sp), sp.GetRequiredService<VastAiGpuBackend>(), sp.GetRequiredService<RunPodGpuBackend>()));
+            ConfiguredGpuBackend(sp), sp.GetRequiredService<VastAiGpuBackend>(), sp.GetRequiredService<RunPodGpuBackend>(),
+            sp.GetRequiredService<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>()));
         services.AddSingleton<IFilmGpuBackend>(sp => sp.GetRequiredService<ActiveFilmGpuBackend>());
 
         static IFilmGpuBackend ConfiguredGpuBackend(IServiceProvider sp)

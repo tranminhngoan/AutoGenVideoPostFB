@@ -1580,9 +1580,20 @@ export interface VastOffer {
   sessionCostUsd: number;
 }
 
+/** One spec the film worker needs; offers below `min` are never listed. */
+export interface VastRequirement {
+  key: 'gpuRamGb' | 'diskGb' | 'downloadMbps' | 'uploadMbps' | 'cpuCores' | 'ramGb' | 'diskMbps' | 'cudaMax' | 'reliability';
+  label: string;
+  min: number;
+  recommended: number;
+  unit: string;
+  why: string;
+}
+
 export interface VastOfferSearchResult {
   diskGb: number;
   modelDownloadGb: number;
+  requirements: VastRequirement[];
   offers: VastOffer[];
 }
 

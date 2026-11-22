@@ -15,7 +15,16 @@ public record VastOfferQuery(
     double MinReliability = 0.98,
     double MinCuda = 12.8,
     bool VerifiedOnly = true,
-    int Limit = 10);
+    int Limit = 10,
+    double MinGpuRamGb = 80,
+    double MinRamGb = 64,
+    double MinCpuCores = 8,
+    double MinDownloadMbps = 500,
+    double MinUploadMbps = 100,
+    double MinDiskMbps = 1000);
+
+/// <summary>One spec the film worker needs: offers below Min are not listed; Recommended is what runs it well.</summary>
+public record VastRequirement(string Key, string Label, double Min, double Recommended, string Unit, string Why);
 
 /// <summary>One rentable machine, priced for the requested disk size.</summary>
 public record VastOffer(
@@ -101,6 +110,23 @@ public partial class VastAiGpuBackend
     public const double SessionHours = 3;
 
     /// <summary>GPUs with enough VRAM for Wan 2.1 14B fully on the card (x86 only — GB10/GB200 are ARM).</summary>
+    /// <summary>
+    /// What one machine needs to run the film pipeline (Wan 2.1 14B, SDXL, LatentSync). VRAM and disk come from
+    /// measured model sizes and the RTX 3090 OOM log; network/CPU/RAM/disk-speed are sizing estimates until benchmarks.
+    /// </summary>
+    public static readonly IReadOnlyList<VastRequirement> Requirements = new VastRequirement[]
+    {
+        new("gpuRamGb", "VRAM GPU", 80, 96, "GB", "Wan 2.1 14B phải nằm trọn trong VRAM (card 24 GB bị tràn bộ nhớ); LatentSync ~18 GB chạy sau Wan"),
+        new("diskGb", "Ổ đĩa", 150, 200, "GB", "Model ~110 GB + môi trường + video tạm ≈ 125 GB"),
+        new("downloadMbps", "Mạng tải về", 500, 1000, "Mbps", "Mỗi lần thuê phải tải ~110 GB model: 500 Mbps ≈ 30 phút, 1000 Mbps ≈ 15 phút"),
+        new("uploadMbps", "Mạng tải lên", 100, 300, "Mbps", "Gửi khung hình và clip về server sau mỗi tập (vài trăm MB)"),
+        new("cpuCores", "CPU", 8, 16, "luồng", "FFmpeg, xử lý âm thanh/ảnh, giải nén batch"),
+        new("ramGb", "RAM", 64, 128, "GB", "Nạp trọng số Wan (bản FP32 90 GB) trước khi đưa lên GPU"),
+        new("diskMbps", "Tốc độ ổ", 1000, 3000, "MB/s", "Nạp model từ ổ: 1000 MB/s ≈ 1,5 phút cho 90 GB"),
+        new("cudaMax", "CUDA tối đa", 12.8, 12.8, "", "Card Blackwell (RTX PRO 6000) cần PyTorch bản CUDA 12.8 trở lên"),
+        new("reliability", "Độ ổn định", 0.98, 0.99, "", "Máy hay rớt làm hỏng batch đang dựng"),
+    };
+
     public static readonly IReadOnlyList<string> DefaultGpuNames = new[] { "RTX PRO 6000 WS", "RTX PRO 6000 Max-Q", "RTX PRO 6000 S" };
 
     /// <summary>Docker image for new machines; Vast picks the tag matching the host's CUDA driver.</summary>
@@ -122,6 +148,12 @@ public partial class VastAiGpuBackend
             ["disk_space"] = new Dictionary<string, object> { ["gte"] = q.DiskGb },
             ["reliability2"] = new Dictionary<string, object> { ["gte"] = q.MinReliability },
             ["cuda_max_good"] = new Dictionary<string, object> { ["gte"] = q.MinCuda },
+            ["gpu_ram"] = new Dictionary<string, object> { ["gte"] = q.MinGpuRamGb * 1024 },   // MB
+            ["cpu_ram"] = new Dictionary<string, object> { ["gte"] = q.MinRamGb * 1024 },      // MB
+            ["cpu_cores_effective"] = new Dictionary<string, object> { ["gte"] = q.MinCpuCores },
+            ["inet_down"] = new Dictionary<string, object> { ["gte"] = q.MinDownloadMbps },
+            ["inet_up"] = new Dictionary<string, object> { ["gte"] = q.MinUploadMbps },
+            ["disk_bw"] = new Dictionary<string, object> { ["gte"] = q.MinDiskMbps },
             // the worker's port 8888 is reached through a direct port mapping
             ["direct_port_count"] = new Dictionary<string, object> { ["gte"] = 2 },
             ["allocated_storage"] = q.DiskGb, // prices (dph_total, storage_total_cost) are returned for this disk size

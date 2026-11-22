@@ -78,17 +78,46 @@ public class VastMarketTests
     }
 
     [Fact]
-    public void Renting_on_Vast_switches_new_batches_to_Vast()
+    public void Stored_choice_overrides_the_configured_backend_and_instance()
     {
-        var vast = Vast(new FakeVast());
-        var active = new ActiveFilmGpuBackend(new KaggleGpuBackend(
-            new Microsoft.Extensions.Configuration.ConfigurationBuilder().Build(),
-            Microsoft.Extensions.Logging.Abstractions.NullLogger<KaggleGpuBackend>.Instance), vast, null!);
+        var before = VastAiGpuBackend.GetRuntimeInstance();
+        try
+        {
+            var vast = Vast(new FakeVast());
+            var active = new ActiveFilmGpuBackend(new KaggleGpuBackend(
+                new ConfigurationBuilder().Build(),
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<KaggleGpuBackend>.Instance), vast, null!);
 
-        active.IsVast.Should().BeFalse();
-        active.UseVast();
-        active.IsVast.Should().BeTrue();
-        active.Name.Should().Be("VastAi");
+            active.Apply(null, hasInstanceKey: false, vastInstance: null);   // nothing stored yet: config wins
+            active.IsVast.Should().BeFalse();
+
+            active.Apply("VastAi", hasInstanceKey: true, vastInstance: "61903314"); // what renting stores
+            active.IsVast.Should().BeTrue();
+            active.Name.Should().Be("VastAi");
+            VastAiGpuBackend.GetRuntimeInstance().Should().Be("61903314");
+
+            active.Apply(null, hasInstanceKey: true, vastInstance: null);     // active machine destroyed
+            VastAiGpuBackend.GetRuntimeInstance().Should().BeNull();
+            active.IsVast.Should().BeTrue();
+        }
+        finally
+        {
+            VastAiGpuBackend.SetRuntimeInstance(before);
+        }
+    }
+
+    [Fact]
+    public void Search_never_lists_machines_below_the_minimum_specs()
+    {
+        var json = JsonSerializer.Serialize(VastAiGpuBackend.BuildSearchBody(new VastOfferQuery(Array.Empty<string>())));
+        var min = VastAiGpuBackend.Requirements.ToDictionary(r => r.Key, r => r.Min);
+
+        json.Should().Contain($"\"gpu_ram\":{{\"gte\":{min["gpuRamGb"] * 1024}}}");
+        json.Should().Contain($"\"cpu_ram\":{{\"gte\":{min["ramGb"] * 1024}}}");
+        json.Should().Contain($"\"inet_down\":{{\"gte\":{min["downloadMbps"]}}}");
+        json.Should().Contain($"\"cpu_cores_effective\":{{\"gte\":{min["cpuCores"]}}}");
+        json.Should().Contain($"\"disk_bw\":{{\"gte\":{min["diskMbps"]}}}");
+        min["diskGb"].Should().BeLessThanOrEqualTo(new VastOfferQuery(Array.Empty<string>()).DiskGb);
     }
 
     [Fact]

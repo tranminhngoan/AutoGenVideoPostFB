@@ -51,6 +51,8 @@ public class FilmGpuService
     [DisableConcurrentExecution(600)]
     public async Task TickAsync(CancellationToken ct = default)
     {
+        // The machine chosen in the app (stored in SystemSettings) may have changed in the other process.
+        if (_backend is ActiveFilmGpuBackend active) await active.RefreshAsync(ct);
         if (!Enabled) return;
 
         var running = await _context.FilmEpisodes.Where(e => e.Status == StatusRendering).Select(e => e.Id).FirstOrDefaultAsync(ct);

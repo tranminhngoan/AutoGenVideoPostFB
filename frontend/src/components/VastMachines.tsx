@@ -3,7 +3,77 @@ import { Copy, Cpu, HardDrive, MapPin, RotateCw, Search, ShoppingCart, Trash2, W
 import { CreditCard } from 'lucide-react';
 import { Badge, Button, ButtonLink, Checkbox, Drawer, EmptyState, Field, Input, Select, Skeleton, cn } from './ui';
 import { useConfirm, useToast } from './feedback';
-import { api, VastAccount, VastInstance, VastOffer } from '../services/api';
+import { api, VastAccount, VastInstance, VastOffer, VastRequirement } from '../services/api';
+
+/* ───────────────────────── Spec check against what the film worker needs ───────────────────────── */
+
+type SpecLevel = 'good' | 'ok' | 'low';
+
+function fmtSpec(r: VastRequirement, v: number) {
+  if (r.key === 'reliability') return `${(v * 100).toFixed(1)}%`;
+  if (r.key === 'cudaMax') return v.toFixed(1);
+  return `${Math.round(v).toLocaleString('vi-VN')} ${r.unit}`.trim();
+}
+
+function specValue(r: VastRequirement, o: VastOffer, diskGb: number): number {
+  switch (r.key) {
+    case 'gpuRamGb': return o.gpuRamGb;
+    case 'diskGb': return diskGb; // the disk that will be allocated (the host has at least this free)
+    case 'downloadMbps': return o.downloadMbps;
+    case 'uploadMbps': return o.uploadMbps;
+    case 'cpuCores': return o.cpuCores;
+    case 'ramGb': return o.ramGb;
+    case 'diskMbps': return o.diskMbps;
+    case 'cudaMax': return o.cudaMax;
+    case 'reliability': return o.reliability;
+  }
+}
+
+function level(r: VastRequirement, v: number): SpecLevel {
+  return v >= r.recommended ? 'good' : v >= r.min ? 'ok' : 'low';
+}
+
+const LEVEL_STYLE: Record<SpecLevel, string> = {
+  good: 'text-success',
+  ok: 'text-warning',
+  low: 'text-danger',
+};
+const LEVEL_MARK: Record<SpecLevel, string> = { good: '✓', ok: '~', low: '✗' };
+
+/** What the film pipeline needs, shown above the machine list. */
+function RequirementsPanel({ requirements }: { requirements: VastRequirement[] }) {
+  return (
+    <details className="group rounded-lg border border-line bg-surface p-3 text-xs" open>
+      <summary className="cursor-pointer select-none text-[13px] font-medium text-fg">Cấu hình cần để dựng phim tốt</summary>
+      <div className="mt-2 overflow-x-auto">
+        <table className="w-full min-w-[420px] text-left">
+          <thead className="text-fg-subtle">
+            <tr>
+              <th className="py-1 pr-2 font-medium">Thông số</th>
+              <th className="py-1 pr-2 font-medium">Tối thiểu</th>
+              <th className="py-1 pr-2 font-medium">Nên có</th>
+              <th className="py-1 font-medium">Để làm gì</th>
+            </tr>
+          </thead>
+          <tbody>
+            {requirements.map((r) => (
+              <tr key={r.key} className="border-t border-line align-top">
+                <td className="py-1.5 pr-2 font-medium text-fg">{r.label}</td>
+                <td className="py-1.5 pr-2 whitespace-nowrap text-fg-muted">{fmtSpec(r, r.min)}</td>
+                <td className="py-1.5 pr-2 whitespace-nowrap text-fg">{fmtSpec(r, r.recommended)}</td>
+                <td className="py-1.5 text-fg-muted">{r.why}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="mt-2 text-[11px] text-fg-subtle">
+        Máy dưới mức tối thiểu không được liệt kê. ✓ đạt mức nên có · ~ chỉ đạt tối thiểu. VRAM và ổ đĩa tính từ dung lượng model thật;
+        mạng, CPU, RAM, tốc độ ổ là ước tính, sẽ chỉnh lại sau benchmark.
+      </p>
+    </details>
+  );
+}
 
 /** Typical RTX PRO 6000 price incl. 200 GB disk (Nov 2026 search) — only for the "hours left" estimate when nothing runs. */
 const TYPICAL_PRICE_PER_HOUR = 1.5;
@@ -247,6 +317,7 @@ export function VastRentDrawer({ open, onClose, onRented }: { open: boolean; onC
   const [minReliability, setMinReliability] = useState('0.98');
   const [offers, setOffers] = useState<VastOffer[] | null>(null);
   const [modelGb, setModelGb] = useState(110);
+  const [requirements, setRequirements] = useState<VastRequirement[]>([]);
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [rentingId, setRentingId] = useState<number | null>(null);
@@ -265,6 +336,7 @@ export function VastRentDrawer({ open, onClose, onRented }: { open: boolean; onC
       });
       setOffers(r.offers);
       setModelGb(r.modelDownloadGb);
+      setRequirements(r.requirements ?? []);
     } catch (e: any) {
       setError(e.message);
       setOffers(null);
@@ -304,6 +376,7 @@ export function VastRentDrawer({ open, onClose, onRented }: { open: boolean; onC
   return (
     <Drawer open={open} onClose={onClose} title="Thuê máy GPU mới" subtitle="10 máy hợp nhất với Film Factory — xếp theo chi phí một lần dựng">
       <div className="space-y-4">
+        {requirements.length > 0 && <RequirementsPanel requirements={requirements} />}
         <div className="space-y-2 rounded-lg border border-line bg-subtle p-3">
           <p className="text-[13px] font-medium text-fg">Loại GPU</p>
           <div className="grid gap-2 sm:grid-cols-2">
@@ -385,13 +458,22 @@ export function VastRentDrawer({ open, onClose, onRented }: { open: boolean; onC
                   </div>
                 </div>
 
-                <div className="mt-2.5 grid grid-cols-2 gap-x-3 gap-y-1 text-fg-muted sm:grid-cols-3">
-                  <span className="flex items-center gap-1"><Cpu className="h-3 w-3" />{Math.round(o.cpuCores)} luồng · {o.ramGb} GB RAM</span>
-                  <span className="flex items-center gap-1"><HardDrive className="h-3 w-3" />trống {o.diskAvailableGb} GB · {Math.round(o.diskMbps)} MB/s</span>
-                  <span className="flex items-center gap-1"><Wifi className="h-3 w-3" />↓{o.downloadMbps} / ↑{o.uploadMbps} Mbps</span>
-                  <span>CUDA {o.cudaMax} · ổn định {(o.reliability * 100).toFixed(1)}%</span>
-                  <span>Tải model: {usd(o.modelDownloadCostUsd)}</span>
-                  <span>Giữ ổ khi tắt: {usd(o.storagePerMonth)}/tháng</span>
+                <div className="mt-2.5 grid grid-cols-2 gap-x-3 gap-y-1 sm:grid-cols-3">
+                  {requirements.map((r) => {
+                    const v = specValue(r, o, diskGb);
+                    const lv = level(r, v);
+                    return (
+                      <span key={r.key} className="flex items-center gap-1 text-fg-muted" title={`Tối thiểu ${fmtSpec(r, r.min)} · nên có ${fmtSpec(r, r.recommended)}`}>
+                        <b className={cn('w-3 shrink-0 text-center', LEVEL_STYLE[lv])}>{LEVEL_MARK[lv]}</b>
+                        {r.label}: <b className="text-fg">{fmtSpec(r, v)}</b>
+                      </span>
+                    );
+                  })}
+                </div>
+                <div className="mt-2 grid grid-cols-1 gap-x-3 gap-y-1 text-fg-muted sm:grid-cols-3">
+                  <span className="flex items-center gap-1"><Wifi className="h-3 w-3" />Tải model ≈ {Math.ceil((modelGb * 8000) / Math.max(o.downloadMbps, 1) / 60)} phút · {usd(o.modelDownloadCostUsd)}</span>
+                  <span className="flex items-center gap-1"><HardDrive className="h-3 w-3" />Giữ ổ khi tắt: {usd(o.storagePerMonth)}/tháng</span>
+                  <span className="flex items-center gap-1"><Cpu className="h-3 w-3" /><span className="truncate">{o.cpuName || ''}</span></span>
                 </div>
 
                 <div className="mt-2.5 flex justify-end border-t border-line pt-2.5">

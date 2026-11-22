@@ -313,6 +313,8 @@ public class FilmFactoryController : ControllerBase
     [HttpGet("gpu/status")]
     public async Task<IActionResult> GetGpuStatus(CancellationToken ct)
     {
+        var stored = HttpContext.RequestServices.GetService<NewsStudio.Infrastructure.FilmFactory.ActiveFilmGpuBackend>();
+        if (stored != null) await stored.RefreshAsync(ct);
         var vast = HttpContext.RequestServices.GetService<NewsStudio.Infrastructure.FilmFactory.VastAiGpuBackend>();
         var runpod = HttpContext.RequestServices.GetService<NewsStudio.Infrastructure.FilmFactory.RunPodGpuBackend>();
         var activeBackend = HttpContext.RequestServices.GetService<NewsStudio.Infrastructure.FilmFactory.IFilmGpuBackend>();
@@ -565,10 +567,12 @@ public class FilmFactoryController : ControllerBase
 
     [HttpPost("gpu/runpod/pod")]
     [HttpPost("gpu/instance")]
-    public IActionResult SetRuntimeInstance([FromBody] SetInstanceRequest req)
+    public async Task<IActionResult> SetRuntimeInstance([FromBody] SetInstanceRequest req, CancellationToken ct)
     {
         var val = req.Target ?? req.InstanceId ?? req.PodId;
         NewsStudio.Infrastructure.FilmFactory.VastAiGpuBackend.SetRuntimeInstance(val);
+        var active = HttpContext.RequestServices.GetService<NewsStudio.Infrastructure.FilmFactory.ActiveFilmGpuBackend>();
+        if (active != null) await active.SetVastInstanceAsync(val, ct); // kept across restarts and seen by the Worker
         NewsStudio.Infrastructure.FilmFactory.RunPodGpuBackend.SetRuntimePodId(val);
         return Ok(new { success = true, podId = val, instanceId = val });
     }
@@ -593,7 +597,13 @@ public class FilmFactoryController : ControllerBase
         {
             var offers = await vast.SearchOffersAsync(new NewsStudio.Infrastructure.FilmFactory.VastOfferQuery(
                 names, diskGb, maxPrice, maxDownloadCostPerGb, minReliability, VerifiedOnly: verifiedOnly), ct);
-            return Ok(new { diskGb, modelDownloadGb = NewsStudio.Infrastructure.FilmFactory.VastAiGpuBackend.ModelDownloadGb, offers });
+            return Ok(new
+            {
+                diskGb,
+                modelDownloadGb = NewsStudio.Infrastructure.FilmFactory.VastAiGpuBackend.ModelDownloadGb,
+                requirements = NewsStudio.Infrastructure.FilmFactory.VastAiGpuBackend.Requirements,
+                offers
+            });
         }
         catch (InvalidOperationException ex)
         {
@@ -619,7 +629,8 @@ public class FilmFactoryController : ControllerBase
         {
             var id = await vast.RentOfferAsync(req.OfferId, req.DiskGb, ct);
             // New batches now go to this Vast machine (batches already sent elsewhere still finish where they are).
-            HttpContext.RequestServices.GetService<NewsStudio.Infrastructure.FilmFactory.ActiveFilmGpuBackend>()?.UseVast();
+            var active = HttpContext.RequestServices.GetService<NewsStudio.Infrastructure.FilmFactory.ActiveFilmGpuBackend>();
+            if (active != null) await active.SelectVastAsync(id, ct); // stored: survives restarts, no Railway variable needed
             return Ok(new
             {
                 success = true,
@@ -701,7 +712,11 @@ public class FilmFactoryController : ControllerBase
 
         try
         {
+            var storedActive = NewsStudio.Infrastructure.FilmFactory.VastAiGpuBackend.GetRuntimeInstance();
             await vast.DestroyInstanceAsync(instanceId, ct);
+            var activeBackend = HttpContext.RequestServices.GetService<NewsStudio.Infrastructure.FilmFactory.ActiveFilmGpuBackend>();
+            if (activeBackend != null && string.Equals(storedActive, instanceId, StringComparison.OrdinalIgnoreCase))
+                await activeBackend.SetVastInstanceAsync(null, ct); // next running machine is picked up automatically
             return Ok(new { success = true, message = $"Đã xoá máy #{instanceId}. Không còn tính tiền GPU lẫn phí giữ ổ." });
         }
         catch (Exception ex) when (ex is InvalidOperationException or ArgumentException)
