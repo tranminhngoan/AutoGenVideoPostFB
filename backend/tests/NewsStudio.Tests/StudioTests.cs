@@ -253,6 +253,20 @@ public class StudioTests
     }
 
     [Fact]
+    public void Plan_gives_every_line_enough_time_to_be_said()
+    {
+        var plan = StudioService.ParsePlan("""
+            {"shots":[{"duration":5,"action":"a","speaker":"Công Tôn Sách","dialogue":"Còn nghiêm trọng hơn ạ! Phu nhân bảo nếu đại nhân không về ngay thì tối nay ngủ ngoài cửa!"},
+                      {"duration":3,"action":"b","speaker":"Bao Công","dialogue":"Án mạng à?"},
+                      {"duration":6,"action":"c"}]}
+            """, new HashSet<Guid>(), new HashSet<Guid>());
+        plan.Shots[0].Duration.Should().Be(8); // 20 words / 3 + 1 → 8 s instead of a rushed 5 s
+        plan.Shots[1].Duration.Should().Be(3); // short line keeps the planner's time
+        plan.Shots[2].Duration.Should().Be(6); // no dialogue: untouched
+        StudioService.SecondsToSay(string.Join(' ', Enumerable.Repeat("chữ", 60))).Should().Be(21); // >15 → clamped by the clip limit
+    }
+
+    [Fact]
     public void Plan_with_unknown_music_falls_back_to_none()
     {
         var plan = StudioService.ParsePlan("""{"musicTrackId":"not-a-guid","shots":[{"duration":8,"action":"x"}]}""", new HashSet<Guid>(), new HashSet<Guid>());

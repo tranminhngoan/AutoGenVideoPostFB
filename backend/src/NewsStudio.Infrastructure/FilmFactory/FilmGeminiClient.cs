@@ -47,14 +47,31 @@ public class FilmGeminiClient
     private decimal PricePerM(string name, decimal fallback) =>
         decimal.TryParse(_configuration[$"Ai:Pricing:{name}"], NumberStyles.Number, CultureInfo.InvariantCulture, out var v) ? v : fallback;
 
-    public async Task<TextResult> GenerateJsonAsync(string systemPrompt, string userPrompt, int maxOutputTokens, double temperature, CancellationToken ct)
+    public Task<TextResult> GenerateJsonAsync(string systemPrompt, string userPrompt, int maxOutputTokens, double temperature, CancellationToken ct) =>
+        GenerateJsonAsync(systemPrompt, userPrompt, maxOutputTokens, temperature, ct, null, false);
+
+    /// <summary>
+    /// JSON answer from <paramref name="modelOverride"/> (default <see cref="TextModel"/>). <paramref name="lightThinking"/>
+    /// keeps the model's reasoning short (thinkingLevel "low" on Gemini 3, a small thinking budget on 2.5): much faster
+    /// for mechanical work such as cutting a script into shots.
+    /// </summary>
+    public async Task<TextResult> GenerateJsonAsync(string systemPrompt, string userPrompt, int maxOutputTokens, double temperature,
+        CancellationToken ct, string? modelOverride, bool lightThinking)
     {
-        var model = TextModel;
+        var model = string.IsNullOrWhiteSpace(modelOverride) ? TextModel : modelOverride;
+        var config = new Dictionary<string, object>
+        {
+            ["temperature"] = temperature, ["maxOutputTokens"] = maxOutputTokens, ["responseMimeType"] = "application/json"
+        };
+        if (lightThinking)
+            config["thinkingConfig"] = model.StartsWith("gemini-2", StringComparison.OrdinalIgnoreCase)
+                ? new Dictionary<string, object> { ["thinkingBudget"] = 1024 }
+                : new Dictionary<string, object> { ["thinkingLevel"] = "low" };
         var body = new
         {
             system_instruction = new { parts = new[] { new { text = systemPrompt } } },
             contents = new[] { new { parts = new[] { new { text = userPrompt } } } },
-            generationConfig = new { temperature, maxOutputTokens, responseMimeType = "application/json" }
+            generationConfig = config
         };
 
         var (doc, key) = await SendAsync(model, body, ct);

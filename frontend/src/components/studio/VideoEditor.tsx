@@ -15,7 +15,7 @@ const REELS_MAX_SECONDS = 90;
 
 /**
  * Rough length of a script, for the writer to judge. Understands both "Name: line" and the markdown layout where the
- * speaker sits on its own line ("**Công Tôn Sách:**") and the words follow on the next lines. Speech ≈ 2.5 Vietnamese
+ * speaker sits on its own line ("**Công Tôn Sách:**") and the words follow on the next lines. Speech ≈ 3 Vietnamese
  * words a second + a breath; every other paragraph is an action beat (~3 s); scene headings (#…) add ~2 s.
  * The real length is the sum of the planned shots.
  */
@@ -47,13 +47,13 @@ export function estimateScriptSeconds(script: string): { seconds: number; lines:
     }
     const inline = /^([^:：]{1,40})[:：]\s*(.+)$/.exec(line);
     if (inline && words(inline[1]) <= 5) {
-      seconds += words(inline[2]) / 2.5 + 1;
+      seconds += words(inline[2]) / 3 + 1;
       lines++;
       speaker = inSpeech = false;
       continue;
     }
     if (speaker || inSpeech) {
-      seconds += words(line) / 2.5 + (inSpeech ? 0 : 1);
+      seconds += words(line) / 3 + (inSpeech ? 0 : 1);
       if (!inSpeech) lines++;
       inSpeech = true;
       speaker = false;
@@ -64,6 +64,10 @@ export function estimateScriptSeconds(script: string): { seconds: number; lines:
   }
   return { seconds: Math.round(seconds), lines, actions };
 }
+
+/** Seconds an actor needs for a line (same rule as the server's planner: ~3 words a second + 1 s). */
+export const secondsToSay = (line?: string | null) =>
+  line?.trim() ? Math.ceil(line.trim().split(/\s+/).length / 3 + 1) : 0;
 
 export const fmtDuration = (s: number) => (s >= 60 ? `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}` : `${Math.round(s)}s`);
 const RESOLUTIONS: { id: string; label: string }[] = [
@@ -480,6 +484,12 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
                               <Input value={s.dialogue ?? ''} disabled={locked} onChange={(e) => updateShot(i, { dialogue: e.target.value })} />
                             </Field>
                           </div>
+                          {secondsToSay(s.dialogue) > clampSecs(s.durationSeconds) && (
+                            <p className="text-[11px] text-warning">
+                              Câu thoại cần khoảng {Math.min(15, secondsToSay(s.dialogue))}s để nói tự nhiên — shot đang {clampSecs(s.durationSeconds)}s nên có thể bị nói vội hoặc cắt.
+                              {secondsToSay(s.dialogue) > 15 && ' Câu quá dài cho 1 clip (tối đa 15s): nên tách sang shot sau.'}
+                            </p>
+                          )}
                           <Field label="Hành động (tiếng Anh để model hiểu tốt nhất)">
                             <Textarea rows={2} value={s.action} disabled={locked} onChange={(e) => updateShot(i, { action: e.target.value })} />
                           </Field>

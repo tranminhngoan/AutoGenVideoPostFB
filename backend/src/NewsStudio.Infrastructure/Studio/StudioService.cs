@@ -294,8 +294,7 @@ public class StudioService
             var assets = await LoadAssetsAsync(Ids(v.AssetIdsJson), ct);
             var music = await _db.StudioMusicTracks.AsNoTracking().OrderBy(m => m.UseCount).ToListAsync(ct);
             var (system, user) = BuildPlanPrompt(v, assets, music);
-            // generous output room: thinking models count their reasoning against this limit
-            var result = await _gemini.GenerateJsonAsync(system, user, 32768, 0.6, ct);
+            var (result, planModel) = await PlanWithFallbackAsync(v, system, user, ct);
             var plan = ParsePlan(result.Text, assets.Select(a => a.Id).ToHashSet(), music.Select(m => m.Id).ToHashSet());
 
             _db.StudioShots.RemoveRange(v.Shots);
@@ -323,7 +322,7 @@ public class StudioService
             v.Progress = null;
             _db.StudioCostRecords.Add(new StudioCostRecord
             {
-                StudioVideoId = v.Id, Kind = "Plan", Model = _gemini.TextModel, Tokens = result.Tokens, CostUsd = result.CostUsd,
+                StudioVideoId = v.Id, Kind = "Plan", Model = planModel, Tokens = result.Tokens, CostUsd = result.CostUsd,
                 Note = result.FreeKey ? "khoá miễn phí" : null
             });
             v.ActualCostUsd += result.CostUsd;
@@ -340,6 +339,53 @@ public class StudioService
                 : "Lập kế hoạch thất bại: " + ex.Message;
             await _db.SaveChangesAsync(CancellationToken.None);
         }
+    }
+
+    /// <summary>Per-model wait: a healthy model answers a long script in well under a minute with light thinking.</summary>
+    private static readonly TimeSpan PlanAttemptTimeout = TimeSpan.FromSeconds(150);
+
+    /// <summary>Models tried in turn for the shot plan (Studio:PlanModels, comma-separated; default: app model, then older Flashes).</summary>
+    public List<string> PlanModels()
+    {
+        var configured = (_configuration["Studio:PlanModels"] ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var models = configured.Length > 0 ? configured.ToList() : new List<string> { _gemini.TextModel, "gemini-3.5-flash", "gemini-2.5-flash" };
+        return models.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    /// <summary>
+    /// Asks each plan model in turn, with light thinking and a time limit per model: an overloaded model (503 / 429,
+    /// or one that hangs) no longer sinks the whole plan — the next one takes over.
+    /// </summary>
+    private async Task<(FilmGeminiClient.TextResult Result, string Model)> PlanWithFallbackAsync(StudioVideo v, string system, string user, CancellationToken ct)
+    {
+        var errors = new List<string>();
+        var models = PlanModels();
+        for (var i = 0; i < models.Count; i++)
+        {
+            var model = models[i];
+            v.Progress = i == 0
+                ? $"Gemini ({model}) đang đọc kịch bản và chia shot…"
+                : $"{models[i - 1]} không trả lời được — đang thử {model} ({i + 1}/{models.Count})…";
+            await _db.SaveChangesAsync(CancellationToken.None);
+            using var attempt = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            attempt.CancelAfter(PlanAttemptTimeout);
+            try
+            {
+                var result = await _gemini.GenerateJsonAsync(system, user, 32768, 0.6, attempt.Token, model, lightThinking: true);
+                ParsePlan(result.Text, new HashSet<Guid>(), new HashSet<Guid>()); // must at least be a usable plan
+                return (result, model);
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                errors.Add($"{model}: quá {PlanAttemptTimeout.TotalSeconds:0}s không trả lời");
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or HttpRequestException or JsonException)
+            {
+                errors.Add($"{model}: {ex.Message}");
+            }
+            _logger.LogWarning("Studio plan: {Error}", errors[^1]);
+        }
+        throw new InvalidOperationException("Không model Gemini nào lập được kế hoạch — " + string.Join(" | ", errors));
     }
 
     public static (string System, string User) BuildPlanPrompt(StudioVideo v, IReadOnlyList<StudioAsset> assets, IReadOnlyList<StudioMusicTrack> music)
@@ -377,7 +423,7 @@ QUY TẮC:
 - Bám sát kịch bản: mỗi câu thoại và mỗi hành động / cảnh được mô tả trong kịch bản thành shot tương ứng, theo đúng thứ tự.
   KHÔNG thêm shot độn, cảnh phụ hay kéo dài cho đủ giờ; KHÔNG bỏ hay rút gọn phần nào của kịch bản. Video dài đúng bằng nội dung.
 - ""duration"" của mỗi shot vừa đủ cho việc xảy ra trong shot: 2–15 giây (số nguyên); shot chỉ có hành động ngắn thì 3–5 giây.
-- Tiếng Việt nói khoảng 2,5 chữ/giây: duration của shot có thoại >= số chữ / 2,5 + 1. Câu quá dài thì tách sang shot sau.
+- Tiếng Việt diễn xuất nói khoảng 3 chữ/giây: duration của shot có thoại >= số chữ / 3 + 1 (vd câu 20 chữ → 8 giây). Câu dài hơn 40 chữ thì tách sang shot sau.
 - Mỗi shot tối đa 1 người nói. ""dialogue"" là câu thoại nguyên văn tiếng Việt trong kịch bản (không dịch, không thêm). Shot không thoại thì để null.
 - ""action"", ""camera"", ""sound"" viết bằng TIẾNG ANH, cụ thể, dễ quay: ai làm gì, cảm xúc, cử chỉ nhỏ có chủ đích; cỡ cảnh + chuyển động máy; tiếng động môi trường (không nhạc).
 - Giữ liên tục: cùng bối cảnh, trang phục, đạo cụ, thời điểm trong ngày giữa các shot.
@@ -418,12 +464,22 @@ Trả về JSON:
                 var action = S(s, "action") ?? "";
                 if (action.Length == 0 && string.IsNullOrWhiteSpace(S(s, "dialogue"))) continue;
                 var cont = shots.Count > 0 && s.TryGetProperty("continueFromPrevious", out var c) && c.ValueKind == JsonValueKind.True;
+                // the planner often under-times lines: never give a line less time than it takes to say it
+                duration = Math.Max(duration, SecondsToSay(NullIfNull(S(s, "dialogue"))));
                 shots.Add(new PlannedShot(GrokVideoClient.ClampSeconds(duration), ids.Take(MaxShotAssets).ToList(),
                     action, S(s, "camera") ?? "", NullIfNull(S(s, "speaker")), NullIfNull(S(s, "dialogue")), NullIfNull(S(s, "sound")), cont));
             }
         }
         if (shots.Count == 0) throw new InvalidOperationException("Gemini trả về kế hoạch không có shot nào.");
         return new Plan(S(root, "caption"), S(root, "notes"), musicId, shots);
+    }
+
+    /// <summary>Time an actor needs for a Vietnamese line: ~3 words (syllables) a second plus a 1 s breath, rounded up.</summary>
+    public static int SecondsToSay(string? line)
+    {
+        if (string.IsNullOrWhiteSpace(line)) return 0;
+        var words = line.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Length;
+        return (int)Math.Ceiling(words / 3.0 + 1);
     }
 
     private static string? NullIfNull(string? s) => string.IsNullOrWhiteSpace(s) || s.Equals("null", StringComparison.OrdinalIgnoreCase) ? null : s;
