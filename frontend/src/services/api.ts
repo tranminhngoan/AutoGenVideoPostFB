@@ -1570,6 +1570,8 @@ export interface VastOffer {
   hostId: number;
   verification?: string | null;
   directPorts: number;
+  /** ≈3 GPU hours + downloading the models once; the list is ranked by this. */
+  sessionCostUsd: number;
 }
 
 export interface VastOfferSearchResult {

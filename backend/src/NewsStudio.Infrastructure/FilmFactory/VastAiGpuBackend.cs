@@ -155,6 +155,9 @@ public partial class VastAiGpuBackend : IFilmGpuBackend
                 return null;
             }
 
+            // A configured id (VAST_INSTANCE_ID) of a machine that was destroyed must not hide the running one.
+            if (!string.IsNullOrWhiteSpace(targetId) && !ContainsInstance(instancesArray, targetId)) targetId = null;
+
             foreach (var item in instancesArray.EnumerateArray())
             {
                 var id = item.TryGetProperty("id", out var idProp) ? idProp.ToString() : null;
@@ -266,6 +269,8 @@ public partial class VastAiGpuBackend : IFilmGpuBackend
                 instancesArray = doc.RootElement;
             else
                 return (null, null, null, null, null, null);
+
+            if (!string.IsNullOrWhiteSpace(idToMatch) && !ContainsInstance(instancesArray, idToMatch)) idToMatch = null;
 
             foreach (var item in instancesArray.EnumerateArray())
             {

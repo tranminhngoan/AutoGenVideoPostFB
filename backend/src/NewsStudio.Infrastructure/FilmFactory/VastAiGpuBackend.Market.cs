@@ -15,7 +15,7 @@ public record VastOfferQuery(
     double MinReliability = 0.98,
     double MinCuda = 12.8,
     bool VerifiedOnly = true,
-    int Limit = 30);
+    int Limit = 10);
 
 /// <summary>One rentable machine, priced for the requested disk size.</summary>
 public record VastOffer(
@@ -24,7 +24,9 @@ public record VastOffer(
     double DownloadCostPerGb, double ModelDownloadCostUsd, double DownloadMbps, double UploadMbps,
     double Reliability, string? Location, string? CpuName, double CpuCores, double RamGb,
     double DiskAvailableGb, double DiskMbps, string? DiskName, double DlPerf, double MaxDurationDays,
-    long MachineId, long HostId, string? Verification, int DirectPorts);
+    long MachineId, long HostId, string? Verification, int DirectPorts,
+    /// <summary>One typical render session: SessionHours of GPU + downloading the models once.</summary>
+    double SessionCostUsd);
 
 /// <summary>An instance on the user's Vast.ai account.</summary>
 public record VastInstanceInfo(
@@ -41,6 +43,9 @@ public partial class VastAiGpuBackend
     /// RealVisXL fp16 6.9 GB, IP-Adapter ~3.4 GB, LatentSync 6.0 GB (Hugging Face sizes, 2026-11-22) + pip packages.
     /// </summary>
     public const double ModelDownloadGb = 110;
+
+    /// <summary>Assumed GPU hours of one render session, used only to rank offers (price x hours + download).</summary>
+    public const double SessionHours = 3;
 
     /// <summary>GPUs with enough VRAM for Wan 2.1 14B fully on the card (x86 only — GB10/GB200 are ARM).</summary>
     public static readonly IReadOnlyList<string> DefaultGpuNames = new[] { "RTX PRO 6000 WS", "RTX PRO 6000 Max-Q", "RTX PRO 6000 S" };
@@ -69,7 +74,8 @@ public partial class VastAiGpuBackend
             ["allocated_storage"] = q.DiskGb, // prices (dph_total, storage_total_cost) are returned for this disk size
             ["type"] = "ondemand",
             ["order"] = new[] { new[] { "dph_total", "asc" } },
-            ["limit"] = Math.Clamp(q.Limit, 1, 100)
+            // fetch a wider pool; SearchOffersAsync re-ranks it by session cost and keeps q.Limit
+            ["limit"] = Math.Clamp(q.Limit * 4, 20, 64)
         };
         if (q.VerifiedOnly) body["verified"] = new Dictionary<string, object> { ["eq"] = true };
         if (q.MaxPricePerHour is > 0) body["dph_total"] = new Dictionary<string, object> { ["lte"] = q.MaxPricePerHour.Value };
@@ -120,7 +126,8 @@ public partial class VastAiGpuBackend
                 MachineId: (long)Num(x, "machine_id"),
                 HostId: (long)Num(x, "host_id"),
                 Verification: Str(x, "verification"),
-                DirectPorts: (int)Num(x, "direct_port_count")));
+                DirectPorts: (int)Num(x, "direct_port_count"),
+                SessionCostUsd: Math.Round(Num(x, "dph_total") * SessionHours + downPerGb * ModelDownloadGb, 2)));
         }
         return list;
     }
@@ -136,7 +143,11 @@ public partial class VastAiGpuBackend
         var json = await res.Content.ReadAsStringAsync(ct);
         if (!res.IsSuccessStatusCode)
             throw new InvalidOperationException($"Vast.ai tìm máy lỗi HTTP {(int)res.StatusCode}: {Trim(json)}");
-        return ParseOffers(json, query.DiskGb);
+        // Cheapest per hour is not cheapest overall: some hosts charge ~$4 just to download the models.
+        return ParseOffers(json, query.DiskGb)
+            .OrderBy(o => o.SessionCostUsd).ThenByDescending(o => o.Reliability)
+            .Take(Math.Clamp(query.Limit, 1, 30))
+            .ToList();
     }
 
     /// <summary>
@@ -288,6 +299,9 @@ public partial class VastAiGpuBackend
         _cachedDiscoveredUrl = null;
         _logger.LogInformation("Destroyed Vast.ai instance {Id}", instanceId);
     }
+
+    private static bool ContainsInstance(JsonElement instances, string id) =>
+        instances.EnumerateArray().Any(i => i.TryGetProperty("id", out var v) && string.Equals(v.ToString(), id, StringComparison.OrdinalIgnoreCase));
 
     private static double Num(JsonElement x, string name, double fallback = 0)
     {

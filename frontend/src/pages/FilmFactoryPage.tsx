@@ -75,7 +75,7 @@ import {
   RunPodGpuLiveStatus
 } from '../services/api';
 import { useToast } from '../components/feedback';
-import { VastMachinesPanel } from '../components/VastMachinesPanel';
+import { VastInstanceList, VastRentDrawer } from '../components/VastMachines';
 
 const BUSY_EPISODE_STATUSES = [
   'Queued',
@@ -257,7 +257,8 @@ export function FilmFactoryPage() {
   const [savingPodId, setSavingPodId] = useState(false);
   const [stoppingGpu, setStoppingGpu] = useState(false);
   const [startingGpu, setStartingGpu] = useState(false);
-  const [vastPanelOpen, setVastPanelOpen] = useState(false);
+  const [vastRentOpen, setVastRentOpen] = useState(false);
+  const [vastListKey, setVastListKey] = useState(0);
 
   const loadGpuStatus = async () => {
     try {
@@ -679,6 +680,219 @@ export function FilmFactoryPage() {
         }
       />
 
+      {/* ── Shared GPU machine: one machine serves every film, so it lives on the main page ── */}
+      <Card className="p-3.5 sm:p-4 space-y-3">
+                <div className="flex items-center justify-between gap-2">
+                  <h2 className="text-sm font-semibold text-fg">Máy GPU dựng phim <span className="font-normal text-fg-subtle">— dùng chung cho mọi series</span></h2>
+                </div>
+        {/* Deck Row: GPU spec, Disk metric, Master Power Button, Pod controls */}
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-2.5">
+            <span className="font-semibold text-fg flex items-center gap-1.5 shrink-0">
+              <Cpu className="h-4 w-4 text-accent" />
+              {gpuStatus?.provider === 'VastAi' ? 'Vast.ai GPU:' : 'GPU Máy Chủ:'}
+            </span>
+
+            {gpuStatus?.online && gpuStatus.gpu ? (
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 shadow-sm">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                Online: {gpuStatus.gpu} ({gpuStatus.vramGb || 24}GB VRAM)
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium bg-amber-500/10 text-amber-500 border border-amber-500/20" title={gpuStatus?.pingDetail || ''}>
+                <span className="w-2 h-2 rounded-full bg-amber-500" />
+                {gpuStatus?.podId ? (gpuStatus.podDesiredStatus === 'stopped' ? `Đã tắt máy (${gpuStatus.podId})` : `Chờ Worker (${gpuStatus.podId})`) : 'Chưa kết nối GPU'}
+              </span>
+            )}
+
+            {gpuStatus?.diskTotalGb && (
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-muted/60 text-[11px] text-fg-muted font-mono border border-line">
+                <HardDrive className="h-3 w-3 text-fg-subtle" />
+                Ổ cứng: còn trống {gpuStatus.diskFreeGb} GB / {gpuStatus.diskTotalGb} GB
+              </span>
+            )}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 w-full md:w-auto justify-between md:justify-end">
+            {/* Master GPU Switch: Start / Stop to save money */}
+            {gpuStatus?.hasApiKey && (
+              (gpuStatus.online || gpuStatus.podDesiredStatus === 'RUNNING' || gpuStatus.podDesiredStatus === 'running') ? (
+                <Button
+                  size="sm"
+                  variant="danger"
+                  icon={<PowerOff className="h-3.5 w-3.5" />}
+                  loading={stoppingGpu}
+                  onClick={handleStopGpu}
+                  className="flex-1 sm:flex-initial"
+                  title={`Dừng máy GPU trên ${gpuStatus?.provider === 'VastAi' ? 'Vast.ai' : 'RunPod'} để lập tức ngừng tính tiền (Ổ cứng và dữ liệu vẫn được giữ nguyên)`}
+                >
+                  Dừng GPU ({gpuStatus?.hourlyCost ? `$${gpuStatus.hourlyCost.toFixed(2)}/h` : gpuStatus?.provider === 'VastAi' ? '~$0.28/h' : '$2.22/h'})
+                </Button>
+              ) : (
+                <Button
+                  size="sm"
+                  variant="primary"
+                  icon={<Play className="h-3.5 w-3.5" />}
+                  loading={startingGpu}
+                  onClick={handleStartGpu}
+                  className="flex-1 sm:flex-initial"
+                  title={`Bật lại máy GPU trên ${gpuStatus?.provider === 'VastAi' ? 'Vast.ai' : 'RunPod'} để tiếp tục dựng phim`}
+                >
+                  Bật Lại GPU
+                </Button>
+              )
+            )}
+
+            {(gpuStatus?.provider === 'VastAi' || gpuStatus?.vastHasApiKey) && (
+              <Button
+                size="sm"
+                variant="secondary"
+                icon={<HardDrive className="h-3.5 w-3.5" />}
+                onClick={() => setVastRentOpen(true)}
+                className="flex-1 sm:flex-initial"
+                title="10 máy GPU hợp nhất để dựng phim, xếp theo chi phí một lần dựng"
+              >
+                Thuê máy mới
+              </Button>
+            )}
+
+            {editingPodId ? (
+              <div className="flex items-center gap-1.5 flex-1 sm:flex-initial">
+                <input
+                  type="text"
+                  placeholder="Vast ID hoặc URL http://..."
+                  className="px-2.5 py-1 text-xs rounded border border-line bg-surface text-fg focus:outline-none focus:ring-1 focus:ring-accent w-full sm:w-48"
+                  value={podInput}
+                  onChange={(e) => setPodInput(e.target.value)}
+                />
+                <Button size="sm" variant="primary" loading={savingPodId} onClick={handleSavePodId}>
+                  Lưu
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setEditingPodId(false)}>
+                  Hủy
+                </Button>
+              </div>
+            ) : (
+              <Button size="sm" variant="ghost" onClick={() => setEditingPodId(true)}>
+                Đổi ID/URL ({gpuStatus?.podId || (gpuStatus?.provider === 'VastAi' ? 'Vast.ai' : 'GPU')})
+              </Button>
+            )}
+          </div>
+        </div>
+
+        {/* Live Mission Control Banner */}
+        {gpuStatus?.online && (
+          <div className={cn(
+            "rounded-lg p-3 sm:p-3.5 text-xs border transition-all",
+            gpuStatus.state === 'busy' || gpuStatus.activeEpisodeStatus
+              ? "bg-accent/5 border-accent/30 text-fg shadow-sm"
+              : "bg-muted/40 border-line text-fg-muted"
+          )}>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-start sm:items-center gap-2.5">
+                {gpuStatus.state === 'busy' || gpuStatus.activeEpisodeStatus ? (
+                  <div className="flex h-7 w-7 items-center justify-center rounded-full bg-accent/20 text-accent shrink-0 mt-0.5 sm:mt-0">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  </div>
+                ) : (
+                  <div className="flex h-7 w-7 items-center justify-center rounded-full bg-emerald-500/20 text-emerald-500 shrink-0 mt-0.5 sm:mt-0">
+                    <CheckCircle2 className="h-4 w-4" />
+                  </div>
+                )}
+                <div>
+                  <span className="font-semibold text-fg text-xs sm:text-sm">
+                    {gpuStatus.state === 'busy'
+                      ? `GPU đang thực thi: ${gpuStatus.currentBatch || 'Tác vụ'}`
+                      : gpuStatus.activeEpisodeStatus
+                      ? `Tiến trình: Tập ${gpuStatus.activeEpisodeNumber || '?'}: ${gpuStatus.activeEpisodeTitle || ''} (${EPISODE_STATUS_LABELS[gpuStatus.activeEpisodeStatus] || gpuStatus.activeEpisodeStatus})`
+                      : 'GPU đang ở trạng thái rảnh rỗi (Idle) — Sẵn sàng nhận việc'}
+                  </span>
+                  {gpuStatus.batchDetail ? (
+                    <div className="mt-1 text-[11px] text-accent font-medium flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-accent animate-ping" />
+                      Chi tiết: {gpuStatus.batchDetail}
+                    </div>
+                  ) : (
+                    <div className="mt-0.5 text-[11px] text-fg-subtle">
+                      Trang tự động cập nhật liên tục mỗi 3-4 giây.
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {gpuStatus.activeEpisodeId && (
+                <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 w-full sm:w-auto">
+                  <Button
+                    size="sm"
+                    variant="primary"
+                    icon={<Activity className="h-3.5 w-3.5" />}
+                    className="flex-1 sm:flex-initial"
+                    onClick={() => {
+                      const found = selectedProject?.episodes.find(e => e.id === gpuStatus.activeEpisodeId);
+                      setTrackingEpisode(found || {
+                        id: gpuStatus.activeEpisodeId!,
+                        filmProjectId: selectedProject?.id || '',
+                        episodeNumber: gpuStatus.activeEpisodeNumber || 2,
+                        title: gpuStatus.activeEpisodeTitle || `Tập ${gpuStatus.activeEpisodeNumber}`,
+                        synopsis: '',
+                        openingHook: '',
+                        endingCliffhanger: '',
+                        targetDurationSeconds: 180,
+                        actualDurationSeconds: 0,
+                        status: gpuStatus.activeEpisodeStatus || 'GpuRendering',
+                        estimatedCostUsd: 0,
+                        actualCostUsd: 0,
+                        qualityScore: 0,
+                        scenesCount: 4,
+                        shotsCount: 26,
+                      } as FilmEpisodeDto);
+                    }}
+                  >
+                    Xem Tiến Độ Chi Tiết
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    icon={<RotateCw className="h-3 w-3" />}
+                    className="flex-1 sm:flex-initial"
+                    onClick={() => handleRenderEpisode(gpuStatus.activeEpisodeId!, true)}
+                  >
+                    Ép Dựng Lại
+                  </Button>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Stalled Warning */}
+        {gpuStatus?.isStalled && (
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 text-xs text-amber-500">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="h-4 w-4 shrink-0" />
+              <div>
+                <span className="font-semibold">Phát hiện tác vụ bị ngắt quãng:</span>{' '}
+                Tập {gpuStatus.activeEpisodeNumber} đang ghi nhận là GpuRendering nhưng máy GPU báo rảnh rỗi (do máy vừa khởi động lại).
+              </div>
+            </div>
+            {gpuStatus.activeEpisodeId && (
+              <Button
+                size="sm"
+                variant="primary"
+                onClick={() => handleRenderEpisode(gpuStatus.activeEpisodeId!, true)}
+              >
+                Gỡ Kẹt & Tiếp Tục Ngay
+              </Button>
+            )}
+          </div>
+        )}
+        {(gpuStatus?.provider === 'VastAi' || gpuStatus?.vastHasApiKey) && (
+          <div className="border-t border-line pt-3">
+            <VastInstanceList refreshKey={vastListKey} onChanged={loadGpuStatus} />
+          </div>
+        )}
+      </Card>
+
       {/* ── Top Metric Stats (Always visible when in list view) ── */}
       {!selectedProjectId && (
         <div className="grid grid-cols-2 gap-2.5 sm:gap-3 lg:grid-cols-4">
@@ -861,210 +1075,6 @@ export function FilmFactoryPage() {
                 </div>
               </div>
 
-              {/* Live GPU & Production Command Center: Modern Responsive Deck */}
-              <div className="bg-surface border-t border-line p-3.5 sm:p-4 space-y-3">
-                {/* Deck Row: GPU spec, Disk metric, Master Power Button, Pod controls */}
-                <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs">
-                  <div className="flex flex-wrap items-center gap-2 sm:gap-2.5">
-                    <span className="font-semibold text-fg flex items-center gap-1.5 shrink-0">
-                      <Cpu className="h-4 w-4 text-accent" />
-                      {gpuStatus?.provider === 'VastAi' ? 'Vast.ai GPU:' : 'GPU Máy Chủ:'}
-                    </span>
-
-                    {gpuStatus?.online && gpuStatus.gpu ? (
-                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 shadow-sm">
-                        <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                        Online: {gpuStatus.gpu} ({gpuStatus.vramGb || 24}GB VRAM)
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium bg-amber-500/10 text-amber-500 border border-amber-500/20" title={gpuStatus?.pingDetail || ''}>
-                        <span className="w-2 h-2 rounded-full bg-amber-500" />
-                        {gpuStatus?.podId ? (gpuStatus.podDesiredStatus === 'stopped' ? `Đã tắt máy (${gpuStatus.podId})` : `Chờ Worker (${gpuStatus.podId})`) : 'Chưa kết nối GPU'}
-                      </span>
-                    )}
-
-                    {gpuStatus?.diskTotalGb && (
-                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-muted/60 text-[11px] text-fg-muted font-mono border border-line">
-                        <HardDrive className="h-3 w-3 text-fg-subtle" />
-                        Ổ cứng: còn trống {gpuStatus.diskFreeGb} GB / {gpuStatus.diskTotalGb} GB
-                      </span>
-                    )}
-                  </div>
-
-                  <div className="flex flex-wrap items-center gap-2 w-full md:w-auto justify-between md:justify-end">
-                    {/* Master GPU Switch: Start / Stop to save money */}
-                    {gpuStatus?.hasApiKey && (
-                      (gpuStatus.online || gpuStatus.podDesiredStatus === 'RUNNING' || gpuStatus.podDesiredStatus === 'running') ? (
-                        <Button
-                          size="sm"
-                          variant="danger"
-                          icon={<PowerOff className="h-3.5 w-3.5" />}
-                          loading={stoppingGpu}
-                          onClick={handleStopGpu}
-                          className="flex-1 sm:flex-initial"
-                          title={`Dừng máy GPU trên ${gpuStatus?.provider === 'VastAi' ? 'Vast.ai' : 'RunPod'} để lập tức ngừng tính tiền (Ổ cứng và dữ liệu vẫn được giữ nguyên)`}
-                        >
-                          Dừng GPU ({gpuStatus?.hourlyCost ? `$${gpuStatus.hourlyCost.toFixed(2)}/h` : gpuStatus?.provider === 'VastAi' ? '~$0.28/h' : '$2.22/h'})
-                        </Button>
-                      ) : (
-                        <Button
-                          size="sm"
-                          variant="primary"
-                          icon={<Play className="h-3.5 w-3.5" />}
-                          loading={startingGpu}
-                          onClick={handleStartGpu}
-                          className="flex-1 sm:flex-initial"
-                          title={`Bật lại máy GPU trên ${gpuStatus?.provider === 'VastAi' ? 'Vast.ai' : 'RunPod'} để tiếp tục dựng phim`}
-                        >
-                          Bật Lại GPU
-                        </Button>
-                      )
-                    )}
-
-                    {(gpuStatus?.provider === 'VastAi' || gpuStatus?.vastHasApiKey) && (
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        icon={<HardDrive className="h-3.5 w-3.5" />}
-                        onClick={() => setVastPanelOpen(true)}
-                        className="flex-1 sm:flex-initial"
-                        title="Tìm & thuê máy GPU theo cấu hình phim cần, hoặc xoá máy để ngừng mọi chi phí"
-                      >
-                        Quản lý máy Vast
-                      </Button>
-                    )}
-
-                    {editingPodId ? (
-                      <div className="flex items-center gap-1.5 flex-1 sm:flex-initial">
-                        <input
-                          type="text"
-                          placeholder="Vast ID hoặc URL http://..."
-                          className="px-2.5 py-1 text-xs rounded border border-line bg-surface text-fg focus:outline-none focus:ring-1 focus:ring-accent w-full sm:w-48"
-                          value={podInput}
-                          onChange={(e) => setPodInput(e.target.value)}
-                        />
-                        <Button size="sm" variant="primary" loading={savingPodId} onClick={handleSavePodId}>
-                          Lưu
-                        </Button>
-                        <Button size="sm" variant="ghost" onClick={() => setEditingPodId(false)}>
-                          Hủy
-                        </Button>
-                      </div>
-                    ) : (
-                      <Button size="sm" variant="ghost" onClick={() => setEditingPodId(true)}>
-                        Đổi ID/URL ({gpuStatus?.podId || (gpuStatus?.provider === 'VastAi' ? 'Vast.ai' : 'GPU')})
-                      </Button>
-                    )}
-                  </div>
-                </div>
-
-                {/* Live Mission Control Banner */}
-                {gpuStatus?.online && (
-                  <div className={cn(
-                    "rounded-lg p-3 sm:p-3.5 text-xs border transition-all",
-                    gpuStatus.state === 'busy' || gpuStatus.activeEpisodeStatus
-                      ? "bg-accent/5 border-accent/30 text-fg shadow-sm"
-                      : "bg-muted/40 border-line text-fg-muted"
-                  )}>
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                      <div className="flex items-start sm:items-center gap-2.5">
-                        {gpuStatus.state === 'busy' || gpuStatus.activeEpisodeStatus ? (
-                          <div className="flex h-7 w-7 items-center justify-center rounded-full bg-accent/20 text-accent shrink-0 mt-0.5 sm:mt-0">
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          </div>
-                        ) : (
-                          <div className="flex h-7 w-7 items-center justify-center rounded-full bg-emerald-500/20 text-emerald-500 shrink-0 mt-0.5 sm:mt-0">
-                            <CheckCircle2 className="h-4 w-4" />
-                          </div>
-                        )}
-                        <div>
-                          <span className="font-semibold text-fg text-xs sm:text-sm">
-                            {gpuStatus.state === 'busy'
-                              ? `GPU đang thực thi: ${gpuStatus.currentBatch || 'Tác vụ'}`
-                              : gpuStatus.activeEpisodeStatus
-                              ? `Tiến trình: Tập ${gpuStatus.activeEpisodeNumber || '?'}: ${gpuStatus.activeEpisodeTitle || ''} (${EPISODE_STATUS_LABELS[gpuStatus.activeEpisodeStatus] || gpuStatus.activeEpisodeStatus})`
-                              : 'GPU đang ở trạng thái rảnh rỗi (Idle) — Sẵn sàng nhận việc'}
-                          </span>
-                          {gpuStatus.batchDetail ? (
-                            <div className="mt-1 text-[11px] text-accent font-medium flex items-center gap-1.5">
-                              <span className="w-1.5 h-1.5 rounded-full bg-accent animate-ping" />
-                              Chi tiết: {gpuStatus.batchDetail}
-                            </div>
-                          ) : (
-                            <div className="mt-0.5 text-[11px] text-fg-subtle">
-                              Trang tự động cập nhật liên tục mỗi 3-4 giây.
-                            </div>
-                          )}
-                        </div>
-                      </div>
-
-                      {gpuStatus.activeEpisodeId && (
-                        <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 w-full sm:w-auto">
-                          <Button
-                            size="sm"
-                            variant="primary"
-                            icon={<Activity className="h-3.5 w-3.5" />}
-                            className="flex-1 sm:flex-initial"
-                            onClick={() => {
-                              const found = selectedProject?.episodes.find(e => e.id === gpuStatus.activeEpisodeId);
-                              setTrackingEpisode(found || {
-                                id: gpuStatus.activeEpisodeId!,
-                                filmProjectId: selectedProject?.id || '',
-                                episodeNumber: gpuStatus.activeEpisodeNumber || 2,
-                                title: gpuStatus.activeEpisodeTitle || `Tập ${gpuStatus.activeEpisodeNumber}`,
-                                synopsis: '',
-                                openingHook: '',
-                                endingCliffhanger: '',
-                                targetDurationSeconds: 180,
-                                actualDurationSeconds: 0,
-                                status: gpuStatus.activeEpisodeStatus || 'GpuRendering',
-                                estimatedCostUsd: 0,
-                                actualCostUsd: 0,
-                                qualityScore: 0,
-                                scenesCount: 4,
-                                shotsCount: 26,
-                              } as FilmEpisodeDto);
-                            }}
-                          >
-                            Xem Tiến Độ Chi Tiết
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="secondary"
-                            icon={<RotateCw className="h-3 w-3" />}
-                            className="flex-1 sm:flex-initial"
-                            onClick={() => handleRenderEpisode(gpuStatus.activeEpisodeId!, true)}
-                          >
-                            Ép Dựng Lại
-                          </Button>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                {/* Stalled Warning */}
-                {gpuStatus?.isStalled && (
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 text-xs text-amber-500">
-                    <div className="flex items-center gap-2">
-                      <AlertTriangle className="h-4 w-4 shrink-0" />
-                      <div>
-                        <span className="font-semibold">Phát hiện tác vụ bị ngắt quãng:</span>{' '}
-                        Tập {gpuStatus.activeEpisodeNumber} đang ghi nhận là GpuRendering nhưng máy GPU báo rảnh rỗi (do máy vừa khởi động lại).
-                      </div>
-                    </div>
-                    {gpuStatus.activeEpisodeId && (
-                      <Button
-                        size="sm"
-                        variant="primary"
-                        onClick={() => handleRenderEpisode(gpuStatus.activeEpisodeId!, true)}
-                      >
-                        Gỡ Kẹt & Tiếp Tục Ngay
-                      </Button>
-                    )}
-                  </div>
-                )}
-              </div>
             </Card>
           </div>
 
@@ -2742,7 +2752,14 @@ export function FilmFactoryPage() {
         );
       })()}
 
-      <VastMachinesPanel open={vastPanelOpen} onClose={() => setVastPanelOpen(false)} onChanged={loadGpuStatus} />
+      <VastRentDrawer
+        open={vastRentOpen}
+        onClose={() => setVastRentOpen(false)}
+        onRented={() => {
+          setVastListKey((k) => k + 1);
+          loadGpuStatus();
+        }}
+      />
     </div>
   );
 }
