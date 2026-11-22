@@ -315,13 +315,19 @@ public class StudioService
         sb.AppendLine($"KỊCH BẢN (giữ nguyên lời thoại):\n{v.Script}\n");
         sb.AppendLine($"Khung hình {(v.AspectRatio == "16:9" ? "ngang 16:9" : "dọc 9:16")}. Độ dài video do KỊCH BẢN quyết định — không có thời lượng mục tiêu.");
         if (!string.IsNullOrWhiteSpace(v.StyleNotes)) sb.AppendLine($"Phong cách / ghi chú của người dùng: {v.StyleNotes}");
-        sb.AppendLine("\nẢNH CÓ SẴN (chỉ dùng các id này):");
+        sb.AppendLine("\nDÀN NHÂN VẬT / BỐI CẢNH NGƯỜI DÙNG ĐÃ CHỌN (chỉ dùng các id này):");
         if (assets.Count == 0) sb.AppendLine("- (không có — mô tả nhân vật và bối cảnh thật chi tiết, nhất quán trong mọi shot)");
         foreach (var a in assets) sb.AppendLine($"- id={a.Id} | {a.Kind} | {a.Name} | {a.Description}");
         sb.AppendLine("\nKHO NHẠC NỀN (chọn 1 bài hợp không khí, hoặc null):");
         if (music.Count == 0) sb.AppendLine("- (trống)");
         foreach (var m in music) sb.AppendLine($"- id={m.Id} | {m.Name} | tâm trạng: {m.Mood} | {m.DurationSeconds:0}s");
         sb.AppendLine(@"
+NHÂN VẬT:
+- Các nhân vật trong danh sách trên là NHÂN VẬT CHÍNH: khi họ xuất hiện thì dùng đúng ảnh của họ.
+- Mọi nhân vật khác trong kịch bản (vai phụ, quần chúng, người qua đường…) và cảnh vật: KHÔNG có ảnh — tự mô tả bằng tiếng Anh
+  trong ""action"" (ngoại hình, trang phục, tuổi) cho hợp bối cảnh và thời đại của kịch bản, giữ mô tả giống nhau giữa các shot.
+- TUYỆT ĐỐI không dùng ảnh của nhân vật này cho nhân vật khác, và không đưa ảnh nhân vật vào shot mà người đó không có mặt.
+
 CÁCH MODEL VIDEO HOẠT ĐỘNG:
 - Mỗi clip BẮT ĐẦU TỪ ĐÚNG 1 ẢNH rồi chuyển động tiếp. Model không có ảnh tham chiếu riêng cho từng nhân vật: nhân vật nào không có
   trong ảnh mở đầu thì model tự vẽ (dễ sai mặt). Vì vậy ảnh mở đầu nên chứa những nhân vật xuất hiện trong shot.

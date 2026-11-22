@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ImagePlus, Pencil, Trash2, Upload } from 'lucide-react';
+import { Check, ImagePlus, Pencil, Trash2, Upload } from 'lucide-react';
 import { Badge, Button, Card, EmptyState, Field, Input, Modal, Select, Skeleton, Textarea, cn } from '../ui';
 import { useConfirm, useToast } from '../feedback';
 import { AssetKind, StudioAsset, studio } from '../../services/studio';
@@ -178,35 +178,145 @@ export function AssetLibrary({ onAuthError }: { onAuthError: (e: unknown) => boo
   );
 }
 
-/** Checkbox grid used in the video form and on each shot. */
+/** Lower-case, accent-free text, so "Triển Chiêu" in a script matches an asset named "trien chieu". */
+export const fold = (t: string) =>
+  t.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'D').toLowerCase().trim();
+
+/** Assets whose name appears in the script (whole words, accents ignored). */
+export function assetsNamedInScript(assets: StudioAsset[], script: string): string[] {
+  const text = ` ${fold(script).replace(/[^a-z0-9]+/g, ' ')} `;
+  return assets
+    .filter((a) => {
+      const name = fold(a.name).replace(/[^a-z0-9]+/g, ' ').trim();
+      return name.length >= 2 && text.includes(` ${name} `);
+    })
+    .map((a) => a.id);
+}
+
+/** Checkbox grid used in the video form and on each shot. Selected pictures carry a ✓ (or their order) and keep the click order. */
 export function AssetPicker({
   assets,
   value,
   onChange,
   compact,
+  disabled,
 }: {
   assets: StudioAsset[];
   value: string[];
   onChange: (ids: string[]) => void;
   compact?: boolean;
+  disabled?: boolean;
 }) {
   if (assets.length === 0) return <p className="text-xs text-fg-muted">Kho ảnh trống — thêm ảnh ở tab "Nhân vật & bối cảnh".</p>;
   const toggle = (id: string) => onChange(value.includes(id) ? value.filter((x) => x !== id) : [...value, id]);
   return (
     <div className={cn('grid gap-2', compact ? 'grid-cols-4 sm:grid-cols-6 lg:grid-cols-8' : 'grid-cols-3 sm:grid-cols-4 lg:grid-cols-6')}>
       {assets.map((a) => {
-        const on = value.includes(a.id);
+        const order = value.indexOf(a.id);
+        const on = order >= 0;
         return (
           <button
             key={a.id}
             type="button"
+            disabled={disabled}
             onClick={() => toggle(a.id)}
-            className={cn('overflow-hidden rounded-lg border-2 text-left transition-colors', on ? 'border-accent' : 'border-transparent opacity-70 hover:opacity-100')}
+            aria-pressed={on}
+            className={cn(
+              'relative overflow-hidden rounded-lg border-2 text-left transition',
+              on ? 'border-accent shadow-sm' : 'border-transparent opacity-55 grayscale-[40%] hover:opacity-100 hover:grayscale-0',
+            )}
             title={`${KIND_LABEL[a.kind]}: ${a.description}`}
           >
             <img src={studio.assetImageUrl(a.id)} alt={a.name} className="aspect-square w-full bg-muted object-cover" loading="lazy" />
-            <div className={cn('truncate px-1 py-0.5 text-[11px]', on ? 'bg-accent text-white' : 'bg-muted text-fg-muted')}>{a.name}</div>
+            {on && (
+              <span className="absolute right-1 top-1 flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-accent px-1 text-[11px] font-bold text-white">
+                {compact ? order + 1 : <Check className="h-3.5 w-3.5" />}
+              </span>
+            )}
+            <div className={cn('truncate px-1 py-0.5 text-[11px]', on ? 'bg-accent font-medium text-white' : 'bg-muted text-fg-muted')}>{a.name}</div>
           </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/**
+ * The cast of one video: the main characters (and locations / props) picked from the library. Only these pictures
+ * reach the planner — side characters, extras and scenery are invented by the AI to fit the setting.
+ */
+export function VideoCastPicker({
+  assets,
+  value,
+  onChange,
+  script,
+  disabled,
+}: {
+  assets: StudioAsset[];
+  value: string[];
+  onChange: (ids: string[]) => void;
+  script: string;
+  disabled?: boolean;
+}) {
+  const [query, setQuery] = useState('');
+  const [showAll, setShowAll] = useState(false);
+  if (assets.length === 0) return <p className="text-xs text-fg-muted">Kho ảnh trống — thêm ảnh ở tab "Nhân vật & bối cảnh".</p>;
+
+  const named = assetsNamedInScript(assets, script);
+  const q = fold(query);
+  const small = assets.length <= 12; // a small library is always shown whole
+  const visible = (kinds: AssetKind[]) =>
+    assets.filter(
+      (a) =>
+        kinds.includes(a.kind) &&
+        (!q || fold(a.name).includes(q) || fold(a.description).includes(q)) &&
+        (small || showAll || q || value.includes(a.id) || named.includes(a.id)),
+    );
+  const chosen = (kinds: AssetKind[]) => assets.filter((a) => kinds.includes(a.kind) && value.includes(a.id));
+  const groups: { kinds: AssetKind[]; title: string; empty: string }[] = [
+    { kinds: ['Character'], title: 'Nhân vật chính', empty: 'Chưa chọn nhân vật nào — AI tự tạo nhân vật theo kịch bản (mặt có thể khác nhau giữa các shot).' },
+    { kinds: ['Location', 'Prop'], title: 'Bối cảnh & đạo cụ', empty: 'Chưa chọn — AI tự dựng bối cảnh theo kịch bản.' },
+  ];
+  const missing = named.filter((id) => !value.includes(id));
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <Input className="max-w-xs" placeholder="Tìm theo tên / mô tả…" value={query} onChange={(e) => setQuery(e.target.value)} />
+        <Button size="sm" variant="secondary" disabled={disabled || missing.length === 0} onClick={() => onChange([...value, ...missing])}
+          title={named.length ? 'Chọn các ảnh có tên xuất hiện trong kịch bản' : 'Không thấy tên ảnh nào trong kịch bản'}>
+          Chọn theo kịch bản{named.length ? ` (${named.length})` : ''}
+        </Button>
+        {value.length > 0 && (
+          <Button size="sm" variant="ghost" disabled={disabled} onClick={() => onChange([])}>
+            Bỏ chọn hết
+          </Button>
+        )}
+        {!small && !q && (
+          <Button size="sm" variant="ghost" onClick={() => setShowAll((v) => !v)}>
+            {showAll ? 'Chỉ hiện ảnh liên quan' : `Hiện cả kho (${assets.length})`}
+          </Button>
+        )}
+      </div>
+      {groups.map((g) => {
+        const list = visible(g.kinds);
+        const picked = chosen(g.kinds);
+        return (
+          <div key={g.title} className="space-y-1.5">
+            <div className="text-xs font-semibold text-fg">
+              {g.title}{' '}
+              <span className="font-normal text-fg-muted">
+                · đã chọn {picked.length}
+                {picked.length ? `: ${picked.map((a) => a.name).join(', ')}` : ''}
+              </span>
+            </div>
+            {picked.length === 0 && <p className="text-[11px] text-fg-subtle">{g.empty}</p>}
+            {list.length > 0 ? (
+              <AssetPicker assets={list} value={value} disabled={disabled} onChange={onChange} />
+            ) : (
+              <p className="text-[11px] text-fg-subtle">{q ? 'Không có ảnh khớp.' : 'Không có ảnh nào liên quan tới kịch bản — bấm "Hiện cả kho" để chọn.'}</p>
+            )}
+          </div>
         );
       })}
     </div>

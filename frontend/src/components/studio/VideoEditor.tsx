@@ -8,7 +8,7 @@ import {
   BUSY, STATUS_LABEL, StudioAsset, StudioMusic, StudioPage, StudioShot, StudioShotInput, StudioVideo, StudioVideoInput, studio, usd,
 } from '../../services/studio';
 import { navigate } from '../../lib/router';
-import { AssetPicker } from './AssetLibrary';
+import { AssetPicker, VideoCastPicker } from './AssetLibrary';
 
 /** Facebook only takes Reels up to 90 s; longer videos go up as ordinary Page videos. */
 const REELS_MAX_SECONDS = 90;
@@ -346,8 +346,10 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
         <Field label="Phong cách / ghi chú cho đạo diễn AI" optional hint="vd: giọng miền Tây, nắng chiều vàng, hài hước, máy quay cầm tay nhẹ">
           <Input value={form.styleNotes} onChange={(e) => setForm({ ...form, styleNotes: e.target.value })} disabled={locked} />
         </Field>
-        <Field label="Ảnh nhân vật & bối cảnh dùng trong video" hint="Chọn những ảnh trong kho sẽ xuất hiện; AI chọn ảnh mở đầu cho từng shot. Ảnh có sẵn nhân vật đứng trong bối cảnh cho kết quả giống mặt nhất.">
-          <AssetPicker assets={assets} value={form.assetIds ?? []} onChange={(ids) => setForm({ ...form, assetIds: ids })} />
+        <Field label="Nhân vật & bối cảnh của video này"
+          hint="Chỉ những ảnh được chọn (có dấu ✓) mới được dùng. Nhân vật phụ, quần chúng, cảnh vật không chọn thì AI tự tạo cho hợp bối cảnh — không lấy ảnh nhân vật khác trong kho.">
+          <VideoCastPicker assets={assets} script={form.script ?? ''} value={form.assetIds ?? []} disabled={locked}
+            onChange={(ids) => setForm({ ...form, assetIds: ids })} />
         </Field>
         <div className="grid gap-3 sm:grid-cols-3">
           <Field label="Nhạc nền">
