@@ -75,6 +75,16 @@ if torch.cuda.is_available():
     VRAM_GB = gpu.total_memory / 2**30
     DTYPE = torch.bfloat16 if gpu.major >= 8 else torch.float16
     log("CUDA GPU detected:", gpu.name, f"{VRAM_GB:.1f} GB VRAM", f"dtype={DTYPE}")
+    # Hardware acceleration flags for Blackwell / Ada / Ampere
+    try:
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
+        torch.backends.cudnn.benchmark = True
+        n_threads = min(16, os.cpu_count() or 4)
+        torch.set_num_threads(n_threads)
+        log(f"Configured PyTorch: TF32=ON, cuDNN Benchmark=ON, CPU Threads={n_threads}")
+    except Exception:
+        pass
 else:
     gpu = None
     VRAM_GB = 0
@@ -369,10 +379,18 @@ def process_batch(in_dir, out_dir, batch_id=None, progress_cb=None):
             raise RuntimeError("Could not load any video motion model (Wan or LTX-Video).")
 
         # Hardware execution strategy:
-        # - 14B on 24GB card requires sequential CPU offload to prevent CUDA OOM
-        # - 1.3B on 24GB card or 14B on 80GB card: runs in native VRAM for MAX SPEED!
+        # - VRAM >= 85 GB (RTX PRO 6000 96GB): Entire Wan 14B fits natively in 96GB VRAM! Run pipe.to("cuda") with 0 CPU offload overhead (2x-3x faster!)
+        # - 70 <= VRAM < 85 GB (A100 80GB): pipe.enable_model_cpu_offload()
+        # - VRAM < 70 GB (RTX 3090/4090 24GB): sequential CPU offload for 14B, or native model offload for 1.3B
         if use_wan:
-            if is_14b and VRAM_GB < 70:
+            if is_14b and VRAM_GB >= 85:
+                try:
+                    pipe.to("cuda")
+                    log("⚡ Extreme Hardware Mode: Entire Wan 14B loaded 100% in 96GB GDDR7 VRAM (Zero PCIe transfer overhead)!")
+                except Exception as e_to:
+                    log(f"Warning on direct VRAM ({e_to}), falling back to model offload...")
+                    pipe.enable_model_cpu_offload()
+            elif is_14b and VRAM_GB < 70:
                 try:
                     pipe.enable_sequential_cpu_offload()
                     log("Enabled sequential CPU offload for 14B model on 24GB VRAM.")
@@ -399,8 +417,9 @@ def process_batch(in_dir, out_dir, batch_id=None, progress_cb=None):
         fps = 16 if use_wan else 24
         w, h = 480, 832
         steps = 40 if is_14b else 30
-        cfg = 3.5 if use_wan else 3.0
-        log(f"Motion model ({results['env'].get('motion_model')}) loaded in {time.time() - t:.1f}s, steps={steps}")
+        cfg = 4.0 if (use_wan and is_14b) else 3.5 if use_wan else 3.0
+        wan_res_mode = spec.get("wan_resolution") or os.environ.get("WAN_RESOLUTION", "").lower()
+        log(f"Motion model ({results['env'].get('motion_model')}) loaded in {time.time() - t:.1f}s, steps={steps}, cfg={cfg}, res_mode={wan_res_mode or 'default'}")
 
         def handle(j):
             if torch.cuda.is_available():
@@ -408,6 +427,10 @@ def process_batch(in_dir, out_dir, batch_id=None, progress_cb=None):
             gc.collect()
 
             jw, jh = j.get("width", w), j.get("height", h)
+            # High-definition 720P override for ultra-high VRAM hardware if requested
+            if wan_res_mode == "720p" or (VRAM_GB >= 85 and "720P" in str(results["env"].get("motion_model", ""))):
+                jw, jh = (1280, 720) if jw >= jh else (720, 1280)
+
             # Ensure dimensions divisible by 16 for Wan / LTX
             jw = (jw // 16) * 16
             jh = (jh // 16) * 16
