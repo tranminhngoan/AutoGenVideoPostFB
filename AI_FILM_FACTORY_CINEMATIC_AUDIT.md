@@ -200,7 +200,18 @@ python3 film_bench.py report outA_*/results.json --usd-per-hour <giá thuê/gi�
 
 **Batch id không được chứa dấu `-`.** Worker dùng lại kết quả của batch có cùng tiền tố trước dấu `-` (cơ chế resume tập phim), khi đó thời gian đo sẽ là 0 và sai.
 
-**Dung lượng:** SSD 85 GB nhiều khả năng không đủ cho Wan 14B + SDXL + IP-Adapter + LatentSync (venv ~8 GB + checkpoint ~7 GB) + cache tạm. Dung lượng thực của Wan sẽ được `gpu_env_audit.sh` đo (`du` cache HF). Khuyến nghị ≥150 GB hoặc volume persistent để không phải tải lại model mỗi lần thuê máy.
+**Dung lượng (đo từ Hugging Face API ngày 2026-11-22): ổ 85 GB KHÔNG đủ.**
+
+| Thứ cần tải | Dung lượng |
+|---|---|
+| `Wan-AI/Wan2.1-I2V-14B-480P-Diffusers` (trọng số FP32: transformer 65.6 GB, text encoder 22.7 GB) | **90.1 GB** |
+| RealVisXL V5 (bản fp16) | 6.9 GB |
+| IP-Adapter Plus Face + image encoder | ≤5.9 GB |
+| LatentSync 1.6 (unet, whisper, SyncNet, S3FD) + sd-vae | 6.0 GB |
+| venv LatentSync, pip cache, batch tạm | ước tính ~15 GB |
+| **Tổng** | **~125 GB** |
+
+Vast không cho mở rộng ổ của máy đã tạo ("Disk size is permanent and cannot be changed after instance creation"). Cần tạo máy mới với ổ **200 GB** (còn chỗ để thử thêm một model motion khác).
 
 **Nghiệm thu Test A trước khi bật production:** xem và nghe `testA_sync.mp4` cạnh `testA_base.mp4`. Chỉ khi khẩu hình khớp bằng mắt **và** SyncNet hợp lý mới đặt `Film:LipSync:Enabled=true` trên Railway. Ngưỡng QC hiện tại (PASS ≥6.0 và lệch ≤1 khung; REJECT <3.0 hoặc lệch >3 khung) là **tạm thời**, sẽ hiệu chỉnh theo số đo của Test A.
 
