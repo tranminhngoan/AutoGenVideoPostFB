@@ -75,6 +75,7 @@ import {
   RunPodGpuLiveStatus
 } from '../services/api';
 import { useToast } from '../components/feedback';
+import { VastMachinesPanel } from '../components/VastMachinesPanel';
 
 const BUSY_EPISODE_STATUSES = [
   'Queued',
@@ -256,6 +257,7 @@ export function FilmFactoryPage() {
   const [savingPodId, setSavingPodId] = useState(false);
   const [stoppingGpu, setStoppingGpu] = useState(false);
   const [startingGpu, setStartingGpu] = useState(false);
+  const [vastPanelOpen, setVastPanelOpen] = useState(false);
 
   const loadGpuStatus = async () => {
     try {
@@ -274,7 +276,9 @@ export function FilmFactoryPage() {
     const isBusy = gpuStatus?.state === 'busy' || gpuStatus?.activeEpisodeStatus === 'GpuRendering';
     const confirmMsg = isBusy
       ? `GPU ${providerName} đang render tập phim dở dang. Dừng máy sẽ tạm ngừng tiến trình render hiện tại.\n\nBạn có chắc chắn muốn DỪNG GPU để lập tức ngừng tính tiền (${rateStr}) không?`
-      : `Bạn có chắc chắn muốn DỪNG máy GPU ${providerName}?\n\n(Hệ thống sẽ ngừng tính tiền thuê máy ${rateStr} ngay lập tức, toàn bộ dữ liệu ổ cứng vẫn được bảo lưu).`;
+      : isVast
+        ? `Bạn có chắc chắn muốn DỪNG máy GPU ${providerName}?\n\n(Ngừng tính tiền GPU ${rateStr}. Ổ cứng được giữ nhưng Vast.ai VẪN tính phí giữ ổ khi máy tắt — muốn hết phí hẳn thì dùng "Quản lý máy" → Xoá máy).`
+        : `Bạn có chắc chắn muốn DỪNG máy GPU ${providerName}?\n\n(Hệ thống sẽ ngừng tính tiền thuê máy ${rateStr} ngay lập tức, toàn bộ dữ liệu ổ cứng vẫn được bảo lưu).`;
 
     if (!window.confirm(confirmMsg)) return;
 
@@ -915,6 +919,19 @@ export function FilmFactoryPage() {
                           Bật Lại GPU
                         </Button>
                       )
+                    )}
+
+                    {gpuStatus?.provider === 'VastAi' && (
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        icon={<HardDrive className="h-3.5 w-3.5" />}
+                        onClick={() => setVastPanelOpen(true)}
+                        className="flex-1 sm:flex-initial"
+                        title="Tìm & thuê máy GPU theo cấu hình phim cần, hoặc xoá máy để ngừng mọi chi phí"
+                      >
+                        Quản lý máy Vast
+                      </Button>
                     )}
 
                     {editingPodId ? (
@@ -2724,6 +2741,8 @@ export function FilmFactoryPage() {
           </Modal>
         );
       })()}
+
+      <VastMachinesPanel open={vastPanelOpen} onClose={() => setVastPanelOpen(false)} onChanged={loadGpuStatus} />
     </div>
   );
 }

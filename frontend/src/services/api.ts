@@ -768,6 +768,45 @@ export const api = {
     return await res.json();
   },
 
+  async searchVastOffers(q: VastOfferSearch): Promise<VastOfferSearchResult> {
+    const p = new URLSearchParams({ diskGb: String(q.diskGb), minReliability: String(q.minReliability) });
+    if (q.gpus.length) p.set('gpus', q.gpus.join(','));
+    if (q.maxPrice) p.set('maxPrice', String(q.maxPrice));
+    if (q.maxDownloadCostPerGb != null) p.set('maxDownloadCostPerGb', String(q.maxDownloadCostPerGb));
+    const res = await fetch(`${API_BASE}/film-factory/gpu/vast/offers?${p}`);
+    if (!res.ok) throw new Error(await apiError(res, 'Không tìm được danh sách máy Vast.ai'));
+    return await res.json();
+  },
+
+  async rentVastOffer(offerId: number, diskGb: number): Promise<{ success: boolean; instanceId: string; message: string }> {
+    const res = await fetch(`${API_BASE}/film-factory/gpu/vast/rent`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ offerId, diskGb }),
+    });
+    if (!res.ok) throw new Error(await apiError(res, 'Thuê máy thất bại'));
+    return await res.json();
+  },
+
+  async listVastInstances(): Promise<{ activeInstanceId?: string | null; instances: VastInstance[] }> {
+    const res = await fetch(`${API_BASE}/film-factory/gpu/vast/instances`);
+    if (!res.ok) throw new Error(await apiError(res, 'Không tải được danh sách máy đang thuê'));
+    return await res.json();
+  },
+
+  /** Throws an Error with `needsForce = true` when the machine may be rendering an episode. */
+  async destroyVastInstance(instanceId: string, force = false): Promise<{ success: boolean; message: string }> {
+    const res = await fetch(`${API_BASE}/film-factory/gpu/vast/instances/${encodeURIComponent(instanceId)}?force=${force}`, { method: 'DELETE' });
+    if (res.status === 409) {
+      const body = await res.json().catch(() => ({}));
+      const err = new Error(body.message || 'Máy đang dựng phim') as Error & { needsForce?: boolean };
+      err.needsForce = true;
+      throw err;
+    }
+    if (!res.ok) throw new Error(await apiError(res, 'Xoá máy thất bại'));
+    return await res.json();
+  },
+
   async setRunPodPodId(podId: string): Promise<void> {
     const res = await fetch(`${API_BASE}/film-factory/gpu/runpod/pod`, {
       method: 'POST',
@@ -1495,6 +1534,66 @@ export interface AiUsageReportDto {
 }
 
 // ── AI Film Factory DTOs ──
+export interface VastOfferSearch {
+  gpus: string[];
+  diskGb: number;
+  maxPrice?: number | null;
+  maxDownloadCostPerGb?: number | null;
+  minReliability: number;
+}
+
+export interface VastOffer {
+  id: number;
+  gpuName: string;
+  numGpus: number;
+  gpuRamGb: number;
+  cudaMax: number;
+  pricePerHour: number;
+  gpuPricePerHour: number;
+  storagePerHour: number;
+  storagePerMonth: number;
+  downloadCostPerGb: number;
+  modelDownloadCostUsd: number;
+  downloadMbps: number;
+  uploadMbps: number;
+  reliability: number;
+  location?: string | null;
+  cpuName?: string | null;
+  cpuCores: number;
+  ramGb: number;
+  diskAvailableGb: number;
+  diskMbps: number;
+  diskName?: string | null;
+  dlPerf: number;
+  maxDurationDays: number;
+  machineId: number;
+  hostId: number;
+  verification?: string | null;
+  directPorts: number;
+}
+
+export interface VastOfferSearchResult {
+  diskGb: number;
+  modelDownloadGb: number;
+  offers: VastOffer[];
+}
+
+export interface VastInstance {
+  id: string;
+  status: string;
+  intendedStatus?: string | null;
+  gpuName?: string | null;
+  pricePerHour?: number | null;
+  storagePerMonth?: number | null;
+  diskGb?: number | null;
+  publicIp?: string | null;
+  workerPort?: number | null;
+  sshCommand?: string | null;
+  label?: string | null;
+  location?: string | null;
+  startedAt?: string | null;
+}
+
 export interface RunPodGpuLiveStatus {
   configured: boolean;
   baseUrl: string;

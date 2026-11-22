@@ -572,6 +572,117 @@ public class FilmFactoryController : ControllerBase
         return Ok(new { success = true, podId = val, instanceId = val });
     }
 
+    // ─────────────────────────────── Vast.ai machines: find / rent / list / destroy ───────────────────────────────
+
+    /// <summary>Rentable Vast.ai machines matching the film worker's needs, cheapest first (prices for the chosen disk).</summary>
+    [HttpGet("gpu/vast/offers")]
+    public async Task<IActionResult> SearchVastOffers(
+        [FromQuery] string? gpus, [FromQuery] int diskGb = 200, [FromQuery] double? maxPrice = null,
+        [FromQuery] double? maxDownloadCostPerGb = null, [FromQuery] double minReliability = 0.98,
+        [FromQuery] bool verifiedOnly = true, CancellationToken ct = default)
+    {
+        var vast = HttpContext.RequestServices.GetService<NewsStudio.Infrastructure.FilmFactory.VastAiGpuBackend>();
+        if (vast == null) return BadRequest(new { message = "Chưa đăng ký Vast.ai backend." });
+        if (diskGb is < 50 or > 2000) return BadRequest(new { message = "Dung lượng ổ phải từ 50 đến 2000 GB." });
+
+        var names = string.IsNullOrWhiteSpace(gpus)
+            ? NewsStudio.Infrastructure.FilmFactory.VastAiGpuBackend.DefaultGpuNames
+            : gpus.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        try
+        {
+            var offers = await vast.SearchOffersAsync(new NewsStudio.Infrastructure.FilmFactory.VastOfferQuery(
+                names, diskGb, maxPrice, maxDownloadCostPerGb, minReliability, VerifiedOnly: verifiedOnly), ct);
+            return Ok(new { diskGb, modelDownloadGb = NewsStudio.Infrastructure.FilmFactory.VastAiGpuBackend.ModelDownloadGb, offers });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return StatusCode(502, new { message = ex.Message });
+        }
+    }
+
+    public class RentVastRequest
+    {
+        public long OfferId { get; set; }
+        public int DiskGb { get; set; } = 200;
+    }
+
+    /// <summary>Rents one offer; the new machine installs and starts the film worker by itself (start_vast.sh).</summary>
+    [HttpPost("gpu/vast/rent")]
+    public async Task<IActionResult> RentVastOffer([FromBody] RentVastRequest req, CancellationToken ct)
+    {
+        var vast = HttpContext.RequestServices.GetService<NewsStudio.Infrastructure.FilmFactory.VastAiGpuBackend>();
+        if (vast == null) return BadRequest(new { message = "Chưa đăng ký Vast.ai backend." });
+        if (req.OfferId <= 0) return BadRequest(new { message = "Thiếu mã máy (offer) cần thuê." });
+        if (req.DiskGb is < 50 or > 2000) return BadRequest(new { message = "Dung lượng ổ phải từ 50 đến 2000 GB." });
+        try
+        {
+            var id = await vast.RentOfferAsync(req.OfferId, req.DiskGb, ct);
+            return Ok(new
+            {
+                success = true,
+                instanceId = id,
+                message = $"Đã thuê máy #{id}. Máy đang khởi động, tự tải model và bật worker (thường 10–20 phút) — tiền GPU bắt đầu tính từ bây giờ."
+            });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { success = false, message = ex.Message });
+        }
+    }
+
+    /// <summary>All instances on the Vast.ai account (running, stopped, loading) with their storage cost.</summary>
+    [HttpGet("gpu/vast/instances")]
+    public async Task<IActionResult> ListVastInstances(CancellationToken ct)
+    {
+        var vast = HttpContext.RequestServices.GetService<NewsStudio.Infrastructure.FilmFactory.VastAiGpuBackend>();
+        if (vast == null) return BadRequest(new { message = "Chưa đăng ký Vast.ai backend." });
+        try
+        {
+            var instances = await vast.ListInstancesAsync(ct);
+            return Ok(new { activeInstanceId = NewsStudio.Infrastructure.FilmFactory.VastAiGpuBackend.GetRuntimeInstance() ?? vast.InstanceId, instances });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return StatusCode(502, new { message = ex.Message });
+        }
+    }
+
+    /// <summary>
+    /// Destroys a Vast.ai machine (deletes its disk, stops all billing). Refused while that machine is rendering an
+    /// episode unless force=true, because the batch would be lost.
+    /// </summary>
+    [HttpDelete("gpu/vast/instances/{instanceId}")]
+    public async Task<IActionResult> DestroyVastInstance(string instanceId, [FromQuery] bool force = false, CancellationToken ct = default)
+    {
+        var vast = HttpContext.RequestServices.GetService<NewsStudio.Infrastructure.FilmFactory.VastAiGpuBackend>();
+        if (vast == null) return BadRequest(new { message = "Chưa đăng ký Vast.ai backend." });
+
+        if (!force)
+        {
+            var active = NewsStudio.Infrastructure.FilmFactory.VastAiGpuBackend.GetRuntimeInstance() ?? vast.InstanceId;
+            var db = HttpContext.RequestServices.GetService<NewsStudio.Application.Common.Interfaces.IApplicationDbContext>();
+            var rendering = db != null && await Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.AnyAsync(
+                db.FilmEpisodes.Where(e => e.Status == NewsStudio.Infrastructure.FilmFactory.FilmGpuService.StatusRendering), ct);
+            if (rendering && (active == null || string.Equals(active, instanceId, StringComparison.OrdinalIgnoreCase)))
+                return Conflict(new
+                {
+                    success = false,
+                    needsForce = true,
+                    message = $"Máy #{instanceId} có thể đang dựng một tập phim (trạng thái GpuRendering). Xoá bây giờ sẽ mất batch đang chạy."
+                });
+        }
+
+        try
+        {
+            await vast.DestroyInstanceAsync(instanceId, ct);
+            return Ok(new { success = true, message = $"Đã xoá máy #{instanceId}. Không còn tính tiền GPU lẫn phí giữ ổ." });
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ArgumentException)
+        {
+            return BadRequest(new { success = false, message = ex.Message });
+        }
+    }
+
     /// <summary>
     /// Phục vụ mã nguồn Python film_gpu_worker.py để các máy GPU (Vast.ai, RunPod) tải về bằng 1 lệnh curl tiện lợi.
     /// </summary>

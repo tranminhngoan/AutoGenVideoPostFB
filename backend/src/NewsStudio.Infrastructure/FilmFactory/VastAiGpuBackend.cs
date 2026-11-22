@@ -11,7 +11,7 @@ namespace NewsStudio.Infrastructure.FilmFactory;
 /// Vast.ai typically offers 50-80% lower hourly pricing than alternative cloud providers ($0.20 - $0.35/hr for 3090/4090).
 /// Communicates directly with the Python HTTP worker running inside the Vast.ai container on port 8888.
 /// </summary>
-public class VastAiGpuBackend : IFilmGpuBackend
+public partial class VastAiGpuBackend : IFilmGpuBackend
 {
     private readonly IConfiguration _configuration;
     private readonly HttpClient _httpClient;
