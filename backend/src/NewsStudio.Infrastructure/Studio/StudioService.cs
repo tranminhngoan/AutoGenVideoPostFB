@@ -410,6 +410,7 @@ Trả về JSON:
                               || shot.Sound != NullIfEmpty(input.Sound) || shot.AssetIdsJson != JsonSerializer.Serialize(input.AssetIds)
                               || shot.ContinueFromPrevious != (index > 1 && input.ContinueFromPrevious);
                 if (changed && shot.Status == "Done") shot.Status = "Pending"; // edited → the clip no longer matches; regenerate
+                if (changed) shot.InteractionId = null; // a pending xAI job made from the old text must not be picked up
             }
             else
             {
@@ -480,7 +481,9 @@ Trả về JSON:
     public async Task RunGenerationAsync(Guid id, Guid? shotId, CancellationToken ct)
     {
         var v = await _db.StudioVideos.Include(x => x.Shots).FirstOrDefaultAsync(x => x.Id == id, ct);
-        if (v == null) return;
+        // a second copy of this job (Hangfire re-queues long jobs / jobs cut by a restart) must not pay again for a
+        // run that already finished: only a video still marked "Generating" is worked on
+        if (v == null || v.Status != "Generating") return;
         var todo = v.Shots.OrderBy(s => s.Index)
             .Where(s => shotId != null ? s.Id == shotId : s.Status != "Done" || s.ClipBlobId == null).ToList();
         var assets = (await LoadAssetsAsync(v.Shots.SelectMany(s => Ids(s.AssetIdsJson)).Distinct().ToList(), ct)).ToDictionary(a => a.Id);
@@ -491,6 +494,9 @@ Trả về JSON:
         foreach (var shot in todo)
         {
             v.Progress = $"Đang tạo clip {++done}/{todo.Count} (shot {shot.Index})…";
+            // a job already paid for and not turned into a clip yet (restart, timeout, failed download) is picked up
+            // again instead of paying for a new one
+            var resumeId = shot.ClipBlobId == null ? shot.InteractionId : null;
             shot.Status = "Generating";
             await _db.SaveChangesAsync(ct);
 
@@ -528,7 +534,11 @@ Trả về JSON:
                 shot.Attempts++;
                 try
                 {
-                    var clip = await _video.GenerateAsync(prompt, frame, v.AspectRatio, v.Resolution, seconds, ct);
+                    var clip = await _video.GenerateAsync(prompt, frame, v.AspectRatio, v.Resolution, seconds, ct, resumeId, async requestId =>
+                    {
+                        shot.InteractionId = requestId; // stored at once: the job is billed from here on
+                        await _db.SaveChangesAsync(CancellationToken.None);
+                    });
                     if (shot.ClipBlobId != null) await DeleteBlobAsync(shot.ClipBlobId.Value, ct);
                     var b = new StudioBlob { MimeType = clip.MimeType, Data = clip.Video, SizeBytes = clip.Video.Length };
                     _db.StudioBlobs.Add(b);
@@ -563,12 +573,22 @@ Trả về JSON:
                     }
                     break;
                 }
+                catch (VideoTransientException ex)
+                {
+                    // xAI busy / internal error before anything billable: one more try after a pause
+                    _logger.LogWarning(ex, "Video shot {Index} attempt {Attempt}: transient", shot.Index, attempt);
+                    shot.Status = "Failed";
+                    shot.ErrorMessage = ex.Message;
+                    resumeId = null;
+                    if (attempt < MaxAttemptsPerRun) await Task.Delay(TimeSpan.FromSeconds(20), ct);
+                }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
+                    // a job may already be paid for (timeout, download): never auto-retry — "Tạo lại" resumes it
                     _logger.LogWarning(ex, "Video shot {Index} attempt {Attempt} failed", shot.Index, attempt);
                     shot.Status = "Failed";
                     shot.ErrorMessage = ex.Message;
-                    if (attempt < MaxAttemptsPerRun) await Task.Delay(TimeSpan.FromSeconds(10), ct);
+                    break;
                 }
             }
             if (shot.Status != "Done") failed.Add($"shot {shot.Index}: {shot.ErrorMessage}");
@@ -598,6 +618,9 @@ Trả về JSON:
             var prev = ordered.LastOrDefault(s => s.Index < shot.Index);
             if (prev?.ClipBlobId is { } clipId && await GetBlobAsync(clipId, ct) is { } clip)
                 return (new StartFrame(await _media.LastFrameAsync(clip.Data, ct), "image/jpeg"), true);
+            // don't spend on a take that would not join up with the previous one
+            if (prev != null)
+                throw new InvalidOperationException($"Shot này nối tiếp shot {prev.Index} nhưng shot {prev.Index} chưa có clip — tạo shot {prev.Index} trước.");
         }
         foreach (var aid in Ids(shot.AssetIdsJson))
             if (assets.TryGetValue(aid, out var a) && await GetBlobAsync(a.BlobId, ct) is { } blob)
@@ -633,7 +656,10 @@ Trả về JSON:
         }
         sb.Append("Sound: ").Append(string.IsNullOrWhiteSpace(shot.Sound) ? "natural ambient sound of the scene" : shot.Sound!.TrimEnd('.')).Append(". No background music. ");
         if (!string.IsNullOrWhiteSpace(v.StyleNotes)) sb.Append("Style: ").Append(v.StyleNotes!.TrimEnd('.')).Append(". ");
-        sb.Append("Natural, believable acting. No subtitles, no captions, no on-screen text.");
+        sb.Append("Motion: continuous, natural movement for the whole clip — people keep acting (gestures, head turns, expressions, " +
+                  "breathing, small steps), the background stays alive (wind in leaves, smoke, light flicker, passers-by where it fits); " +
+                  "smooth cinematic camera; no frozen frames, no still-image look, no slow motion, no sudden cuts inside the clip. ");
+        sb.Append("Natural, believable acting, consistent faces and clothes, realistic hands. No subtitles, no captions, no on-screen text, no watermark.");
         return sb.ToString();
     }
 
@@ -795,6 +821,7 @@ Trả về JSON:
         {
             await DeleteBlobAsync(s.ClipBlobId!.Value, ct);
             s.ClipBlobId = null;
+            s.InteractionId = null;
         }
         await _db.SaveChangesAsync(ct);
         return await GetVideoAsync(id, ct);

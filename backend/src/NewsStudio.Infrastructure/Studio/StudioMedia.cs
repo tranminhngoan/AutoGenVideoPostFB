@@ -130,12 +130,25 @@ public class StudioMedia
     /// FFmpeg overlay that moves the watermark every 7 s between top-left, top-right and lower-left — all inside the
     /// Reels safe zone (clear of Facebook's header, action column and caption) — so it can't be cropped out in one go.
     /// </summary>
-    public static string WatermarkFilter(string aspectRatio)
+    /// <param name="offsetSeconds">Where this clip starts in the final video, so the cycle runs on across clips.</param>
+    public static string WatermarkFilter(string aspectRatio, int watermarkInput, string baseLabel, double offsetSeconds)
     {
         var (mx, top, low) = aspectRatio == "16:9" ? ("W*0.04", "H*0.06", "H*0.80") : ("W*0.11", "H*0.085", "H*0.70");
-        const string slot = "mod(floor(t/7),3)";
-        return $"[1:v]format=rgba,colorchannelmixer=aa=0.85[wm];" +
-               $"[0:v][wm]overlay=x='if(eq({slot},1),W-w-{mx},{mx})':y='if(eq({slot},2),{low},{top})':eval=frame,format=yuv420p[v]";
+        var slot = $"mod(floor((t+{offsetSeconds.ToString("F3", CultureInfo.InvariantCulture)})/7),3)";
+        return $"[{watermarkInput}:v]format=rgba,colorchannelmixer=aa=0.85[wm];" +
+               $"[{baseLabel}][wm]overlay=x='if(eq({slot},1),W-w-{mx},{mx})':y='if(eq({slot},2),{low},{top})':eval=frame,format=yuv420p[v]";
+    }
+
+    /// <summary>Frame rate of a clip's video stream (kept as is when joining, so motion isn't re-timed); 30 when unknown.</summary>
+    public async Task<string> ProbeFrameRateAsync(string path, CancellationToken ct)
+    {
+        var (_, output, _) = await RunAsync(_ffprobe, $"-v error -select_streams v:0 -show_entries stream=avg_frame_rate -of csv=p=0 \"{path}\"", ct);
+        var text = output.Trim();
+        var parts = text.Split('/');
+        if (parts.Length == 2 && double.TryParse(parts[0], NumberStyles.Float, CultureInfo.InvariantCulture, out var n)
+            && double.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out var d) && d > 0 && n / d is >= 15 and <= 60)
+            return text;
+        return "30";
     }
 
     private static string Quote(string s) => s.Replace("\\", "\\\\").Replace("\"", "\\\"");
@@ -172,8 +185,9 @@ public class StudioMedia
     }
 
     /// <summary>
-    /// Joins the clips in order (every clip re-encoded to the same size, 30 fps, 48 kHz stereo — a clip without sound
-    /// gets silence, so joins never drift) and, when a music file is given, loops it under the whole video at
+    /// Joins the clips in order (every clip re-encoded once to the same size, the first clip's frame rate and 48 kHz
+    /// stereo — a clip without sound gets silence, so joins never drift; the watermark is burned in during that same
+    /// encode) and, when a music file is given, loops it under the whole video at
     /// <paramref name="musicVolume"/>, ducked while people speak, with a fade in/out. With <paramref name="watermarkPng"/>
     /// the Page watermark is burned in (moving, see <see cref="WatermarkFilter"/>); <paramref name="brand"/> also goes
     /// into the file's metadata. Returns the duration in seconds.
@@ -188,19 +202,32 @@ public class StudioMedia
         try
         {
             var parts = new List<string>();
+            var fps = await ProbeFrameRateAsync(clips[0], ct);
+            var offset = 0.0;
             for (var i = 0; i < clips.Count; i++)
             {
                 var part = Path.Combine(dir, $"part_{i:D3}.mp4");
                 var hasAudio = await HasAudioAsync(clips[i], ct);
-                var audioIn = hasAudio ? "" : " -f lavfi -i anullsrc=r=48000:cl=stereo";
-                var audioMap = hasAudio ? "0:a:0" : "1:a:0";
+                var inputs = $"-i \"{clips[i]}\"";
+                var audioInput = 0;
+                if (!hasAudio) { inputs += " -f lavfi -i anullsrc=r=48000:cl=stereo"; audioInput = 1; }
+                var graph = $"[0:v]scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={fps}[base];";
+                if (watermarkPng != null)
+                {
+                    inputs += $" -i \"{watermarkPng}\"";
+                    graph += WatermarkFilter(aspectRatio, hasAudio ? 1 : 2, "base", offset) + ";";
+                }
+                else
+                {
+                    graph += "[base]format=yuv420p[v];";
+                }
+                graph += $"[{audioInput}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo[a]";
                 var (code, _, err) = await RunAsync(_ffmpeg,
-                    $"-hide_banner -y -i \"{clips[i]}\"{audioIn} -map 0:v:0 -map {audioMap} " +
-                    $"-vf \"scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30,format=yuv420p\" " +
-                    "-af \"aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo\" -shortest " +
-                    $"-c:v libx264 -preset veryfast -crf 18 -c:a aac -b:a 192k -ar 48000 -ac 2 \"{part}\"", ct);
+                    $"-hide_banner -y {inputs} -filter_complex \"{graph}\" -map \"[v]\" -map \"[a]\" -shortest " +
+                    $"-c:v libx264 -preset fast -crf 18 -c:a aac -b:a 192k -ar 48000 -ac 2 \"{part}\"", ct);
                 if (code != 0 || !File.Exists(part)) throw new InvalidOperationException($"FFmpeg không chuẩn hoá được clip {i + 1}: {Tail(err)}");
                 parts.Add(part);
+                offset += await ProbeSecondsAsync(part, ct);
             }
 
             var list = Path.Combine(dir, "list.txt");
@@ -208,19 +235,9 @@ public class StudioMedia
             foreach (var p in parts) sb.Append("file '").Append(p.Replace("\\", "/").Replace("'", "'\\''")).Append("'\n");
             await File.WriteAllTextAsync(list, sb.ToString(), new UTF8Encoding(false), ct);
 
-            var joined = music == null && watermarkPng == null ? output : Path.Combine(dir, "joined.mp4");
+            var joined = music == null ? output : Path.Combine(dir, "joined.mp4");
             var (jc, _, jerr) = await RunAsync(_ffmpeg, $"-hide_banner -y -f concat -safe 0 -i \"{list}\" -c copy{meta} -movflags +faststart \"{joined}\"", ct);
             if (jc != 0 || !File.Exists(joined)) throw new InvalidOperationException($"FFmpeg không ghép được các clip: {Tail(jerr)}");
-
-            if (watermarkPng != null)
-            {
-                var marked = music == null ? output : Path.Combine(dir, "marked.mp4");
-                var (wc, _, werr) = await RunAsync(_ffmpeg,
-                    $"-hide_banner -y -i \"{joined}\" -i \"{watermarkPng}\" -filter_complex \"{WatermarkFilter(aspectRatio)}\" " +
-                    $"-map \"[v]\" -map 0:a -c:v libx264 -preset veryfast -crf 18 -c:a copy{meta} -movflags +faststart \"{marked}\"", ct);
-                if (wc != 0 || !File.Exists(marked)) throw new InvalidOperationException($"FFmpeg không gắn được watermark tên Page: {Tail(werr)}");
-                joined = marked;
-            }
 
             var duration = await ProbeSecondsAsync(joined, ct);
             if (music != null)

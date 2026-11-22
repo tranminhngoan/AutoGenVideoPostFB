@@ -10,6 +10,12 @@ namespace NewsStudio.Infrastructure.Studio;
 /// <summary>The picture a clip starts from (image-to-video). JPEG already cropped to the clip's frame.</summary>
 public sealed record StartFrame(byte[] Data, string MimeType);
 
+/// <summary>xAI was busy or failed before producing anything billable (HTTP 429/5xx, internal error): safe to retry.</summary>
+public sealed class VideoTransientException : InvalidOperationException
+{
+    public VideoTransientException(string message) : base(message) { }
+}
+
 public sealed record VideoClip(byte[] Video, string MimeType, string? RequestId, int Seconds, decimal CostUsd);
 
 /// <summary>xAI refused or filtered the clip (moderation, bad argument…): retrying the same prompt will not help.</summary>
@@ -123,39 +129,111 @@ public class GrokVideoClient
         return new JobStatus(status.ToLowerInvariant(), url, respect, code, message);
     }
 
-    public async Task<VideoClip> GenerateAsync(string prompt, StartFrame? frame, string aspectRatio, string resolution, int seconds, CancellationToken ct)
+    /// <summary>
+    /// One clip. <paramref name="onStarted"/> gets the request id as soon as xAI accepts (and bills) the job, so the
+    /// caller can store it; <paramref name="resumeRequestId"/> picks up such a stored job after a restart instead of
+    /// paying for a new one (a job xAI no longer knows is started afresh).
+    /// </summary>
+    public async Task<VideoClip> GenerateAsync(string prompt, StartFrame? frame, string aspectRatio, string resolution, int seconds,
+        CancellationToken ct, string? resumeRequestId = null, Func<string, Task>? onStarted = null)
     {
         var key = ApiKey(_configuration) ?? throw new InvalidOperationException("Chưa có khoá xAI (biến XAI_API_KEY trên Railway).");
         seconds = ClampSeconds(seconds);
         resolution = NormalizeResolution(resolution);
         var cost = EstimateCost(seconds, resolution, frame != null);
+        var started = DateTime.UtcNow;
 
-        // 1. start the job
-        using var start = new HttpRequestMessage(HttpMethod.Post, $"{BaseUrl}/generations")
+        JobStatus? status = null;
+        var requestId = resumeRequestId;
+        if (requestId != null)
         {
-            Content = JsonContent.Create(BuildRequest(Model, prompt, frame, aspectRatio, resolution, seconds))
-        };
-        start.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
-        string requestId;
-        using (var res = await _http.SendAsync(start, ct))
-        {
-            var body = await res.Content.ReadAsStringAsync(ct);
-            if (!res.IsSuccessStatusCode)
+            // only a job still running or finished cleanly is worth picking up; anything else is started afresh
+            status = await WaitAsync(requestId, key, ct);
+            if (status is not { Status: "done", VideoUrl: not null } || status.RespectModeration == false) status = null;
+            else if (await TryDownloadAsync(status.VideoUrl, ct) is { } resumed)
             {
-                var reason = ErrorText(body);
-                _logger.LogWarning("xAI video HTTP {Status}: {Reason}", (int)res.StatusCode, reason);
-                if ((int)res.StatusCode is 400 or 403 or 422)
-                    throw new VideoRejectedException($"xAI từ chối yêu cầu (HTTP {(int)res.StatusCode}): {reason}");
-                throw new InvalidOperationException($"xAI lỗi HTTP {(int)res.StatusCode}: {reason}");
+                _logger.LogInformation("xAI job {Id} resumed without a new charge", requestId);
+                return new VideoClip(resumed.Bytes, resumed.Mime, requestId, seconds, 0m);
             }
-            using var doc = JsonDocument.Parse(body);
-            requestId = Str(doc.RootElement, "request_id") ?? Str(doc.RootElement, "id")
-                        ?? throw new InvalidOperationException("xAI không trả về request_id.");
+            else status = null;
+            if (status == null) _logger.LogInformation("xAI job {Id} not reusable — starting a new one", requestId);
+        }
+        if (status == null)
+        {
+            requestId = await StartAsync(key, BuildRequest(Model, prompt, frame, aspectRatio, resolution, seconds), ct);
+            if (onStarted != null) await onStarted(requestId);
+            status = await WaitAsync(requestId, key, ct)
+                     ?? throw new InvalidOperationException($"xAI không còn thấy clip {requestId} vừa tạo.");
         }
 
-        // 2. wait for it
+        if (status.Status == "failed")
+        {
+            var reason = $"{status.ErrorCode}: {status.ErrorMessage}".Trim(' ', ':');
+            if (status.ErrorCode is "service_unavailable" or "internal_error")
+                throw new VideoTransientException($"xAI tạm lỗi khi tạo clip ({reason}).");
+            throw new VideoRejectedException($"xAI không tạo clip ({reason}).");
+        }
+        if (status.VideoUrl == null)
+            throw new InvalidOperationException($"Clip {requestId} hết hạn trước khi tải được.");
+        if (status.RespectModeration == false)
+            throw new VideoRejectedException("xAI đã lọc clip này vì vi phạm chính sách nội dung — sửa hành động / lời thoại / ảnh của shot rồi tạo lại.", cost);
+
+        // download promptly (the URL is temporary); a flaky download is retried, never the paid job
+        var file = await TryDownloadAsync(status.VideoUrl, ct)
+                   ?? throw new InvalidOperationException($"Không tải được clip {requestId} từ xAI — bấm tạo lại shot để thử tải lại (không trả tiền lần nữa nếu clip còn trên xAI).");
+        _logger.LogInformation("xAI clip {Seconds}s {Res} in {Elapsed:F0}s ({Size} KB)", seconds, resolution,
+            (DateTime.UtcNow - started).TotalSeconds, file.Bytes.Length / 1024);
+        return new VideoClip(file.Bytes, file.Mime, requestId, seconds, cost);
+    }
+
+    /// <summary>Up to 4 tries; null when the file can't be fetched (or is clearly not a video).</summary>
+    private async Task<(byte[] Bytes, string Mime)?> TryDownloadAsync(string url, CancellationToken ct)
+    {
+        for (var attempt = 1; attempt <= 4; attempt++)
+        {
+            try
+            {
+                using var dl = await _http.GetAsync(url, ct);
+                if (dl.StatusCode is System.Net.HttpStatusCode.NotFound or System.Net.HttpStatusCode.Forbidden or System.Net.HttpStatusCode.Gone) return null;
+                dl.EnsureSuccessStatusCode();
+                var bytes = await dl.Content.ReadAsByteArrayAsync(ct);
+                if (bytes.Length < 1024) return null;
+                var mime = dl.Content.Headers.ContentType?.MediaType is { } m && m.StartsWith("video/") ? m : "video/mp4";
+                return (bytes, mime);
+            }
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException && !ct.IsCancellationRequested)
+            {
+                _logger.LogWarning(ex, "xAI clip download attempt {Attempt} failed", attempt);
+                if (attempt < 4) await Task.Delay(PollInterval * attempt, ct);
+            }
+        }
+        return null;
+    }
+
+    private async Task<string> StartAsync(string key, Dictionary<string, object> body, CancellationToken ct)
+    {
+        using var start = new HttpRequestMessage(HttpMethod.Post, $"{BaseUrl}/generations") { Content = JsonContent.Create(body) };
+        start.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
+        using var res = await _http.SendAsync(start, ct);
+        var text = await res.Content.ReadAsStringAsync(ct);
+        if (!res.IsSuccessStatusCode)
+        {
+            var reason = ErrorText(text);
+            var code = (int)res.StatusCode;
+            _logger.LogWarning("xAI video HTTP {Status}: {Reason}", code, reason);
+            if (code is 429 or >= 500) throw new VideoTransientException($"xAI đang bận / lỗi tạm thời (HTTP {code}): {reason}");
+            if (code is 401 or 402 or 403)
+                throw new VideoRejectedException($"xAI từ chối (HTTP {code}): {reason} — kiểm tra khoá XAI_API_KEY và số dư tài khoản xAI.");
+            throw new VideoRejectedException($"xAI từ chối yêu cầu (HTTP {code}): {reason}");
+        }
+        using var doc = JsonDocument.Parse(text);
+        return Str(doc.RootElement, "request_id") ?? Str(doc.RootElement, "id") ?? throw new InvalidOperationException("xAI không trả về request_id.");
+    }
+
+    /// <summary>Polls until done / failed / expired. Null when xAI doesn't know the id (404).</summary>
+    private async Task<JobStatus?> WaitAsync(string requestId, string key, CancellationToken ct)
+    {
         var started = DateTime.UtcNow;
-        JobStatus status;
         while (true)
         {
             await Task.Delay(PollInterval, ct);
@@ -163,39 +241,20 @@ public class GrokVideoClient
             poll.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
             using var res = await _http.SendAsync(poll, ct);
             var body = await res.Content.ReadAsStringAsync(ct);
-            if (!res.IsSuccessStatusCode)
+            if (res.StatusCode == System.Net.HttpStatusCode.NotFound) return null;
+            if (res.IsSuccessStatusCode)
+            {
+                var status = ParseStatus(body);
+                if (status.Status is "done" or "failed" or "expired") return status;
+            }
+            else
             {
                 // a transient error while polling must not lose a paid job: keep waiting until the deadline
                 _logger.LogWarning("xAI poll {Id} HTTP {Status}: {Body}", requestId, (int)res.StatusCode, ErrorText(body));
-                if (DateTime.UtcNow - started > MaxWait) throw new InvalidOperationException($"xAI không phản hồi trạng thái clip {requestId}.");
-                continue;
             }
-            status = ParseStatus(body);
-            if (status.Status is "done" or "failed" or "expired") break;
             if (DateTime.UtcNow - started > MaxWait)
-                throw new InvalidOperationException($"Quá {MaxWait.TotalMinutes:0} phút xAI chưa tạo xong clip ({requestId}).");
+                throw new InvalidOperationException($"Quá {MaxWait.TotalMinutes:0} phút xAI chưa trả clip {requestId} — bấm tạo lại shot sau ít phút (sẽ lấy tiếp clip này, không trả tiền lần nữa).");
         }
-
-        if (status.Status == "failed")
-        {
-            var reason = $"{status.ErrorCode}: {status.ErrorMessage}".Trim(' ', ':');
-            if (status.ErrorCode is "invalid_argument" or "permission_denied" or "failed_precondition")
-                throw new VideoRejectedException($"xAI không tạo clip ({reason}).");
-            throw new InvalidOperationException($"xAI tạo clip lỗi ({reason}).");
-        }
-        if (status.Status == "expired" || status.VideoUrl == null)
-            throw new InvalidOperationException($"Clip {requestId} hết hạn trước khi tải được.");
-        if (status.RespectModeration == false)
-            throw new VideoRejectedException("xAI đã lọc clip này vì vi phạm chính sách nội dung — sửa hành động / lời thoại của shot rồi tạo lại.", cost);
-
-        // 3. download promptly (the URL is temporary)
-        using var dl = await _http.GetAsync(status.VideoUrl, ct);
-        if (!dl.IsSuccessStatusCode) throw new InvalidOperationException($"Không tải được clip từ xAI (HTTP {(int)dl.StatusCode}).");
-        var bytes = await dl.Content.ReadAsByteArrayAsync(ct);
-        _logger.LogInformation("xAI clip {Seconds}s {Res} in {Elapsed:F0}s ({Size} KB)", seconds, resolution,
-            (DateTime.UtcNow - started).TotalSeconds, bytes.Length / 1024);
-        return new VideoClip(bytes, dl.Content.Headers.ContentType?.MediaType is { } m && m.StartsWith("video/") ? m : "video/mp4",
-            requestId, seconds, cost);
     }
 
     private static string ErrorText(string body)

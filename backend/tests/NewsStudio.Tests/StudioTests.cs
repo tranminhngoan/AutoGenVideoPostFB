@@ -80,6 +80,47 @@ public class StudioTests
     }
 
     [Fact]
+    public async Task Grok_resumes_a_paid_job_instead_of_paying_again()
+    {
+        var xai = new FakeXai();
+        xai.Old["old1"] = """{"status":"done","video":{"url":"https://vidgen.x.ai/old1/video.mp4","respect_moderation":true}}""";
+        string? started = null;
+        var clip = await Client(xai).GenerateAsync("p", null, "9:16", "720p", 8, CancellationToken.None, "old1", id => { started = id; return Task.CompletedTask; });
+
+        xai.Starts.Should().Be(0);          // nothing new submitted
+        started.Should().BeNull();
+        clip.RequestId.Should().Be("old1");
+        clip.CostUsd.Should().Be(0m);       // already paid in the earlier run
+        clip.Video.Should().Equal(FakeXai.VideoBytes);
+    }
+
+    [Theory]
+    [InlineData(null)]                                                                          // xAI no longer knows it (404)
+    [InlineData("""{"status":"failed","error":{"code":"invalid_argument","message":"x"}}""")]  // it had failed
+    [InlineData("""{"status":"done","video":{"url":"https://vidgen.x.ai/f.mp4","respect_moderation":false}}""")] // filtered
+    public async Task Grok_starts_afresh_when_the_old_job_is_not_reusable(string? oldAnswer)
+    {
+        var xai = new FakeXai();
+        if (oldAnswer != null) xai.Old["old1"] = oldAnswer;
+        xai.Polls.Enqueue("""{"status":"done","video":{"url":"https://vidgen.x.ai/r1/video.mp4","respect_moderation":true}}""");
+        string? started = null;
+        var clip = await Client(xai).GenerateAsync("p", null, "9:16", "720p", 8, CancellationToken.None, "old1", id => { started = id; return Task.CompletedTask; });
+
+        xai.Starts.Should().Be(1);
+        started.Should().Be("r1");          // the new id is handed over as soon as the job exists
+        clip.RequestId.Should().Be("r1");
+        clip.CostUsd.Should().Be(0.24m);
+    }
+
+    [Fact]
+    public async Task Grok_busy_is_transient()
+    {
+        var xai = new FakeXai { StartStatus = (System.Net.HttpStatusCode)429 };
+        var act = () => Client(xai).GenerateAsync("p", null, "9:16", "720p", 5, CancellationToken.None);
+        await act.Should().ThrowAsync<VideoTransientException>();
+    }
+
+    [Fact]
     public async Task Grok_moderation_failure_is_a_rejection_not_a_retry()
     {
         var xai = new FakeXai();
@@ -110,8 +151,12 @@ public class StudioTests
     /// <summary>Stands in for api.x.ai: start → request_id, polls answered from a queue, video download.</summary>
     private sealed class FakeXai : HttpMessageHandler
     {
-        public static readonly byte[] VideoBytes = { 0, 0, 0, 24, 102, 116, 121, 112 };
+        public static readonly byte[] VideoBytes = Enumerable.Range(0, 4096).Select(i => (byte)i).ToArray();
         public Queue<string> Polls { get; } = new();
+        /// <summary>Jobs from an earlier run (resume): id → poll answer; unknown ids answer 404.</summary>
+        public Dictionary<string, string> Old { get; } = new();
+        public int Starts { get; private set; }
+        public System.Net.HttpStatusCode StartStatus { get; set; } = System.Net.HttpStatusCode.OK;
         public string StartBody { get; private set; } = "";
         public List<string> AuthHeaders { get; } = new();
 
@@ -126,11 +171,16 @@ public class StudioTests
             AuthHeaders.Add(request.Headers.Authorization?.ToString() ?? "");
             if (request.Method == HttpMethod.Post && url == "https://api.x.ai/v1/videos/generations")
             {
+                Starts++;
                 StartBody = await request.Content!.ReadAsStringAsync(ct);
+                if (StartStatus != System.Net.HttpStatusCode.OK)
+                    return new HttpResponseMessage(StartStatus) { Content = new StringContent("""{"error":"busy"}""") };
                 return Json("""{"request_id":"r1"}""");
             }
             if (request.Method == HttpMethod.Get && url == "https://api.x.ai/v1/videos/r1")
                 return Json(Polls.Count > 0 ? Polls.Dequeue() : """{"status":"pending"}""");
+            if (request.Method == HttpMethod.Get && url.StartsWith("https://api.x.ai/v1/videos/") && Old.TryGetValue(url[27..], out var old))
+                return Json(old);
             return new HttpResponseMessage(System.Net.HttpStatusCode.NotFound);
         }
 
@@ -259,6 +309,7 @@ public class StudioTests
 
             seconds.Should().BeApproximately(5.0, 0.3);
             File.Exists(output).Should().BeTrue();
+            (await media.ProbeFrameRateAsync(output, CancellationToken.None)).Should().Be("24/1"); // clips' own rate kept, no 24→30 judder
         }
         finally
         {
@@ -317,8 +368,9 @@ public class StudioTests
     [Fact]
     public void Watermark_moves_between_three_safe_spots()
     {
-        var f = StudioMedia.WatermarkFilter("9:16");
-        f.Should().Contain("mod(floor(t/7),3)").And.Contain("W-w-W*0.11").And.Contain("H*0.70").And.Contain("H*0.085");
+        var f = StudioMedia.WatermarkFilter("9:16", 2, "base", 12.5);
+        f.Should().Contain("mod(floor((t+12.500)/7),3)").And.Contain("W-w-W*0.11").And.Contain("H*0.70").And.Contain("H*0.085");
+        f.Should().StartWith("[2:v]").And.Contain("[base][wm]overlay");
     }
 
     [Theory]
