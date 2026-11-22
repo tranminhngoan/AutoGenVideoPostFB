@@ -5,7 +5,7 @@ import { AssetLibrary } from '../components/studio/AssetLibrary';
 import { MusicLibrary } from '../components/studio/MusicLibrary';
 import { CostPanel } from '../components/studio/CostPanel';
 import { StudioUnlock } from '../components/studio/StudioUnlock';
-import { VideoEditor } from '../components/studio/VideoEditor';
+import { VideoEditor, fmtDuration } from '../components/studio/VideoEditor';
 import { BUSY, STATUS_LABEL, StudioError, StudioSettings, StudioVideoSummary, getStudioKey, studio, usd } from '../services/studio';
 import { navigate } from '../lib/router';
 
@@ -164,7 +164,7 @@ function VideoList() {
           </div>
           <div className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-fg-muted">
             <span>{v.pageName ?? 'Chưa chọn Page'}</span>
-            <span>{v.targetDurationSeconds}s · {v.shotCount} shot</span>
+            <span>{v.shotCount ? '' : '~'}{fmtDuration(v.targetDurationSeconds)} · {v.shotCount} shot</span>
             <span>Ước tính {usd(v.estimatedCostUsd)} · đã chi {usd(v.actualCostUsd, 3)}</span>
             <span>{new Date(v.createdAtUtc).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>
           </div>

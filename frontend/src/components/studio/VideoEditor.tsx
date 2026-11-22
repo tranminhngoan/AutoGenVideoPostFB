@@ -10,7 +10,34 @@ import {
 import { navigate } from '../../lib/router';
 import { AssetPicker } from './AssetLibrary';
 
-const DURATION_PRESETS = [15, 30, 45, 60, 90, 120];
+/** Facebook only takes Reels up to 90 s; longer videos go up as ordinary Page videos. */
+const REELS_MAX_SECONDS = 90;
+
+/**
+ * Rough length of a script: a "Name: line" is speech (~2.5 Vietnamese words a second + a breath), any other line is an
+ * action/scene beat (~3 s). Only a guide for the writer — the real length is the sum of the planned shots.
+ */
+export function estimateScriptSeconds(script: string): { seconds: number; lines: number; actions: number } {
+  let seconds = 0;
+  let lines = 0;
+  let actions = 0;
+  for (const raw of script.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line) continue;
+    const speech = /^([^:：]{1,40})[:：]\s*(.+)$/.exec(line);
+    if (speech) {
+      const words = speech[2].replace(/\([^)]*\)/g, ' ').split(/\s+/).filter(Boolean).length;
+      seconds += words / 2.5 + 1;
+      lines++;
+    } else {
+      seconds += 3;
+      actions++;
+    }
+  }
+  return { seconds: Math.round(seconds), lines, actions };
+}
+
+export const fmtDuration = (s: number) => (s >= 60 ? `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}` : `${Math.round(s)}s`);
 const RESOLUTIONS: { id: string; label: string }[] = [
   { id: '720p', label: '720p (khuyên dùng)' },
   { id: '480p', label: '480p (nháp, rẻ nhất)' },
@@ -129,6 +156,7 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
   const pendingSeconds = pendingShots.reduce((s, x) => s + clampSecs(x.durationSeconds), 0);
   const pendingCost = pendingShots.reduce((s, x) => s + shotCost(x), 0);
   const assetById = useMemo(() => new Map(assets.map((a) => [a.id, a])), [assets]);
+  const scriptEstimate = useMemo(() => estimateScriptSeconds(form.script ?? ''), [form.script]);
 
   // ── actions ──
   const guarded = async (label: string, fn: () => Promise<void>) => {
@@ -145,11 +173,11 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
   const saveDetails = () =>
     guarded('save', async () => {
       if (isNew) {
-        const v = await studio.createVideo(form);
+        const v = await studio.createVideo({ ...form, targetDurationSeconds: Math.max(1, scriptEstimate.seconds) });
         toast.success('Đã tạo video nháp');
         navigate(`/studio/videos/${v.id}`);
       } else {
-        applyVideo(await studio.updateVideo(videoId!, { ...form, caption }), !shotsDirty);
+        applyVideo(await studio.updateVideo(videoId!, { ...form, caption, targetDurationSeconds: Math.max(1, scriptEstimate.seconds) }), !shotsDirty);
         toast.success('Đã lưu');
       }
     });
@@ -161,7 +189,7 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
         description: 'Gemini đọc kịch bản, ảnh tham chiếu và kho nhạc để chia thành các shot (chi phí vài phần trăm cent). Kế hoạch hiện tại (nếu có) sẽ được thay.',
         confirmLabel: 'Lập kế hoạch',
       }))) return;
-      await studio.updateVideo(videoId!, { ...form, caption });
+      await studio.updateVideo(videoId!, { ...form, caption, targetDurationSeconds: Math.max(1, scriptEstimate.seconds) });
       applyVideo(await studio.plan(videoId!), true);
       toast.success('Đã có kế hoạch — kiểm tra và sửa nếu cần, rồi bấm Tạo video.');
     });
@@ -287,30 +315,27 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
             <Input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="vd: Anh Hai mời Út Tèo nhậu" disabled={locked} />
           </Field>
         </div>
-        <Field label="Kịch bản" hint="Dán nguyên kịch bản: bối cảnh, lời thoại (ghi rõ ai nói), hành động. AI giữ nguyên lời thoại khi chia shot.">
+        <Field label="Kịch bản" hint="Dán nguyên kịch bản, mỗi câu thoại 1 dòng dạng “Tên: lời thoại”, hành động / bối cảnh ở dòng riêng. Video dài đúng theo kịch bản — AI không thêm, không cắt.">
           <Textarea rows={10} value={form.script} onChange={(e) => setForm({ ...form, script: e.target.value })} disabled={locked} />
         </Field>
-        <div className="grid gap-3 sm:grid-cols-3">
-          <Field label="Thời lượng (giây)">
-            <Input type="number" min={5} max={600} value={form.targetDurationSeconds}
-              onChange={(e) => setForm({ ...form, targetDurationSeconds: Number(e.target.value) || 30 })} disabled={locked} />
-            <div className="mt-1.5 flex flex-wrap gap-1">
-              {DURATION_PRESETS.map((d) => (
-                <button key={d} type="button" disabled={locked}
-                  className={cn('rounded-full border px-2 py-0.5 text-[11px]', form.targetDurationSeconds === d ? 'border-accent bg-accent text-white' : 'border-line text-fg-muted hover:bg-muted')}
-                  onClick={() => setForm({ ...form, targetDurationSeconds: d })}>
-                  {d < 60 ? `${d}s` : `${d / 60} phút`}
-                </button>
-              ))}
-            </div>
-          </Field>
+        {form.script?.trim() && (
+          <div className={cn('rounded-lg border px-3 py-2 text-xs', scriptEstimate.seconds > REELS_MAX_SECONDS ? 'border-warning/40 bg-warning/[0.06]' : 'border-line bg-subtle')}>
+            Ước tính theo kịch bản: <b className="text-fg">~{fmtDuration(scriptEstimate.seconds)}</b> ({scriptEstimate.lines} câu thoại, {scriptEstimate.actions} dòng hành động)
+            · chi phí ~<b className="text-fg">{usd(scriptEstimate.seconds * perSecond)}</b> ·{' '}
+            {scriptEstimate.seconds > REELS_MAX_SECONDS
+              ? <span className="text-warning">dài hơn 90 giây → đăng thành video thường, không vào Reels</span>
+              : <span className="text-success">≤ 90 giây → đăng Reels</span>}
+            . Con số chính xác có sau khi lập kế hoạch shot.
+          </div>
+        )}
+        <div className="grid gap-3 sm:grid-cols-2">
           <Field label="Khung hình">
             <Select value={form.aspectRatio} onChange={(e) => setForm({ ...form, aspectRatio: e.target.value })} disabled={locked}>
               <option value="9:16">Dọc 9:16 (Reels)</option>
               <option value="16:9">Ngang 16:9</option>
             </Select>
           </Field>
-          <Field label="Độ phân giải clip" hint={`${usd(perSecond, 3)}/giây · ${form.targetDurationSeconds}s ≈ ${usd((form.targetDurationSeconds ?? 0) * perSecond)} · video cuối luôn xuất 1080p`}>
+          <Field label="Độ phân giải clip" hint={`${usd(perSecond, 3)}/giây · video cuối luôn xuất 1080p`}>
             <Select value={form.resolution} onChange={(e) => setForm({ ...form, resolution: e.target.value })} disabled={locked}>
               {RESOLUTIONS.map((r) => (
                 <option key={r.id} value={r.id}>{r.label}</option>
@@ -370,7 +395,7 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
                 <Wand2 className="h-4 w-4" /> 2. Kế hoạch shot
               </div>
               <span className="text-xs text-fg-muted">
-                {shots.length} shot · {shotSeconds}s · ước tính {usd(estimate)}
+                {shots.length} shot · dài {fmtDuration(shotSeconds)}{shotSeconds > REELS_MAX_SECONDS ? ' (quá 90s → video thường, không phải Reels)' : ''} · ước tính {usd(estimate)}
               </span>
               <Button className="ml-auto" size="sm" variant="secondary" icon={<Sparkles className="h-4 w-4" />} loading={busy === 'plan'}
                 disabled={locked || !form.script?.trim() || video.shots.some((s) => s.hasClip)} onClick={plan}

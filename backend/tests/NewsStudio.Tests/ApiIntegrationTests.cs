@@ -170,6 +170,13 @@ public class ApiIntegrationTests : IClassFixture<WebApplicationFactory<Program>>
         shots[0].GetProperty("continueFromPrevious").GetBoolean().Should().BeFalse(); // the first shot has nothing to continue
         shots[1].GetProperty("continueFromPrevious").GetBoolean().Should().BeTrue();
         video.GetProperty("status").GetString().Should().Be("Planned");
+        video.GetProperty("targetDurationSeconds").GetInt32().Should().Be(23); // length = the shots, not the number typed
+
+        // saving the details again (with a script estimate) must not overwrite the shots' real length
+        (await _client.SendAsync(StudioRequest("PUT", $"/api/studio/videos/{id}", "{\"targetDurationSeconds\":180}", StudioKey)))
+            .StatusCode.Should().Be(HttpStatusCode.OK);
+        var reread = JsonDocument.Parse(await _client.GetStringAsync($"/api/studio/videos/{id}")).RootElement;
+        reread.GetProperty("targetDurationSeconds").GetInt32().Should().Be(23);
 
         // edit the first shot (by id), drop the second, add a new one
         var firstId = shots[0].GetProperty("id").GetString();

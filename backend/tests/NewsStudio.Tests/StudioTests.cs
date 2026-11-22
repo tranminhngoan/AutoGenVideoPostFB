@@ -182,6 +182,15 @@ public class StudioTests
     }
 
     [Fact]
+    public void Plan_prompt_follows_the_script_without_a_target_length()
+    {
+        var (_, user) = StudioService.BuildPlanPrompt(new StudioVideo { Script = "Anh Hai: Ê Út Tèo!", TargetDurationSeconds = 180 },
+            new List<StudioAsset>(), new List<StudioMusicTrack>());
+        user.Should().Contain("Độ dài video do KỊCH BẢN quyết định").And.Contain("KHÔNG thêm shot độn");
+        user.Should().NotContain("180").And.NotContain("±10%"); // the typed number never reaches the planner
+    }
+
+    [Fact]
     public void Plan_with_unknown_music_falls_back_to_none()
     {
         var plan = StudioService.ParsePlan("""{"musicTrackId":"not-a-guid","shots":[{"duration":8,"action":"x"}]}""", new HashSet<Guid>(), new HashSet<Guid>());

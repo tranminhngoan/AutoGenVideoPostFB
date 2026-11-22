@@ -202,6 +202,7 @@ public class StudioService
         EnsureNotBusy(v);
         var pageBefore = v.FacebookAccountId;
         Apply(v, input);
+        if (v.Shots.Count > 0) v.TargetDurationSeconds = v.Shots.Sum(s => GrokVideoClient.ClampSeconds(s.DurationSeconds)); // real length wins
         // the final video carries the Page's name: a different Page means composing it again with the new watermark
         var rebrand = v.FacebookAccountId != pageBefore && v.FinalBlobId != null && v.Status != "Published";
         if (rebrand)
@@ -231,7 +232,8 @@ public class StudioService
         if (i.Title != null) v.Title = i.Title.Trim();
         if (i.FacebookAccountId != null) v.FacebookAccountId = i.FacebookAccountId == Guid.Empty ? null : i.FacebookAccountId;
         if (i.Script != null) v.Script = i.Script.Trim();
-        if (i.TargetDurationSeconds != null) v.TargetDurationSeconds = Math.Clamp(i.TargetDurationSeconds.Value, 5, 600);
+        // only a rough estimate from the script until shots exist; then it is the shots' total (see ShotsTotalSeconds)
+        if (i.TargetDurationSeconds != null) v.TargetDurationSeconds = Math.Clamp(i.TargetDurationSeconds.Value, 1, 3600);
         if (i.AspectRatio != null) v.AspectRatio = i.AspectRatio == "16:9" ? "16:9" : "9:16";
         if (i.Resolution != null) v.Resolution = GrokVideoClient.NormalizeResolution(i.Resolution);
         if (i.StyleNotes != null) v.StyleNotes = i.StyleNotes.Trim();
@@ -282,6 +284,7 @@ public class StudioService
             }
             if (string.IsNullOrWhiteSpace(v.Caption)) v.Caption = plan.Caption;
             v.PlanNotes = plan.Notes;
+            v.TargetDurationSeconds = Math.Max(1, plan.Shots.Sum(s => GrokVideoClient.ClampSeconds(s.Duration)));
             if (v.MusicMode == "Auto") v.MusicTrackId = plan.MusicTrackId ?? music.FirstOrDefault()?.Id;
             v.EstimatedCostUsd = EstimateVideoCost(v);
             v.Status = "Planned";
@@ -310,7 +313,7 @@ public class StudioService
             "(mỗi shot là 1 clip 2–15 giây có cả hình, tiếng động và lời thoại khớp miệng, bắt đầu từ 1 ảnh mở đầu). Chỉ trả về JSON hợp lệ.";
         var sb = new StringBuilder();
         sb.AppendLine($"KỊCH BẢN (giữ nguyên lời thoại):\n{v.Script}\n");
-        sb.AppendLine($"Thời lượng mục tiêu: khoảng {v.TargetDurationSeconds} giây. Khung hình {(v.AspectRatio == "16:9" ? "ngang 16:9" : "dọc 9:16")}.");
+        sb.AppendLine($"Khung hình {(v.AspectRatio == "16:9" ? "ngang 16:9" : "dọc 9:16")}. Độ dài video do KỊCH BẢN quyết định — không có thời lượng mục tiêu.");
         if (!string.IsNullOrWhiteSpace(v.StyleNotes)) sb.AppendLine($"Phong cách / ghi chú của người dùng: {v.StyleNotes}");
         sb.AppendLine("\nẢNH CÓ SẴN (chỉ dùng các id này):");
         if (assets.Count == 0) sb.AppendLine("- (không có — mô tả nhân vật và bối cảnh thật chi tiết, nhất quán trong mọi shot)");
@@ -329,7 +332,9 @@ CÁCH MODEL VIDEO HOẠT ĐỘNG:
   Khi true thì ảnh mở đầu (assetIds) bị bỏ qua.
 
 QUY TẮC:
-- Tổng ""duration"" các shot gần bằng thời lượng mục tiêu (±10%). Mỗi shot 4–15 giây (số nguyên), tốt nhất 6–10 giây.
+- Bám sát kịch bản: mỗi câu thoại và mỗi hành động / cảnh được mô tả trong kịch bản thành shot tương ứng, theo đúng thứ tự.
+  KHÔNG thêm shot độn, cảnh phụ hay kéo dài cho đủ giờ; KHÔNG bỏ hay rút gọn phần nào của kịch bản. Video dài đúng bằng nội dung.
+- ""duration"" của mỗi shot vừa đủ cho việc xảy ra trong shot: 2–15 giây (số nguyên); shot chỉ có hành động ngắn thì 3–5 giây.
 - Tiếng Việt nói khoảng 2,5 chữ/giây: duration của shot có thoại >= số chữ / 2,5 + 1. Câu quá dài thì tách sang shot sau.
 - Mỗi shot tối đa 1 người nói. ""dialogue"" là câu thoại nguyên văn tiếng Việt trong kịch bản (không dịch, không thêm). Shot không thoại thì để null.
 - ""action"", ""camera"", ""sound"" viết bằng TIẾNG ANH, cụ thể, dễ quay: ai làm gì, cảm xúc, cử chỉ nhỏ có chủ đích; cỡ cảnh + chuyển động máy; tiếng động môi trường (không nhạc).
@@ -423,6 +428,7 @@ Trả về JSON:
             v.Shots.Remove(gone);
         }
         v.EstimatedCostUsd = EstimateVideoCost(v);
+        if (v.Shots.Count > 0) v.TargetDurationSeconds = v.Shots.Sum(s => GrokVideoClient.ClampSeconds(s.DurationSeconds));
         if (v.Status is "Draft" or "Ready" or "Failed") v.Status = v.Shots.Count > 0 ? "Planned" : "Draft";
         await _db.SaveChangesAsync(ct);
         return await GetVideoAsync(id, ct);
