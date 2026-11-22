@@ -157,6 +157,28 @@ public class StudioMedia
         ? ""
         : $" -metadata artist=\"{Quote(brand)}\" -metadata copyright=\"© {Quote(brand)}\" -metadata comment=\"Video gốc của Page {Quote(brand)} trên Facebook\"";
 
+    public const int MaxMusicSeconds = 300;
+
+    /// <summary>Re-encodes an uploaded track to AAC 128 kb/s stereo (≈1 MB a minute), at most 5 minutes.</summary>
+    public async Task<byte[]> CompactMusicAsync(byte[] data, string extension, CancellationToken ct)
+    {
+        var dir = TempDir();
+        try
+        {
+            var input = Path.Combine(dir, "in" + (string.IsNullOrWhiteSpace(extension) ? ".audio" : extension));
+            var output = Path.Combine(dir, "out.m4a");
+            await File.WriteAllBytesAsync(input, data, ct);
+            var (code, _, err) = await RunAsync(_ffmpeg,
+                $"-hide_banner -y -i \"{input}\" -vn -t {MaxMusicSeconds} -c:a aac -b:a 128k -ar 44100 -ac 2 -movflags +faststart \"{output}\"", ct);
+            if (code != 0 || !File.Exists(output)) throw new ArgumentException($"Không đọc được file nhạc: {Tail(err)}");
+            return await File.ReadAllBytesAsync(output, ct);
+        }
+        finally
+        {
+            TryDelete(dir);
+        }
+    }
+
     public async Task<double> ProbeSecondsAsync(string path, CancellationToken ct)
     {
         var (_, output, _) = await RunAsync(_ffprobe, $"-v error -show_entries format=duration -of csv=p=0 \"{path}\"", ct);
@@ -224,7 +246,7 @@ public class StudioMedia
                 graph += $"[{audioInput}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo[a]";
                 var (code, _, err) = await RunAsync(_ffmpeg,
                     $"-hide_banner -y {inputs} -filter_complex \"{graph}\" -map \"[v]\" -map \"[a]\" -shortest " +
-                    $"-c:v libx264 -preset fast -crf 18 -c:a aac -b:a 192k -ar 48000 -ac 2 \"{part}\"", ct);
+                    $"-c:v libx264 -preset fast -crf 19 -maxrate 10M -bufsize 20M -c:a aac -b:a 192k -ar 48000 -ac 2 \"{part}\"", ct);
                 if (code != 0 || !File.Exists(part)) throw new InvalidOperationException($"FFmpeg không chuẩn hoá được clip {i + 1}: {Tail(err)}");
                 parts.Add(part);
                 offset += await ProbeSecondsAsync(part, ct);

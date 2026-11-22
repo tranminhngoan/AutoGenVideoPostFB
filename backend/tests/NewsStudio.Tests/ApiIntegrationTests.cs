@@ -2,6 +2,7 @@ using System.Net;
 using System.Text.Json;
 using FluentAssertions;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 namespace NewsStudio.Tests;
@@ -191,6 +192,39 @@ public class ApiIntegrationTests : IClassFixture<WebApplicationFactory<Program>>
 
         (await _client.SendAsync(StudioRequest("DELETE", $"/api/studio/videos/{id}", "", StudioKey))).StatusCode.Should().Be(HttpStatusCode.NoContent);
     });
+
+    [Fact]
+    public async Task Studio_ClipsLiveOnDisk_AndALostClipIsMarkedToRedo()
+    {
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NewsStudio.Application.Common.Interfaces.IApplicationDbContext>();
+        var files = scope.ServiceProvider.GetRequiredService<NewsStudio.Infrastructure.Studio.StudioFileStore>();
+
+        // two clips kept on disk (empty Data in the database): one still there, one wiped by a redeploy
+        var kept = new NewsStudio.Domain.Entities.StudioBlob { MimeType = "video/mp4", SizeBytes = 4 };
+        var lost = new NewsStudio.Domain.Entities.StudioBlob { MimeType = "video/mp4", SizeBytes = 4 };
+        await files.SaveAsync(kept.Id, new byte[] { 1, 2, 3, 4 }, CancellationToken.None);
+        var video = new NewsStudio.Domain.Entities.StudioVideo { Title = "disk test", Status = "Ready", FinalBlobId = lost.Id };
+        var s1 = new NewsStudio.Domain.Entities.StudioShot { StudioVideoId = video.Id, Index = 1, Status = "Done", ClipBlobId = kept.Id, Action = "a" };
+        var s2 = new NewsStudio.Domain.Entities.StudioShot { StudioVideoId = video.Id, Index = 2, Status = "Done", ClipBlobId = lost.Id, Action = "b" };
+        db.StudioBlobs.Add(kept); db.StudioBlobs.Add(lost);
+        db.StudioVideos.Add(video); db.StudioShots.Add(s1); db.StudioShots.Add(s2);
+        await db.SaveChangesAsync(CancellationToken.None);
+
+        var clip = await _client.GetAsync($"/api/studio/shots/{s1.Id}/clip");
+        clip.StatusCode.Should().Be(HttpStatusCode.OK);
+        (await clip.Content.ReadAsByteArrayAsync()).Should().Equal(1, 2, 3, 4); // streamed from disk
+
+        var dto = JsonDocument.Parse(await _client.GetStringAsync($"/api/studio/videos/{video.Id}")).RootElement;
+        var shots = dto.GetProperty("shots").EnumerateArray().ToList();
+        shots[0].GetProperty("hasClip").GetBoolean().Should().BeTrue();
+        shots[1].GetProperty("hasClip").GetBoolean().Should().BeFalse();       // lost → to redo, not a broken player
+        shots[1].GetProperty("status").GetString().Should().Be("Pending");
+        dto.GetProperty("hasFinal").GetBoolean().Should().BeFalse();
+        dto.GetProperty("status").GetString().Should().Be("Planned");
+
+        files.Delete(kept.Id);
+    }
 
     [Fact]
     public Task Studio_ReadsStayOpen() => WithStudioKey(async () =>

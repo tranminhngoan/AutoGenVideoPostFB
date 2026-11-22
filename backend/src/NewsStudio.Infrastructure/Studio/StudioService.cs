@@ -30,18 +30,20 @@ public class StudioService
     private readonly GrokVideoClient _video;
     private readonly FilmGeminiClient _gemini;
     private readonly StudioMedia _media;
+    private readonly StudioFileStore _files;
     private readonly IFacebookPublishingService _facebook;
     private readonly IBackgroundJobClient _jobs;
     private readonly IConfiguration _configuration;
     private readonly ILogger<StudioService> _logger;
 
-    public StudioService(IApplicationDbContext db, GrokVideoClient video, FilmGeminiClient gemini, StudioMedia media,
+    public StudioService(IApplicationDbContext db, GrokVideoClient video, FilmGeminiClient gemini, StudioMedia media, StudioFileStore files,
         IFacebookPublishingService facebook, IBackgroundJobClient jobs, IConfiguration configuration, ILogger<StudioService> logger)
     {
         _db = db;
         _video = video;
         _gemini = gemini;
         _media = media;
+        _files = files;
         _facebook = facebook;
         _jobs = jobs;
         _configuration = configuration;
@@ -97,7 +99,10 @@ public class StudioService
         if (data.Length == 0) throw new ArgumentException("File nhạc trống.");
         var seconds = await _media.ProbeSecondsAsync(data, extension, ct);
         if (seconds <= 0) throw new ArgumentException("Không đọc được file nhạc (hãy dùng MP3, M4A, WAV hoặc OGG).");
-        var blob = new StudioBlob { MimeType = string.IsNullOrWhiteSpace(mimeType) ? "audio/mpeg" : mimeType, Data = data, SizeBytes = data.Length };
+        // the music store lives in the (small) database: keep each track compact — AAC 128 kb/s, at most 5 minutes
+        data = await _media.CompactMusicAsync(data, extension, ct);
+        seconds = Math.Min(seconds, StudioMedia.MaxMusicSeconds);
+        var blob = new StudioBlob { MimeType = "audio/mp4", Data = data, SizeBytes = data.Length };
         var track = new StudioMusicTrack
         {
             Name = Required(name, "Tên bài"), Mood = (mood ?? "").Trim(), BlobId = blob.Id, MimeType = blob.MimeType,
@@ -126,8 +131,68 @@ public class StudioService
         await _db.SaveChangesAsync(ct);
     }
 
-    public async Task<StudioBlob?> GetBlobAsync(Guid blobId, CancellationToken ct) =>
-        await _db.StudioBlobs.AsNoTracking().FirstOrDefaultAsync(b => b.Id == blobId, ct);
+    /// <summary>The file with its bytes, wherever it lives (database row or app disk); null when gone.</summary>
+    public async Task<StudioBlob?> GetBlobAsync(Guid blobId, CancellationToken ct)
+    {
+        var blob = await _db.StudioBlobs.AsNoTracking().FirstOrDefaultAsync(b => b.Id == blobId, ct);
+        if (blob == null || blob.Data.Length > 0) return blob;
+        var bytes = await _files.ReadAsync(blobId, ct);
+        if (bytes == null) return null;
+        blob.Data = bytes;
+        return blob;
+    }
+
+    /// <summary>Path of a file kept on disk (clips, final videos), or null when it lives in the database / is gone.</summary>
+    public async Task<(string Path, string MimeType)?> DiskFileAsync(Guid blobId, CancellationToken ct)
+    {
+        var meta = await _db.StudioBlobs.AsNoTracking().Where(b => b.Id == blobId)
+            .Select(b => new { b.MimeType, InDb = b.Data.Length > 0 }).FirstOrDefaultAsync(ct);
+        if (meta == null || meta.InDb || !_files.Exists(blobId)) return null;
+        return (_files.PathFor(blobId), meta.MimeType);
+    }
+
+    /// <summary>Clips and final videos go to the app disk, never into the database (see <see cref="StudioFileStore"/>).</summary>
+    private async Task<StudioBlob> StoreOnDiskAsync(byte[] data, string mimeType, CancellationToken ct)
+    {
+        var blob = new StudioBlob { MimeType = mimeType, Data = Array.Empty<byte>(), SizeBytes = data.Length };
+        await _files.SaveAsync(blob.Id, data, ct);
+        _db.StudioBlobs.Add(blob);
+        return blob;
+    }
+
+    /// <summary>
+    /// The app disk is wiped on redeploy: a clip / final video whose file is gone is marked missing (shot back to
+    /// "to do", final cleared) so the page shows what to redo instead of failing later.
+    /// </summary>
+    private async Task ReconcileLostFilesAsync(Guid videoId, CancellationToken ct)
+    {
+        var v = await _db.StudioVideos.Include(x => x.Shots).FirstOrDefaultAsync(x => x.Id == videoId, ct);
+        if (v == null || v.Status is "Generating" or "Composing" or "Publishing") return;
+        var ids = v.Shots.Where(s => s.ClipBlobId != null).Select(s => s.ClipBlobId!.Value).ToList();
+        if (v.FinalBlobId != null) ids.Add(v.FinalBlobId.Value);
+        if (ids.Count == 0) return;
+        var onDisk = await _db.StudioBlobs.AsNoTracking().Where(b => ids.Contains(b.Id) && b.Data.Length == 0).Select(b => b.Id).ToListAsync(ct);
+        var known = await _db.StudioBlobs.AsNoTracking().Where(b => ids.Contains(b.Id)).Select(b => b.Id).ToListAsync(ct);
+        bool Lost(Guid id) => !known.Contains(id) || (onDisk.Contains(id) && !_files.Exists(id));
+        var changed = false;
+        foreach (var s in v.Shots.Where(s => s.ClipBlobId is { } c && Lost(c)))
+        {
+            await DeleteBlobAsync(s.ClipBlobId!.Value, ct);
+            s.ClipBlobId = null;
+            s.Status = "Pending";
+            s.ErrorMessage = "Clip đã mất do server khởi động lại — cần tạo lại shot này.";
+            changed = true;
+        }
+        if (v.FinalBlobId is { } f && Lost(f))
+        {
+            await DeleteBlobAsync(f, ct);
+            v.FinalBlobId = null;
+            if (v.Status == "Ready") v.Status = "Planned";
+            v.ErrorMessage = "Video cuối đã mất do server khởi động lại — bấm Ghép lại (hoặc tạo các clip còn thiếu).";
+            changed = true;
+        }
+        if (changed) await _db.SaveChangesAsync(ct);
+    }
 
     public async Task<Guid?> AssetBlobIdAsync(Guid assetId, CancellationToken ct) =>
         await _db.StudioAssets.Where(a => a.Id == assetId).Select(a => (Guid?)a.BlobId).FirstOrDefaultAsync(ct);
@@ -170,6 +235,7 @@ public class StudioService
     public async Task<StudioVideoDto> GetVideoAsync(Guid id, CancellationToken ct)
     {
         await ReleaseStalePlanningAsync(ct);
+        await ReconcileLostFilesAsync(id, ct);
         var v = await _db.StudioVideos.AsNoTracking().Include(x => x.Shots).FirstOrDefaultAsync(x => x.Id == id, ct)
                 ?? throw new KeyNotFoundException("Không tìm thấy video.");
         var pages = await PageNamesAsync(ct);
@@ -545,6 +611,7 @@ Trả về JSON:
     public async Task<StudioVideoDto> StartGenerateAsync(Guid id, Guid? shotId, CancellationToken ct)
     {
         if (!_video.IsConfigured) throw new InvalidOperationException("Chưa có khoá xAI (biến XAI_API_KEY trên Railway) — chưa tạo được video.");
+        await ReconcileLostFilesAsync(id, ct);
         var v = await _db.StudioVideos.Include(x => x.Shots).FirstOrDefaultAsync(x => x.Id == id, ct) ?? throw new KeyNotFoundException("Không tìm thấy video.");
         EnsureNotBusy(v);
         if (v.Shots.Count == 0) throw new InvalidOperationException("Video chưa có shot nào — hãy lập kế hoạch trước.");
@@ -633,8 +700,7 @@ Trả về JSON:
                         await _db.SaveChangesAsync(CancellationToken.None);
                     });
                     if (shot.ClipBlobId != null) await DeleteBlobAsync(shot.ClipBlobId.Value, ct);
-                    var b = new StudioBlob { MimeType = clip.MimeType, Data = clip.Video, SizeBytes = clip.Video.Length };
-                    _db.StudioBlobs.Add(b);
+                    var b = await StoreOnDiskAsync(clip.Video, clip.MimeType, ct);
                     shot.ClipBlobId = b.Id;
                     shot.InteractionId = clip.RequestId;
                     shot.CostUsd += clip.CostUsd;
@@ -779,6 +845,7 @@ Trả về JSON:
 
     public async Task<StudioVideoDto> StartComposeAsync(Guid id, CancellationToken ct)
     {
+        await ReconcileLostFilesAsync(id, ct);
         var v = await _db.StudioVideos.Include(x => x.Shots).FirstOrDefaultAsync(x => x.Id == id, ct) ?? throw new KeyNotFoundException("Không tìm thấy video.");
         EnsureNotBusy(v);
         if (v.Shots.Count == 0 || v.Shots.Any(s => s.ClipBlobId == null))
@@ -841,8 +908,7 @@ Trả về JSON:
             var duration = await _media.ComposeAsync(clips, musicPath, v.MusicVolume, v.AspectRatio, DeliveryResolution, output, ct, watermark, brand);
             var bytes = await File.ReadAllBytesAsync(output, ct);
             if (v.FinalBlobId != null) await DeleteBlobAsync(v.FinalBlobId.Value, ct);
-            var final = new StudioBlob { MimeType = "video/mp4", Data = bytes, SizeBytes = bytes.Length };
-            _db.StudioBlobs.Add(final);
+            var final = await StoreOnDiskAsync(bytes, "video/mp4", ct);
             v.FinalBlobId = final.Id;
             v.FinalDurationSeconds = Math.Round(duration, 1);
             v.Status = "Ready";
@@ -868,6 +934,7 @@ Trả về JSON:
 
     public async Task<StudioVideoDto> StartPublishAsync(Guid id, string? caption, CancellationToken ct)
     {
+        await ReconcileLostFilesAsync(id, ct);
         var v = await _db.StudioVideos.FirstOrDefaultAsync(x => x.Id == id, ct) ?? throw new KeyNotFoundException("Không tìm thấy video.");
         EnsureNotBusy(v);
         if (v.FinalBlobId == null) throw new InvalidOperationException("Video chưa ghép xong.");
@@ -907,6 +974,15 @@ Trả về JSON:
             v.PublishedAtUtc = DateTime.UtcNow;
             v.Status = "Published";
             v.Progress = null;
+            await _db.SaveChangesAsync(ct);
+            // posted: the clips have done their job — free the disk (the final video stays until the next redeploy)
+            var posted = await _db.StudioVideos.Include(x => x.Shots).FirstAsync(x => x.Id == id, ct);
+            foreach (var s in posted.Shots.Where(s => s.ClipBlobId != null))
+            {
+                await DeleteBlobAsync(s.ClipBlobId!.Value, ct);
+                s.ClipBlobId = null;
+                s.InteractionId = null;
+            }
             await _db.SaveChangesAsync(ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -1068,6 +1144,7 @@ Trả về JSON:
     {
         var blob = await _db.StudioBlobs.FirstOrDefaultAsync(b => b.Id == id, ct);
         if (blob != null) _db.StudioBlobs.Remove(blob);
+        _files.Delete(id);
     }
 
     public static List<Guid> Ids(string? json)

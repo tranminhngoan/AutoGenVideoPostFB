@@ -20,7 +20,7 @@ namespace NewsStudio.Api.Controllers;
 public class StudioController : ControllerBase
 {
     private const long MaxImageBytes = 15 * 1024 * 1024;
-    private const long MaxMusicBytes = 40 * 1024 * 1024;
+    private const long MaxMusicBytes = 25 * 1024 * 1024;
 
     private readonly StudioService _studio;
     private readonly IFacebookPublishingService _facebook;
@@ -143,7 +143,7 @@ public class StudioController : ControllerBase
         if (Denied() is { } d) return d;
         var file = form.File;
         if (file == null || file.Length == 0) return BadRequest(new { message = "Chưa chọn file nhạc." });
-        if (file.Length > MaxMusicBytes) return BadRequest(new { message = "File nhạc quá lớn (tối đa 40 MB)." });
+        if (file.Length > MaxMusicBytes) return BadRequest(new { message = "File nhạc quá lớn (tối đa 25 MB)." });
         var bytes = await ReadAsync(file, ct);
         return await Run(async () => await _studio.AddMusicAsync(form.Name ?? "", form.Mood, bytes, file.ContentType, Path.GetExtension(file.FileName), ct));
     }
@@ -230,6 +230,11 @@ public class StudioController : ControllerBase
     private async Task<IActionResult> BlobResult(Guid? blobId, string? downloadName, CancellationToken ct)
     {
         if (blobId == null) return NotFound();
+        Response.Headers.CacheControl = "private, max-age=3600";
+        if (await _studio.DiskFileAsync(blobId.Value, ct) is { } disk) // streamed from disk, never loaded whole
+            return downloadName == null
+                ? PhysicalFile(disk.Path, disk.MimeType, enableRangeProcessing: true)
+                : PhysicalFile(disk.Path, disk.MimeType, downloadName, enableRangeProcessing: true);
         var blob = await _studio.GetBlobAsync(blobId.Value, ct);
         if (blob == null) return NotFound();
         Response.Headers.CacheControl = "private, max-age=3600";
