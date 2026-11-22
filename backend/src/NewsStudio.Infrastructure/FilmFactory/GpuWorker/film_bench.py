@@ -30,6 +30,12 @@ TALK = ", the person is speaking to someone, natural jaw and lip movement while 
 SILENT = ", open mouth, talking, speaking, mouth moving, lip movement"
 MOTION_TAIL = ", smooth natural motion, stable face and eyes, highly detailed photorealistic, cinematic camera"
 
+CHAR_HAI = ("Vietnamese man, about 45 years old, sun-tanned weathered skin, short black hair with some grey, thin moustache, "
+            "faded light-blue short-sleeve shirt")
+CHAR_TEO = ("Vietnamese man, about 28 years old, lean, short messy black hair, cheerful face, white t-shirt, "
+            "open-face motorbike helmet pushed back on his head")
+MEKONG = "rustic Mekong Delta countryside house, late afternoon golden light, soft smoke drifting from a small charcoal grill"
+
 CHAR_A = "Vietnamese woman, 30 years old, shoulder-length straight black hair, light makeup, cream silk blouse"
 CHAR_B = "Vietnamese man, 35 years old, short black hair, clean shaven, navy suit jacket over white shirt"
 
@@ -57,6 +63,35 @@ TESTS = {
             {"frame": "fB", "silent": 2.5, "motion": "he listens, blinks, lowers his eyes for a moment"},
             {"frame": "fB", "voice": 1, "motion": "he answers apologetically, slight shrug"},
             {"frame": "fA", "silent": 2.0, "motion": "she listens, exhales and looks away briefly"},
+        ],
+    },
+    # The user's script (FilmTestScene on the server: GET /api/film-factory/gpu/test-scene/voice/1..9).
+    # Every line split at its sentence break (<= ~5 s per shot); B-roll inserts carry off-screen voice (no lip sync).
+    "E": {
+        "chars": {"h": CHAR_HAI, "t": CHAR_TEO},
+        "frames": {
+            "fH1": ("h", f"medium shot of a {CHAR_HAI}, sitting on a low wooden stool on the front porch of a {MEKONG}, "
+                         "holding a woven palm-leaf hand fan beside a small clay charcoal grill, looking slightly right of camera toward the road"),
+            "fH2": ("h", f"close-up of a {CHAR_HAI}, broad warm smile, on the porch of a {MEKONG}, looking slightly right of camera"),
+            "fT1": ("t", f"medium shot of a {CHAR_TEO}, sitting on a small motorbike stopped on a dirt lane in front of a {MEKONG}, "
+                         "coconut palms behind, looking slightly left of camera, grinning"),
+            "fT2": ("t", f"close-up of a {CHAR_TEO}, sitting on a motorbike on a dirt lane, late afternoon golden light, "
+                         "coconut palms softly out of focus, looking slightly left of camera, playful smile"),
+            "fFish": (None, "close-up of a whole snakehead fish grilling on a small clay charcoal grill, glowing embers, smoke rising, "
+                            "a small bowl of tamarind fish sauce with chopped red chili beside it, late afternoon golden light, no people"),
+            "fGlass": (None, "close-up of two hands clinking small glasses of rice wine above a rustic wooden table with grilled fish, "
+                             "smoke drifting, late afternoon golden light, faces not visible"),
+        },
+        "shots": [
+            {"frame": "fH1", "voice": 0, "motion": "he raises one hand and calls out loudly toward the road, broad grin, the fan resting in his other hand"},
+            {"frame": "fH2", "voice": 1, "motion": "he laughs and beckons with a small nod toward the porch"},
+            {"frame": "fT1", "voice": 2, "motion": "he laughs sheepishly while sitting on the motorbike, small shake of the head"},
+            {"frame": "fT2", "voice": 3, "motion": "he sniffs the air, raises his eyebrows, curious smile"},
+            {"frame": "fH1", "voice": 4, "motion": "he proudly gestures toward the grill with the hand fan, laughing"},
+            {"frame": "fFish", "voice": 5, "voiceover": True, "motion": "smoke rises from the grilling fish, embers glow, slow gentle camera push-in"},
+            {"frame": "fT1", "voice": 6, "motion": "he quickly switches off the motorbike and leans back, excited expression"},
+            {"frame": "fT2", "voice": 7, "motion": "he grins mischievously and winks, leaning in as if sharing a secret"},
+            {"frame": "fGlass", "voice": 8, "voiceover": True, "motion": "the two small glasses clink together, rice wine ripples, smoke drifts"},
         ],
     },
     # 30 s scene (FilmTestScene on the server: GET /api/film-factory/gpu/test-scene/voice/1..5).
@@ -112,15 +147,19 @@ def make(args):
                      "prompt": f"close-up portrait photo of a {look}, looking at camera, neutral plain grey studio background, soft cinematic lighting, {STYLE}",
                      "negative": NEG_IMG})
     for fid, (cid, prompt) in test["frames"].items():
-        jobs.append({"id": f"frame_{fid}.jpg", "type": "image", "out": f"frame_{fid}.jpg", "width": gw, "height": gh,
-                     "target_width": tw, "target_height": th, "seed": 2000 + len(fid) + ord(fid[-1]),
-                     "prompt": f"{prompt}, {STYLE}", "negative": NEG_IMG,
-                     "face_ref": f"portrait_{cid}.jpg", "face_strength": 0.45})
+        job = {"id": f"frame_{fid}.jpg", "type": "image", "out": f"frame_{fid}.jpg", "width": gw, "height": gh,
+               "target_width": tw, "target_height": th, "seed": 2000 + len(fid) + ord(fid[-1]),
+               "prompt": f"{prompt}, {STYLE}", "negative": NEG_IMG}
+        if cid:
+            job.update(face_ref=f"portrait_{cid}.jpg", face_strength=0.45)
+        jobs.append(job)
 
     for i, s in enumerate(test["shots"]):
         sid = f"s{i + 1}"
-        speaking = "voice" in s
-        if speaking:
+        speaking = "voice" in s and not s.get("voiceover")   # a face on screen says the line
+        has_voice = "voice" in s
+        has_face = test["frames"][s["frame"]][0] is not None
+        if has_voice:
             src = voices[s["voice"]]
             vname = f"voice_{sid}{os.path.splitext(src)[1]}"
             shutil.copy(src, os.path.join(work, vname))
@@ -129,8 +168,9 @@ def make(args):
             vname, dur = None, s["silent"]
         if sync:
             prompt = s["motion"] + MOTION_TAIL + (TALK if speaking else "")
-            neg = NEG_MOTION + ("" if speaking else SILENT)
-            secs = min(max(dur, 2), 81 / 16)
+            neg = NEG_MOTION + ("" if speaking or not has_face else SILENT)
+            # synced clips play at their own speed; others keep 85% and may be slowed, so ask a little longer
+            secs = min(max(dur if speaking else dur / 0.85, 2), 81 / 16)
         else:  # the current production workflow: mouths closed, clip trimmed/slowed by the renderer
             prompt, neg = s["motion"] + MOTION_TAIL, NEG_MOTION.replace("screaming,", "open mouth, screaming,")
             secs = min(max(dur / 0.85, 2), 5)

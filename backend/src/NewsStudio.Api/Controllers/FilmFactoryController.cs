@@ -746,7 +746,9 @@ public class FilmFactoryController : ControllerBase
 
         var dir = Path.Combine(NewsStudio.Infrastructure.Common.TempStorage.GetRoot(_configuration), "film_factory", "test_scene");
         Directory.CreateDirectory(dir);
-        var cached = Path.Combine(dir, $"line_{n}_{voice.Replace(':', '_')}.wav");
+        // keyed by voice + text, so an edited line (or a bad take replaced by a new deploy) is never served stale
+        var textHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(voice + "|" + text)))[..12];
+        var cached = Path.Combine(dir, $"line_{n}_{textHash}.wav");
         if (!System.IO.File.Exists(cached))
         {
             try
