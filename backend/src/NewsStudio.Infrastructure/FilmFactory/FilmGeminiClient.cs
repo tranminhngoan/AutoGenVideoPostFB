@@ -24,7 +24,7 @@ public class FilmGeminiClient
     public FilmGeminiClient(HttpClient http, IConfiguration configuration, AiUsageMeter meter, ILogger<FilmGeminiClient> logger)
     {
         _http = http;
-        _http.Timeout = TimeSpan.FromMinutes(4); // a 5-minute episode script is a long answer
+        _http.Timeout = TimeSpan.FromMinutes(8); // a long script → a long shot plan (runs in the background)
         _configuration = configuration;
         _meter = meter;
         _logger = logger;

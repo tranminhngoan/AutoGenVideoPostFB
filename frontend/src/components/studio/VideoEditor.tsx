@@ -14,25 +14,53 @@ import { AssetPicker, VideoCastPicker } from './AssetLibrary';
 const REELS_MAX_SECONDS = 90;
 
 /**
- * Rough length of a script: a "Name: line" is speech (~2.5 Vietnamese words a second + a breath), any other line is an
- * action/scene beat (~3 s). Only a guide for the writer — the real length is the sum of the planned shots.
+ * Rough length of a script, for the writer to judge. Understands both "Name: line" and the markdown layout where the
+ * speaker sits on its own line ("**Công Tôn Sách:**") and the words follow on the next lines. Speech ≈ 2.5 Vietnamese
+ * words a second + a breath; every other paragraph is an action beat (~3 s); scene headings (#…) add ~2 s.
+ * The real length is the sum of the planned shots.
  */
 export function estimateScriptSeconds(script: string): { seconds: number; lines: number; actions: number } {
+  const clean = (t: string) => t.replace(/[*_`>]/g, '').replace(/\([^)]*\)/g, ' ').trim();
+  const words = (t: string) => t.split(/\s+/).filter(Boolean).length;
   let seconds = 0;
   let lines = 0;
   let actions = 0;
+  let speaker = false; // the paragraph after a lone "Name:" line is speech
+  let inSpeech = false;
   for (const raw of script.split(/\r?\n/)) {
-    const line = raw.trim();
-    if (!line) continue;
-    const speech = /^([^:：]{1,40})[:：]\s*(.+)$/.exec(line);
-    if (speech) {
-      const words = speech[2].replace(/\([^)]*\)/g, ' ').split(/\s+/).filter(Boolean).length;
-      seconds += words / 2.5 + 1;
-      lines++;
-    } else {
-      seconds += 3;
-      actions++;
+    const trimmed = raw.trim();
+    if (!trimmed) {
+      inSpeech = false;
+      continue;
     }
+    if (/^#{1,6}\s/.test(trimmed) || /^-{3,}$/.test(trimmed)) {
+      if (/^#/.test(trimmed)) seconds += 2;
+      speaker = inSpeech = false;
+      continue;
+    }
+    const line = clean(trimmed);
+    if (!line) continue;
+    const lone = /^([^:：]{1,40})[:：]$/.exec(line);
+    if (lone) {
+      speaker = true;
+      continue;
+    }
+    const inline = /^([^:：]{1,40})[:：]\s*(.+)$/.exec(line);
+    if (inline && words(inline[1]) <= 5) {
+      seconds += words(inline[2]) / 2.5 + 1;
+      lines++;
+      speaker = inSpeech = false;
+      continue;
+    }
+    if (speaker || inSpeech) {
+      seconds += words(line) / 2.5 + (inSpeech ? 0 : 1);
+      if (!inSpeech) lines++;
+      inSpeech = true;
+      speaker = false;
+      continue;
+    }
+    seconds += 3;
+    actions++;
   }
   return { seconds: Math.round(seconds), lines, actions };
 }
@@ -139,6 +167,9 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
   useEffect(() => {
     if (video && lastStatus && BUSY.includes(lastStatus as any) && !BUSY.includes(video.status)) {
       applyVideo(video, true);
+      if (lastStatus === 'Planning' && video.status === 'Planned' && !video.errorMessage)
+        toast.success(`Đã có kế hoạch ${video.shots.length} shot — kiểm tra và sửa nếu cần, rồi bấm Tạo video.`);
+      if (lastStatus === 'Planning' && video.errorMessage) toast.error(video.errorMessage);
       if (video.status === 'Ready') toast.success('Video đã ghép xong — xem thử bên dưới.');
       if (video.status === 'Published') toast.success('Đã đăng lên Facebook!');
       if (video.status === 'Failed' && video.errorMessage) toast.error(video.errorMessage);
@@ -191,7 +222,7 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
       }))) return;
       await studio.updateVideo(videoId!, { ...form, caption, targetDurationSeconds: Math.max(1, scriptEstimate.seconds) });
       applyVideo(await studio.plan(videoId!), true);
-      toast.success('Đã có kế hoạch — kiểm tra và sửa nếu cần, rồi bấm Tạo video.');
+      toast.success('Gemini đang chia shot — kịch bản dài có thể mất 1–3 phút, trang tự cập nhật.');
     });
 
   const saveShots = () =>

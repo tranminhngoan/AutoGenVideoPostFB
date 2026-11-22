@@ -143,8 +143,25 @@ public class StudioService
 
     // ═══════════════════════════════ Videos ═══════════════════════════════
 
+    /// <summary>Frees videos left "Planning" by a planning run that was cut off (server restart, old build).</summary>
+    private async Task ReleaseStalePlanningAsync(CancellationToken ct)
+    {
+        var cutoff = DateTime.UtcNow - StalePlanning;
+        var stuck = await _db.StudioVideos.Include(v => v.Shots)
+            .Where(v => v.Status == "Planning" && (v.UpdatedAtUtc ?? v.CreatedAtUtc) < cutoff).ToListAsync(ct);
+        if (stuck.Count == 0) return;
+        foreach (var v in stuck)
+        {
+            v.Status = v.Shots.Count > 0 ? "Planned" : "Draft";
+            v.Progress = null;
+            v.ErrorMessage = "Lập kế hoạch lần trước bị ngắt giữa chừng — bấm lập kế hoạch lại.";
+        }
+        await _db.SaveChangesAsync(ct);
+    }
+
     public async Task<List<StudioVideoSummaryDto>> ListVideosAsync(CancellationToken ct)
     {
+        await ReleaseStalePlanningAsync(ct);
         var pages = await PageNamesAsync(ct);
         var videos = await _db.StudioVideos.AsNoTracking().Include(v => v.Shots).OrderByDescending(v => v.CreatedAtUtc).Take(200).ToListAsync(ct);
         return videos.Select(v => FillSummary(new StudioVideoSummaryDto(), v, pages)).ToList();
@@ -152,6 +169,7 @@ public class StudioService
 
     public async Task<StudioVideoDto> GetVideoAsync(Guid id, CancellationToken ct)
     {
+        await ReleaseStalePlanningAsync(ct);
         var v = await _db.StudioVideos.AsNoTracking().Include(x => x.Shots).FirstOrDefaultAsync(x => x.Id == id, ct)
                 ?? throw new KeyNotFoundException("Không tìm thấy video.");
         var pages = await PageNamesAsync(ct);
@@ -246,25 +264,38 @@ public class StudioService
 
     // ═══════════════════════════════ Planning ═══════════════════════════════
 
-    /// <summary>Asks Gemini to cut the script into clip-sized shots (replaces the current shot list).</summary>
-    public async Task<StudioVideoDto> PlanAsync(Guid id, CancellationToken ct)
+    /// <summary>
+    /// Queues the shot planning (Gemini cuts the script into clip-sized shots, replacing the current list). It runs in
+    /// the background: a long script can take Gemini minutes, longer than a browser / proxy keeps a request open.
+    /// </summary>
+    public async Task<StudioVideoDto> StartPlanAsync(Guid id, CancellationToken ct)
     {
         var v = await _db.StudioVideos.Include(x => x.Shots).FirstOrDefaultAsync(x => x.Id == id, ct) ?? throw new KeyNotFoundException("Không tìm thấy video.");
         EnsureNotBusy(v);
         if (string.IsNullOrWhiteSpace(v.Script)) throw new InvalidOperationException("Hãy nhập kịch bản trước khi lập kế hoạch.");
         if (v.Shots.Any(s => s.ClipBlobId != null))
             throw new InvalidOperationException("Video đã có clip được tạo — lập kế hoạch lại sẽ bỏ các clip đó. Hãy xoá clip/tạo video mới nếu muốn làm lại từ đầu.");
-
-        var assets = await LoadAssetsAsync(Ids(v.AssetIdsJson), ct);
-        var music = await _db.StudioMusicTracks.AsNoTracking().OrderBy(m => m.UseCount).ToListAsync(ct);
         v.Status = "Planning";
+        v.Progress = "Gemini đang đọc kịch bản và chia shot (kịch bản dài có thể mất 1–3 phút)…";
         v.ErrorMessage = null;
         await _db.SaveChangesAsync(ct);
+        _jobs.Enqueue<StudioService>(s => s.RunPlanAsync(id, CancellationToken.None));
+        return await GetVideoAsync(id, ct);
+    }
 
+    [Queue("critical")]
+    [AutomaticRetry(Attempts = 0)]
+    public async Task RunPlanAsync(Guid id, CancellationToken ct)
+    {
+        var v = await _db.StudioVideos.Include(x => x.Shots).FirstOrDefaultAsync(x => x.Id == id, ct);
+        if (v == null || v.Status != "Planning") return;
         try
         {
+            var assets = await LoadAssetsAsync(Ids(v.AssetIdsJson), ct);
+            var music = await _db.StudioMusicTracks.AsNoTracking().OrderBy(m => m.UseCount).ToListAsync(ct);
             var (system, user) = BuildPlanPrompt(v, assets, music);
-            var result = await _gemini.GenerateJsonAsync(system, user, 8192, 0.6, ct);
+            // generous output room: thinking models count their reasoning against this limit
+            var result = await _gemini.GenerateJsonAsync(system, user, 32768, 0.6, ct);
             var plan = ParsePlan(result.Text, assets.Select(a => a.Id).ToHashSet(), music.Select(m => m.Id).ToHashSet());
 
             _db.StudioShots.RemoveRange(v.Shots);
@@ -274,13 +305,14 @@ public class StudioService
             {
                 // Added through the DbSet: a new entity already carries its Guid, so attaching it via the navigation
                 // would make EF treat it as an existing row (UPDATE → "expected to affect 1 row").
-                _db.StudioShots.Add(new StudioShot
+                var shot = new StudioShot
                 {
                     StudioVideoId = v.Id, ContinueFromPrevious = index > 1 && s.ContinueFromPrevious,
                     Index = index++, DurationSeconds = GrokVideoClient.ClampSeconds(s.Duration),
                     Action = s.Action, Camera = s.Camera, Speaker = NullIfEmpty(s.Speaker), Dialogue = NullIfEmpty(s.Dialogue),
                     Sound = NullIfEmpty(s.Sound), AssetIdsJson = JsonSerializer.Serialize(s.AssetIds)
-                });
+                };
+                _db.StudioShots.Add(shot); // EF fixes up v.Shots itself
             }
             if (string.IsNullOrWhiteSpace(v.Caption)) v.Caption = plan.Caption;
             v.PlanNotes = plan.Notes;
@@ -288,6 +320,7 @@ public class StudioService
             if (v.MusicMode == "Auto") v.MusicTrackId = plan.MusicTrackId ?? music.FirstOrDefault()?.Id;
             v.EstimatedCostUsd = EstimateVideoCost(v);
             v.Status = "Planned";
+            v.Progress = null;
             _db.StudioCostRecords.Add(new StudioCostRecord
             {
                 StudioVideoId = v.Id, Kind = "Plan", Model = _gemini.TextModel, Tokens = result.Tokens, CostUsd = result.CostUsd,
@@ -296,14 +329,17 @@ public class StudioService
             v.ActualCostUsd += result.CostUsd;
             await _db.SaveChangesAsync(ct);
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception ex)
         {
-            v.Status = "Draft";
-            v.ErrorMessage = "Lập kế hoạch thất bại: " + ex.Message;
+            // whatever happens (Gemini error, timeout, server shutting down) the video must not stay stuck in "Planning"
+            _logger.LogWarning(ex, "Studio planning failed for {Id}", id);
+            v.Status = v.Shots.Count > 0 ? "Planned" : "Draft";
+            v.Progress = null;
+            v.ErrorMessage = ex is OperationCanceledException
+                ? "Lập kế hoạch bị ngắt giữa chừng (Gemini trả lời quá lâu hoặc server khởi động lại) — bấm lập kế hoạch lại."
+                : "Lập kế hoạch thất bại: " + ex.Message;
             await _db.SaveChangesAsync(CancellationToken.None);
-            throw;
         }
-        return await GetVideoAsync(id, ct);
     }
 
     public static (string System, string User) BuildPlanPrompt(StudioVideo v, IReadOnlyList<StudioAsset> assets, IReadOnlyList<StudioMusicTrack> music)
@@ -957,8 +993,17 @@ Trả về JSON:
         return dto;
     }
 
+    /// <summary>Planning never takes this long; a video still "Planning" after it was cut off (e.g. by a restart).</summary>
+    private static readonly TimeSpan StalePlanning = TimeSpan.FromMinutes(10);
+
     private static void EnsureNotBusy(StudioVideo v)
     {
+        if (v.Status == "Planning" && DateTime.UtcNow - (v.UpdatedAtUtc ?? v.CreatedAtUtc) > StalePlanning)
+        {
+            v.Status = v.Shots.Count > 0 ? "Planned" : "Draft"; // stuck: free it
+            v.Progress = null;
+            return;
+        }
         if (v.Status is "Planning" or "Generating" or "Composing" or "Publishing")
             throw new InvalidOperationException($"Video đang trong bước \"{v.Status}\" — chờ xong rồi thao tác tiếp.");
     }

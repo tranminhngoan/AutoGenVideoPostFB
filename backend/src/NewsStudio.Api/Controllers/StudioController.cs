@@ -184,7 +184,7 @@ public class StudioController : ControllerBase
 
     [HttpPost("videos/{id:guid}/plan")]
     public async Task<IActionResult> Plan(Guid id, CancellationToken ct) =>
-        Denied() ?? await Run(async () => await _studio.PlanAsync(id, ct));
+        Denied() ?? await Run(async () => await _studio.StartPlanAsync(id, ct));
 
     [HttpPut("videos/{id:guid}/shots")]
     public async Task<IActionResult> Shots(Guid id, [FromBody] List<StudioShotInputDto> shots, CancellationToken ct) =>
