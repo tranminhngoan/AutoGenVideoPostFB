@@ -22,7 +22,7 @@ public class StudioService
 {
     public const string BudgetKey = "Studio.MonthlyBudgetUsd";
     public const string DeliveryResolution = "1080p";
-    public const int MaxShotAssets = 3;
+    public const int MaxShotAssets = 5;
     private const int MaxAttemptsPerRun = 2;
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
@@ -282,7 +282,7 @@ public class StudioService
         {
             Id = s.Id, Index = s.Index, DurationSeconds = s.DurationSeconds, Action = s.Action, Camera = s.Camera,
             Speaker = s.Speaker, Dialogue = s.Dialogue, Sound = s.Sound, AssetIds = Ids(s.AssetIdsJson),
-            ContinueFromPrevious = s.ContinueFromPrevious, Status = s.Status,
+            ContinueFromPrevious = s.ContinueFromPrevious, HasKeyframe = s.KeyframeBlobId != null, Status = s.Status,
             HasClip = s.ClipBlobId != null, CostUsd = s.CostUsd, Attempts = s.Attempts, ErrorMessage = s.ErrorMessage,
             EstimatedCostUsd = ShotCost(v, s)
         }).ToList();
@@ -329,6 +329,7 @@ public class StudioService
         var v = await _db.StudioVideos.Include(x => x.Shots).FirstOrDefaultAsync(x => x.Id == id, ct) ?? throw new KeyNotFoundException("Không tìm thấy video.");
         EnsureNotBusy(v);
         foreach (var s in v.Shots.Where(s => s.ClipBlobId != null)) await DeleteBlobAsync(s.ClipBlobId!.Value, ct);
+        foreach (var s in v.Shots.Where(s => s.KeyframeBlobId != null)) await DeleteBlobAsync(s.KeyframeBlobId!.Value, ct);
         if (v.FinalBlobId != null) await DeleteBlobAsync(v.FinalBlobId.Value, ct);
         _db.StudioVideos.Remove(v);
         await _db.SaveChangesAsync(ct);
@@ -386,6 +387,7 @@ public class StudioService
             var (result, planModel) = await PlanWithFallbackAsync(v, system, user, ct);
             var plan = ParsePlan(result.Text, assets.Select(a => a.Id).ToHashSet(), music.Select(m => m.Id).ToHashSet());
 
+            foreach (var old in v.Shots.Where(o => o.KeyframeBlobId != null)) await DeleteBlobAsync(old.KeyframeBlobId!.Value, ct);
             _db.StudioShots.RemoveRange(v.Shots);
             v.Shots.Clear();
             var index = 1;
@@ -499,14 +501,19 @@ NHÂN VẬT:
   trong ""action"" (ngoại hình, trang phục, tuổi) cho hợp bối cảnh và thời đại của kịch bản, giữ mô tả giống nhau giữa các shot.
 - TUYỆT ĐỐI không dùng ảnh của nhân vật này cho nhân vật khác, và không đưa ảnh nhân vật vào shot mà người đó không có mặt.
 
-CÁCH MODEL VIDEO HOẠT ĐỘNG:
-- Mỗi clip BẮT ĐẦU TỪ ĐÚNG 1 ẢNH rồi chuyển động tiếp. Model không có ảnh tham chiếu riêng cho từng nhân vật: nhân vật nào không có
-  trong ảnh mở đầu thì model tự vẽ (dễ sai mặt). Vì vậy ảnh mở đầu nên chứa những nhân vật xuất hiện trong shot.
-- ""assetIds"": id ĐẦU TIÊN là ẢNH MỞ ĐẦU của shot (ưu tiên ảnh có nhân vật đang nói đứng trong bối cảnh). Có thể thêm tối đa 2 id
-  khác chỉ để mô tả bằng chữ. Không có ảnh phù hợp thì để [].
-- ""continueFromPrevious"": true khi shot nối liền shot trước trong cùng 1 cảnh (cùng nơi, cùng người, máy gần như giữ góc) — clip sẽ
-  bắt đầu từ khung hình cuối của clip trước nên mặt nhân vật liền mạch. false khi đổi góc máy mạnh, đổi cảnh, hoặc là shot đầu.
-  Khi true thì ảnh mở đầu (assetIds) bị bỏ qua.
+CÁCH LÀM VIDEO:
+- Với mỗi shot, hệ thống dựng 1 KHUNG HÌNH MỞ ĐẦU từ ảnh của MỌI nhân vật chính có trong ""assetIds"" (đúng mặt từng người), rồi
+  model video làm chuyển động từ khung đó. Nhân vật chính nào có mặt trong khung hình mà thiếu id thì sẽ bị vẽ sai mặt.
+- ""assetIds"": id của TẤT CẢ nhân vật chính NHÌN THẤY trong shot (người nói + người nghe + người đứng cạnh), cộng ảnh bối cảnh nếu
+  có; tối đa 5. Chỉ đưa người thật sự có mặt — không thêm ai không có trong cảnh.
+- ""continueFromPrevious"": true chỉ khi shot là đoạn tiếp liền của shot trước với CÙNG góc máy và CÙNG những người (clip bắt đầu từ
+  khung cuối của clip trước). Đổi góc máy, đổi người trong khung, đổi cảnh hoặc shot đầu → false.
+
+GÓC MÁY (""camera""):
+- Ưu tiên toàn cảnh / trung cảnh rộng (wide shot, full shot, medium-wide): thấy toàn thân hoặc nửa người của MỌI người trong cảnh và
+  thấy rõ bối cảnh xung quanh (công đường, sân, đồ vật, người hầu ở xa…).
+- Shot đầu mỗi cảnh luôn là wide establishing shot. Cận mặt (close-up) chỉ dùng cho khoảnh khắc biểu cảm / đòn gây cười, tối đa 1/4
+  số shot. Khi 2 người nói qua lại, dùng khung 2 người (two-shot) thay vì cận từng người.
 
 QUY TẮC:
 - Bám sát kịch bản: mỗi câu thoại và mỗi hành động / cảnh được mô tả trong kịch bản thành shot tương ứng, theo đúng thứ tự.
@@ -592,6 +599,13 @@ Trả về JSON:
                               || shot.ContinueFromPrevious != (index > 1 && input.ContinueFromPrevious);
                 if (changed && shot.Status == "Done") shot.Status = "Pending"; // edited → the clip no longer matches; regenerate
                 if (changed) shot.InteractionId = null; // a pending xAI job made from the old text must not be picked up
+                var framingChanged = shot.AssetIdsJson != JsonSerializer.Serialize(input.AssetIds) || shot.Camera != input.Camera.Trim()
+                                     || shot.Action != input.Action.Trim() || shot.ContinueFromPrevious != (index > 1 && input.ContinueFromPrevious);
+                if (framingChanged && shot.KeyframeBlobId != null)
+                {
+                    await DeleteBlobAsync(shot.KeyframeBlobId.Value, ct);
+                    shot.KeyframeBlobId = null;
+                }
             }
             else
             {
@@ -612,6 +626,7 @@ Trả về JSON:
         foreach (var gone in v.Shots.Where(s => !keep.Contains(s.Id)).ToList())
         {
             if (gone.ClipBlobId != null) await DeleteBlobAsync(gone.ClipBlobId.Value, ct);
+            if (gone.KeyframeBlobId != null) await DeleteBlobAsync(gone.KeyframeBlobId.Value, ct);
             _db.StudioShots.Remove(gone);
             v.Shots.Remove(gone);
         }
@@ -626,7 +641,13 @@ Trả về JSON:
 
     /// <summary>Seconds × price, plus the input-image fee when the clip starts from a picture.</summary>
     private decimal ShotCost(StudioVideo v, StudioShot s) =>
-        _video.EstimateCost(s.DurationSeconds, v.Resolution, s.ContinueFromPrevious || Ids(s.AssetIdsJson).Count > 0);
+        _video.EstimateCost(s.DurationSeconds, v.Resolution, s.ContinueFromPrevious || Ids(s.AssetIdsJson).Count > 0)
+        + (NeedsKeyframe(s) && s.KeyframeBlobId == null ? _gemini.EstimatedImageCostUsd : 0m);
+
+    /// <summary>A shot that doesn't continue the previous take and shows library pictures starts from a built keyframe.</summary>
+    private static bool NeedsKeyframe(StudioShot s) => !s.ContinueFromPrevious && Ids(s.AssetIdsJson).Count > 0;
+
+    private string KeyframeModel => _configuration["Studio:KeyframeModel"] is { Length: > 0 } m ? m : "gemini-3.1-flash-image";
 
     // ═══════════════════════════════ Generation ═══════════════════════════════
 
@@ -823,11 +844,134 @@ Trả về JSON:
             if (prev != null)
                 throw new InvalidOperationException($"Shot này nối tiếp shot {prev.Index} nhưng shot {prev.Index} chưa có clip — tạo shot {prev.Index} trước.");
         }
-        foreach (var aid in Ids(shot.AssetIdsJson))
-            if (assets.TryGetValue(aid, out var a) && await GetBlobAsync(a.BlobId, ct) is { } blob)
-                return (new StartFrame(await _media.PrepareStartFrameAsync(blob.Data, v.AspectRatio, ct), "image/jpeg"), false);
-        return (null, false);
+        if (!NeedsKeyframe(shot)) return (null, false);
+        var keyframe = shot.KeyframeBlobId is { } kf ? await GetBlobAsync(kf, ct) : null;
+        if (keyframe == null)
+        {
+            await BuildKeyframeAsync(v, shot, assets, ct);
+            keyframe = await GetBlobAsync(shot.KeyframeBlobId!.Value, ct);
+        }
+        return (new StartFrame(keyframe!.Data, keyframe.MimeType), false);
     }
+
+    /// <summary>
+    /// Builds the opening frame of a shot with the image model: every character of the shot from their own picture
+    /// (right faces, each once), in the location, framed as the shot's camera says. Saved on the shot (small JPEG in
+    /// the database) so it can be previewed before any video money is spent, and reused by the clip.
+    /// </summary>
+    private async Task BuildKeyframeAsync(StudioVideo v, StudioShot shot, IReadOnlyDictionary<Guid, StudioAsset> assets, CancellationToken ct)
+    {
+        var used = Ids(shot.AssetIdsJson).Where(assets.ContainsKey).Select(id => assets[id]).Take(MaxShotAssets).ToList();
+        var refs = new List<FilmGeminiClient.ReferenceImage>();
+        foreach (var a in used)
+            if (await GetBlobAsync(a.BlobId, ct) is { } img) refs.Add(new FilmGeminiClient.ReferenceImage(img.Data, img.MimeType));
+        if (refs.Count == 0) throw new InvalidOperationException("Ảnh nhân vật / bối cảnh của shot đã bị xoá khỏi kho.");
+
+        FilmGeminiClient.ImageResult image;
+        try
+        {
+            image = await _gemini.GenerateImageAsync(BuildKeyframePrompt(v, shot, used), v.AspectRatio == "16:9" ? "16:9" : "9:16", refs, ct, KeyframeModel);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or HttpRequestException)
+        {
+            throw new InvalidOperationException($"Không dựng được khung mở đầu cho shot {shot.Index} (Gemini: {ex.Message}). " +
+                                                "Chưa tốn tiền tạo clip. Nếu Gemini từ chối ảnh người nổi tiếng, hãy dùng ảnh nhân vật do AI tạo.", ex);
+        }
+        var jpeg = await _media.PrepareStartFrameAsync(image.Bytes, v.AspectRatio, ct);
+        if (shot.KeyframeBlobId != null) await DeleteBlobAsync(shot.KeyframeBlobId.Value, ct);
+        var blob = new StudioBlob { MimeType = "image/jpeg", Data = jpeg, SizeBytes = jpeg.Length };
+        _db.StudioBlobs.Add(blob);
+        shot.KeyframeBlobId = blob.Id;
+        shot.CostUsd += image.CostUsd;
+        v.ActualCostUsd += image.CostUsd;
+        _db.StudioCostRecords.Add(new StudioCostRecord
+        {
+            StudioVideoId = v.Id, StudioShotId = shot.Id, Kind = "Image", Model = KeyframeModel, CostUsd = image.CostUsd,
+            Note = $"khung mở đầu shot {shot.Index}" + (image.FreeKey ? ", khoá miễn phí" : "")
+        });
+        await _db.SaveChangesAsync(ct);
+    }
+
+    /// <summary>The image-model brief for a shot's opening frame (reference pictures go first, in the same order).</summary>
+    public static string BuildKeyframePrompt(StudioVideo v, StudioShot shot, IReadOnlyList<StudioAsset> used)
+    {
+        var people = used.Where(a => a.Kind == "Character").ToList();
+        var places = used.Where(a => a.Kind == "Location").ToList();
+        var props = used.Where(a => a.Kind == "Prop").ToList();
+        var sb = new StringBuilder();
+        sb.Append($"Create the opening frame of a live-action film shot: a single photorealistic cinematic still, {(v.AspectRatio == "16:9" ? "horizontal 16:9" : "vertical 9:16")}. ");
+        for (var i = 0; i < used.Count; i++)
+            sb.Append($"Reference image {i + 1} is {(used[i].Kind == "Character" ? "the character" : used[i].Kind == "Location" ? "the location" : "the prop")} \"{used[i].Name}\". ");
+        if (people.Count > 0)
+            sb.Append($"Exactly {people.Count} main {(people.Count == 1 ? "person" : "people")} in frame: ")
+              .Append(string.Join("; ", people.Select(p => $"{p.Name} ({p.Description}) — same face, hair, make-up and costume as their reference image")))
+              .Append(". Each of them appears exactly once — never duplicate anyone; any background extras must look clearly different from them. ");
+        if (places.Count > 0) sb.Append("Setting: ").Append(string.Join("; ", places.Select(l => $"{l.Name} — {l.Description}"))).Append(", as in its reference image. ");
+        if (props.Count > 0) sb.Append("Props: ").Append(string.Join("; ", props.Select(p => $"{p.Name} — {p.Description}"))).Append(". ");
+        sb.Append("Moment: ").Append(shot.Action.TrimEnd('.')).Append(". ");
+        sb.Append("Framing: ").Append(string.IsNullOrWhiteSpace(shot.Camera) ? "medium-wide shot" : shot.Camera.TrimEnd('.'))
+          .Append(" — keep everyone's full head and upper body (or full body) inside the frame and show the surroundings clearly, not a tight face crop. ");
+        if (!string.IsNullOrWhiteSpace(v.StyleNotes)) sb.Append("Style: ").Append(v.StyleNotes!.TrimEnd('.')).Append(". ");
+        sb.Append("Natural cinematic lighting, sharp focus, realistic skin and fabric. The image contains no text, captions, subtitles, logos or watermarks.");
+        return sb.ToString();
+    }
+
+    // ═══════════════════════════════ Keyframes (preview) ═══════════════════════════════
+
+    /// <summary>Builds the opening frames (all missing ones, or one shot's again) so they can be checked before paying for clips.</summary>
+    public async Task<StudioVideoDto> StartKeyframesAsync(Guid id, Guid? shotId, CancellationToken ct)
+    {
+        var v = await _db.StudioVideos.Include(x => x.Shots).FirstOrDefaultAsync(x => x.Id == id, ct) ?? throw new KeyNotFoundException("Không tìm thấy video.");
+        EnsureNotBusy(v);
+        var todo = v.Shots.Where(s => NeedsKeyframe(s) && (shotId != null ? s.Id == shotId : s.KeyframeBlobId == null)).ToList();
+        if (todo.Count == 0)
+            throw new InvalidOperationException(shotId != null
+                ? "Shot này không cần khung mở đầu (đang nối tiếp shot trước hoặc chưa chọn nhân vật)."
+                : "Mọi shot cần khung mở đầu đều đã có — bấm \"Dựng lại\" ở từng shot nếu muốn đổi.");
+        await EnsureBudgetAsync(todo.Count * _gemini.EstimatedImageCostUsd, ct);
+        v.Progress = $"Đang dựng {todo.Count} khung mở đầu (~{todo.Count * _gemini.EstimatedImageCostUsd:0.00} USD)…";
+        v.Status = "Generating";
+        v.ErrorMessage = null;
+        await _db.SaveChangesAsync(ct);
+        _jobs.Enqueue<StudioService>(s => s.RunKeyframesAsync(id, shotId, CancellationToken.None));
+        return await GetVideoAsync(id, ct);
+    }
+
+    [Queue("critical")]
+    [AutomaticRetry(Attempts = 0)]
+    [DisableConcurrentExecution(1800)]
+    public async Task RunKeyframesAsync(Guid id, Guid? shotId, CancellationToken ct)
+    {
+        var v = await _db.StudioVideos.Include(x => x.Shots).FirstOrDefaultAsync(x => x.Id == id, ct);
+        if (v == null || v.Status != "Generating") return;
+        var assets = (await LoadAssetsAsync(v.Shots.SelectMany(s => Ids(s.AssetIdsJson)).Distinct().ToList(), ct)).ToDictionary(a => a.Id);
+        var todo = v.Shots.OrderBy(s => s.Index).Where(s => NeedsKeyframe(s) && (shotId != null ? s.Id == shotId : s.KeyframeBlobId == null)).ToList();
+        var errors = new List<string>();
+        var n = 0;
+        foreach (var s in todo)
+        {
+            v.Progress = $"Đang dựng khung mở đầu {++n}/{todo.Count} (shot {s.Index})…";
+            await _db.SaveChangesAsync(ct);
+            try
+            {
+                await BuildKeyframeAsync(v, s, assets, ct);
+                if (s.ErrorMessage?.Contains("khung mở đầu") == true) s.ErrorMessage = null;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                s.ErrorMessage = ex.Message;
+                errors.Add($"shot {s.Index}");
+            }
+            await _db.SaveChangesAsync(ct);
+        }
+        v.Status = v.FinalBlobId != null ? "Ready" : "Planned";
+        v.Progress = null;
+        v.ErrorMessage = errors.Count == 0 ? null : $"Chưa dựng được khung mở đầu cho {string.Join(", ", errors)} — xem lỗi ở từng shot.";
+        await _db.SaveChangesAsync(ct);
+    }
+
+    public async Task<Guid?> ShotKeyframeBlobIdAsync(Guid shotId, CancellationToken ct) =>
+        await _db.StudioShots.Where(s => s.Id == shotId).Select(s => s.KeyframeBlobId).FirstOrDefaultAsync(ct);
 
     /// <summary>The text sent to the video model for one shot (the start frame, if any, goes with it).</summary>
     public static string BuildShotPrompt(StudioVideo v, StudioShot shot, IReadOnlyDictionary<Guid, StudioAsset> assets, bool continued = false)
@@ -837,6 +981,9 @@ Trả về JSON:
         sb.Append($"Live-action cinematic video, photorealistic, real people, {(v.AspectRatio == "16:9" ? "horizontal 16:9" : "vertical 9:16")} framing. ");
         if (continued) sb.Append("Continue seamlessly from the starting image: same people, same faces, same clothes, same place and light. ");
         else if (used.Count > 0) sb.Append("Start from the provided image and keep everyone's face, hair and clothes identical to it. ");
+        var cast = used.Where(a => a.Kind == "Character").Select(a => a.Name).ToList();
+        if (cast.Count > 0)
+            sb.Append($"The main people are exactly: {string.Join(", ", cast)} — each stays the same person and appears only once; never duplicate anyone. ");
         var locations = used.Where(a => a.Kind == "Location").ToList();
         var people = used.Where(a => a.Kind == "Character").ToList();
         var props = used.Where(a => a.Kind == "Prop").ToList();

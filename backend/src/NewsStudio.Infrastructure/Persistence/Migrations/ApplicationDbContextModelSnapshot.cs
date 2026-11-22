@@ -1805,6 +1805,9 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                         .HasMaxLength(300)
                         .HasColumnType("character varying(300)");
 
+                    b.Property<Guid?>("KeyframeBlobId")
+                        .HasColumnType("uuid");
+
                     b.Property<string>("Sound")
                         .HasColumnType("text");
 

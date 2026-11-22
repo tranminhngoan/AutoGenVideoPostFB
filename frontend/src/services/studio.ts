@@ -90,6 +90,7 @@ export interface StudioShot {
   sound?: string | null;
   assetIds: string[];
   continueFromPrevious: boolean;
+  hasKeyframe: boolean;
   status: 'Pending' | 'Generating' | 'Done' | 'Failed';
   hasClip: boolean;
   costUsd: number;
@@ -231,12 +232,15 @@ export const studio = {
   saveShots: (id: string, shots: StudioShotInput[]) => call<StudioVideo>('PUT', `/videos/${id}/shots`, shots),
   generate: (id: string) => call<StudioVideo>('POST', `/videos/${id}/generate`),
   generateShot: (id: string, shotId: string) => call<StudioVideo>('POST', `/videos/${id}/shots/${shotId}/generate`),
+  keyframes: (id: string) => call<StudioVideo>('POST', `/videos/${id}/keyframes`),
+  shotKeyframe: (id: string, shotId: string) => call<StudioVideo>('POST', `/videos/${id}/shots/${shotId}/keyframe`),
   compose: (id: string) => call<StudioVideo>('POST', `/videos/${id}/compose`),
   recoverClips: (id: string) => call<StudioVideo>('POST', `/videos/${id}/recover-clips`),
   publish: (id: string, caption: string) => call<StudioVideo>('POST', `/videos/${id}/publish`, { caption }),
   purgeClips: (id: string) => call<StudioVideo>('POST', `/videos/${id}/purge-clips`),
   finalUrl: (id: string, download = false) => `${BASE}/videos/${id}/final${download ? '?download=true' : ''}`,
   clipUrl: (shotId: string) => `${BASE}/shots/${shotId}/clip`,
+  keyframeUrl: (shotId: string) => `${BASE}/shots/${shotId}/keyframe`,
 
   costs: () => call<StudioCosts>('GET', '/costs'),
 };

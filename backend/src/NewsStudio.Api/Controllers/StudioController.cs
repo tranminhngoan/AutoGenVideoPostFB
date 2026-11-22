@@ -198,6 +198,18 @@ public class StudioController : ControllerBase
     public async Task<IActionResult> GenerateShot(Guid id, Guid shotId, CancellationToken ct) =>
         Denied() ?? await Run(async () => await _studio.StartGenerateAsync(id, shotId, ct));
 
+    [HttpPost("videos/{id:guid}/keyframes")]
+    public async Task<IActionResult> Keyframes(Guid id, CancellationToken ct) =>
+        Denied() ?? await Run(async () => await _studio.StartKeyframesAsync(id, null, ct));
+
+    [HttpPost("videos/{id:guid}/shots/{shotId:guid}/keyframe")]
+    public async Task<IActionResult> ShotKeyframe(Guid id, Guid shotId, CancellationToken ct) =>
+        Denied() ?? await Run(async () => await _studio.StartKeyframesAsync(id, shotId, ct));
+
+    [HttpGet("shots/{shotId:guid}/keyframe")]
+    public async Task<IActionResult> KeyframeImage(Guid shotId, CancellationToken ct) =>
+        await BlobResult(await _studio.ShotKeyframeBlobIdAsync(shotId, ct), null, ct);
+
     [HttpPost("videos/{id:guid}/recover-clips")]
     public async Task<IActionResult> RecoverClips(Guid id, CancellationToken ct) =>
         Denied() ?? await Run(async () => await _studio.StartRecoverAsync(id, ct));

@@ -230,6 +230,31 @@ public class StudioTests
     }
 
     [Fact]
+    public void Keyframe_prompt_puts_every_character_once_in_a_wide_frame()
+    {
+        var bao = new StudioAsset { Id = Guid.NewGuid(), Kind = "Character", Name = "Bao Công", Description = "judge, dark face, crescent mark" };
+        var cong = new StudioAsset { Id = Guid.NewGuid(), Kind = "Character", Name = "Công Tôn Sách", Description = "advisor, goatee" };
+        var hall = new StudioAsset { Id = Guid.NewGuid(), Kind = "Location", Name = "Công đường", Description = "Song dynasty court hall" };
+        var shot = new StudioShot { Action = "Cong Ton Sach rushes in holding a red letter while Bao Cong sits at the bench", Camera = "wide shot" };
+        var prompt = StudioService.BuildKeyframePrompt(new StudioVideo { AspectRatio = "9:16" }, shot, new[] { bao, cong, hall });
+
+        prompt.Should().Contain("Reference image 1 is the character \"Bao Công\"").And.Contain("Reference image 3 is the location \"Công đường\"");
+        prompt.Should().Contain("Exactly 2 main people").And.Contain("never duplicate anyone");
+        prompt.Should().Contain("Framing: wide shot").And.Contain("not a tight face crop");
+        prompt.Should().Contain("no text, captions, subtitles, logos or watermarks");
+    }
+
+    [Fact]
+    public void Shot_prompt_names_the_cast_once()
+    {
+        var a = new StudioAsset { Id = Guid.NewGuid(), Kind = "Character", Name = "Triển Chiêu", Description = "guard" };
+        var b = new StudioAsset { Id = Guid.NewGuid(), Kind = "Character", Name = "Công Tôn Sách", Description = "advisor" };
+        var shot = new StudioShot { Action = "Both kneel", AssetIdsJson = JsonSerializer.Serialize(new[] { a.Id, b.Id }) };
+        var prompt = StudioService.BuildShotPrompt(new StudioVideo(), shot, new Dictionary<Guid, StudioAsset> { [a.Id] = a, [b.Id] = b });
+        prompt.Should().Contain("The main people are exactly: Triển Chiêu, Công Tôn Sách").And.Contain("never duplicate anyone");
+    }
+
+    [Fact]
     public void Continued_shot_prompt_asks_for_a_seamless_take()
     {
         var prompt = StudioService.BuildShotPrompt(new StudioVideo(), new StudioShot { Action = "He laughs" }, new Dictionary<Guid, StudioAsset>(), continued: true);

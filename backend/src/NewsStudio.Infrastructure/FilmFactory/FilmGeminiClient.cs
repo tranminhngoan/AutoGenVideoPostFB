@@ -42,7 +42,7 @@ public class FilmGeminiClient
     public string ImageModel => _configuration["Film:ImageModel"] ?? "gemini-3.1-flash-lite-image";
 
     /// <summary>Price of one generated frame, used for the budget check before the call (USD).</summary>
-    public decimal EstimatedImageCostUsd => Math.Round(1120m * PricePerM("ImageOutputPerM", 30m) / 1_000_000m, 4);
+    public decimal EstimatedImageCostUsd => Math.Round(1520m * PricePerM("ImageOutputPerM", 30m) / 1_000_000m, 4); // a 9:16 frame ≈ 1.5k image tokens (measured)
 
     private decimal PricePerM(string name, decimal fallback) =>
         decimal.TryParse(_configuration[$"Ai:Pricing:{name}"], NumberStyles.Number, CultureInfo.InvariantCulture, out var v) ? v : fallback;
@@ -103,9 +103,10 @@ public class FilmGeminiClient
         }
     }
 
-    public async Task<ImageResult> GenerateImageAsync(string prompt, string aspectRatio, IReadOnlyList<ReferenceImage> references, CancellationToken ct)
+    public async Task<ImageResult> GenerateImageAsync(string prompt, string aspectRatio, IReadOnlyList<ReferenceImage> references, CancellationToken ct,
+        string? modelOverride = null)
     {
-        var model = ImageModel;
+        var model = string.IsNullOrWhiteSpace(modelOverride) ? ImageModel : modelOverride;
         var parts = new List<object>();
         foreach (var r in references)
         {

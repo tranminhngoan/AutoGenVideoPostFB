@@ -33,6 +33,7 @@ public class StudioShotDto
     public string? Sound { get; set; }
     public List<Guid> AssetIds { get; set; } = new();
     public bool ContinueFromPrevious { get; set; }
+    public bool HasKeyframe { get; set; }
     public string Status { get; set; } = "Pending";
     public bool HasClip { get; set; }
     public decimal CostUsd { get; set; }

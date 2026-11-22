@@ -79,6 +79,10 @@ const RESOLUTIONS: { id: string; label: string }[] = [
 const IMAGE_FEE = 0.01;
 const clampSecs = (n: number) => Math.min(15, Math.max(1, n || 0));
 const usesFrame = (s: { assetIds: string[]; continueFromPrevious?: boolean }) => !!s.continueFromPrevious || s.assetIds.length > 0;
+/** Gemini opening frame with every character of the shot in place (measured ≈ $0.046 for a 9:16 frame). */
+const KEYFRAME_COST = 0.046;
+const needsKeyframe = (s: { assetIds: string[]; continueFromPrevious?: boolean }, index: number) =>
+  s.assetIds.length > 0 && !(s.continueFromPrevious && index > 0);
 
 function statusTone(s: string): 'success' | 'warning' | 'danger' | 'info' | 'neutral' {
   if (s === 'Published' || s === 'Ready' || s === 'Done') return 'success';
@@ -183,8 +187,11 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
   }, [video?.status]);
 
   const perSecond = price[form.resolution ?? '720p'] ?? 0.03;
-  const shotCost = (x: { durationSeconds: number; assetIds: string[]; continueFromPrevious?: boolean }, rate = perSecond) =>
-    clampSecs(x.durationSeconds) * rate + (usesFrame(x) ? IMAGE_FEE : 0);
+  const shotCost = (x: { id?: string; durationSeconds: number; assetIds: string[]; continueFromPrevious?: boolean }, rate = perSecond) => {
+    const index = shots.findIndex((s) => s.id === x.id);
+    const hasKf = !!video?.shots.find((s) => s.id === x.id)?.hasKeyframe;
+    return clampSecs(x.durationSeconds) * rate + (usesFrame(x) ? IMAGE_FEE : 0) + (needsKeyframe(x, index < 0 ? 1 : index) && !hasKf ? KEYFRAME_COST : 0);
+  };
   const shotSeconds = shots.reduce((s, x) => s + clampSecs(x.durationSeconds), 0);
   const estimate = shots.reduce((s, x) => s + shotCost(x), 0);
   const pendingShots = (video?.shots ?? []).filter((s) => !s.hasClip || s.status !== 'Done');
@@ -261,6 +268,23 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
     });
 
   const compose = () => guarded('compose', async () => applyVideo(await studio.compose(videoId!), true));
+
+  const missingKeyframes = (video?.shots ?? []).filter((s, i) => needsKeyframe(s, i) && !s.hasKeyframe).length;
+  const buildKeyframes = () =>
+    guarded('keyframes', async () => {
+      if (shotsDirty) applyVideo(await studio.saveShots(videoId!, shots), true);
+      if (!(await confirm({
+        title: `Dựng ${missingKeyframes} khung mở đầu để xem trước?`,
+        description: `Gemini vẽ khung hình đầu của từng shot với đủ nhân vật (đúng mặt từ ảnh của anh) trong bối cảnh, góc rộng. Khoảng ${usd(missingKeyframes * KEYFRAME_COST)} tiền Gemini — chưa tốn tiền tạo clip. Xem từng khung, khung nào chưa ưng thì sửa shot rồi bấm "Dựng lại khung".`,
+        confirmLabel: `Dựng (~${usd(missingKeyframes * KEYFRAME_COST)})`,
+      }))) return;
+      applyVideo(await studio.keyframes(videoId!), true);
+    });
+  const rebuildKeyframe = (s: StudioShotInput) =>
+    guarded('kf-' + s.id, async () => {
+      if (shotsDirty) applyVideo(await studio.saveShots(videoId!, shots), true);
+      applyVideo(await studio.shotKeyframe(videoId!, s.id!), true);
+    });
 
   const recover = () =>
     guarded('recover', async () => {
@@ -516,23 +540,35 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
                               label="Nối tiếp từ khung cuối của shot trước"
                               description="Cùng cảnh, cùng người: clip bắt đầu đúng chỗ clip trước dừng nên mặt nhân vật liền mạch. Bỏ chọn khi đổi góc máy / đổi cảnh." />
                           )}
-                          <Field label={s.continueFromPrevious && i > 0 ? 'Ảnh mô tả (không dùng làm khung mở đầu vì đang nối tiếp)' : 'Ảnh mở đầu (ảnh chọn đầu tiên = khung hình đầu của clip; tối đa 3)'}>
+                          <Field label={s.continueFromPrevious && i > 0
+                            ? 'Nhân vật trong shot (đang nối tiếp: khung đầu lấy từ cuối clip trước)'
+                            : 'Nhân vật & bối cảnh CÓ MẶT trong shot — chọn đủ mọi người nhìn thấy (tối đa 5); AI dựng khung mở đầu có đúng những người này'}>
                             <AssetPicker compact assets={assets.filter((a) => (form.assetIds ?? []).includes(a.id) || s.assetIds.includes(a.id))}
-                              value={s.assetIds} onChange={(ids) => updateShot(i, { assetIds: ids.slice(0, 3) })} />
+                              value={s.assetIds} onChange={(ids) => updateShot(i, { assetIds: ids.slice(0, 5) })} />
                           </Field>
-                          {!(s.continueFromPrevious && i > 0) && s.assetIds[0] && assetById.has(s.assetIds[0]) && (
-                            <p className="text-[11px] text-fg-muted">Khung mở đầu: <b>{assetById.get(s.assetIds[0])!.name}</b></p>
-                          )}
                           {s.assetIds.some((id) => !assetById.has(id)) && <p className="text-[11px] text-warning">Một ảnh của shot đã bị xoá khỏi kho.</p>}
                         </div>
                         <div>
                           {st?.hasClip && s.id ? (
                             <video src={studio.clipUrl(s.id) + `?v=${st.attempts}`} controls preload="metadata"
+                              poster={st.hasKeyframe ? studio.keyframeUrl(s.id) + `?v=${st.attempts}` : undefined}
                               className={cn('w-full rounded-lg bg-black', video.aspectRatio === '16:9' ? 'aspect-video' : 'aspect-[9/16]')} />
+                          ) : st?.hasKeyframe && s.id ? (
+                            <div className="relative">
+                              <img src={studio.keyframeUrl(s.id) + `?t=${encodeURIComponent(video.progress ?? '')}${st.costUsd}`} alt="Khung mở đầu"
+                                className={cn('w-full rounded-lg bg-muted object-cover', video.aspectRatio === '16:9' ? 'aspect-video' : 'aspect-[9/16]')} />
+                              <span className="absolute left-1 top-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] text-white">Khung mở đầu — xem trước</span>
+                            </div>
                           ) : (
                             <div className={cn('flex w-full items-center justify-center rounded-lg bg-muted text-xs text-fg-subtle', video.aspectRatio === '16:9' ? 'aspect-video' : 'aspect-[9/16]')}>
                               {st?.status === 'Generating' ? 'Đang tạo…' : 'Chưa có clip'}
                             </div>
+                          )}
+                          {s.id && st && needsKeyframe(s, i) && !st.hasClip && (
+                            <Button size="sm" variant="ghost" className="mt-1 w-full" icon={<Wand2 className="h-3.5 w-3.5" />} loading={busy === 'kf-' + s.id}
+                              disabled={locked} onClick={() => rebuildKeyframe(s)}>
+                              {st.hasKeyframe ? 'Dựng lại khung (~$0.05)' : 'Dựng khung xem trước (~$0.05)'}
+                            </Button>
                           )}
                         </div>
                       </div>
@@ -573,6 +609,12 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
               <Button variant="primary" icon={<Sparkles className="h-4 w-4" />} loading={busy === 'generate'} disabled={locked || shots.length === 0} onClick={generate}>
                 {video.shots.some((s) => s.hasClip) ? 'Tạo các clip còn thiếu' : 'Tạo video'}
               </Button>
+              {missingKeyframes > 0 && (
+                <Button variant="secondary" icon={<Wand2 className="h-4 w-4" />} loading={busy === 'keyframes'} disabled={locked} onClick={buildKeyframes}
+                  title="Xem trước khung hình đầu của các shot (đúng mặt, đủ người, góc rộng) trước khi trả tiền tạo clip">
+                  Dựng {missingKeyframes} khung mở đầu để xem trước (~{usd(missingKeyframes * KEYFRAME_COST)})
+                </Button>
+              )}
               <Button variant="secondary" icon={<RefreshCw className="h-4 w-4" />} loading={busy === 'compose'}
                 disabled={locked || video.shots.length === 0 || video.shots.some((s) => !s.hasClip)} onClick={compose}>
                 Ghép lại (đổi nhạc / thứ tự)

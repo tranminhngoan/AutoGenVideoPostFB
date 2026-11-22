@@ -84,6 +84,8 @@ public class StudioShot : BaseEntity
     public string AssetIdsJson { get; set; } = "[]";
     /// <summary>Start from the last frame of the previous shot's clip (continuous take) instead of the first asset image.</summary>
     public bool ContinueFromPrevious { get; set; }
+    /// <summary>Opening frame built by the image model with every character of the shot in place (small JPEG, in the DB).</summary>
+    public Guid? KeyframeBlobId { get; set; }
 
     public string Status { get; set; } = "Pending"; // Pending, Generating, Done, Failed
     public Guid? ClipBlobId { get; set; }
