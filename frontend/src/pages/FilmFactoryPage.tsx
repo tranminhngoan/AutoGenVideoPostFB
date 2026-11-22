@@ -268,17 +268,20 @@ export function FilmFactoryPage() {
   };
 
   const handleStopGpu = async () => {
+    const isVast = gpuStatus?.provider === 'VastAi';
+    const providerName = isVast ? 'Vast.ai' : 'RunPod';
+    const rateStr = gpuStatus?.hourlyCost ? `$${gpuStatus.hourlyCost.toFixed(2)}/h` : isVast ? '~$0.28/h' : '$2.22/h';
     const isBusy = gpuStatus?.state === 'busy' || gpuStatus?.activeEpisodeStatus === 'GpuRendering';
     const confirmMsg = isBusy
-      ? 'GPU đang render tập phim dở dang. Dừng máy sẽ hủy tiến trình render hiện tại.\n\nBạn có chắc chắn muốn DỪNG GPU để lập tức ngừng tính tiền ($2.22/h) không?'
-      : 'Bạn có chắc chắn muốn DỪNG máy GPU RunPod?\n\n(Hệ thống sẽ ngừng tính tiền $2.22/h ngay lập tức, toàn bộ dữ liệu ổ cứng vẫn được bảo lưu).';
+      ? `GPU ${providerName} đang render tập phim dở dang. Dừng máy sẽ tạm ngừng tiến trình render hiện tại.\n\nBạn có chắc chắn muốn DỪNG GPU để lập tức ngừng tính tiền (${rateStr}) không?`
+      : `Bạn có chắc chắn muốn DỪNG máy GPU ${providerName}?\n\n(Hệ thống sẽ ngừng tính tiền thuê máy ${rateStr} ngay lập tức, toàn bộ dữ liệu ổ cứng vẫn được bảo lưu).`;
 
     if (!window.confirm(confirmMsg)) return;
 
     try {
       setStoppingGpu(true);
       const res = await api.stopRunPodGpu(gpuStatus?.podId || undefined);
-      toast.success(res.message || 'Đã dừng GPU RunPod thành công!');
+      toast.success(res.message || `Đã dừng GPU ${providerName} thành công!`);
       await loadGpuStatus();
     } catch (err: any) {
       toast.error(err.message || 'Lỗi khi dừng GPU');
@@ -288,10 +291,12 @@ export function FilmFactoryPage() {
   };
 
   const handleStartGpu = async () => {
+    const isVast = gpuStatus?.provider === 'VastAi';
+    const providerName = isVast ? 'Vast.ai' : 'RunPod';
     try {
       setStartingGpu(true);
       const res = await api.startRunPodGpu(gpuStatus?.podId || undefined);
-      toast.success(res.message || 'Đã gửi lệnh bật lại GPU RunPod! Đang khởi động...');
+      toast.success(res.message || `Đã gửi lệnh bật lại GPU ${providerName}! Đang khởi động...`);
       await loadGpuStatus();
     } catch (err: any) {
       toast.error(err.message || 'Lỗi khi bật lại GPU');
@@ -305,11 +310,11 @@ export function FilmFactoryPage() {
     try {
       setSavingPodId(true);
       await api.setRunPodPodId(podInput.trim());
-      toast.success('Đã cập nhật RunPod Pod ID thành công!');
+      toast.success('Đã cập nhật GPU ID / Endpoint thành công!');
       setEditingPodId(false);
       await loadGpuStatus();
     } catch (err: any) {
-      toast.error(err.message || 'Lỗi cập nhật Pod ID');
+      toast.error(err.message || 'Lỗi cập nhật ID');
     } finally {
       setSavingPodId(false);
     }
@@ -640,7 +645,7 @@ export function FilmFactoryPage() {
             <Badge tone="info" className="text-[11px] font-normal">v2.0</Badge>
           </div>
         }
-        description="Hệ thống tự động sản xuất phim nhiều tập: AI Showrunner, Wan 2.2 / RunPod GPU, và xuất bản trực tiếp lên Facebook Reels."
+        description="Hệ thống tự động sản xuất phim nhiều tập: AI Showrunner, Wan 2.2 / GPU Cloud (Vast.ai, RunPod), và xuất bản trực tiếp lên Facebook Reels."
         actions={
           <div className="flex flex-wrap items-center gap-2">
             <IconButton
@@ -714,7 +719,7 @@ export function FilmFactoryPage() {
             <div className="mt-1.5 sm:mt-2 text-base sm:text-xl font-semibold text-emerald-500">
               &lt; $5.00 / Series
             </div>
-            <div className="mt-1 text-[11px] text-fg-muted line-clamp-1">4 Free Gemini + RunPod GPU</div>
+            <div className="mt-1 text-[11px] text-fg-muted line-clamp-1">4 Free Gemini + GPU Cloud</div>
           </Card>
         </div>
       )}
@@ -859,18 +864,18 @@ export function FilmFactoryPage() {
                   <div className="flex flex-wrap items-center gap-2 sm:gap-2.5">
                     <span className="font-semibold text-fg flex items-center gap-1.5 shrink-0">
                       <Cpu className="h-4 w-4 text-accent" />
-                      RunPod GPU:
+                      {gpuStatus?.provider === 'VastAi' ? 'Vast.ai GPU:' : 'GPU Máy Chủ:'}
                     </span>
 
                     {gpuStatus?.online && gpuStatus.gpu ? (
                       <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 shadow-sm">
                         <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                        Online: {gpuStatus.gpu} ({gpuStatus.vramGb || 80}GB VRAM)
+                        Online: {gpuStatus.gpu} ({gpuStatus.vramGb || 24}GB VRAM)
                       </span>
                     ) : (
                       <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium bg-amber-500/10 text-amber-500 border border-amber-500/20" title={gpuStatus?.pingDetail || ''}>
                         <span className="w-2 h-2 rounded-full bg-amber-500" />
-                        {gpuStatus?.podId ? `Chờ bật Worker (${gpuStatus.podId})` : 'Chưa gắn Pod ID'}
+                        {gpuStatus?.podId ? (gpuStatus.podDesiredStatus === 'stopped' ? `Đã tắt máy (${gpuStatus.podId})` : `Chờ Worker (${gpuStatus.podId})`) : 'Chưa kết nối GPU'}
                       </span>
                     )}
 
@@ -885,7 +890,7 @@ export function FilmFactoryPage() {
                   <div className="flex flex-wrap items-center gap-2 w-full md:w-auto justify-between md:justify-end">
                     {/* Master GPU Switch: Start / Stop to save money */}
                     {gpuStatus?.hasApiKey && (
-                      (gpuStatus.online || gpuStatus.podDesiredStatus === 'RUNNING') ? (
+                      (gpuStatus.online || gpuStatus.podDesiredStatus === 'RUNNING' || gpuStatus.podDesiredStatus === 'running') ? (
                         <Button
                           size="sm"
                           variant="danger"
@@ -893,9 +898,9 @@ export function FilmFactoryPage() {
                           loading={stoppingGpu}
                           onClick={handleStopGpu}
                           className="flex-1 sm:flex-initial"
-                          title="Dừng máy GPU trên RunPod để lập tức ngừng tính tiền $2.22/giờ (Ổ cứng và dữ liệu vẫn được giữ nguyên)"
+                          title={`Dừng máy GPU trên ${gpuStatus?.provider === 'VastAi' ? 'Vast.ai' : 'RunPod'} để lập tức ngừng tính tiền (Ổ cứng và dữ liệu vẫn được giữ nguyên)`}
                         >
-                          Dừng GPU ($2.22/h)
+                          Dừng GPU ({gpuStatus?.hourlyCost ? `$${gpuStatus.hourlyCost.toFixed(2)}/h` : gpuStatus?.provider === 'VastAi' ? '~$0.28/h' : '$2.22/h'})
                         </Button>
                       ) : (
                         <Button
@@ -905,7 +910,7 @@ export function FilmFactoryPage() {
                           loading={startingGpu}
                           onClick={handleStartGpu}
                           className="flex-1 sm:flex-initial"
-                          title="Bật lại máy GPU trên RunPod để tiếp tục dựng phim"
+                          title={`Bật lại máy GPU trên ${gpuStatus?.provider === 'VastAi' ? 'Vast.ai' : 'RunPod'} để tiếp tục dựng phim`}
                         >
                           Bật Lại GPU
                         </Button>
@@ -916,8 +921,8 @@ export function FilmFactoryPage() {
                       <div className="flex items-center gap-1.5 flex-1 sm:flex-initial">
                         <input
                           type="text"
-                          placeholder="Dán Pod ID"
-                          className="px-2.5 py-1 text-xs rounded border border-line bg-surface text-fg focus:outline-none focus:ring-1 focus:ring-accent w-full sm:w-44"
+                          placeholder="Vast ID hoặc URL http://..."
+                          className="px-2.5 py-1 text-xs rounded border border-line bg-surface text-fg focus:outline-none focus:ring-1 focus:ring-accent w-full sm:w-48"
                           value={podInput}
                           onChange={(e) => setPodInput(e.target.value)}
                         />
@@ -930,7 +935,7 @@ export function FilmFactoryPage() {
                       </div>
                     ) : (
                       <Button size="sm" variant="ghost" onClick={() => setEditingPodId(true)}>
-                        Đổi Pod ID ({gpuStatus?.podId || 'RunPod'})
+                        Đổi ID/URL ({gpuStatus?.podId || (gpuStatus?.provider === 'VastAi' ? 'Vast.ai' : 'GPU')})
                       </Button>
                     )}
                   </div>
@@ -1637,7 +1642,7 @@ export function FilmFactoryPage() {
                     <span className="font-semibold text-fg">${costSummary.scriptCostUsd.toFixed(4)}</span>
                   </div>
                   <div className="flex justify-between py-1.5 border-b border-line">
-                    <span className="text-fg-muted">Tạo khung hình & Video GPU Wan ({gpuStatus?.gpu || 'RunPod GPU'}):</span>
+                    <span className="text-fg-muted">Tạo khung hình & Video GPU Wan ({gpuStatus?.gpu || (gpuStatus?.provider === 'VastAi' ? 'Vast.ai GPU' : 'Cloud GPU')}):</span>
                     <span className="font-semibold text-fg">${costSummary.visualCostUsd.toFixed(4)}</span>
                   </div>
                   <div className="flex justify-between py-1.5 border-b border-line">
@@ -2328,7 +2333,7 @@ export function FilmFactoryPage() {
               • Quy mô cấu hình: <strong>{createForm.targetEpisodes || 5} tập × ~{createForm.targetDurationMinutes || 2.5} phút/tập</strong>.
             </p>
             <p className="text-fg-subtle">
-              • Ngân sách bảo vệ: <strong>Tối đa $5.00 USD</strong> (luân phiên 4 Gemini free keys + GPU RunPod).
+              • Ngân sách bảo vệ: <strong>Tối đa $5.00 USD</strong> (luân phiên 4 Gemini free keys + GPU Cloud).
             </p>
           </div>
 

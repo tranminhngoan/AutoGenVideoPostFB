@@ -313,12 +313,51 @@ public class FilmFactoryController : ControllerBase
     [HttpGet("gpu/status")]
     public async Task<IActionResult> GetGpuStatus(CancellationToken ct)
     {
+        var vast = HttpContext.RequestServices.GetService<NewsStudio.Infrastructure.FilmFactory.VastAiGpuBackend>();
         var runpod = HttpContext.RequestServices.GetService<NewsStudio.Infrastructure.FilmFactory.RunPodGpuBackend>();
-        if (runpod == null) return Ok(new { configured = false, message = "RunPod backend chưa được đăng ký." });
+        var activeBackend = HttpContext.RequestServices.GetService<NewsStudio.Infrastructure.FilmFactory.IFilmGpuBackend>();
 
-        var baseUrl = await runpod.GetEffectiveBaseUrlAsync(ct);
-        var podId = NewsStudio.Infrastructure.FilmFactory.RunPodGpuBackend.GetRuntimePodId() ?? runpod.PodId;
-        var hasApiKey = !string.IsNullOrWhiteSpace(runpod.ApiKey);
+        var isVast = (activeBackend is NewsStudio.Infrastructure.FilmFactory.VastAiGpuBackend) ||
+                     (vast != null && vast.IsConfigured && (runpod == null || !runpod.IsConfigured));
+
+        string provider = isVast ? "VastAi" : "RunPod";
+        string? baseUrl = null;
+        string? podId = null;
+        string? podName = null;
+        string? podDesiredStatus = null;
+        bool hasApiKey = false;
+        double? hourlyCost = null;
+
+        if (isVast && vast != null)
+        {
+            baseUrl = await vast.GetEffectiveBaseUrlAsync(ct);
+            hasApiKey = !string.IsNullOrWhiteSpace(vast.ApiKey);
+            if (hasApiKey)
+            {
+                var lifecycle = await vast.GetInstanceLifecycleStatusAsync(null, ct);
+                podId = lifecycle.Id ?? NewsStudio.Infrastructure.FilmFactory.VastAiGpuBackend.GetRuntimeInstance() ?? vast.InstanceId;
+                podDesiredStatus = lifecycle.Status;
+                podName = lifecycle.GpuName;
+                hourlyCost = lifecycle.DphTotal;
+            }
+            else
+            {
+                podId = NewsStudio.Infrastructure.FilmFactory.VastAiGpuBackend.GetRuntimeInstance() ?? vast.InstanceId;
+            }
+        }
+        else if (runpod != null)
+        {
+            baseUrl = await runpod.GetEffectiveBaseUrlAsync(ct);
+            podId = NewsStudio.Infrastructure.FilmFactory.RunPodGpuBackend.GetRuntimePodId() ?? runpod.PodId;
+            hasApiKey = !string.IsNullOrWhiteSpace(runpod.ApiKey);
+            hourlyCost = 2.22;
+            if (hasApiKey)
+            {
+                var lifecycle = await runpod.GetPodLifecycleStatusAsync(podId, ct);
+                podDesiredStatus = lifecycle.Status;
+                podName = lifecycle.Name;
+            }
+        }
 
         bool online = false;
         string? pingDetail = null;
@@ -356,7 +395,7 @@ public class FilmFactoryController : ControllerBase
                     catch (System.Text.Json.JsonException)
                     {
                         online = false;
-                        pingDetail = "Pod đang mở nhưng cổng 8888 đang chạy ứng dụng mặc định (Jupyter Lab). Cần chạy lệnh start_a100.sh trong Web Terminal để kích hoạt Worker.";
+                        pingDetail = "Máy GPU đang mở nhưng cổng 8888 đang chạy ứng dụng mặc định (Jupyter Lab). Cần chạy lệnh start_vast.sh hoặc start_a100.sh trong Terminal để kích hoạt Worker.";
                     }
 
                     if (online && !string.IsNullOrWhiteSpace(currentBatch))
@@ -425,22 +464,17 @@ public class FilmFactoryController : ControllerBase
             }
         }
 
-        string? podDesiredStatus = null;
-        string? podName = null;
-        if (hasApiKey)
-        {
-            var lifecycle = await runpod.GetPodLifecycleStatusAsync(podId, ct);
-            podDesiredStatus = lifecycle.Status;
-            podName = lifecycle.Name;
-        }
-
         return Ok(new
         {
-            configured = runpod.IsConfigured || !string.IsNullOrWhiteSpace(baseUrl),
+            provider,
+            configured = (isVast && vast?.IsConfigured == true) || (!isVast && runpod?.IsConfigured == true) || !string.IsNullOrWhiteSpace(baseUrl),
             baseUrl,
             podId,
+            instanceId = podId,
             podName,
             podDesiredStatus,
+            hourlyCost,
+            dphTotal = hourlyCost,
             hasApiKey,
             canManageLifecycle = hasApiKey,
             online,
@@ -462,42 +496,122 @@ public class FilmFactoryController : ControllerBase
     }
 
     /// <summary>
-    /// Master control to STOP the RunPod GPU pod directly from the UI, stopping per-hour billing.
+    /// Master control to STOP the active GPU (Vast.ai or RunPod) directly from the UI, stopping per-hour billing.
     /// </summary>
     [HttpPost("gpu/stop")]
     public async Task<IActionResult> StopGpu([FromQuery] string? podId, CancellationToken ct)
     {
+        var vast = HttpContext.RequestServices.GetService<NewsStudio.Infrastructure.FilmFactory.VastAiGpuBackend>();
         var runpod = HttpContext.RequestServices.GetService<NewsStudio.Infrastructure.FilmFactory.RunPodGpuBackend>();
-        if (runpod == null) return BadRequest(new { success = false, message = "RunPod backend chưa được đăng ký." });
+        var activeBackend = HttpContext.RequestServices.GetService<NewsStudio.Infrastructure.FilmFactory.IFilmGpuBackend>();
 
-        var (success, msg, desiredStatus) = await runpod.StopPodAsync(podId, ct);
-        if (!success) return BadRequest(new { success = false, message = msg });
-        return Ok(new { success = true, message = msg, desiredStatus });
+        var isVast = (activeBackend is NewsStudio.Infrastructure.FilmFactory.VastAiGpuBackend) ||
+                     (vast != null && vast.IsConfigured && (runpod == null || !runpod.IsConfigured));
+
+        if (isVast && vast != null)
+        {
+            var (success, msg, desiredStatus) = await vast.StopInstanceAsync(podId, ct);
+            if (!success) return BadRequest(new { success = false, message = msg });
+            return Ok(new { success = true, message = msg, desiredStatus, provider = "VastAi" });
+        }
+
+        if (runpod != null)
+        {
+            var (success, msg, desiredStatus) = await runpod.StopPodAsync(podId, ct);
+            if (!success) return BadRequest(new { success = false, message = msg });
+            return Ok(new { success = true, message = msg, desiredStatus, provider = "RunPod" });
+        }
+
+        return BadRequest(new { success = false, message = "Chưa cấu hình GPU backend nào." });
     }
 
     /// <summary>
-    /// Master control to START / RESUME the RunPod GPU pod directly from the UI.
+    /// Master control to START / RESUME the active GPU (Vast.ai or RunPod) directly from the UI.
     /// </summary>
     [HttpPost("gpu/start")]
     public async Task<IActionResult> StartGpu([FromQuery] string? podId, CancellationToken ct)
     {
+        var vast = HttpContext.RequestServices.GetService<NewsStudio.Infrastructure.FilmFactory.VastAiGpuBackend>();
         var runpod = HttpContext.RequestServices.GetService<NewsStudio.Infrastructure.FilmFactory.RunPodGpuBackend>();
-        if (runpod == null) return BadRequest(new { success = false, message = "RunPod backend chưa được đăng ký." });
+        var activeBackend = HttpContext.RequestServices.GetService<NewsStudio.Infrastructure.FilmFactory.IFilmGpuBackend>();
 
-        var (success, msg, desiredStatus) = await runpod.ResumePodAsync(podId, ct);
-        if (!success) return BadRequest(new { success = false, message = msg });
-        return Ok(new { success = true, message = msg, desiredStatus });
+        var isVast = (activeBackend is NewsStudio.Infrastructure.FilmFactory.VastAiGpuBackend) ||
+                     (vast != null && vast.IsConfigured && (runpod == null || !runpod.IsConfigured));
+
+        if (isVast && vast != null)
+        {
+            var (success, msg, desiredStatus) = await vast.StartInstanceAsync(podId, ct);
+            if (!success) return BadRequest(new { success = false, message = msg });
+            return Ok(new { success = true, message = msg, desiredStatus, provider = "VastAi" });
+        }
+
+        if (runpod != null)
+        {
+            var (success, msg, desiredStatus) = await runpod.ResumePodAsync(podId, ct);
+            if (!success) return BadRequest(new { success = false, message = msg });
+            return Ok(new { success = true, message = msg, desiredStatus, provider = "RunPod" });
+        }
+
+        return BadRequest(new { success = false, message = "Chưa cấu hình GPU backend nào." });
     }
 
-    public class SetPodIdRequest
+    public class SetInstanceRequest
     {
         public string? PodId { get; set; }
+        public string? InstanceId { get; set; }
+        public string? Target { get; set; }
     }
 
     [HttpPost("gpu/runpod/pod")]
-    public IActionResult SetRuntimePod([FromBody] SetPodIdRequest req)
+    [HttpPost("gpu/instance")]
+    public IActionResult SetRuntimeInstance([FromBody] SetInstanceRequest req)
     {
-        NewsStudio.Infrastructure.FilmFactory.RunPodGpuBackend.SetRuntimePodId(req.PodId);
-        return Ok(new { success = true, podId = req.PodId });
+        var val = req.Target ?? req.InstanceId ?? req.PodId;
+        NewsStudio.Infrastructure.FilmFactory.VastAiGpuBackend.SetRuntimeInstance(val);
+        NewsStudio.Infrastructure.FilmFactory.RunPodGpuBackend.SetRuntimePodId(val);
+        return Ok(new { success = true, podId = val, instanceId = val });
+    }
+
+    /// <summary>
+    /// Phục vụ mã nguồn Python film_gpu_worker.py để các máy GPU (Vast.ai, RunPod) tải về bằng 1 lệnh curl tiện lợi.
+    /// </summary>
+    [HttpGet("gpu/worker-script")]
+    public IActionResult GetWorkerScript()
+    {
+        var path = FindLocalScriptPath("film_gpu_worker.py");
+        if (string.IsNullOrWhiteSpace(path) || !System.IO.File.Exists(path))
+        {
+            return NotFound(new { message = "Không tìm thấy file film_gpu_worker.py trên server." });
+        }
+        return PhysicalFile(path, "text/x-python", "film_gpu_worker.py");
+    }
+
+    /// <summary>
+    /// Phục vụ kịch bản khởi động start_vast.sh để chạy trên Vast.ai.
+    /// </summary>
+    [HttpGet("gpu/start-vast")]
+    public IActionResult GetStartVastScript()
+    {
+        var path = FindLocalScriptPath("start_vast.sh");
+        if (string.IsNullOrWhiteSpace(path) || !System.IO.File.Exists(path))
+        {
+            return NotFound(new { message = "Không tìm thấy file start_vast.sh trên server." });
+        }
+        return PhysicalFile(path, "text/x-sh", "start_vast.sh");
+    }
+
+    private string? FindLocalScriptPath(string fileName)
+    {
+        var candidates = new[]
+        {
+            Path.Combine(AppContext.BaseDirectory, fileName),
+            Path.Combine(AppContext.BaseDirectory, "GpuWorker", fileName),
+            Path.Combine(Directory.GetCurrentDirectory(), fileName),
+            Path.Combine(Directory.GetCurrentDirectory(), "start_vast.sh"),
+            Path.Combine(Directory.GetCurrentDirectory(), "backend", "src", "NewsStudio.Infrastructure", "FilmFactory", "GpuWorker", fileName),
+            Path.Combine(Directory.GetCurrentDirectory(), "..", "backend", "src", "NewsStudio.Infrastructure", "FilmFactory", "GpuWorker", fileName),
+            Path.Combine(Directory.GetCurrentDirectory(), "NewsStudio.Infrastructure", "FilmFactory", "GpuWorker", fileName)
+        };
+        return candidates.FirstOrDefault(System.IO.File.Exists);
     }
 }

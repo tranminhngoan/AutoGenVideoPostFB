@@ -135,19 +135,32 @@ public static class DependencyInjection
         // AI Film Factory Subsystem
         services.AddHttpClient<FilmGeminiClient>();
         services.AddHttpClient<RunPodGpuBackend>(c => c.Timeout = TimeSpan.FromMinutes(10));
+        services.AddHttpClient<VastAiGpuBackend>(c => c.Timeout = TimeSpan.FromMinutes(10));
         services.AddSingleton<KaggleGpuBackend>();
         services.AddSingleton<RunPodGpuBackend>();
+        services.AddSingleton<VastAiGpuBackend>();
         services.AddSingleton<IFilmGpuBackend>(sp =>
         {
             var config = sp.GetRequiredService<IConfiguration>();
-            var pref = config["Film:Gpu:Backend"];
+            var pref = config["Film:Gpu:Backend"] ?? Environment.GetEnvironmentVariable("FILM_GPU_BACKEND");
+            var vast = sp.GetRequiredService<VastAiGpuBackend>();
             var runpod = sp.GetRequiredService<RunPodGpuBackend>();
             var kaggle = sp.GetRequiredService<KaggleGpuBackend>();
 
-            if (string.Equals(pref, "RunPod", StringComparison.OrdinalIgnoreCase)) return runpod;
-            if (string.Equals(pref, "Kaggle", StringComparison.OrdinalIgnoreCase)) return kaggle;
+            if (string.Equals(pref, "VastAi", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(pref, "Vast", StringComparison.OrdinalIgnoreCase))
+                return vast;
 
-            return runpod.IsConfigured ? runpod : kaggle;
+            if (string.Equals(pref, "RunPod", StringComparison.OrdinalIgnoreCase))
+                return runpod;
+
+            if (string.Equals(pref, "Kaggle", StringComparison.OrdinalIgnoreCase))
+                return kaggle;
+
+            // Tự động ưu tiên VastAi nếu có cấu hình VAST_API_KEY / VAST_ENDPOINT_URL
+            if (vast.IsConfigured) return vast;
+            if (runpod.IsConfigured) return runpod;
+            return kaggle;
         });
         services.AddScoped<FilmGpuService>();
         services.AddScoped<IFilmCostController, FilmCostController>();

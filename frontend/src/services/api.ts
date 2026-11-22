@@ -1499,6 +1499,10 @@ export interface RunPodGpuLiveStatus {
   configured: boolean;
   baseUrl: string;
   podId: string | null;
+  instanceId?: string | null;
+  provider?: 'VastAi' | 'RunPod' | 'Kaggle' | string;
+  hourlyCost?: number | null;
+  dphTotal?: number | null;
   podName?: string | null;
   podDesiredStatus?: string | null;
   hasApiKey: boolean;
