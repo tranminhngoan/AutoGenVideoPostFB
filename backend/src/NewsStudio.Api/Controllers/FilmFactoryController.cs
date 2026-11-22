@@ -504,6 +504,7 @@ public class FilmFactoryController : ControllerBase
     [HttpPost("gpu/stop")]
     public async Task<IActionResult> StopGpu([FromQuery] string? podId, CancellationToken ct)
     {
+        if (GpuControlDenied() is { } denied) return denied;
         var vast = HttpContext.RequestServices.GetService<NewsStudio.Infrastructure.FilmFactory.VastAiGpuBackend>();
         var runpod = HttpContext.RequestServices.GetService<NewsStudio.Infrastructure.FilmFactory.RunPodGpuBackend>();
         var activeBackend = HttpContext.RequestServices.GetService<NewsStudio.Infrastructure.FilmFactory.IFilmGpuBackend>();
@@ -534,6 +535,7 @@ public class FilmFactoryController : ControllerBase
     [HttpPost("gpu/start")]
     public async Task<IActionResult> StartGpu([FromQuery] string? podId, CancellationToken ct)
     {
+        if (GpuControlDenied() is { } denied) return denied;
         var vast = HttpContext.RequestServices.GetService<NewsStudio.Infrastructure.FilmFactory.VastAiGpuBackend>();
         var runpod = HttpContext.RequestServices.GetService<NewsStudio.Infrastructure.FilmFactory.RunPodGpuBackend>();
         var activeBackend = HttpContext.RequestServices.GetService<NewsStudio.Infrastructure.FilmFactory.IFilmGpuBackend>();
@@ -569,6 +571,7 @@ public class FilmFactoryController : ControllerBase
     [HttpPost("gpu/instance")]
     public async Task<IActionResult> SetRuntimeInstance([FromBody] SetInstanceRequest req, CancellationToken ct)
     {
+        if (GpuControlDenied() is { } denied) return denied;
         var val = req.Target ?? req.InstanceId ?? req.PodId;
         NewsStudio.Infrastructure.FilmFactory.VastAiGpuBackend.SetRuntimeInstance(val);
         var active = HttpContext.RequestServices.GetService<NewsStudio.Infrastructure.FilmFactory.ActiveFilmGpuBackend>();
@@ -621,6 +624,7 @@ public class FilmFactoryController : ControllerBase
     [HttpPost("gpu/vast/rent")]
     public async Task<IActionResult> RentVastOffer([FromBody] RentVastRequest req, CancellationToken ct)
     {
+        if (GpuControlDenied() is { } denied) return denied;
         var vast = HttpContext.RequestServices.GetService<NewsStudio.Infrastructure.FilmFactory.VastAiGpuBackend>();
         if (vast == null) return BadRequest(new { message = "Chưa đăng ký Vast.ai backend." });
         if (req.OfferId <= 0) return BadRequest(new { message = "Thiếu mã máy (offer) cần thuê." });
@@ -648,6 +652,7 @@ public class FilmFactoryController : ControllerBase
     [HttpGet("gpu/vast/account")]
     public async Task<IActionResult> GetVastAccount(CancellationToken ct)
     {
+        if (GpuControlDenied() is { } denied) return denied;
         var vast = HttpContext.RequestServices.GetService<NewsStudio.Infrastructure.FilmFactory.VastAiGpuBackend>();
         if (vast == null) return BadRequest(new { message = "Chưa đăng ký Vast.ai backend." });
         try
@@ -672,6 +677,7 @@ public class FilmFactoryController : ControllerBase
     [HttpGet("gpu/vast/instances")]
     public async Task<IActionResult> ListVastInstances(CancellationToken ct)
     {
+        if (GpuControlDenied() is { } denied) return denied;
         var vast = HttpContext.RequestServices.GetService<NewsStudio.Infrastructure.FilmFactory.VastAiGpuBackend>();
         if (vast == null) return BadRequest(new { message = "Chưa đăng ký Vast.ai backend." });
         try
@@ -692,6 +698,7 @@ public class FilmFactoryController : ControllerBase
     [HttpDelete("gpu/vast/instances/{instanceId}")]
     public async Task<IActionResult> DestroyVastInstance(string instanceId, [FromQuery] bool force = false, CancellationToken ct = default)
     {
+        if (GpuControlDenied() is { } denied) return denied;
         var vast = HttpContext.RequestServices.GetService<NewsStudio.Infrastructure.FilmFactory.VastAiGpuBackend>();
         if (vast == null) return BadRequest(new { message = "Chưa đăng ký Vast.ai backend." });
 
@@ -751,6 +758,30 @@ public class FilmFactoryController : ControllerBase
             return NotFound(new { message = "Không tìm thấy file start_vast.sh trên server." });
         }
         return PhysicalFile(path, "text/x-sh", "start_vast.sh");
+    }
+
+    /// <summary>
+    /// The API has no login (Security:AdminApiKey is optional and unset in production), so anything that spends money
+    /// or touches the Vast account — rent, destroy, start/stop, retarget, balance, machine list — needs the account's
+    /// own Vast API key in X-Vast-Key. The browser asks for it once and keeps it locally; it is compared in constant
+    /// time with VAST_API_KEY on the server, so no extra Railway variable is needed. Without a Vast key configured
+    /// (RunPod/Kaggle-only setups) the previous behaviour is kept.
+    /// </summary>
+    private IActionResult? GpuControlDenied()
+    {
+        var expected = HttpContext.RequestServices.GetService<NewsStudio.Infrastructure.FilmFactory.VastAiGpuBackend>()?.ApiKey;
+        if (string.IsNullOrWhiteSpace(expected)) return null;
+        var given = Request.Headers.TryGetValue("X-Vast-Key", out var h) ? h.ToString().Trim() : "";
+        var ok = given.Length > 0 && System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(
+            System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(given)),
+            System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(expected)));
+        return ok ? null : StatusCode(StatusCodes.Status401Unauthorized, new
+        {
+            needsVastKey = true,
+            message = given.Length == 0
+                ? "Cần mở khoá bằng Vast API key (chỉ lưu trên trình duyệt này) để quản lý máy GPU."
+                : "Vast API key không khớp với khoá đang cấu hình trên server."
+        });
     }
 
     private string? FindLocalScriptPath(string fileName)

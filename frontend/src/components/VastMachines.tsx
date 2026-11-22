@@ -3,7 +3,7 @@ import { Copy, Cpu, HardDrive, MapPin, RotateCw, Search, ShoppingCart, Trash2, W
 import { CreditCard } from 'lucide-react';
 import { Badge, Button, ButtonLink, Checkbox, Drawer, EmptyState, Field, Input, Select, Skeleton, cn } from './ui';
 import { useConfirm, useToast } from './feedback';
-import { api, VastAccount, VastInstance, VastOffer, VastRequirement } from '../services/api';
+import { api, getVastControlKey, setVastControlKey, VastAccount, VastInstance, VastOffer, VastRequirement } from '../services/api';
 
 /* ───────────────────────── Spec check against what the film worker needs ───────────────────────── */
 
@@ -160,22 +160,33 @@ export function VastInstanceList({ refreshKey, onChanged }: { refreshKey?: numbe
   const [destroyingId, setDestroyingId] = useState<string | null>(null);
   const [account, setAccount] = useState<VastAccount | null>(null);
   const [accountError, setAccountError] = useState<string | null>(null);
+  const [locked, setLocked] = useState(false);
+  const [keyInput, setKeyInput] = useState('');
 
   const load = async () => {
     setLoading(true);
     setError(null);
     api.getVastAccount()
       .then((a) => { setAccount(a); setAccountError(null); })
-      .catch((e: any) => setAccountError(e.message));
+      .catch((e: any) => (e.needsVastKey ? setLocked(true) : setAccountError(e.message)));
     try {
       const r = await api.listVastInstances();
       setInstances(r.instances);
       setActiveId(r.activeInstanceId ?? null);
+      setLocked(false);
     } catch (e: any) {
-      setError(e.message);
+      if (e.needsVastKey) setLocked(true);
+      else setError(e.message);
     } finally {
       setLoading(false);
     }
+  };
+
+  const unlock = async () => {
+    if (!keyInput.trim()) return;
+    setVastControlKey(keyInput);
+    setKeyInput('');
+    await load();
   };
 
   useEffect(() => {
@@ -225,6 +236,32 @@ export function VastInstanceList({ refreshKey, onChanged }: { refreshKey?: numbe
       toast.error('Không chép được — hãy bôi đen và sao chép thủ công');
     }
   };
+
+  if (locked) {
+    return (
+      <div className="space-y-2 rounded-lg border border-line bg-subtle p-3 text-xs">
+        <p className="font-medium text-fg">Mở khoá quản lý máy GPU</p>
+        <p className="text-fg-muted">
+          Thuê, xoá, bật/tắt máy và xem số dư Vast cần chính Vast API key của anh, để người lạ không dùng được tài khoản.
+          Lấy ở cloud.vast.ai/manage-keys. Khoá chỉ lưu trên trình duyệt này.
+          {getVastControlKey() && ' Khoá đã lưu không khớp với server — nhập lại.'}
+        </p>
+        <div className="flex flex-col gap-2 sm:flex-row">
+          <Input
+            type="password"
+            autoComplete="off"
+            placeholder="Vast API key"
+            value={keyInput}
+            onChange={(e) => setKeyInput(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && unlock()}
+          />
+          <Button variant="primary" size="sm" className="shrink-0" loading={loading} disabled={!keyInput.trim()} onClick={unlock}>
+            Mở khoá
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-2">

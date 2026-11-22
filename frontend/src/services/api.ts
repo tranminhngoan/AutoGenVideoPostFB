@@ -46,6 +46,46 @@ export interface ProcessingJobDto {
   errorMessage?: string;
 }
 
+
+/* ── GPU control unlock: the server requires the account's Vast API key (X-Vast-Key) for anything that spends
+      money or touches the Vast account. It is kept only in this browser's localStorage. ── */
+const VAST_KEY_STORAGE = 'film.vastControlKey';
+
+export function getVastControlKey(): string {
+  try {
+    return localStorage.getItem(VAST_KEY_STORAGE) || '';
+  } catch {
+    return '';
+  }
+}
+
+export function setVastControlKey(key: string | null) {
+  try {
+    if (key) localStorage.setItem(VAST_KEY_STORAGE, key.trim());
+    else localStorage.removeItem(VAST_KEY_STORAGE);
+  } catch {
+    /* private mode: the key just won't be remembered */
+  }
+}
+
+function gpuHeaders(extra?: Record<string, string>): Record<string, string> {
+  const key = getVastControlKey();
+  return { ...(extra || {}), ...(key ? { 'X-Vast-Key': key } : {}) };
+}
+
+/** Throws an Error; `needsVastKey = true` when the server wants the Vast key (unlock form). */
+async function gpuFail(res: Response, fallback: string): Promise<never> {
+  if (res.status === 401) {
+    const body = await res.clone().json().catch(() => ({} as any));
+    if (body?.needsVastKey) {
+      const err = new Error(body.message || 'Cần mở khoá bằng Vast API key') as Error & { needsVastKey?: boolean };
+      err.needsVastKey = true;
+      throw err;
+    }
+  }
+  throw new Error(await apiError(res, fallback));
+}
+
 export const api = {
   async getHealth(): Promise<boolean> {
     try {
@@ -756,15 +796,15 @@ export const api = {
 
   async stopRunPodGpu(podId?: string): Promise<{ success: boolean; message: string; desiredStatus?: string }> {
     const url = podId ? `${API_BASE}/film-factory/gpu/stop?podId=${encodeURIComponent(podId)}` : `${API_BASE}/film-factory/gpu/stop`;
-    const res = await fetch(url, { method: 'POST' });
-    if (!res.ok) throw new Error(await apiError(res, 'Dừng GPU thất bại'));
+    const res = await fetch(url, { method: 'POST', headers: gpuHeaders() });
+    if (!res.ok) await gpuFail(res, 'Dừng GPU thất bại');
     return await res.json();
   },
 
   async startRunPodGpu(podId?: string): Promise<{ success: boolean; message: string; desiredStatus?: string }> {
     const url = podId ? `${API_BASE}/film-factory/gpu/start?podId=${encodeURIComponent(podId)}` : `${API_BASE}/film-factory/gpu/start`;
-    const res = await fetch(url, { method: 'POST' });
-    if (!res.ok) throw new Error(await apiError(res, 'Khởi động GPU thất bại'));
+    const res = await fetch(url, { method: 'POST', headers: gpuHeaders() });
+    if (!res.ok) await gpuFail(res, 'Khởi động GPU thất bại');
     return await res.json();
   },
 
@@ -781,45 +821,48 @@ export const api = {
   async rentVastOffer(offerId: number, diskGb: number): Promise<{ success: boolean; instanceId: string; message: string }> {
     const res = await fetch(`${API_BASE}/film-factory/gpu/vast/rent`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: gpuHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ offerId, diskGb }),
     });
-    if (!res.ok) throw new Error(await apiError(res, 'Thuê máy thất bại'));
+    if (!res.ok) await gpuFail(res, 'Thuê máy thất bại');
     return await res.json();
   },
 
   async getVastAccount(): Promise<VastAccount> {
-    const res = await fetch(`${API_BASE}/film-factory/gpu/vast/account`);
-    if (!res.ok) throw new Error(await apiError(res, 'Không đọc được số dư Vast.ai'));
+    const res = await fetch(`${API_BASE}/film-factory/gpu/vast/account`, { headers: gpuHeaders() });
+    if (!res.ok) await gpuFail(res, 'Không đọc được số dư Vast.ai');
     return await res.json();
   },
 
   async listVastInstances(): Promise<{ activeInstanceId?: string | null; instances: VastInstance[] }> {
-    const res = await fetch(`${API_BASE}/film-factory/gpu/vast/instances`);
-    if (!res.ok) throw new Error(await apiError(res, 'Không tải được danh sách máy đang thuê'));
+    const res = await fetch(`${API_BASE}/film-factory/gpu/vast/instances`, { headers: gpuHeaders() });
+    if (!res.ok) await gpuFail(res, 'Không tải được danh sách máy đang thuê');
     return await res.json();
   },
 
   /** Throws an Error with `needsForce = true` when the machine may be rendering an episode. */
   async destroyVastInstance(instanceId: string, force = false): Promise<{ success: boolean; message: string }> {
-    const res = await fetch(`${API_BASE}/film-factory/gpu/vast/instances/${encodeURIComponent(instanceId)}?force=${force}`, { method: 'DELETE' });
+    const res = await fetch(`${API_BASE}/film-factory/gpu/vast/instances/${encodeURIComponent(instanceId)}?force=${force}`, {
+      method: 'DELETE',
+      headers: gpuHeaders(),
+    });
     if (res.status === 409) {
       const body = await res.json().catch(() => ({}));
       const err = new Error(body.message || 'Máy đang dựng phim') as Error & { needsForce?: boolean };
       err.needsForce = true;
       throw err;
     }
-    if (!res.ok) throw new Error(await apiError(res, 'Xoá máy thất bại'));
+    if (!res.ok) await gpuFail(res, 'Xoá máy thất bại');
     return await res.json();
   },
 
   async setRunPodPodId(podId: string): Promise<void> {
     const res = await fetch(`${API_BASE}/film-factory/gpu/runpod/pod`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: gpuHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ podId }),
     });
-    if (!res.ok) throw new Error(await apiError(res, 'Cập nhật Pod ID thất bại'));
+    if (!res.ok) await gpuFail(res, 'Cập nhật Pod ID thất bại');
   },
 
   async connectFilmFacebookPage(data: ConnectFacebookPageRequestDto): Promise<FilmPageDto> {
