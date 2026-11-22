@@ -1,5 +1,6 @@
 using System.Text.Json;
 using FluentAssertions;
+using Microsoft.Extensions.Configuration;
 using NewsStudio.Infrastructure.FilmFactory;
 using Xunit;
 
@@ -41,6 +42,52 @@ public class VastMarketTests
         json.Should().Contain("\"inet_down_cost\":{\"lte\":0.01}");
         json.Should().Contain("\"verified\":{\"eq\":true}");
         json.Should().NotContain("dph_total\":{");                         // no price cap unless asked
+    }
+
+    private sealed class FakeVast : HttpMessageHandler
+    {
+        public readonly List<string> Urls = new();
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            Urls.Add(request.RequestUri!.ToString());
+            var body = request.RequestUri!.Query.Contains("after_token=t%2B1")
+                ? """{"success":true,"instances":[{"id":2,"actual_status":"exited"}],"next_token":null}"""
+                : """{"success":true,"instances":[{"id":1,"actual_status":"running"}],"next_token":"t+1"}""";
+            return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK) { Content = new StringContent(body) });
+        }
+    }
+
+    private static VastAiGpuBackend Vast(HttpMessageHandler handler) => new(
+        new Microsoft.Extensions.Configuration.ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?> { ["Film:Gpu:VastAi:ApiKey"] = "test-key" }).Build(),
+        new HttpClient(handler),
+        Microsoft.Extensions.Logging.Abstractions.NullLogger<VastAiGpuBackend>.Instance);
+
+    [Fact]
+    public async Task Instance_list_uses_v1_and_follows_every_page()
+    {
+        // Vast answers the v0 list with 410 deprecated_endpoint since late 2026.
+        var fake = new FakeVast();
+        var list = await Vast(fake).ListInstancesAsync();
+
+        list.Select(i => i.Id).Should().Equal("1", "2");
+        fake.Urls.Should().HaveCount(2);
+        fake.Urls.Should().OnlyContain(u => u.StartsWith("https://console.vast.ai/api/v1/instances/"));
+        fake.Urls[1].Should().Contain("after_token=t%2B1");
+    }
+
+    [Fact]
+    public void Renting_on_Vast_switches_new_batches_to_Vast()
+    {
+        var vast = Vast(new FakeVast());
+        var active = new ActiveFilmGpuBackend(new KaggleGpuBackend(
+            new Microsoft.Extensions.Configuration.ConfigurationBuilder().Build(),
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<KaggleGpuBackend>.Instance), vast, null!);
+
+        active.IsVast.Should().BeFalse();
+        active.UseVast();
+        active.IsVast.Should().BeTrue();
+        active.Name.Should().Be("VastAi");
     }
 
     [Fact]

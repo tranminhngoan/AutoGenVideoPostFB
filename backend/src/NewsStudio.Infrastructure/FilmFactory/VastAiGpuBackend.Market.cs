@@ -190,13 +190,38 @@ public partial class VastAiGpuBackend
     public async Task<List<VastInstanceInfo>> ListInstancesAsync(CancellationToken ct = default)
     {
         var apiKey = ApiKey ?? throw new InvalidOperationException("Chưa cấu hình VAST_API_KEY trên server.");
-        using var req = new HttpRequestMessage(HttpMethod.Get, $"{ApiBase}/instances/");
-        req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
-        using var res = await _httpClient.SendAsync(req, ct);
-        var json = await res.Content.ReadAsStringAsync(ct);
-        if (!res.IsSuccessStatusCode)
-            throw new InvalidOperationException($"Vast.ai liệt kê máy lỗi HTTP {(int)res.StatusCode}: {Trim(json)}");
+        var (ok, json, status) = await FetchInstancesJsonAsync(apiKey, ct);
+        if (!ok)
+            throw new InvalidOperationException($"Vast.ai liệt kê máy lỗi HTTP {status}: {Trim(json)}");
         return ParseInstances(json, Port);
+    }
+
+    /// <summary>
+    /// Lists the account's instances via GET /api/v1/instances/ (the v0 list answers 410 deprecated_endpoint),
+    /// following next_token pages (25 per page), merged into {"instances": [...]} — the shape v0 returned.
+    /// Single-instance calls (PUT state, DELETE) stay on /api/v0/instances/{id}/, as the official CLI does.
+    /// </summary>
+    private async Task<(bool Ok, string Json, int Status)> FetchInstancesJsonAsync(string apiKey, CancellationToken ct)
+    {
+        var items = new List<string>();
+        string? token = null;
+        for (var page = 0; page < 20; page++)
+        {
+            var url = "https://console.vast.ai/api/v1/instances/?limit=25" +
+                      (token != null ? "&after_token=" + Uri.EscapeDataString(token) : "");
+            using var req = new HttpRequestMessage(HttpMethod.Get, url);
+            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+            using var res = await _httpClient.SendAsync(req, ct);
+            var body = await res.Content.ReadAsStringAsync(ct);
+            if (!res.IsSuccessStatusCode) return (false, body, (int)res.StatusCode);
+
+            using var doc = JsonDocument.Parse(body);
+            if (doc.RootElement.TryGetProperty("instances", out var arr) && arr.ValueKind == JsonValueKind.Array)
+                items.AddRange(arr.EnumerateArray().Select(x => x.GetRawText()));
+            token = doc.RootElement.TryGetProperty("next_token", out var nt) && nt.ValueKind == JsonValueKind.String ? nt.GetString() : null;
+            if (string.IsNullOrEmpty(token)) break;
+        }
+        return (true, "{\"instances\":[" + string.Join(",", items) + "]}", 200);
     }
 
     public static List<VastInstanceInfo> ParseInstances(string json, int workerPort)

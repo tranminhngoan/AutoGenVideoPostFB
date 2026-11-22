@@ -317,7 +317,7 @@ public class FilmFactoryController : ControllerBase
         var runpod = HttpContext.RequestServices.GetService<NewsStudio.Infrastructure.FilmFactory.RunPodGpuBackend>();
         var activeBackend = HttpContext.RequestServices.GetService<NewsStudio.Infrastructure.FilmFactory.IFilmGpuBackend>();
 
-        var isVast = (activeBackend is NewsStudio.Infrastructure.FilmFactory.VastAiGpuBackend) ||
+        var isVast = (activeBackend is NewsStudio.Infrastructure.FilmFactory.ActiveFilmGpuBackend { IsVast: true }) || (activeBackend is NewsStudio.Infrastructure.FilmFactory.VastAiGpuBackend) ||
                      (vast != null && vast.IsConfigured && (runpod == null || !runpod.IsConfigured));
 
         string provider = isVast ? "VastAi" : "RunPod";
@@ -476,6 +476,7 @@ public class FilmFactoryController : ControllerBase
             hourlyCost,
             dphTotal = hourlyCost,
             hasApiKey,
+            vastHasApiKey = !string.IsNullOrWhiteSpace(vast?.ApiKey),
             canManageLifecycle = hasApiKey,
             online,
             pingDetail,
@@ -505,7 +506,7 @@ public class FilmFactoryController : ControllerBase
         var runpod = HttpContext.RequestServices.GetService<NewsStudio.Infrastructure.FilmFactory.RunPodGpuBackend>();
         var activeBackend = HttpContext.RequestServices.GetService<NewsStudio.Infrastructure.FilmFactory.IFilmGpuBackend>();
 
-        var isVast = (activeBackend is NewsStudio.Infrastructure.FilmFactory.VastAiGpuBackend) ||
+        var isVast = (activeBackend is NewsStudio.Infrastructure.FilmFactory.ActiveFilmGpuBackend { IsVast: true }) || (activeBackend is NewsStudio.Infrastructure.FilmFactory.VastAiGpuBackend) ||
                      (vast != null && vast.IsConfigured && (runpod == null || !runpod.IsConfigured));
 
         if (isVast && vast != null)
@@ -535,7 +536,7 @@ public class FilmFactoryController : ControllerBase
         var runpod = HttpContext.RequestServices.GetService<NewsStudio.Infrastructure.FilmFactory.RunPodGpuBackend>();
         var activeBackend = HttpContext.RequestServices.GetService<NewsStudio.Infrastructure.FilmFactory.IFilmGpuBackend>();
 
-        var isVast = (activeBackend is NewsStudio.Infrastructure.FilmFactory.VastAiGpuBackend) ||
+        var isVast = (activeBackend is NewsStudio.Infrastructure.FilmFactory.ActiveFilmGpuBackend { IsVast: true }) || (activeBackend is NewsStudio.Infrastructure.FilmFactory.VastAiGpuBackend) ||
                      (vast != null && vast.IsConfigured && (runpod == null || !runpod.IsConfigured));
 
         if (isVast && vast != null)
@@ -617,11 +618,13 @@ public class FilmFactoryController : ControllerBase
         try
         {
             var id = await vast.RentOfferAsync(req.OfferId, req.DiskGb, ct);
+            // New batches now go to this Vast machine (batches already sent elsewhere still finish where they are).
+            HttpContext.RequestServices.GetService<NewsStudio.Infrastructure.FilmFactory.ActiveFilmGpuBackend>()?.UseVast();
             return Ok(new
             {
                 success = true,
                 instanceId = id,
-                message = $"Đã thuê máy #{id}. Máy đang khởi động, tự tải model và bật worker (thường 10–20 phút) — tiền GPU bắt đầu tính từ bây giờ."
+                message = $"Đã thuê máy #{id} và chuyển Film Factory sang dùng máy này. Máy đang khởi động, tự tải model và bật worker (thường 10–20 phút) — tiền GPU bắt đầu tính từ bây giờ."
             });
         }
         catch (InvalidOperationException ex)

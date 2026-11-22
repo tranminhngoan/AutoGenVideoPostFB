@@ -132,17 +132,13 @@ public partial class VastAiGpuBackend : IFilmGpuBackend
 
         try
         {
-            var req = new HttpRequestMessage(HttpMethod.Get, "https://console.vast.ai/api/v0/instances/");
-            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
-
-            var res = await _httpClient.SendAsync(req, ct);
-            if (!res.IsSuccessStatusCode)
+            var (ok, json, status) = await FetchInstancesJsonAsync(apiKey, ct);
+            if (!ok)
             {
-                _logger.LogWarning("Vast.ai API /instances/ trả về HTTP {StatusCode}", res.StatusCode);
+                _logger.LogWarning("Vast.ai API /instances/ trả về HTTP {StatusCode}: {Body}", status, Trim(json));
                 return null;
             }
 
-            var json = await res.Content.ReadAsStringAsync(ct);
             using var doc = JsonDocument.Parse(json);
 
             JsonElement instancesArray;
@@ -258,13 +254,9 @@ public partial class VastAiGpuBackend : IFilmGpuBackend
 
         try
         {
-            var req = new HttpRequestMessage(HttpMethod.Get, "https://console.vast.ai/api/v0/instances/");
-            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+            var (ok, json, _) = await FetchInstancesJsonAsync(apiKey, ct);
+            if (!ok) return (null, null, null, null, null, null);
 
-            var res = await _httpClient.SendAsync(req, ct);
-            if (!res.IsSuccessStatusCode) return (null, null, null, null, null, null);
-
-            var json = await res.Content.ReadAsStringAsync(ct);
             using var doc = JsonDocument.Parse(json);
 
             JsonElement instancesArray;

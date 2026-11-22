@@ -921,7 +921,7 @@ export function FilmFactoryPage() {
                       )
                     )}
 
-                    {gpuStatus?.provider === 'VastAi' && (
+                    {(gpuStatus?.provider === 'VastAi' || gpuStatus?.vastHasApiKey) && (
                       <Button
                         size="sm"
                         variant="secondary"

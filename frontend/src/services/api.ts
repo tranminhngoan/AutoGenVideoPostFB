@@ -1605,6 +1605,8 @@ export interface RunPodGpuLiveStatus {
   podName?: string | null;
   podDesiredStatus?: string | null;
   hasApiKey: boolean;
+  /** Vast.ai API key configured — the machine manager works even while RunPod is the active backend. */
+  vastHasApiKey?: boolean;
   canManageLifecycle?: boolean;
   online: boolean;
   pingDetail: string | null;

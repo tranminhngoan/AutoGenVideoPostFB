@@ -139,7 +139,12 @@ public static class DependencyInjection
         services.AddSingleton<KaggleGpuBackend>();
         services.AddSingleton<RunPodGpuBackend>();
         services.AddSingleton<VastAiGpuBackend>();
-        services.AddSingleton<IFilmGpuBackend>(sp =>
+        // Active backend = configured choice, switchable at runtime (renting a Vast machine in the app selects Vast).
+        services.AddSingleton(sp => new ActiveFilmGpuBackend(
+            ConfiguredGpuBackend(sp), sp.GetRequiredService<VastAiGpuBackend>(), sp.GetRequiredService<RunPodGpuBackend>()));
+        services.AddSingleton<IFilmGpuBackend>(sp => sp.GetRequiredService<ActiveFilmGpuBackend>());
+
+        static IFilmGpuBackend ConfiguredGpuBackend(IServiceProvider sp)
         {
             var config = sp.GetRequiredService<IConfiguration>();
             var pref = config["Film:Gpu:Backend"] ?? Environment.GetEnvironmentVariable("FILM_GPU_BACKEND");
@@ -161,7 +166,7 @@ public static class DependencyInjection
             if (vast.IsConfigured) return vast;
             if (runpod.IsConfigured) return runpod;
             return kaggle;
-        });
+        }
         services.AddScoped<FilmGpuService>();
         services.AddScoped<IFilmCostController, FilmCostController>();
         services.AddScoped<IFilmFactoryService, FilmFactoryService>();
