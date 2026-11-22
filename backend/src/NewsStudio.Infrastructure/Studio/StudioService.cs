@@ -208,18 +208,41 @@ public class StudioService
 
     // ═══════════════════════════════ Videos ═══════════════════════════════
 
-    /// <summary>Frees videos left "Planning" by a planning run that was cut off (server restart, old build).</summary>
+    /// <summary>
+    /// Frees videos left in a background step by a run that was cut off (server restart, database outage): planning
+    /// after 10 min, composing / publishing after 30 min, generating after 45 min without any progress (every clip
+    /// saved refreshes the timestamp, and one clip never waits longer than 20 min).
+    /// </summary>
     private async Task ReleaseStalePlanningAsync(CancellationToken ct)
     {
-        var cutoff = DateTime.UtcNow - StalePlanning;
+        var now = DateTime.UtcNow;
+        var plan = now - StalePlanning;
+        var short_ = now - TimeSpan.FromMinutes(30);
+        var gen = now - TimeSpan.FromMinutes(45);
         var stuck = await _db.StudioVideos.Include(v => v.Shots)
-            .Where(v => v.Status == "Planning" && (v.UpdatedAtUtc ?? v.CreatedAtUtc) < cutoff).ToListAsync(ct);
+            .Where(v => (v.Status == "Planning" && (v.UpdatedAtUtc ?? v.CreatedAtUtc) < plan)
+                        || ((v.Status == "Composing" || v.Status == "Publishing") && (v.UpdatedAtUtc ?? v.CreatedAtUtc) < short_)
+                        || (v.Status == "Generating" && (v.UpdatedAtUtc ?? v.CreatedAtUtc) < gen))
+            .ToListAsync(ct);
         if (stuck.Count == 0) return;
         foreach (var v in stuck)
         {
-            v.Status = v.Shots.Count > 0 ? "Planned" : "Draft";
+            var step = v.Status;
+            foreach (var s in v.Shots.Where(s => s.Status == "Generating")) s.Status = "Pending"; // its paid job id is kept → resumed
+            v.Status = step switch
+            {
+                "Publishing" => "Ready",
+                _ when v.FinalBlobId != null => "Ready",
+                _ => v.Shots.Count > 0 ? (v.Shots.Any(s => s.ClipBlobId == null) ? "Failed" : "Planned") : "Draft"
+            };
             v.Progress = null;
-            v.ErrorMessage = "Lập kế hoạch lần trước bị ngắt giữa chừng — bấm lập kế hoạch lại.";
+            v.ErrorMessage = step switch
+            {
+                "Planning" => "Lập kế hoạch lần trước bị ngắt giữa chừng — bấm lập kế hoạch lại.",
+                "Composing" => "Ghép video bị ngắt giữa chừng — bấm \"Ghép lại\".",
+                "Publishing" => "Đăng Facebook bị ngắt giữa chừng — kiểm tra Page rồi bấm đăng lại nếu chưa thấy bài.",
+                _ => "Tạo clip bị ngắt giữa chừng — bấm \"Tạo các clip còn thiếu\" (clip đã trả tiền dở sẽ được lấy tiếp, không trả lại)."
+            };
         }
         await _db.SaveChangesAsync(ct);
     }

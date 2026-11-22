@@ -2,6 +2,7 @@ using System.Net;
 using System.Text.Json;
 using FluentAssertions;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
@@ -224,6 +225,26 @@ public class ApiIntegrationTests : IClassFixture<WebApplicationFactory<Program>>
         dto.GetProperty("status").GetString().Should().Be("Planned");
 
         files.Delete(kept.Id);
+    }
+
+    [Fact]
+    public async Task Studio_AVideoStuckComposingAfterAnOutage_IsReleased()
+    {
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<NewsStudio.Application.Common.Interfaces.IApplicationDbContext>();
+        var clip = new NewsStudio.Domain.Entities.StudioBlob { MimeType = "video/mp4", Data = new byte[] { 1 }, SizeBytes = 1 };
+        var video = new NewsStudio.Domain.Entities.StudioVideo { Title = "stuck", Status = "Composing" };
+        db.StudioBlobs.Add(clip);
+        db.StudioVideos.Add(video);
+        db.StudioShots.Add(new NewsStudio.Domain.Entities.StudioShot { StudioVideoId = video.Id, Index = 1, Status = "Done", ClipBlobId = clip.Id, Action = "a" });
+        await db.SaveChangesAsync(CancellationToken.None);
+        // the context stamps CreatedAtUtc on save: age the row directly, as if the outage was two hours ago
+        await ((Microsoft.EntityFrameworkCore.DbContext)db).Database.ExecuteSqlInterpolatedAsync(
+            $"UPDATE \"StudioVideos\" SET \"CreatedAtUtc\" = {DateTime.UtcNow.AddHours(-2)}, \"UpdatedAtUtc\" = NULL WHERE \"Id\" = {video.Id}");
+
+        var dto = JsonDocument.Parse(await _client.GetStringAsync($"/api/studio/videos/{video.Id}")).RootElement;
+        dto.GetProperty("status").GetString().Should().Be("Planned"); // unlocked: "Ghép lại" can be pressed again
+        dto.GetProperty("errorMessage").GetString().Should().Contain("Ghép lại");
     }
 
     [Fact]
