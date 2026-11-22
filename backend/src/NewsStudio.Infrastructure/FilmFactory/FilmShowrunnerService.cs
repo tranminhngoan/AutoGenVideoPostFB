@@ -384,6 +384,13 @@ Trả về JSON:
               $"- YÊU CẦU NỐI TIẾP: Scene 1, Shot 1 của Tập {episode.EpisodeNumber} BẮT BUỘC PHẢI BẮT ĐẦU NGAY TẠI HIỆN TRƯỜNG VÀ ĐÚNG KHOẢNH KHẮC CAO TRÀO ĐÓ! Các nhân vật phản ứng tức thì với tình huống nghẹt thở của cliffhanger trước, không nhảy cóc thời gian, tạo cảm giác mạch phim liên tục 100%.\n"
             : "";
 
+        // With lip sync on, a line is mouth-synced only when its speaker is the one visible face (FilmShotPlanner),
+        // so the script must frame dialogue that way (shot / reverse shot) and list only visible faces.
+        var lipSyncRules = _configuration.GetValue("Film:LipSync:Enabled", false)
+            ? "- KHẨU HÌNH: \"characters\" của frame CHỈ liệt kê nhân vật NHÌN THẤY MẶT (người quay lưng / chỉ thấy vai thì không ghi).\n" +
+              "- Câu thoại nói trước máy: dùng frame CloseUp hoặc MediumShot mà người nói là người DUY NHẤT thấy mặt (quay kiểu shot / reverse-shot); người nghe phản ứng ở shot riêng với speaker \"none\" hoặc lời của người kia vọng vào.\n" +
+              "- \"motionPrompt\" của shot có thoại chỉ tả cử động nhỏ, có chủ đích, khớp cảm xúc câu nói (gật nhẹ, nghiêng đầu, ánh mắt, cử chỉ tay đơn giản); không quay đầu gắt, không đổi tư thế đột ngột, không nhiều hành động cùng lúc.\n"
+            : "";
         var system = "Bạn là biên kịch kiêm đạo diễn hình ảnh cho phim ngắn tiếng Việt dạng 'ảnh điện ảnh chuyển động + lồng tiếng'. Chỉ trả về JSON hợp lệ.";
         var filmingStyle = isFullMotion
             ? $"MỌI SHOT (100%) đều là CLIP CHUYỂN ĐỘNG THẬT 3-5 giây (Wan 2.2), KHÔNG DÙNG ẢNH TĨNH. Mỗi shot đi kèm chuyển động tự nhiên và 1 câu thoại lồng tiếng tương ứng."
@@ -418,7 +425,7 @@ CÁCH PHIM ĐƯỢC DỰNG: {filmingStyle} Vì vậy:
 - Frame ""prompt"" viết bằng TIẾNG ANH, tối đa 70 từ, tự đủ nghĩa (máy vẽ không biết gì ngoài câu này): bắt đầu bằng cỡ cảnh + nhân vật chính, rồi hành động, biểu cảm, bối cảnh, ánh sáng, thời điểm; mô tả ngắn ngoại hình nhân vật có mặt (tuổi, giới tính, tóc, trang phục theo mô tả EN ở trên), KHÔNG dùng tên riêng; KHÔNG thêm từ phong cách (hệ thống tự thêm). Ghi rõ thời điểm và ánh sáng ngay đầu prompt (vd: ""night, dark street lit by red neon""). Ít nhất 80% frame chỉ có 1 nhân vật nhìn thấy mặt (máy vẽ hay trộn mặt khi có 2 người); cảnh hai người dùng góc qua vai: một người quay lưng chỉ thấy vai và tóc, người kia nhìn rõ mặt.
 - ""motion"": true cho khoảng {motionPct}% số shot — {motionRule}
 - Khi ""motion"" true: thêm ""motionPrompt"" TIẾNG ANH tối đa 35 từ mô tả chuyển động của nhân vật và máy quay trong 4-5 giây, không thêm người/vật mới; và ""line"" của shot đó tối đa 12 từ (hoặc speaker ""none"").
-- Nội dung bám đúng diễn biến tập:
+{lipSyncRules}- Nội dung bám đúng diễn biến tập:
   + Mở đầu bằng phần Mở đầu { (prevEp != null ? "(nối tiếp ngay cliffhanger tập trước)" : "") }
   + KẾT THÚC TẬP (CLIFFHANGER NGHẸT THỞ): Shot cuối cùng của Cảnh cuối cùng BẮT BUỘC dừng lại đúng ở: '{episode.EndingCliffhanger}'. Tạo một hình ảnh dừng lại đầy ám ảnh, một cú twist, tiếng động bất ngờ hoặc mối nguy hiểm ập tới giật gân người xem!
   + Không bạo lực máu me chi tiết.

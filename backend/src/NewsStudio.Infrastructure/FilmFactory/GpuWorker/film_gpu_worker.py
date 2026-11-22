@@ -15,6 +15,12 @@ Job types:
   motion  : image -> short video clip.
             Wan 2.2 / 2.1 Image-to-Video when >= 23 GB VRAM (RTX 3090/4090);
             LTX-Video on 16 GB cards (Kaggle T4).
+  lipsync : motion clip + approved master voice -> lip-synced clip (LatentSync 1.6, run in its own
+            venv from setup_lipsync.sh), then a SyncNet confidence/offset check when its weights exist.
+            Runs after the motion model is unloaded, so the two never share VRAM.
+
+Every job result records wall time, peak VRAM and average GPU utilisation (nvidia-smi sampling),
+so batches double as benchmarks.
 """
 import gc
 import glob
@@ -61,10 +67,11 @@ def pip(*pkgs):
     subprocess.run([sys.executable, "-m", "pip", "install", "-q", "-U", *pkgs], check=True)
 
 
-# Install required packages on worker startup
-log("Checking / installing AI dependencies...")
-pip("diffusers>=0.35.0", "transformers>=4.49", "accelerate", "sentencepiece", "peft",
-    "imageio", "imageio-ffmpeg", "spandrel", "ftfy", "tiktoken", "protobuf", "einops")
+# Install required packages on worker startup (FILM_WORKER_SKIP_PIP=1 skips it: offline tests, pinned images)
+if os.environ.get("FILM_WORKER_SKIP_PIP") != "1":
+    log("Checking / installing AI dependencies...")
+    pip("diffusers>=0.35.0", "transformers>=4.49", "accelerate", "sentencepiece", "peft",
+        "imageio", "imageio-ffmpeg", "spandrel", "ftfy", "tiktoken", "protobuf", "einops")
 
 import numpy as np
 import torch
@@ -90,6 +97,82 @@ else:
     VRAM_GB = 0
     DTYPE = torch.float32
     log("WARNING: No CUDA GPU detected, running in CPU mode.")
+
+
+class GpuSampler:
+    """Samples nvidia-smi once a second while a job runs: peak memory used (whole GPU, so it also sees
+    subprocesses such as LatentSync) and mean utilisation. Gives None values when nvidia-smi is absent."""
+
+    def __init__(self, interval=1.0):
+        self.interval = interval
+        self.peak_mib = None
+        self.util = []
+        self._stop = threading.Event()
+        self._thread = None
+
+    def _poll(self):
+        while not self._stop.is_set():
+            try:
+                out = subprocess.run(
+                    ["nvidia-smi", "--query-gpu=memory.used,utilization.gpu", "--format=csv,noheader,nounits", "-i", "0"],
+                    capture_output=True, text=True, timeout=5).stdout.strip()
+                mem, util = [float(x) for x in out.split(",")[:2]]
+                self.peak_mib = mem if self.peak_mib is None else max(self.peak_mib, mem)
+                self.util.append(util)
+            except Exception:
+                return  # no nvidia-smi (CPU box / tests): stop sampling quietly
+            self._stop.wait(self.interval)
+
+    def __enter__(self):
+        self._thread = threading.Thread(target=self._poll, daemon=True)
+        self._thread.start()
+        return self
+
+    def __exit__(self, *exc):
+        self._stop.set()
+        if self._thread:
+            self._thread.join(timeout=6)
+        return False
+
+    def metrics(self):
+        return {
+            "gpu_peak_mem_gb": round(self.peak_mib / 1024, 2) if self.peak_mib is not None else None,
+            "gpu_util_avg": round(sum(self.util) / len(self.util), 1) if self.util else None,
+        }
+
+
+def run_cmd(cmd, cwd=None, timeout=None):
+    """Runs a command; returns (code, stdout, stderr)."""
+    p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout)
+    return p.returncode, p.stdout, p.stderr
+
+
+def probe_seconds(path):
+    code, out, _ = run_cmd(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", path])
+    try:
+        return float(out.strip()) if code == 0 else 0.0
+    except ValueError:
+        return 0.0
+
+
+def sync_verdict(conf, offset, qc):
+    """PASS / WARNING / REJECT from SyncNet confidence and AV offset (frames @25 fps).
+    Defaults are provisional until calibrated on benchmark Test A; jobs.json "qc" overrides them."""
+    if conf is None or offset is None:
+        return "NOT_MEASURED"
+    if conf < qc.get("sync_conf_reject", 3.0) or abs(offset) > qc.get("sync_offset_reject", 3):
+        return "REJECT"
+    if conf < qc.get("sync_conf_pass", 6.0) or abs(offset) > qc.get("sync_offset_pass", 1):
+        return "WARNING"
+    return "PASS"
+
+
+def parse_syncnet_output(text):
+    """Reads 'SyncNet confidence: 7.12' and 'AV offset: -1' from LatentSync's eval_sync_conf output."""
+    import re
+    c = re.search(r"SyncNet confidence:\s*(-?[\d.]+)", text or "")
+    o = re.search(r"AV offset:\s*(-?\d+)", text or "")
+    return (float(c.group(1)) if c else None), (int(o.group(1)) if o else None)
 
 
 def process_batch(in_dir, out_dir, batch_id=None, progress_cb=None):
@@ -139,10 +222,13 @@ def process_batch(in_dir, out_dir, batch_id=None, progress_cb=None):
                 return p
         raise FileNotFoundError(f"Input file not found: {name} in {in_dir} or {out_dir}")
 
-    def run_stage(kind, handler):
+    def run_stage(kind, handler, max_attempts=1):
+        """Runs every job of one type. A handler may return a dict (settings used, QC) that is stored
+        with the job result. Each job is tried at most max_attempts times (never loops on a bad input)."""
         todo = [j for j in jobs if j.get("type") == kind]
         if not todo:
             return
+        stage_t = time.time()
         log(f"== Stage {kind}: {len(todo)} jobs ==")
         for idx, j in enumerate(todo):
             t = time.time()
@@ -172,17 +258,36 @@ def process_batch(in_dir, out_dir, batch_id=None, progress_cb=None):
 
             if progress_cb:
                 progress_cb(f"Stage {kind}: {idx + 1}/{len(todo)} ({jid})")
-            try:
-                handler(j)
-                results["jobs"][jid] = {"status": "ok", "seconds": round(time.time() - t, 1), "out": j["out"]}
-                log(f"  [{kind}] {jid} ok in {time.time() - t:.1f}s")
-            except Exception as e:
-                err_msg = f"{type(e).__name__}: {e}"
-                results["jobs"][jid] = {"status": "failed", "seconds": round(time.time() - t, 1), "error": err_msg[:800]}
-                log(f"  [{kind}] {jid} FAILED: {traceback.format_exc()[-600:]}")
+            for attempt in range(1, max_attempts + 1):
+                t = time.time()
+                j["_attempt"] = attempt
                 if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-            save_results()
+                    torch.cuda.reset_peak_memory_stats()
+                sampler = GpuSampler()
+                try:
+                    with sampler:
+                        info = handler(j) or {}
+                    entry = {"status": "ok", "seconds": round(time.time() - t, 1), "out": j["out"], "attempts": attempt}
+                    entry.update(info)
+                    log(f"  [{kind}] {jid} ok in {time.time() - t:.1f}s (attempt {attempt})")
+                    ok = True
+                except Exception as e:
+                    err_msg = f"{type(e).__name__}: {e}"
+                    entry = {"status": "failed", "seconds": round(time.time() - t, 1), "error": err_msg[:800], "attempts": attempt}
+                    log(f"  [{kind}] {jid} FAILED (attempt {attempt}/{max_attempts}): {traceback.format_exc()[-600:]}")
+                    ok = False
+                    if torch.cuda.is_available() and "out of memory" in str(e).lower():
+                        gc.collect()
+                        torch.cuda.empty_cache()  # only after an OOM, where it actually helps the next job
+                entry.update(sampler.metrics())
+                if torch.cuda.is_available():
+                    entry["torch_peak_alloc_gb"] = round(torch.cuda.max_memory_allocated() / 2**30, 2)
+                results["jobs"][jid] = entry
+                save_results()
+                if ok:
+                    break
+        results.setdefault("stages", {}).setdefault(kind, {})["seconds"] = round(time.time() - stage_t, 1)
+        save_results()
 
     # ─────────────────────────────── stage 1: still frames ───────────────────────────────
     def image_stage():
@@ -230,6 +335,7 @@ def process_batch(in_dir, out_dir, batch_id=None, progress_cb=None):
         if torch.cuda.is_available():
             upscaler = upscaler.cuda().half()
         log(f"Image pipeline & Real-ESRGAN loaded in {time.time() - t:.1f}s")
+        results.setdefault("stages", {}).setdefault("image", {})["load_seconds"] = round(time.time() - t, 1)
 
         def chunk_ids(tok, text, n_chunks=None):
             ids = tok(text, truncation=False, add_special_tokens=False).input_ids
@@ -420,15 +526,16 @@ def process_batch(in_dir, out_dir, batch_id=None, progress_cb=None):
         cfg = 4.0 if (use_wan and is_14b) else 3.5 if use_wan else 3.0
         wan_res_mode = spec.get("wan_resolution") or os.environ.get("WAN_RESOLUTION", "").lower()
         log(f"Motion model ({results['env'].get('motion_model')}) loaded in {time.time() - t:.1f}s, steps={steps}, cfg={cfg}, res_mode={wan_res_mode or 'default'}")
+        results.setdefault("stages", {}).setdefault("motion", {})["load_seconds"] = round(time.time() - t, 1)
+        model_is_720p = "720P" in str(results["env"].get("motion_model", ""))
+        if wan_res_mode == "720p" and not model_is_720p:
+            # A 480P checkpoint asked for 1280x720 renders outside its training size (worse faces, 2x slower).
+            log("WARNING: 720p requested but the loaded checkpoint is 480P — keeping the job's 480p size.")
 
         def handle(j):
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-            gc.collect()
-
             jw, jh = j.get("width", w), j.get("height", h)
-            # High-definition 720P override for ultra-high VRAM hardware if requested
-            if wan_res_mode == "720p" or (VRAM_GB >= 85 and "720P" in str(results["env"].get("motion_model", ""))):
+            # 720p only with a 720P checkpoint
+            if use_wan and model_is_720p:
                 jw, jh = (1280, 720) if jw >= jh else (720, 1280)
 
             # Ensure dimensions divisible by 16 for Wan / LTX
@@ -436,8 +543,9 @@ def process_batch(in_dir, out_dir, batch_id=None, progress_cb=None):
             jh = (jh // 16) * 16
 
             image = Image.open(path_of(j["image"])).convert("RGB").resize((jw, jh), Image.LANCZOS)
-            seconds = min(float(j.get("seconds", 4)), 5.0)
-            frames = int(seconds * fps)
+            # Wan 2.1 is trained on 81 frames (5.06 s @16 fps); LTX stays at its previous 5 s cap.
+            max_frames = 81 if use_wan else int(5.0 * fps) + 1
+            frames = min(int(round(float(j.get("seconds", 4)) * fps)) + 1, max_frames)
             # Alignment rules: Wan requires 4k+1, LTX requires 8k+1
             mod = 4 if use_wan else 8
             frames = frames - (frames - 1) % mod
@@ -461,6 +569,8 @@ def process_batch(in_dir, out_dir, batch_id=None, progress_cb=None):
             out_file = os.path.join(out_dir, j["out"])
             os.makedirs(os.path.dirname(out_file), exist_ok=True)
             export_to_video(out, out_file, fps=fps)
+            return {"model": results["env"].get("motion_model"), "width": jw, "height": jh, "fps": fps,
+                    "frames": frames, "steps": j.get("steps", steps), "cfg": cfg, "seed": j.get("seed", 42)}
 
         run_stage("motion", handle)
         del pipe
@@ -468,8 +578,100 @@ def process_batch(in_dir, out_dir, batch_id=None, progress_cb=None):
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
+    # ─────────────────────────────── stage 3: lip sync + SyncNet QC ───────────────────────────────
+    def lipsync_stage():
+        todo = [j for j in jobs if j.get("type") == "lipsync"]
+        if not todo:
+            return
+        ls_dir = os.environ.get("LATENTSYNC_DIR", os.path.join(WORKSPACE_DIR, "LatentSync"))
+        default_py = os.path.join(ls_dir, ".venv", "Scripts" if os.name == "nt" else "bin", "python")
+        ls_py = os.environ.get("LATENTSYNC_PYTHON", default_py)
+        ckpt = os.path.join(ls_dir, "checkpoints", "latentsync_unet.pt")
+        unet_cfg = os.path.join(ls_dir, "configs", "unet", "stage2_512.yaml")  # LatentSync 1.6 (512x512)
+        syncnet = os.path.join(ls_dir, "checkpoints", "auxiliary", "syncnet_v2.model")
+        cfg = spec.get("lipsync", {})
+        qc = spec.get("qc", {})
+        steps = int(cfg.get("steps", 20))           # upstream inference.sh default
+        guidance = float(cfg.get("guidance", 1.5))  # upstream inference.sh default (README range 1.0-3.0)
+        deepcache = bool(cfg.get("deepcache", True))
+
+        missing = [p for p in (ls_py, ckpt, unet_cfg) if not os.path.exists(p)]
+        if missing:
+            msg = (f"LatentSync chưa được cài trên máy GPU (thiếu {', '.join(missing)}). "
+                   "Chạy setup_lipsync.sh một lần rồi gửi lại batch.")
+            log(msg)
+            for j in todo:
+                results["jobs"][j["id"]] = {"status": "failed", "seconds": 0.0, "error": msg}
+            save_results()
+            return
+        results["env"]["lipsync_model"] = "LatentSync-1.6 (stage2_512)"
+
+        def sync_qc(video, work):
+            if not os.path.exists(syncnet):
+                return {"status": "skipped", "reason": "SyncNet weights missing (checkpoints/auxiliary/syncnet_v2.model)"}
+            t = time.time()
+            code, out, err = run_cmd([ls_py, "-m", "eval.eval_sync_conf", "--video_path", video,
+                                      "--temp_dir", os.path.join(work, "qc")], cwd=ls_dir, timeout=900)
+            conf, offset = parse_syncnet_output(out + "\n" + err)
+            res = {"seconds": round(time.time() - t, 1), "confidence": conf, "av_offset_frames": offset,
+                   "verdict": sync_verdict(conf, offset, qc)}
+            if conf is None:
+                # e.g. "Face not detected" or a clip shorter than SyncNet's 50-frame face track
+                res["status"] = "not_measured"
+                res["reason"] = (err or out).strip()[-300:]
+            else:
+                res["status"] = "ok"
+            return res
+
+        def handle(j):
+            video = path_of(j["video"])
+            audio = path_of(j["audio"])
+            work = os.path.join(out_dir, "_lipsync", j["id"])
+            if os.path.isdir(work):
+                shutil.rmtree(work, ignore_errors=True)
+            os.makedirs(work, exist_ok=True)
+
+            # Master voice -> 16 kHz mono PCM (LatentSync's audio rate). The master file itself is never
+            # modified; the renderer muxes the original, so this copy only drives the mouth.
+            wav = os.path.join(work, "voice_16k.wav")
+            code, _, err = run_cmd(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", audio,
+                                    "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", wav])
+            if code != 0 or not os.path.exists(wav):
+                raise RuntimeError(f"ffmpeg audio prep failed: {err[-300:]}")
+
+            synced = os.path.join(work, "synced.mp4")
+            seed = int(j.get("seed", 1247)) + (j.get("_attempt", 1) - 1)  # a retry draws a new seed
+            cmd = [ls_py, "-m", "scripts.inference",
+                   "--unet_config_path", unet_cfg, "--inference_ckpt_path", ckpt,
+                   "--inference_steps", str(steps), "--guidance_scale", str(guidance),
+                   "--video_path", video, "--audio_path", wav, "--video_out_path", synced,
+                   "--temp_dir", os.path.join(work, "tmp"), "--seed", str(seed)]
+            if deepcache:
+                cmd.append("--enable_deepcache")
+            # LatentSync writes ./temp relative to its cwd, so jobs run strictly one at a time from ls_dir.
+            code, out, err = run_cmd(cmd, cwd=ls_dir, timeout=int(cfg.get("timeout_seconds", 1800)))
+            if code != 0 or not os.path.exists(synced) or os.path.getsize(synced) < 10240:
+                raise RuntimeError(f"LatentSync exit {code}: {(err or out).strip()[-600:]}")
+
+            v_sec, a_sec = probe_seconds(synced), probe_seconds(wav)
+            if a_sec > 0 and abs(v_sec - a_sec) > 0.2:
+                raise RuntimeError(f"Synced clip {v_sec:.2f}s does not match the voice {a_sec:.2f}s")
+
+            out_file = os.path.join(out_dir, j["out"])
+            os.makedirs(os.path.dirname(out_file), exist_ok=True)
+            shutil.move(synced, out_file)
+            info = {"model": "LatentSync-1.6", "steps": steps, "guidance": guidance, "deepcache": deepcache,
+                    "seed": seed, "video_seconds": round(v_sec, 2), "audio_seconds": round(a_sec, 2),
+                    "looped": a_sec > probe_seconds(video) + 0.05}
+            info["qc_sync"] = sync_qc(out_file, work)
+            shutil.rmtree(work, ignore_errors=True)
+            return info
+
+        run_stage("lipsync", handle, max_attempts=int(cfg.get("max_attempts", 2)))
+
     image_stage()
     motion_stage()
+    lipsync_stage()
     results["total_seconds"] = round(time.time() - t_start, 1)
     save_results()
     log("BATCH FINISHED successfully in", results["total_seconds"], "s")

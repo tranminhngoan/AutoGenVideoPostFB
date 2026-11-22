@@ -91,7 +91,7 @@ public class FilmRendererService : IFilmRendererService
         if (await _meter.ShouldPauseAsync(ct))
             throw new InvalidOperationException("Đã vượt ngân sách AI của tháng (chế độ tạm dừng) — tăng ngân sách trong Cài đặt để dựng tiếp.");
         await SetStatusAsync(episode, "VoiceGenerating", ct);
-        await EnsureVoicesAsync(episode, OrderedShots(episode), ct);
+        await EnsureVoicesAsync(episode, OrderedShots(episode), ct, beforeGpu: true);
     }
 
     public async Task<string> AssembleEpisodeAsync(Guid episodeId, CancellationToken ct = default)
@@ -102,6 +102,10 @@ public class FilmRendererService : IFilmRendererService
             throw new InvalidOperationException("Tập phim chưa có kịch bản (0 shot) — cần viết kịch bản trước khi dựng.");
 
         _logger.LogInformation("Assembling Episode {Num} ({Title}): {Shots} shots", episode.EpisodeNumber, episode.Title, shots.Count);
+        // A lip-sync QC note from the GPU ingest must stay visible on the finished episode for a human check.
+        var qcNote = episode.ErrorMessage != null && episode.ErrorMessage.StartsWith("Kiểm tra khẩu hình", StringComparison.Ordinal)
+            ? episode.ErrorMessage
+            : null;
 
         try
         {
@@ -138,7 +142,7 @@ public class FilmRendererService : IFilmRendererService
             episode.ActualDurationSeconds = Math.Round(duration, 1);
             episode.QualityScore = score;
             episode.ThumbnailPath = shots.First().RawImagePath;
-            episode.ErrorMessage = null;
+            episode.ErrorMessage = qcNote;
             episode.Status = "Completed";
             episode.UpdatedAtUtc = DateTime.UtcNow;
             await _context.SaveChangesAsync(ct);
@@ -273,7 +277,9 @@ public class FilmRendererService : IFilmRendererService
 
     // ─────────────────────────────── Voices ───────────────────────────────
 
-    private async Task EnsureVoicesAsync(FilmEpisode episode, IReadOnlyList<FilmShot> shots, CancellationToken ct)
+    /// <param name="beforeGpu">True when voices are recorded before a GPU batch: a lost voice may then be
+    /// re-recorded, because the batch re-syncs the mouth to it. After the GPU (assembly) it must not be.</param>
+    private async Task EnsureVoicesAsync(FilmEpisode episode, IReadOnlyList<FilmShot> shots, CancellationToken ct, bool beforeGpu = false)
     {
         var project = episode.FilmProject!;
         var voices = project.Characters.ToDictionary(c => c.CharacterId, c => c.VoiceModel, StringComparer.OrdinalIgnoreCase);
@@ -283,6 +289,12 @@ public class FilmRendererService : IFilmRendererService
         foreach (var shot in shots.Where(s => !string.IsNullOrWhiteSpace(s.DialogueText)))
         {
             if (!string.IsNullOrWhiteSpace(shot.AudioVoicePath) && File.Exists(shot.AudioVoicePath)) continue;
+            if (shot.VisualMethod == FilmShotPlanner.LipSyncMethod && beforeGpu)
+                shot.VisualMethod = FilmShotPlanner.DefaultMethod; // old sync is void; the new batch re-syncs
+            else if (shot.VisualMethod == FilmShotPlanner.LipSyncMethod)
+                throw new InvalidOperationException(
+                    $"Giọng gốc của shot {shot.ShotNumber} (cảnh {shot.FilmScene?.SceneNumber}) đã khớp khẩu hình nhưng file giọng bị mất. " +
+                    "Thu giọng mới sẽ lệch miệng — bấm \"Dựng tập\" để gửi lại lên GPU (thu giọng + khớp khẩu hình lại).");
 
             var voice = shot.SpeakerCharacterId != null && voices.TryGetValue(shot.SpeakerCharacterId, out var v) && GeminiFilmVoices.IsGeminiVoice(v)
                 ? v
@@ -348,7 +360,15 @@ public class FilmRendererService : IFilmRendererService
         var clip = !string.IsNullOrWhiteSpace(shot.MotionVideoPath) && File.Exists(shot.MotionVideoPath) ? shot.MotionVideoPath : null;
         string video;
         string visualInput;
-        if (clip != null)
+        if (clip != null && shot.VisualMethod == FilmShotPlanner.LipSyncMethod && hasVoice)
+        {
+            // Lip-synced clip: its mouth is timed to this exact voice file, so it is used from frame 0 at its
+            // own speed — no 85% trim, no slow-down. Only the 0.25 s gap after the line is held on the last frame.
+            video = $"[0:v]setpts=PTS-STARTPTS,scale={w}:{h}:force_original_aspect_ratio=increase:flags=lanczos,crop={w}:{h},setsar=1," +
+                    $"unsharp=5:5:0.6:5:5:0.0,fps={Fps},tpad=stop_mode=clone:stop_duration={d},trim=end_frame={frames},format=yuv420p{fades}[v]";
+            visualInput = $"-i \"{clip}\"";
+        }
+        else if (clip != null)
         {
             // Real motion clip: upscale to the delivery size, sharpen lightly, slow it down a little when the line
             // is longer than the clip (max 1.5x) and hold the last frame for whatever remains.

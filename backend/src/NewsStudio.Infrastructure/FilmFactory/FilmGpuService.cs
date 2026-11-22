@@ -129,7 +129,8 @@ public class FilmGpuService
             var bundleDir = Directory.CreateDirectory(Path.Combine(Root, "gpu", batchId, "bundle")).FullName;
             var jobs = BuildJobs(episode, bundleDir);
             await File.WriteAllTextAsync(Path.Combine(bundleDir, "jobs.json"),
-                JsonSerializer.Serialize(new { batch_id = batchId, jobs }, new JsonSerializerOptions { WriteIndented = true }), ct);
+                JsonSerializer.Serialize(new { batch_id = batchId, jobs, lipsync = LipSyncSpec(), qc = QcSpec() },
+                    new JsonSerializerOptions { WriteIndented = true }), ct);
 
             var reference = await _backend.SubmitAsync(bundleDir, batchId, ct);
             episode.GpuBatchRef = reference;
@@ -238,23 +239,59 @@ public class FilmGpuService
             jobs.Add(job);
         }
 
+        var lipSyncOn = LipSyncEnabled;
         foreach (var shot in shots.Where(s => s.UseMotion))
         {
-            var motionPrompt = (string.IsNullOrWhiteSpace(shot.MotionPrompt) ? "subtle natural movement" : shot.MotionPrompt!)
-                         + ", smooth natural motion, stable face and eyes, highly detailed photorealistic, cinematic camera";
+            var sync = lipSyncOn && FilmShotPlanner.IsOnCameraSpeech(shot);
+            var (motionPrompt, negative) = FilmShotPlanner.MotionPrompts(shot, lipSyncOn);
             jobs.Add(new()
             {
                 ["id"] = $"motion_{shot.Id:N}", ["type"] = "motion", ["out"] = $"motion_{shot.Id:N}.mp4",
                 ["image"] = $"frame_{Hash(shot.VisualPrompt + project.AspectRatio)}.jpg",
                 ["prompt"] = motionPrompt,
-                ["negative"] = "worst quality, blurry, jittery, distorted face, deformed face, morphing face, melting face, asymmetrical eyes, open mouth, screaming, grimace, deformed, extra limbs, morphing body, text, watermark",
-                ["seconds"] = Math.Round(Math.Clamp(shot.DurationSeconds / 0.85, 2, 5), 1),
+                ["negative"] = negative,
+                ["seconds"] = FilmShotPlanner.MotionSeconds(shot, sync),
                 ["width"] = landscape ? 832 : 480, ["height"] = landscape ? 480 : 832,
                 ["seed"] = Seed(shot.Id.ToString())
+            });
+
+            if (!sync) continue;
+            // The approved master voice travels with the batch; the worker only reads it to drive the mouth.
+            var voiceName = $"voice_{shot.Id:N}{Path.GetExtension(shot.AudioVoicePath)}";
+            File.Copy(shot.AudioVoicePath!, Path.Combine(bundleDir, voiceName), true);
+            jobs.Add(new()
+            {
+                ["id"] = LipSyncName(shot), ["type"] = "lipsync", ["out"] = LipSyncName(shot),
+                ["video"] = $"motion_{shot.Id:N}.mp4",
+                ["audio"] = voiceName,
+                ["seed"] = Seed("lipsync" + shot.Id)
             });
         }
         return jobs;
     }
+
+    /// <summary>Lip sync is opt-in until benchmark Test A passes on the rented GPU (Film:LipSync:Enabled).</summary>
+    public bool LipSyncEnabled => _configuration.GetValue("Film:LipSync:Enabled", false);
+
+    /// <summary>Output name carries a hash of the voice file, so a re-recorded line never reuses an old sync.</summary>
+    private static string LipSyncName(FilmShot shot) => $"lipsync_{shot.Id:N}_{Hash(shot.AudioVoicePath ?? "")}.mp4";
+
+    /// <summary>Lip-sync settings and QC thresholds sent with the batch (jobs.json "lipsync" / "qc").</summary>
+    private object LipSyncSpec() => new
+    {
+        steps = _configuration.GetValue("Film:LipSync:Steps", 20),
+        guidance = _configuration.GetValue("Film:LipSync:Guidance", 1.5),
+        deepcache = _configuration.GetValue("Film:LipSync:DeepCache", true),
+        max_attempts = _configuration.GetValue("Film:LipSync:MaxAttempts", 2)
+    };
+
+    private object QcSpec() => new
+    {
+        sync_conf_pass = _configuration.GetValue("Film:Qc:SyncConfPass", 6.0),
+        sync_conf_reject = _configuration.GetValue("Film:Qc:SyncConfReject", 3.0),
+        sync_offset_pass = _configuration.GetValue("Film:Qc:SyncOffsetPass", 1),
+        sync_offset_reject = _configuration.GetValue("Film:Qc:SyncOffsetReject", 3)
+    };
 
     // ─────────────────────────────── Ingest ───────────────────────────────
 
@@ -334,12 +371,47 @@ public class FilmGpuService
             var dest = Path.Combine(motionDir, $"{s.Id:N}.mp4");
             File.Copy(file, dest, true);
             s.MotionVideoPath = dest;
+            s.VisualMethod = FilmShotPlanner.DefaultMethod;
             s.RenderStatus = "Pending";
         }
         if (motionErrors.Count > 0)
         {
             throw new InvalidOperationException($"Lỗi GPU không tạo được chuyển động video ({motionErrors.Count}/{shots.Count(s => s.UseMotion)} clips): {motionErrors.First()}");
         }
+
+        // Lip sync: only shots that had a lipsync job in this batch. A failed sync stops the episode (a talking
+        // mouth that does not match the voice is worse than none); QC verdicts are reported, not hidden.
+        var syncErrors = new List<string>();
+        var qcNotes = new List<string>();
+        foreach (var s in shots)
+        {
+            var id = LipSyncName(s);
+            if (!jobResults.TryGetProperty(id, out var r)) continue;
+            var file = Ok(id);
+            if (file == null)
+            {
+                syncErrors.Add($"shot {s.ShotNumber}: {Error(id)}");
+                continue;
+            }
+            var dest = Path.Combine(motionDir, $"{s.Id:N}_lipsync.mp4");
+            File.Copy(file, dest, true);
+            s.MotionVideoPath = dest;
+            s.VisualMethod = FilmShotPlanner.LipSyncMethod;
+            s.RenderStatus = "Pending";
+
+            if (r.TryGetProperty("qc_sync", out var q))
+            {
+                var verdict = q.TryGetProperty("verdict", out var v) ? v.GetString() : "NOT_MEASURED";
+                var conf = q.TryGetProperty("confidence", out var c) && c.ValueKind == JsonValueKind.Number ? c.GetDouble().ToString("0.00") : "?";
+                var off = q.TryGetProperty("av_offset_frames", out var o) && o.ValueKind == JsonValueKind.Number ? o.GetInt32().ToString() : "?";
+                _logger.LogInformation("Episode {Num} shot {Shot}: lip-sync QC {Verdict} (SyncNet conf {Conf}, offset {Off} frames)",
+                    episode.EpisodeNumber, s.ShotNumber, verdict, conf, off);
+                if (verdict != "PASS")
+                    qcNotes.Add($"cảnh {s.FilmScene?.SceneNumber}/shot {s.ShotNumber}: {verdict} (conf {conf}, lệch {off} khung)");
+            }
+        }
+        if (syncErrors.Count > 0)
+            throw new InvalidOperationException($"Lỗi khớp khẩu hình ({syncErrors.Count} shot): {string.Join(" | ", syncErrors.Take(3))}");
         await _context.SaveChangesAsync(ct);
 
         try { Directory.Delete(Path.Combine(Root, "gpu", batchId), true); } catch { /* best effort */ }
@@ -347,9 +419,11 @@ public class FilmGpuService
         var env = root.TryGetProperty("env", out var en) ? en.GetRawText() : "";
         _logger.LogInformation("Episode {Num}: GPU batch ingested ({Frames} frames, {Clips} clips, {Failed} clip errors) {Env}",
             episode.EpisodeNumber, shots.Select(s => s.VisualPrompt).Distinct().Count(), shots.Count(s => s.MotionVideoPath != null), motionErrors.Count, env);
-        return motionErrors.Count == 0
+        // QC thresholds are provisional until calibrated on benchmark Test A, so non-PASS shots are reported
+        // for a human check instead of silently passing or blocking the episode.
+        return qcNotes.Count == 0
             ? null
-            : $"Cảnh báo: {motionErrors.Count} clip chuyển động lỗi nên dùng ảnh tĩnh thay thế ({motionErrors[0]}).";
+            : $"Kiểm tra khẩu hình (SyncNet) chưa đạt ở {qcNotes.Count} shot — cần xem lại bằng mắt: {string.Join("; ", qcNotes.Take(6))}";
     }
 
     // ─────────────────────────────── Helpers ───────────────────────────────
