@@ -124,6 +124,23 @@ public class StudioTests
     }
 
     [Fact]
+    public async Task Grok_recover_downloads_a_paid_clip_again_without_a_new_job()
+    {
+        var xai = new FakeXai();
+        xai.Old["paid1"] = """{"status":"done","video":{"url":"https://vidgen.x.ai/paid1/video.mp4","respect_moderation":true}}""";
+        xai.Old["gone1"] = """{"status":"expired"}""";
+
+        var got = await Client(xai).TryRecoverAsync("paid1", CancellationToken.None);
+        var expired = await Client(xai).TryRecoverAsync("gone1", CancellationToken.None);
+        var unknown = await Client(xai).TryRecoverAsync("never", CancellationToken.None);
+
+        got!.Value.Bytes.Should().Equal(FakeXai.VideoBytes);
+        expired.Should().BeNull();
+        unknown.Should().BeNull();
+        xai.Starts.Should().Be(0); // recovering never pays for a new clip
+    }
+
+    [Fact]
     public async Task Grok_busy_is_transient()
     {
         var xai = new FakeXai { StartStatus = (System.Net.HttpStatusCode)429 };

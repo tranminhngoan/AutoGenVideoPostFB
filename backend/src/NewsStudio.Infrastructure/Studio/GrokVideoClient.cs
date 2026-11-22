@@ -219,6 +219,18 @@ public class GrokVideoClient
         return null;
     }
 
+    /// <summary>
+    /// Downloads the clip of an earlier, already-paid job again. Never submits anything new, so it costs nothing:
+    /// null when xAI no longer has it (unknown id, failed / filtered job, expired link).
+    /// </summary>
+    public async Task<(byte[] Bytes, string Mime)?> TryRecoverAsync(string requestId, CancellationToken ct)
+    {
+        var key = ApiKey(_configuration) ?? throw new InvalidOperationException("Chưa có khoá xAI (biến XAI_API_KEY trên Railway).");
+        var status = await WaitAsync(requestId, key, ct);
+        if (status is not { Status: "done", VideoUrl: not null } || status.RespectModeration == false) return null;
+        return await TryDownloadAsync(status.VideoUrl, ct);
+    }
+
     private async Task<string> StartAsync(string key, Dictionary<string, object> body, CancellationToken ct)
     {
         using var start = new HttpRequestMessage(HttpMethod.Post, $"{BaseUrl}/generations") { Content = JsonContent.Create(body) };

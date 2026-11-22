@@ -198,6 +198,10 @@ public class StudioController : ControllerBase
     public async Task<IActionResult> GenerateShot(Guid id, Guid shotId, CancellationToken ct) =>
         Denied() ?? await Run(async () => await _studio.StartGenerateAsync(id, shotId, ct));
 
+    [HttpPost("videos/{id:guid}/recover-clips")]
+    public async Task<IActionResult> RecoverClips(Guid id, CancellationToken ct) =>
+        Denied() ?? await Run(async () => await _studio.StartRecoverAsync(id, ct));
+
     [HttpPost("videos/{id:guid}/compose")]
     public async Task<IActionResult> Compose(Guid id, CancellationToken ct) =>
         Denied() ?? await Run(async () => await _studio.StartComposeAsync(id, ct));

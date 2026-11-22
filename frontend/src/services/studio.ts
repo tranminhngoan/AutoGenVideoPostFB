@@ -232,6 +232,7 @@ export const studio = {
   generate: (id: string) => call<StudioVideo>('POST', `/videos/${id}/generate`),
   generateShot: (id: string, shotId: string) => call<StudioVideo>('POST', `/videos/${id}/shots/${shotId}/generate`),
   compose: (id: string) => call<StudioVideo>('POST', `/videos/${id}/compose`),
+  recoverClips: (id: string) => call<StudioVideo>('POST', `/videos/${id}/recover-clips`),
   publish: (id: string, caption: string) => call<StudioVideo>('POST', `/videos/${id}/publish`, { caption }),
   purgeClips: (id: string) => call<StudioVideo>('POST', `/videos/${id}/purge-clips`),
   finalUrl: (id: string, download = false) => `${BASE}/videos/${id}/final${download ? '?download=true' : ''}`,

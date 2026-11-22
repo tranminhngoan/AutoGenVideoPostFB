@@ -262,6 +262,16 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
 
   const compose = () => guarded('compose', async () => applyVideo(await studio.compose(videoId!), true));
 
+  const recover = () =>
+    guarded('recover', async () => {
+      if (!(await confirm({
+        title: 'Lấy lại các clip đã trả tiền?',
+        description: 'Tải lại từ xAI những clip đã tạo nhưng bị mất file (server khởi động lại). Miễn phí — không tạo clip mới. Lấy đủ thì tự ghép video; clip nào xAI không còn giữ sẽ được báo để anh quyết định tạo lại.',
+        confirmLabel: 'Lấy lại (miễn phí)',
+      }))) return;
+      applyVideo(await studio.recoverClips(videoId!), true);
+    });
+
   const publish = () =>
     guarded('publish', async () => {
       const page = pages.find((p) => p.id === form.facebookAccountId);
@@ -567,6 +577,13 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
                 disabled={locked || video.shots.length === 0 || video.shots.some((s) => !s.hasClip)} onClick={compose}>
                 Ghép lại (đổi nhạc / thứ tự)
               </Button>
+              {(video.status === 'Composing' || video.status === 'Failed' || video.shots.some((s) => !s.hasClip) || video.shots.some((s) => s.errorMessage?.includes('mất'))) && (
+                <Button variant="secondary" icon={<RefreshCw className="h-4 w-4" />} loading={busy === 'recover'}
+                  disabled={!!busy || (serverBusy && video.status !== 'Composing')} onClick={recover}
+                  title="Tải lại từ xAI các clip đã trả tiền nhưng bị mất file — không tốn tiền">
+                  Lấy lại clip đã trả tiền (miễn phí)
+                </Button>
+              )}
             </div>
             {video.hasFinal && (
               <div className="space-y-2">

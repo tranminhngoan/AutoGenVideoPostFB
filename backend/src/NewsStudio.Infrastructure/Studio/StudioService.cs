@@ -864,6 +864,91 @@ Trả về JSON:
         return sb.ToString();
     }
 
+    // ═══════════════════════════════ Recovering ═══════════════════════════════
+
+    /// <summary>
+    /// Gets back clips whose files were lost (app disk wiped by a redeploy / restart) by downloading the already-paid
+    /// xAI jobs again — free, nothing new is generated. Allowed while a compose run is stuck, since that run is dead.
+    /// </summary>
+    public async Task<StudioVideoDto> StartRecoverAsync(Guid id, CancellationToken ct)
+    {
+        var v = await _db.StudioVideos.Include(x => x.Shots).FirstOrDefaultAsync(x => x.Id == id, ct) ?? throw new KeyNotFoundException("Không tìm thấy video.");
+        if (v.Status is "Planning" or "Generating" or "Publishing")
+            throw new InvalidOperationException($"Video đang trong bước \"{v.Status}\" — chờ xong rồi thao tác tiếp.");
+        if (!v.Shots.Any(s => !string.IsNullOrEmpty(s.InteractionId)))
+            throw new InvalidOperationException("Video chưa có clip nào từng được tạo trên xAI để lấy lại.");
+        v.Status = "Generating";
+        v.Progress = "Đang lấy lại các clip đã trả tiền từ xAI (miễn phí)…";
+        v.ErrorMessage = null;
+        await _db.SaveChangesAsync(ct);
+        _jobs.Enqueue<StudioService>(s => s.RunRecoverAsync(id, CancellationToken.None));
+        return await GetVideoAsync(id, ct);
+    }
+
+    [Queue("render")]
+    [AutomaticRetry(Attempts = 0)]
+    [DisableConcurrentExecution(3600)]
+    public async Task RunRecoverAsync(Guid id, CancellationToken ct)
+    {
+        var v = await _db.StudioVideos.Include(x => x.Shots).FirstOrDefaultAsync(x => x.Id == id, ct);
+        if (v == null || v.Status != "Generating") return;
+        var shots = v.Shots.OrderBy(s => s.Index).ToList();
+        var lost = new List<StudioShot>();
+        foreach (var s in shots)
+            if (s.ClipBlobId == null || await GetBlobAsync(s.ClipBlobId.Value, ct) == null) lost.Add(s);
+
+        int recovered = 0, done = 0;
+        var gone = new List<int>();
+        foreach (var s in lost)
+        {
+            v.Progress = $"Đang lấy lại clip {++done}/{lost.Count} (shot {s.Index}) từ xAI — miễn phí…";
+            await _db.SaveChangesAsync(ct);
+            (byte[] Bytes, string Mime)? file = null;
+            if (!string.IsNullOrEmpty(s.InteractionId))
+            {
+                try { file = await _video.TryRecoverAsync(s.InteractionId, ct); }
+                catch (Exception ex) when (ex is not OperationCanceledException) { _logger.LogWarning(ex, "Recover shot {Index}", s.Index); }
+            }
+            if (s.ClipBlobId != null) await DeleteBlobAsync(s.ClipBlobId.Value, ct);
+            if (file is { } f)
+            {
+                var b = await StoreOnDiskAsync(f.Bytes, f.Mime, ct);
+                s.ClipBlobId = b.Id;
+                s.Status = "Done";
+                s.ErrorMessage = null;
+                recovered++;
+            }
+            else
+            {
+                s.ClipBlobId = null;
+                s.Status = "Pending";
+                s.InteractionId = null; // nothing left to fetch: the next "Tạo" makes a new (paid) clip
+                s.ErrorMessage = "xAI không còn giữ clip này (link hết hạn) — cần tạo lại shot (tốn tiền).";
+                gone.Add(s.Index);
+            }
+            await _db.SaveChangesAsync(ct);
+        }
+
+        if (gone.Count == 0)
+        {
+            if (v.FinalBlobId != null && await GetBlobAsync(v.FinalBlobId.Value, ct) == null)
+            {
+                await DeleteBlobAsync(v.FinalBlobId.Value, ct);
+                v.FinalBlobId = null;
+            }
+            v.Progress = $"Đã lấy lại {recovered} clip — đang ghép video…";
+            await _db.SaveChangesAsync(ct);
+            await ComposeInternalAsync(v, ct);
+            return;
+        }
+        v.Status = "Failed";
+        v.Progress = null;
+        var cost = gone.Sum(i => ShotCost(v, shots.First(s => s.Index == i)));
+        v.ErrorMessage = $"Lấy lại được {recovered}/{lost.Count} clip miễn phí. Shot {string.Join(", ", gone)} đã hết hạn trên xAI — " +
+                         $"bấm \"Tạo các clip còn thiếu\" để tạo lại (~{cost:0.00} USD).";
+        await _db.SaveChangesAsync(ct);
+    }
+
     // ═══════════════════════════════ Composing ═══════════════════════════════
 
     public async Task<StudioVideoDto> StartComposeAsync(Guid id, CancellationToken ct)
