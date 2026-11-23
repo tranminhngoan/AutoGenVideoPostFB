@@ -498,9 +498,9 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
           <div className="flex items-center gap-2 text-sm font-semibold text-fg">
             <Clapperboard className="h-4 w-4" /> 1. Thông tin video
           </div>
-          <Button variant="secondary" size="sm" icon={<Sparkles className="h-3.5 w-3.5 text-amber-400" />} onClick={() => setShowDramaPicker(true)}
-            className="border-amber-500/40 text-amber-300 hover:bg-amber-500/10 text-xs font-medium">
-            📜 Chọn Kịch Bản Ký Ức Tuổi Thơ 8x 9x
+          <Button variant="secondary" size="sm" icon={<Sparkles className="h-3.5 w-3.5 text-fg-muted" />} onClick={() => setShowDramaPicker(true)}
+            className="text-xs font-medium">
+            📜 Kịch bản ký ức tuổi thơ (300)
           </Button>
         </div>
         <div className="grid gap-3 sm:grid-cols-2">
@@ -893,18 +893,18 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
 
       {/* Childhood Nostalgia Scripts Picker Modal */}
       {showDramaPicker && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm">
-          <Card className="max-h-[88vh] w-full max-w-3xl overflow-y-auto p-5 space-y-4 shadow-2xl border-amber-500/30">
-            <div className="flex items-center justify-between border-b border-line pb-3">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-0 sm:p-4 backdrop-blur-sm">
+          <Card className="h-full sm:h-auto sm:max-h-[85vh] w-full max-w-2xl flex flex-col p-4 sm:p-5 space-y-3.5 shadow-2xl border-line bg-surface sm:rounded-2xl overflow-hidden">
+            <div className="flex items-start justify-between border-b border-line pb-3">
               <div>
-                <h4 className="font-bold text-fg text-base flex items-center gap-2">
-                  <Sparkles className="h-4 w-4 text-amber-400" /> Kho Kịch Bản Ký Ức Tuổi Thơ 8x 9x (300 Kịch Bản)
+                <h4 className="font-bold text-fg text-sm sm:text-base flex items-center gap-2">
+                  <Sparkles className="h-4 w-4 text-fg-muted" /> Thư viện kịch bản ký ức tuổi thơ (300)
                 </h4>
                 <p className="text-xs text-fg-subtle">
-                  Chọn kịch bản để tự động nạp toàn bộ 5 phân cảnh chuẩn AI và lời dẫn vào Studio.
+                  Chọn kịch bản để nạp toàn bộ 5 phân cảnh chuẩn AI và lời dẫn vào Studio.
                 </p>
               </div>
-              <Button variant="ghost" size="sm" onClick={() => setShowDramaPicker(false)}>
+              <Button variant="ghost" size="sm" onClick={() => setShowDramaPicker(false)} className="text-xs">
                 ✕ Đóng
               </Button>
             </div>
@@ -913,15 +913,15 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
             <div className="flex flex-col sm:flex-row gap-2">
               <input
                 type="text"
-                placeholder="Tìm kịch bản: cơm độn, kem mút, diều, mẹ vá áo, dép tổ ong..."
+                placeholder="Tìm kịch bản: cơm độn, kem mút, diều, mẹ vá áo..."
                 value={pickerQuery}
                 onChange={(e) => setPickerQuery(e.target.value)}
-                className="flex-1 rounded-md border border-line bg-canvas px-3 py-1.5 text-xs text-fg focus:outline-none focus:border-brand"
+                className="flex-1 rounded-lg border border-line bg-canvas px-3 py-2 text-xs text-fg focus:outline-none focus:border-fg/40"
               />
               <select
                 value={pickerCategory}
                 onChange={(e) => setPickerCategory(e.target.value)}
-                className="rounded-md border border-line bg-canvas px-2.5 py-1.5 text-xs text-fg focus:outline-none"
+                className="rounded-lg border border-line bg-canvas px-2.5 py-2 text-xs text-fg focus:outline-none"
               >
                 <option value="all">Tất cả 6 chủ đề ({ALL_NOSTALGIA_SCRIPTS.length})</option>
                 {NOSTALGIA_CATEGORIES.map((cat) => (
@@ -933,25 +933,25 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
             </div>
 
             {/* Script List */}
-            <div className="space-y-2 max-h-[50vh] overflow-y-auto pr-1">
+            <div className="space-y-2 flex-1 overflow-y-auto pr-1">
               {filteredPickerScripts.slice(0, 50).map((script) => (
                 <div
                   key={script.id}
-                  className="rounded-lg border border-line p-3 hover:border-amber-500/50 hover:bg-muted/30 transition-all flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 group"
+                  className="rounded-lg border border-line p-3 hover:border-line-strong hover:bg-subtle transition-all flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5 group"
                 >
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-1.5">
-                      <span className="font-mono text-[10px] font-semibold text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded">
+                  <div className="space-y-1 pr-2">
+                    <div className="flex items-center gap-1.5 text-xs">
+                      <span className="font-mono text-[10px] font-medium text-fg-muted bg-muted px-1.5 py-0.5 rounded">
                         {script.code}
                       </span>
                       <span className="text-[10px] text-fg-subtle">
                         {script.region} • {script.era}
                       </span>
-                      <span className="text-[10px] text-rose-400 font-medium">
+                      <span className="text-[10px] text-fg-muted">
                         {script.mood}
                       </span>
                     </div>
-                    <h5 className="font-semibold text-fg text-xs group-hover:text-amber-300 transition-colors">
+                    <h5 className="font-semibold text-fg text-xs group-hover:text-fg transition-colors">
                       {script.title}
                     </h5>
                     <p className="text-[11px] text-fg-subtle line-clamp-1 italic">
@@ -963,15 +963,15 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
                     variant="primary"
                     size="sm"
                     onClick={() => applyNostalgiaScript(script)}
-                    className="shrink-0 text-xs bg-emerald-600 hover:bg-emerald-500 text-white font-medium"
+                    className="shrink-0 text-xs w-full sm:w-auto font-medium"
                   >
-                    ⚡ Nạp Kịch Bản Này
+                    Dùng kịch bản
                   </Button>
                 </div>
               ))}
               {filteredPickerScripts.length > 50 && (
                 <p className="text-center text-xs text-fg-subtle py-2">
-                  Đang hiển thị 50 / {filteredPickerScripts.length} kết quả. Hãy dùng ô tìm kiếm để lọc chính xác hơn.
+                  Đang hiển thị 50 / {filteredPickerScripts.length} kết quả. Dùng ô tìm kiếm để lọc nhanh hơn.
                 </p>
               )}
             </div>

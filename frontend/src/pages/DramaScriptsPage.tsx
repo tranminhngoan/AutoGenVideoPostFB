@@ -1,41 +1,29 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import {
   Search,
-  Sparkles,
   Copy,
   Check,
   Download,
-  Upload,
   Trash2,
-  Edit3,
-  ArrowRight,
-  ExternalLink,
   Clapperboard,
   Clock,
   Volume2,
-  Video,
   Eye,
-  RefreshCw,
   Wand2,
-  Plus,
   Heart,
   FileText,
-  ChevronRight,
-  SlidersHorizontal,
   Bookmark,
-  Share2,
   Film,
   Camera,
-  MapPin,
-  Calendar,
   Layers,
+  X,
+  RotateCcw,
 } from 'lucide-react';
 import {
   Badge,
   Button,
   Card,
   Field,
-  Input,
   PageHeader,
   Select,
   Textarea,
@@ -47,8 +35,6 @@ import {
   ALL_NOSTALGIA_SCRIPTS,
   NOSTALGIA_CATEGORIES,
   NostalgiaScript,
-  NostalgiaScene,
-  NostalgiaCategoryKey,
   getNostalgiaScriptById,
 } from '../data/nostalgiaScriptLibrary';
 import {
@@ -99,23 +85,18 @@ export function DramaScriptsPage() {
   // Filtered scripts in Library
   const filteredScripts = useMemo(() => {
     return ALL_NOSTALGIA_SCRIPTS.filter((script) => {
-      // Category filter
       if (selectedCategory !== 'all' && script.category !== selectedCategory) {
         return false;
       }
-      // Region filter
       if (selectedRegion !== 'all' && script.region !== selectedRegion) {
         return false;
       }
-      // Mood filter
       if (selectedMood !== 'all' && script.mood !== selectedMood) {
         return false;
       }
-      // Era filter
       if (selectedEra !== 'all' && script.era !== selectedEra) {
         return false;
       }
-      // Search query (title, code, hook, synopsis, visual details)
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase().trim();
         const inTitle = script.title.toLowerCase().includes(q);
@@ -149,7 +130,7 @@ export function DramaScriptsPage() {
   const handleToggleFavorite = (scriptId: string) => {
     const isFav = nostalgiaStorage.toggleFavorite(scriptId);
     setFavorites(nostalgiaStorage.getFavorites());
-    toast.success(isFav ? 'Đã thêm vào kịch bản yêu thích' : 'Đã bỏ yêu thích');
+    toast.success(isFav ? 'Đã lưu vào yêu thích' : 'Đã bỏ yêu thích');
   };
 
   // 1-Click transfer to Studio Video AI
@@ -163,7 +144,7 @@ export function DramaScriptsPage() {
       sessionStorage.setItem('studio_prefill_duration', String(script.targetDurationSeconds || 120));
       sessionStorage.setItem('studio_prefill_shots', JSON.stringify(convertedShots));
 
-      toast.success(`Đã chuẩn bị 5 phân cảnh chuẩn AI cho "${script.title}". Đang mở Studio...`);
+      toast.success(`Đã nạp 5 phân cảnh của "${script.title}" vào Studio!`);
       navigate('/studio/new');
     } catch (e: any) {
       toast.error('Lỗi khi nạp kịch bản vào Studio: ' + (e?.message || 'Không xác định'));
@@ -173,7 +154,7 @@ export function DramaScriptsPage() {
   // Generate Custom Script
   const handleCreateCustomScript = () => {
     if (!customMemoryText.trim()) {
-      toast.info('Vui lòng nhập một kỷ niệm tuổi thơ của bạn (ví dụ: bữa cơm chiều mưa, chiếc xe đạp đứt xích của cha...)');
+      toast.info('Vui lòng nhập một kỷ niệm tuổi thơ của bạn (ví dụ: bữa cơm chiều mưa, xe đạp đứt xích...)');
       return;
     }
     const script = generateCustomChildhoodScript({
@@ -183,7 +164,7 @@ export function DramaScriptsPage() {
       mood: customMood,
     });
     setGeneratedCustomScript(script);
-    toast.success('Đã sinh thành công kịch bản 5 phân cảnh chi tiết chuẩn 2 phút!');
+    toast.success('Đã sinh kịch bản 5 phân cảnh chuẩn 2 phút!');
   };
 
   // Save generated custom script to LocalStorage
@@ -197,138 +178,147 @@ export function DramaScriptsPage() {
     };
     nostalgiaStorage.saveProject(newProj);
     setSavedProjects(nostalgiaStorage.getSavedProjects());
-    toast.success(`Đã lưu "${script.title}" vào danh sách kịch bản cá nhân!`);
+    toast.success(`Đã lưu "${script.title}" vào mục cá nhân!`);
+  };
+
+  const isFiltered =
+    Boolean(searchQuery) ||
+    selectedCategory !== 'all' ||
+    selectedRegion !== 'all' ||
+    selectedMood !== 'all' ||
+    selectedEra !== 'all';
+
+  const resetFilters = () => {
+    setSearchQuery('');
+    setSelectedCategory('all');
+    setSelectedRegion('all');
+    setSelectedMood('all');
+    setSelectedEra('all');
   };
 
   return (
-    <div className="space-y-6 pb-20">
+    <div className="space-y-4 sm:space-y-6 pb-20">
       {/* Page Header */}
       <PageHeader
-        title="Lên Kịch Bản - Ký Ức Tuổi Thơ 8x 9x"
-        description="Kho 300+ kịch bản hoài niệm tuổi thơ cơ hàn mà bình yên. Tái hiện từng mái nhà tranh, đường đất bùn lầy, bữa cơm độn sắn khoai, áo may ô cháo lòng, đôi dép tổ ong mòn rách. Tối ưu prompt chi tiết từng góc máy, ánh sáng và cử chỉ cho AI Video Generator (Kling AI, Midjourney, Hailuo, Runway Gen-3)."
+        title="Lên kịch bản"
+        description="Kho kịch bản hoài niệm tuổi thơ 8x 9x làng quê Việt Nam. Tái hiện chân thực mái nhà tranh, vách đất, bữa cơm độn sắn khoai, áo may ô cháo lòng, đôi dép tổ ong mòn rách. Tối ưu prompt chi tiết cho AI Video."
         actions={
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-2 w-full sm:w-auto">
             <Button
               variant="secondary"
               size="sm"
               icon={<Download className="h-4 w-4" />}
               onClick={() => nostalgiaStorage.exportBackupJson()}
-              title="Sao lưu toàn bộ kịch bản ra file JSON"
+              className="flex-1 sm:flex-initial text-xs"
             >
-              Sao lưu JSON
+              Sao lưu
             </Button>
             <Button
               variant="primary"
               size="sm"
               icon={<Clapperboard className="h-4 w-4" />}
               onClick={() => navigate('/studio/new')}
+              className="flex-1 sm:flex-initial text-xs font-medium"
             >
-              Mở Studio Video AI
+              Vào Studio
             </Button>
           </div>
         }
       />
 
-      {/* Emotional Nostalgic Banner */}
-      <div className="relative overflow-hidden rounded-xl border border-amber-500/20 bg-gradient-to-r from-amber-950/40 via-surface to-amber-900/20 p-4 sm:p-5 shadow-sm">
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-          <div className="space-y-1">
-            <div className="flex items-center gap-2">
-              <span className="text-xl">🌾</span>
-              <span className="font-semibold text-amber-200 text-sm sm:text-base">
-                "Bao nhiêu của cải phố thị cũng chẳng thể mua lại được một chiều mưa bên mẹ..."
-              </span>
-            </div>
-            <p className="text-xs text-fg-subtle max-w-3xl leading-relaxed">
-              Mỗi kịch bản gồm đúng <strong>5 phân cảnh chuẩn 2 phút</strong>, mô tả chân thực từ vết nứt tường vách đất, vệt muối mồ hôi trên lưng áo cha, đến Master Prompt tiếng Anh chuyên biệt cho các mô hình AI tạo video thế hệ mới.
-            </p>
+      {/* Gentle & Calming Banner */}
+      <div className="rounded-xl border border-line bg-subtle p-3.5 sm:p-4 text-xs sm:text-sm text-fg-muted flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+        <div className="space-y-0.5">
+          <div className="flex items-center gap-2 text-fg font-medium">
+            <span className="text-base">🌾</span>
+            <span>"Bao nhiêu của cải phố thị cũng chẳng thể mua lại được một chiều mưa bên mẹ..."</span>
           </div>
-          <div className="flex items-center gap-2 shrink-0">
-            <Badge tone="success" className="font-mono text-xs">
-              300 Kịch bản chuẩn 8x 9x
-            </Badge>
-            <Badge tone="info" className="text-xs">
-              0% Database (Tiết kiệm RAM)
-            </Badge>
-          </div>
+          <p className="text-xs text-fg-subtle">
+            300 kịch bản chuẩn 2 phút (5 phân cảnh). Đầy đủ mô tả tiếng Việt và Master Prompt tiếng Anh cho Kling AI, Midjourney, Hailuo.
+          </p>
+        </div>
+        <div className="flex items-center gap-2 shrink-0 text-xs">
+          <Badge tone="neutral" className="text-[11px] font-mono">
+            300 Kịch bản
+          </Badge>
+          <Badge tone="neutral" className="text-[11px]">
+            Lưu offline
+          </Badge>
         </div>
       </div>
 
-      {/* Main Tabs Navigation */}
-      <div className="flex border-b border-line gap-2 overflow-x-auto pb-1 text-sm font-medium">
+      {/* Main Tabs Navigation (Touch Friendly on Mobile) */}
+      <div className="-mx-4 sm:mx-0 px-4 sm:px-0 flex gap-2 border-b border-line overflow-x-auto no-scrollbar pb-1 text-xs sm:text-sm font-medium">
         <button
           type="button"
           onClick={() => setActiveTab('library')}
           className={cn(
-            'flex items-center gap-2 px-4 py-2.5 border-b-2 transition-colors whitespace-nowrap',
+            'flex items-center gap-2 px-3.5 py-2.5 border-b-2 transition-colors whitespace-nowrap',
             activeTab === 'library'
-              ? 'border-brand text-brand font-semibold'
+              ? 'border-fg text-fg font-semibold'
               : 'border-transparent text-fg-muted hover:text-fg hover:border-line'
           )}
         >
           <Layers className="h-4 w-4" />
-          <span>Thư Viện 300 Kịch Bản (6 Chủ Đề)</span>
-          <span className="rounded-full bg-brand/10 px-2 py-0.5 text-xs text-brand">300</span>
+          <span>Thư viện 300 kịch bản</span>
+          <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-fg-muted">300</span>
         </button>
 
         <button
           type="button"
           onClick={() => setActiveTab('custom')}
           className={cn(
-            'flex items-center gap-2 px-4 py-2.5 border-b-2 transition-colors whitespace-nowrap',
+            'flex items-center gap-2 px-3.5 py-2.5 border-b-2 transition-colors whitespace-nowrap',
             activeTab === 'custom'
-              ? 'border-brand text-brand font-semibold'
+              ? 'border-fg text-fg font-semibold'
               : 'border-transparent text-fg-muted hover:text-fg hover:border-line'
           )}
         >
           <Wand2 className="h-4 w-4" />
-          <span>Tạo Kịch Bản Ký Ức Riêng</span>
-          <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-xs text-amber-400">AI Viết</span>
+          <span>Tạo theo ký ức riêng</span>
         </button>
 
         <button
           type="button"
           onClick={() => setActiveTab('saved')}
           className={cn(
-            'flex items-center gap-2 px-4 py-2.5 border-b-2 transition-colors whitespace-nowrap',
+            'flex items-center gap-2 px-3.5 py-2.5 border-b-2 transition-colors whitespace-nowrap',
             activeTab === 'saved'
-              ? 'border-brand text-brand font-semibold'
+              ? 'border-fg text-fg font-semibold'
               : 'border-transparent text-fg-muted hover:text-fg hover:border-line'
           )}
         >
           <Bookmark className="h-4 w-4" />
-          <span>Kịch Bản Đã Lưu & Yêu Thích</span>
-          <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-fg-muted">
+          <span>Đã lưu & Yêu thích</span>
+          <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-fg-muted">
             {savedProjects.length + favorites.length}
           </span>
         </button>
       </div>
 
-      {/* TAB 1: THƯ VIỆN KỊCH BẢN (6 CHỦ ĐỀ) */}
+      {/* TAB 1: THƯ VIỆN 300 KỊCH BẢN */}
       {activeTab === 'library' && (
-        <div className="space-y-6">
-          {/* Category Chips Bar */}
+        <div className="space-y-4 sm:space-y-5">
+          {/* Category Chips Bar (Mobile friendly horizontal scroll) */}
           <div className="space-y-2">
-            <div className="text-xs font-semibold text-fg-muted uppercase tracking-wider">
-              Chọn chủ đề ký ức thời 8x 9x (Mỗi chủ đề 50 kịch bản):
+            <div className="flex items-center justify-between text-xs text-fg-subtle px-0.5">
+              <span>Chủ đề (50 kịch bản / chủ đề):</span>
+              <span className="text-[11px] text-fg-muted sm:hidden">Vuốt sang để xem thêm →</span>
             </div>
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5">
+
+            <div className="-mx-4 sm:mx-0 px-4 sm:px-0 flex gap-2 overflow-x-auto no-scrollbar pb-1">
               <button
                 type="button"
                 onClick={() => setSelectedCategory('all')}
                 className={cn(
-                  'flex flex-col items-start p-3 rounded-lg border text-left transition-all',
+                  'px-3 py-2 rounded-lg border text-xs font-medium whitespace-nowrap transition-all flex items-center gap-1.5 shrink-0',
                   selectedCategory === 'all'
-                    ? 'border-brand bg-brand/10 shadow-sm'
-                    : 'border-line bg-surface hover:bg-muted/50'
+                    ? 'border-fg bg-surface text-fg shadow-sm'
+                    : 'border-line bg-surface/50 text-fg-muted hover:text-fg hover:bg-surface'
                 )}
               >
-                <div className="flex items-center justify-between w-full mb-1">
-                  <span className="text-lg">✨</span>
-                  <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-muted text-fg-muted">Tất cả</span>
-                </div>
-                <div className="font-semibold text-xs text-fg">Toàn Bộ Ký Ức</div>
-                <div className="text-[11px] text-fg-subtle line-clamp-1">300 kịch bản tổng hợp</div>
+                <span>✨</span>
+                <span>Tất cả (300)</span>
               </button>
 
               {NOSTALGIA_CATEGORIES.map((cat) => (
@@ -337,201 +327,181 @@ export function DramaScriptsPage() {
                   type="button"
                   onClick={() => setSelectedCategory(cat.id)}
                   className={cn(
-                    'flex flex-col items-start p-3 rounded-lg border text-left transition-all',
+                    'px-3 py-2 rounded-lg border text-xs font-medium whitespace-nowrap transition-all flex items-center gap-1.5 shrink-0',
                     selectedCategory === cat.id
-                      ? 'border-brand bg-brand/10 shadow-sm ring-1 ring-brand/30'
-                      : 'border-line bg-surface hover:bg-muted/50'
+                      ? 'border-fg bg-surface text-fg shadow-sm'
+                      : 'border-line bg-surface/50 text-fg-muted hover:text-fg hover:bg-surface'
                   )}
                 >
-                  <div className="flex items-center justify-between w-full mb-1">
-                    <span className="text-lg">{cat.icon}</span>
-                    <span className="text-[10px] font-mono font-medium px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-300">
-                      50 KB
-                    </span>
-                  </div>
-                  <div className="font-semibold text-xs text-fg line-clamp-1">{cat.name}</div>
-                  <div className="text-[11px] text-fg-subtle line-clamp-1">{cat.description}</div>
+                  <span>{cat.icon}</span>
+                  <span>{cat.name}</span>
+                  <span className="text-[10px] text-fg-subtle font-mono">(50)</span>
                 </button>
               ))}
             </div>
           </div>
 
-          {/* Search & Advanced Filters */}
-          <div className="flex flex-col lg:flex-row gap-3 items-stretch lg:items-center justify-between rounded-lg border border-line bg-surface p-3.5">
-            <div className="relative flex-1">
+          {/* Search & Mobile Responsive Filters */}
+          <div className="rounded-xl border border-line bg-surface p-3 sm:p-4 space-y-3">
+            {/* Search Input */}
+            <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-fg-subtle" />
               <input
                 type="text"
-                placeholder="Tìm kịch bản theo từ khóa: cơm độn sắn, que kem mút, cánh diều, mẹ vá áo, dép tổ ong, tắm sông..."
+                placeholder="Tìm kịch bản: cơm độn, kem mút, diều, mẹ vá áo, dép tổ ong, tắm sông..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-9 pr-4 py-2 text-sm rounded-md border border-line bg-canvas focus:border-brand focus:outline-none"
+                className="w-full pl-9 pr-8 py-2.5 text-xs sm:text-sm rounded-lg border border-line bg-canvas text-fg placeholder:text-fg-subtle focus:border-fg/40 focus:outline-none transition-colors"
               />
               {searchQuery && (
                 <button
                   type="button"
                   onClick={() => setSearchQuery('')}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-fg-subtle hover:text-fg"
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-fg-subtle hover:text-fg"
                 >
-                  ✕
+                  <X className="h-3.5 w-3.5" />
                 </button>
               )}
             </div>
 
-            <div className="flex flex-wrap items-center gap-2 text-xs">
-              {/* Region filter */}
+            {/* Filter Dropdowns Grid */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-0.5">
               <select
                 value={selectedRegion}
                 onChange={(e) => setSelectedRegion(e.target.value)}
-                className="rounded-md border border-line bg-canvas px-2.5 py-1.5 text-xs text-fg focus:outline-none"
+                className="rounded-lg border border-line bg-canvas px-2.5 py-2 text-xs text-fg focus:outline-none"
               >
-                <option value="all">🌍 Mọi miền quê</option>
-                <option value="Bắc Bộ">🌾 Làng quê Bắc Bộ</option>
-                <option value="Miền Trung">🌊 Miền Trung nắng gió</option>
-                <option value="Miền Tây">🚣 Miền Tây sông nước</option>
+                <option value="all">Mọi vùng miền</option>
+                <option value="Bắc Bộ">Làng quê Bắc Bộ</option>
+                <option value="Miền Trung">Miền Trung nắng gió</option>
+                <option value="Miền Tây">Miền Tây sông nước</option>
               </select>
 
-              {/* Mood filter */}
               <select
                 value={selectedMood}
                 onChange={(e) => setSelectedMood(e.target.value)}
-                className="rounded-md border border-line bg-canvas px-2.5 py-1.5 text-xs text-fg focus:outline-none"
+                className="rounded-lg border border-line bg-canvas px-2.5 py-2 text-xs text-fg focus:outline-none"
               >
-                <option value="all">🎭 Tất cả cảm xúc</option>
-                <option value="Nghẹn ngào rớt nước mắt">😢 Nghẹn ngào rớt nước mắt</option>
-                <option value="Da diết nhớ cha mẹ">👵 Da diết nhớ cha mẹ</option>
-                <option value="Ấm áp hoài niệm">🍂 Ấm áp hoài niệm</option>
-                <option value="Xót xa thương quê">💔 Xót xa thương quê</option>
-                <option value="Hóm hỉnh ngây ngô">😄 Hóm hỉnh ngây ngô</option>
+                <option value="all">Mọi cảm xúc</option>
+                <option value="Nghẹn ngào rớt nước mắt">Nghẹn ngào rớt nước mắt</option>
+                <option value="Da diết nhớ cha mẹ">Da diết nhớ cha mẹ</option>
+                <option value="Ấm áp hoài niệm">Ấm áp hoài niệm</option>
+                <option value="Xót xa thương quê">Xót xa thương quê</option>
+                <option value="Hóm hỉnh ngây ngô">Hóm hỉnh ngây ngô</option>
               </select>
 
-              {/* Era filter */}
               <select
                 value={selectedEra}
                 onChange={(e) => setSelectedEra(e.target.value)}
-                className="rounded-md border border-line bg-canvas px-2.5 py-1.5 text-xs text-fg focus:outline-none"
+                className="rounded-lg border border-line bg-canvas px-2.5 py-2 text-xs text-fg focus:outline-none"
               >
-                <option value="all">⏳ Thời kỳ 8x & 9x</option>
-                <option value="8x">Thập niên 80s (Thời bao cấp)</option>
-                <option value="9x">Thập niên 90s (Đổi mới nghèo)</option>
+                <option value="all">Thời kỳ 8x & 9x</option>
+                <option value="8x">Thế hệ 8x (Bao cấp)</option>
+                <option value="9x">Thế hệ 9x (Đổi mới)</option>
               </select>
 
-              {(searchQuery || selectedCategory !== 'all' || selectedRegion !== 'all' || selectedMood !== 'all' || selectedEra !== 'all') && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => {
-                    setSearchQuery('');
-                    setSelectedCategory('all');
-                    setSelectedRegion('all');
-                    setSelectedMood('all');
-                    setSelectedEra('all');
-                  }}
-                  className="text-xs text-brand"
+              {isFiltered ? (
+                <button
+                  type="button"
+                  onClick={resetFilters}
+                  className="rounded-lg border border-line bg-muted/60 hover:bg-muted px-2.5 py-2 text-xs text-fg flex items-center justify-center gap-1.5 transition-colors"
                 >
-                  Đặt lại lọc
-                </Button>
+                  <RotateCcw className="h-3 w-3" />
+                  <span>Đặt lại</span>
+                </button>
+              ) : (
+                <div className="hidden sm:flex items-center justify-end text-[11px] text-fg-subtle px-1">
+                  {filteredScripts.length} kết quả
+                </div>
               )}
             </div>
           </div>
 
-          {/* Results Counter */}
+          {/* Results Summary */}
           <div className="flex items-center justify-between text-xs text-fg-subtle px-1">
             <span>
-              Hiển thị <strong>{filteredScripts.length}</strong> / 300 kịch bản hoài niệm
+              Đang hiển thị <strong>{filteredScripts.length}</strong> / 300 kịch bản
             </span>
-            <span className="italic">
-              * Nhấn "Dựng Video (Studio)" để tự động tạo 5 phân cảnh vào Studio AI
+            <span className="text-[11px] hidden sm:inline">
+              Nhấn "Chi tiết" để xem 5 phân cảnh hoặc "Dựng Video" để nạp vào Studio
             </span>
           </div>
 
-          {/* Scripts Grid */}
+          {/* Scripts Grid (Responsive) */}
           {filteredScripts.length === 0 ? (
-            <Card className="p-12 text-center space-y-3">
-              <div className="text-4xl">🌾</div>
-              <h4 className="font-semibold text-fg">Không tìm thấy kịch bản phù hợp</h4>
-              <p className="text-xs text-fg-subtle max-w-md mx-auto">
-                Không tìm thấy kịch bản nào khớp với bộ lọc. Hãy thử tìm từ khóa khác (ví dụ: "cơm độn", "diều", "bếp", "dép") hoặc xóa bớt tiêu chí lọc.
+            <Card className="p-8 sm:p-12 text-center space-y-3">
+              <div className="text-3xl sm:text-4xl">🌾</div>
+              <h4 className="font-semibold text-fg text-sm sm:text-base">Không tìm thấy kịch bản phù hợp</h4>
+              <p className="text-xs text-fg-subtle max-w-sm mx-auto">
+                Không có kịch bản nào khớp với bộ lọc hiện tại. Hãy thử tìm từ khóa khác hoặc đặt lại bộ lọc.
               </p>
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => {
-                  setSearchQuery('');
-                  setSelectedCategory('all');
-                  setSelectedRegion('all');
-                  setSelectedMood('all');
-                }}
-              >
-                Xem toàn bộ 300 kịch bản
+              <Button variant="secondary" size="sm" onClick={resetFilters} className="text-xs">
+                Xem lại toàn bộ 300 kịch bản
               </Button>
             </Card>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
               {filteredScripts.map((script) => {
                 const isFav = favorites.includes(script.id);
                 return (
                   <Card
                     key={script.id}
-                    className="flex flex-col justify-between p-4 space-y-3 hover:border-brand/50 transition-all group"
+                    className="flex flex-col justify-between p-3.5 sm:p-4 space-y-3 hover:border-line-strong transition-all group"
                   >
                     <div className="space-y-2">
-                      {/* Top Badges */}
+                      {/* Card Header */}
                       <div className="flex items-start justify-between gap-2">
                         <div className="flex flex-wrap items-center gap-1.5">
-                          <span className="font-mono text-[11px] font-semibold text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded">
+                          <span className="font-mono text-[11px] font-medium text-fg-muted bg-muted px-1.5 py-0.5 rounded">
                             {script.code}
                           </span>
-                          <Badge tone="neutral" className="text-[10px]">
-                            {script.region}
-                          </Badge>
-                          <Badge tone="info" className="text-[10px]">
-                            {script.era}
-                          </Badge>
+                          <span className="text-[11px] text-fg-subtle">
+                            {script.region} • {script.era}
+                          </span>
                         </div>
                         <button
                           type="button"
                           onClick={() => handleToggleFavorite(script.id)}
                           className={cn(
-                            'p-1.5 rounded-full hover:bg-muted transition-colors',
-                            isFav ? 'text-rose-500' : 'text-fg-subtle hover:text-fg'
+                            'p-1.5 rounded-md hover:bg-muted transition-colors',
+                            isFav ? 'text-fg' : 'text-fg-subtle hover:text-fg'
                           )}
-                          title={isFav ? 'Bỏ yêu thích' : 'Lưu vào yêu thích'}
+                          title={isFav ? 'Bỏ yêu thích' : 'Lưu yêu thích'}
                         >
-                          <Heart className={cn('h-4 w-4', isFav && 'fill-current')} />
+                          <Heart className={cn('h-3.5 w-3.5', isFav && 'fill-current')} />
                         </button>
                       </div>
 
                       {/* Title */}
-                      <h4 className="font-semibold text-fg text-sm group-hover:text-brand transition-colors line-clamp-2 leading-snug">
+                      <h4 className="font-semibold text-fg text-sm leading-snug line-clamp-2">
                         {script.title}
                       </h4>
 
-                      {/* Hook & Synopsis */}
-                      <p className="text-xs text-amber-200/80 italic line-clamp-2 bg-amber-500/5 p-2 rounded border border-amber-500/10">
+                      {/* Hook Quote */}
+                      <p className="text-xs text-fg-muted italic border-l-2 border-line pl-2.5 py-0.5 line-clamp-2 leading-relaxed">
                         "{script.hook}"
                       </p>
 
+                      {/* Synopsis */}
                       <p className="text-xs text-fg-subtle line-clamp-2 leading-relaxed">
                         {script.synopsis}
                       </p>
 
-                      {/* Mood Badge */}
-                      <div className="flex items-center gap-2 pt-1 text-[11px] text-fg-subtle">
-                        <span className="text-rose-400 font-medium">🎭 {script.mood}</span>
-                        <span>•</span>
-                        <span>⏱️ ~2 phút (5 scenes)</span>
+                      {/* Mood Tag */}
+                      <div className="pt-1 flex items-center justify-between text-[11px] text-fg-subtle">
+                        <span>🎭 {script.mood}</span>
+                        <span>⏱️ ~2p (5 cảnh)</span>
                       </div>
                     </div>
 
-                    {/* Action Buttons */}
-                    <div className="pt-2 border-t border-line/60 flex items-center justify-between gap-2">
+                    {/* Card Actions (Mobile Ergonomic) */}
+                    <div className="pt-2.5 border-t border-line flex items-center justify-between gap-2">
                       <Button
                         variant="ghost"
                         size="sm"
                         icon={<Eye className="h-3.5 w-3.5" />}
                         onClick={() => setSelectedScript(script)}
-                        className="text-xs text-fg-muted hover:text-fg"
+                        className="text-xs text-fg-muted hover:text-fg px-2.5"
                       >
                         Chi tiết
                       </Button>
@@ -540,10 +510,10 @@ export function DramaScriptsPage() {
                         <Button
                           variant="secondary"
                           size="sm"
-                          icon={copiedKey === `prompt_${script.id}` ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
-                          onClick={() => handleCopy(extractNostalgiaAIPrompts(script), `prompt_${script.id}`, 'Prompt AI Video')}
-                          title="Copy Master Prompt AI Video (Kling/Midjourney)"
-                          className="text-xs"
+                          icon={copiedKey === `prompt_${script.id}` ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+                          onClick={() => handleCopy(extractNostalgiaAIPrompts(script), `prompt_${script.id}`, 'Prompt AI')}
+                          title="Copy Master Prompt AI Video"
+                          className="text-xs px-2.5"
                         >
                           Prompt AI
                         </Button>
@@ -553,8 +523,8 @@ export function DramaScriptsPage() {
                           size="sm"
                           icon={<Clapperboard className="h-3.5 w-3.5" />}
                           onClick={() => handleSendToStudio(script)}
-                          title="Nạp kịch bản và 5 shots vào Studio Video AI"
-                          className="text-xs font-medium bg-emerald-600 hover:bg-emerald-500 text-white"
+                          title="Nạp vào Studio Video AI"
+                          className="text-xs font-medium px-2.5"
                         >
                           Dựng Video
                         </Button>
@@ -570,54 +540,53 @@ export function DramaScriptsPage() {
 
       {/* TAB 2: TẠO KỊCH BẢN KÝ ỨC RIÊNG */}
       {activeTab === 'custom' && (
-        <div className="space-y-6 max-w-4xl mx-auto">
-          <Card className="p-5 sm:p-6 space-y-5 border-amber-500/30">
+        <div className="space-y-5 max-w-3xl mx-auto">
+          <Card className="p-4 sm:p-6 space-y-4">
             <div className="space-y-1">
-              <div className="flex items-center gap-2">
-                <span className="text-xl">✍️</span>
-                <h3 className="font-semibold text-fg text-base sm:text-lg">
-                  Lên Kịch Bản Tuổi Thơ Từ Ký Ức Của Chính Bạn
-                </h3>
-              </div>
+              <h3 className="font-semibold text-fg text-base flex items-center gap-2">
+                <Wand2 className="h-4 w-4" />
+                <span>Lên kịch bản từ ký ức của bạn</span>
+              </h3>
               <p className="text-xs text-fg-subtle leading-relaxed">
-                Hãy kể lại một mẩu ký ức thời 8x 9x của bạn (bữa cơm gia đình, một lần đi chăn trâu bị ướt mưa, mẹ mua chiếc xe đạp cũ...). Hệ thống sẽ tự động bóc tách thành <strong>kịch bản chuẩn 2 phút gồm 5 phân cảnh</strong> với đầy đủ mô tả hình ảnh cực kỳ chi tiết (ngôi nhà tranh, tường vách đất, áo vá, dép tổ ong mòn đế) và Master Prompt tiếng Anh cho AI Video Generator.
+                Nhập mẩu chuyện thời 8x 9x của bạn (bữa cơm chiều mưa, một lần tắm sông, chiếc xe đạp cũ...). Hệ thống sẽ phân rã thành 5 phân cảnh chuẩn 2 phút kèm Master Prompt tiếng Anh cho AI Video.
               </p>
             </div>
 
-            <div className="space-y-4">
-              <Field label="Kể lại mẩu ký ức tuổi thơ của bạn (Càng cụ thể càng chân thực):">
+            <div className="space-y-3.5">
+              <Field label="Kể lại mẩu ký ức của bạn:">
                 <Textarea
                   rows={4}
                   value={customMemoryText}
                   onChange={(e) => setCustomMemoryText(e.target.value)}
-                  placeholder="Ví dụ: Nhớ chiều mưa năm 1996 ở quê nghèo Bắc Bộ, bố đạp chiếc xe đạp Thống Nhất rỉ sét đèo tôi đi thi học sinh giỏi huyện. Đường đất trơn trượt bị đứt xích, hai bố con bì bõm dắt bộ lội bùn, bố cởi chiếc áo mưa nilon rách che kín người tôi còn mình thì ướt sũng..."
+                  placeholder="Ví dụ: Nhớ chiều mưa năm 1996 ở quê, bố đạp xe đèo tôi đi thi học sinh giỏi huyện. Đường đất trơn trượt bị đứt xích, hai bố con dắt bộ lội bùn, bố cởi áo mưa che cho tôi còn mình ướt sũng..."
+                  className="text-xs sm:text-sm"
                 />
               </Field>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <Field label="Vùng miền quê hương:">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                <Field label="Vùng miền:">
                   <Select
                     value={customRegion}
                     onChange={(e) => setCustomRegion(e.target.value as any)}
                   >
-                    <option value="Bắc Bộ">Làng quê Bắc Bộ (Nhà ngói, giếng nước, rặng tre)</option>
-                    <option value="Miền Trung">Miền Trung (Gió Lào, cát trắng, phi lao)</option>
-                    <option value="Miền Tây">Miền Tây sông nước (Nhà sàn, cầu khỉ, ghe xuồng)</option>
-                    <option value="Chung">Làng quê Việt Nam chung</option>
+                    <option value="Bắc Bộ">Làng quê Bắc Bộ</option>
+                    <option value="Miền Trung">Miền Trung nắng gió</option>
+                    <option value="Miền Tây">Miền Tây sông nước</option>
+                    <option value="Chung">Làng quê chung</option>
                   </Select>
                 </Field>
 
-                <Field label="Thời kỳ tuổi thơ:">
+                <Field label="Thời kỳ:">
                   <Select
                     value={customEra}
                     onChange={(e) => setCustomEra(e.target.value as any)}
                   >
-                    <option value="8x">Thế hệ 8x (Thập niên 80 - đầu 90)</option>
-                    <option value="9x">Thế hệ 9x (Thập niên 90 - 2000)</option>
+                    <option value="8x">Thế hệ 8x (Bao cấp)</option>
+                    <option value="9x">Thế hệ 9x (Đổi mới)</option>
                   </Select>
                 </Field>
 
-                <Field label="Tông cảm xúc kịch bản:">
+                <Field label="Tông cảm xúc:">
                   <Select
                     value={customMood}
                     onChange={(e) => setCustomMood(e.target.value as any)}
@@ -631,99 +600,99 @@ export function DramaScriptsPage() {
                 </Field>
               </div>
 
-              <div className="flex justify-end pt-2">
+              <div className="pt-2 flex justify-end">
                 <Button
                   variant="primary"
                   icon={<Wand2 className="h-4 w-4" />}
                   onClick={handleCreateCustomScript}
-                  className="bg-amber-600 hover:bg-amber-500 text-white font-medium"
+                  className="w-full sm:w-auto text-xs font-medium"
                 >
-                  Sinh Kịch Bản Chuẩn 2 Phút Ngay
+                  Sinh kịch bản 2 phút
                 </Button>
               </div>
             </div>
           </Card>
 
-          {/* Generated Custom Script Result Preview */}
+          {/* Generated Custom Script Preview */}
           {generatedCustomScript && (
-            <Card className="p-5 space-y-4 border-emerald-500/40 bg-surface">
+            <Card className="p-4 sm:p-5 space-y-4">
               <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 border-b border-line pb-3">
-                <div>
+                <div className="space-y-0.5">
                   <div className="flex items-center gap-2">
-                    <span className="font-mono text-xs font-bold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded">
+                    <span className="font-mono text-xs font-semibold text-fg-muted bg-muted px-2 py-0.5 rounded">
                       {generatedCustomScript.code}
                     </span>
-                    <Badge tone="success" className="text-xs">
-                      Đã sinh 5 Phân cảnh (~2 Phút)
+                    <Badge tone="neutral" className="text-[11px]">
+                      5 phân cảnh (~2 phút)
                     </Badge>
                   </div>
-                  <h3 className="font-bold text-fg text-base mt-1">
+                  <h4 className="font-bold text-fg text-sm sm:text-base mt-1">
                     {generatedCustomScript.title}
-                  </h3>
+                  </h4>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 w-full sm:w-auto">
                   <Button
                     variant="secondary"
                     size="sm"
-                    icon={<Bookmark className="h-4 w-4" />}
+                    icon={<Bookmark className="h-3.5 w-3.5" />}
                     onClick={() => handleSaveCustomProject(generatedCustomScript)}
+                    className="flex-1 sm:flex-initial text-xs"
                   >
-                    Lưu kịch bản
+                    Lưu
                   </Button>
                   <Button
                     variant="primary"
                     size="sm"
-                    icon={<Clapperboard className="h-4 w-4" />}
+                    icon={<Clapperboard className="h-3.5 w-3.5" />}
                     onClick={() => handleSendToStudio(generatedCustomScript)}
-                    className="bg-emerald-600 hover:bg-emerald-500 text-white"
+                    className="flex-1 sm:flex-initial text-xs font-medium"
                   >
-                    Dựng Video (Studio)
+                    Dựng Video
                   </Button>
                 </div>
               </div>
 
               <div className="space-y-3">
-                <div className="bg-amber-500/10 p-3 rounded-md border border-amber-500/20 text-xs text-amber-200">
-                  <strong>Câu Hook mở đầu (0-5s):</strong> "{generatedCustomScript.hook}"
+                <div className="p-2.5 rounded-lg bg-subtle border border-line text-xs text-fg-muted italic">
+                  <strong>Hook (0-5s):</strong> "{generatedCustomScript.hook}"
                 </div>
 
-                {/* Scenes Preview */}
-                <div className="space-y-3 pt-2">
+                <div className="space-y-2.5 pt-1">
                   <h5 className="font-semibold text-xs text-fg uppercase tracking-wider">
-                    Chi tiết 5 phân cảnh điện ảnh:
+                    5 Phân cảnh chi tiết:
                   </h5>
                   {generatedCustomScript.scenes.map((scene) => (
                     <div
                       key={scene.sceneNumber}
-                      className="rounded-lg border border-line p-3 space-y-2 bg-canvas/60 text-xs"
+                      className="rounded-lg border border-line p-3 space-y-2 bg-canvas text-xs"
                     >
                       <div className="flex items-center justify-between font-medium text-fg">
-                        <span className="text-amber-400">
-                          [Cảnh {scene.sceneNumber}] ({scene.timecode}) - {scene.title}
+                        <span>
+                          Cảnh {scene.sceneNumber}: {scene.title}
                         </span>
-                        <span className="text-fg-subtle">{scene.durationSeconds}s</span>
+                        <span className="text-fg-subtle font-mono text-[11px]">{scene.durationSeconds}s</span>
                       </div>
 
-                      <div className="space-y-1">
-                        <span className="text-fg-subtle font-semibold">🎥 Hình ảnh chi tiết:</span>
-                        <p className="text-fg-muted pl-2 border-l-2 border-amber-500/30">
+                      <div className="space-y-0.5">
+                        <span className="text-fg-subtle font-medium">🎥 Hình ảnh:</span>
+                        <p className="text-fg-muted pl-2 border-l border-line leading-relaxed">
                           {scene.visualVi}
                         </p>
                       </div>
 
-                      <div className="space-y-1 bg-muted/40 p-2 rounded">
-                        <span className="text-emerald-400 font-semibold font-mono text-[11px]">
-                          🤖 Master Prompt AI Video:
+                      <div className="space-y-0.5 bg-subtle p-2 rounded border border-line/50">
+                        <span className="text-fg font-mono text-[10px] font-semibold">
+                          🤖 AI Master Prompt:
                         </span>
-                        <p className="text-fg font-mono text-[11px] leading-relaxed select-all">
+                        <p className="text-fg-muted font-mono text-[11px] leading-relaxed select-all">
                           {scene.aiPromptEn}
                         </p>
                       </div>
 
-                      <div className="space-y-1">
-                        <span className="text-fg-subtle font-semibold">🎙️ Lời bình / Voice:</span>
-                        <p className="text-fg italic pl-2 border-l-2 border-brand/30">
+                      <div className="space-y-0.5">
+                        <span className="text-fg-subtle font-medium">🎙️ Lời bình:</span>
+                        <p className="text-fg italic pl-2 border-l border-line leading-relaxed">
                           "{scene.voiceover}"
                         </p>
                       </div>
@@ -736,24 +705,22 @@ export function DramaScriptsPage() {
         </div>
       )}
 
-      {/* TAB 3: KỊCH BẢN ĐÃ LƯU & YÊU THÍCH */}
+      {/* TAB 3: ĐÃ LƯU & YÊU THÍCH */}
       {activeTab === 'saved' && (
-        <div className="space-y-6">
+        <div className="space-y-5">
           {/* Favorites List */}
           <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <h3 className="font-semibold text-fg text-sm flex items-center gap-2">
-                <Heart className="h-4 w-4 text-rose-500 fill-current" />
-                <span>Kịch Bản Mẫu Yêu Thích ({favorites.length})</span>
-              </h3>
-            </div>
+            <h3 className="font-semibold text-fg text-sm flex items-center gap-2">
+              <Heart className="h-4 w-4 fill-current text-fg" />
+              <span>Kịch bản yêu thích ({favorites.length})</span>
+            </h3>
 
             {favorites.length === 0 ? (
               <Card className="p-6 text-center text-xs text-fg-subtle">
-                Bạn chưa lưu kịch bản mẫu nào vào danh sách yêu thích. Hãy bấm vào biểu tượng trái tim ở các kịch bản trong thư viện để lưu nhanh tại đây.
+                Chưa có kịch bản yêu thích. Nhấn vào biểu tượng trái tim ở kịch bản trong thư viện để lưu nhanh.
               </Card>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                 {favorites.map((favId) => {
                   const script = getNostalgiaScriptById(favId);
                   if (!script) return null;
@@ -761,13 +728,13 @@ export function DramaScriptsPage() {
                     <Card key={script.id} className="p-3.5 space-y-2 flex flex-col justify-between">
                       <div className="space-y-1.5">
                         <div className="flex items-center justify-between">
-                          <span className="font-mono text-[11px] font-semibold text-amber-400">
+                          <span className="font-mono text-[11px] font-medium text-fg-muted bg-muted px-1.5 py-0.5 rounded">
                             {script.code}
                           </span>
                           <button
                             type="button"
                             onClick={() => handleToggleFavorite(script.id)}
-                            className="text-rose-500 hover:text-fg-subtle p-1"
+                            className="p-1 text-fg hover:text-fg-subtle"
                           >
                             <Heart className="h-3.5 w-3.5 fill-current" />
                           </button>
@@ -786,14 +753,14 @@ export function DramaScriptsPage() {
                           onClick={() => setSelectedScript(script)}
                           className="text-xs"
                         >
-                          Xem chi tiết
+                          Chi tiết
                         </Button>
                         <Button
                           variant="primary"
                           size="sm"
                           icon={<Clapperboard className="h-3.5 w-3.5" />}
                           onClick={() => handleSendToStudio(script)}
-                          className="text-xs bg-emerald-600 hover:bg-emerald-500 text-white"
+                          className="text-xs font-medium"
                         >
                           Dựng Video
                         </Button>
@@ -809,8 +776,8 @@ export function DramaScriptsPage() {
           <div className="space-y-3 pt-4 border-t border-line">
             <div className="flex items-center justify-between">
               <h3 className="font-semibold text-fg text-sm flex items-center gap-2">
-                <Bookmark className="h-4 w-4 text-brand" />
-                <span>Kịch Bản Tự Tạo Đã Lưu ({savedProjects.length})</span>
+                <Bookmark className="h-4 w-4" />
+                <span>Kịch bản tự tạo ({savedProjects.length})</span>
               </h3>
               {savedProjects.length > 0 && (
                 <Button
@@ -820,34 +787,34 @@ export function DramaScriptsPage() {
                   onClick={() => nostalgiaStorage.exportBackupJson()}
                   className="text-xs"
                 >
-                  Xuất file Backup
+                  Xuất file
                 </Button>
               )}
             </div>
 
             {savedProjects.length === 0 ? (
               <Card className="p-6 text-center text-xs text-fg-subtle">
-                Chưa có kịch bản tùy chỉnh nào được lưu. Hãy sang tab <strong>"Tạo Kịch Bản Ký Ức Riêng"</strong> để sáng tác câu chuyện của bạn!
+                Chưa có kịch bản tự tạo nào. Hãy sang tab <strong>"Tạo theo ký ức riêng"</strong> để bắt đầu!
               </Card>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                 {savedProjects.map((p) => (
                   <Card key={p.id} className="p-3.5 space-y-2 flex flex-col justify-between">
                     <div className="space-y-1.5">
                       <div className="flex items-center justify-between">
-                        <span className="font-mono text-[11px] font-semibold text-amber-400">
+                        <span className="font-mono text-[11px] font-medium text-fg-muted bg-muted px-1.5 py-0.5 rounded">
                           {p.script.code}
                         </span>
                         <button
                           type="button"
                           onClick={() => {
-                            if (confirm(`Bạn có chắc muốn xóa kịch bản "${p.script.title}"?`)) {
+                            if (confirm(`Bạn có chắc muốn xóa "${p.script.title}"?`)) {
                               nostalgiaStorage.deleteProject(p.id);
                               setSavedProjects(nostalgiaStorage.getSavedProjects());
                               toast.success('Đã xóa kịch bản');
                             }
                           }}
-                          className="text-fg-subtle hover:text-rose-400 p-1"
+                          className="p-1 text-fg-subtle hover:text-fg"
                         >
                           <Trash2 className="h-3.5 w-3.5" />
                         </button>
@@ -866,14 +833,14 @@ export function DramaScriptsPage() {
                         onClick={() => setSelectedScript(p.script)}
                         className="text-xs"
                       >
-                        Xem chi tiết
+                        Chi tiết
                       </Button>
                       <Button
                         variant="primary"
                         size="sm"
                         icon={<Clapperboard className="h-3.5 w-3.5" />}
                         onClick={() => handleSendToStudio(p.script)}
-                        className="text-xs bg-emerald-600 hover:bg-emerald-500 text-white"
+                        className="text-xs font-medium"
                       >
                         Dựng Video
                       </Button>
@@ -886,66 +853,149 @@ export function DramaScriptsPage() {
         </div>
       )}
 
-      {/* DETAIL MODAL: Xem Toàn Bộ 5 Phân Cảnh & Copy Kịch Bản */}
+      {/* DETAIL MODAL: Mobile Full-screen / Desktop Dialog with Sticky Bottom Bar */}
       {selectedScript && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-3 sm:p-5 backdrop-blur-sm overflow-y-auto">
-          <Card className="max-h-[92vh] w-full max-w-4xl overflow-y-auto p-4 sm:p-6 space-y-5 shadow-2xl border-amber-500/30 bg-surface">
-            {/* Modal Header */}
-            <div className="flex items-start justify-between gap-3 border-b border-line pb-4">
-              <div className="space-y-1">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="font-mono text-xs font-bold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-0 sm:p-4 backdrop-blur-sm">
+          <div className="h-full sm:h-auto sm:max-h-[90vh] w-full max-w-3xl flex flex-col bg-surface sm:rounded-2xl border border-line shadow-2xl overflow-hidden">
+            {/* Modal Sticky Header */}
+            <div className="sticky top-0 z-10 flex items-start justify-between gap-3 border-b border-line bg-surface/95 backdrop-blur px-4 py-3 sm:px-6 sm:py-4">
+              <div className="space-y-1 pr-2">
+                <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                  <span className="font-mono text-[11px] font-semibold text-fg-muted bg-muted px-1.5 py-0.5 rounded">
                     {selectedScript.code}
                   </span>
-                  <Badge tone="neutral" className="text-xs">
-                    {selectedScript.region}
-                  </Badge>
-                  <Badge tone="info" className="text-xs">
-                    {selectedScript.era}
-                  </Badge>
-                  <span className="text-xs text-rose-400 font-medium">
+                  <span className="text-[11px] text-fg-subtle">
+                    {selectedScript.region} • {selectedScript.era}
+                  </span>
+                  <span className="text-[11px] text-fg-muted font-medium">
                     🎭 {selectedScript.mood}
                   </span>
                 </div>
-                <h3 className="font-bold text-fg text-lg sm:text-xl">
+                <h3 className="font-bold text-fg text-sm sm:text-base leading-snug">
                   {selectedScript.title}
                 </h3>
-                <p className="text-xs text-amber-200/90 italic">
-                  Hook mở màn: "{selectedScript.hook}"
-                </p>
               </div>
 
-              <Button
-                variant="ghost"
-                size="sm"
+              <button
+                type="button"
                 onClick={() => setSelectedScript(null)}
-                className="text-fg-subtle hover:text-fg text-sm"
+                className="p-2 rounded-lg text-fg-subtle hover:text-fg hover:bg-muted transition-colors shrink-0"
+                aria-label="Đóng"
               >
-                ✕ Đóng
-              </Button>
+                <X className="h-5 w-5" />
+              </button>
             </div>
 
-            {/* Quick Action Bar inside Modal */}
-            <div className="flex flex-wrap items-center justify-between gap-2 p-3 rounded-lg bg-canvas border border-line">
-              <div className="flex flex-wrap items-center gap-2">
+            {/* Modal Scrollable Body */}
+            <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 text-xs">
+              {/* Hook banner */}
+              <div className="p-3 rounded-lg bg-subtle border border-line text-xs text-fg-muted italic leading-relaxed">
+                <strong>Hook mở đầu (0-5s):</strong> "{selectedScript.hook}"
+              </div>
+
+              {/* 5 Scenes Breakdown */}
+              <div className="space-y-3">
+                <h4 className="font-semibold text-xs text-fg uppercase tracking-wider flex items-center gap-1.5">
+                  <Film className="h-3.5 w-3.5" />
+                  <span>5 Phân cảnh chuẩn 2 phút:</span>
+                </h4>
+
+                {selectedScript.scenes.map((scene) => (
+                  <div
+                    key={scene.sceneNumber}
+                    className="rounded-lg border border-line p-3 sm:p-3.5 space-y-2.5 bg-canvas"
+                  >
+                    {/* Scene header */}
+                    <div className="flex items-center justify-between border-b border-line/60 pb-1.5 font-medium">
+                      <span className="text-fg text-xs font-semibold">
+                        Cảnh {scene.sceneNumber}: {scene.title}
+                      </span>
+                      <span className="font-mono text-[11px] text-fg-subtle bg-muted px-1.5 py-0.5 rounded">
+                        ⏱️ {scene.timecode}
+                      </span>
+                    </div>
+
+                    {/* Vietnamese Visual Details */}
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-1 text-fg font-medium">
+                        <Camera className="h-3 w-3" />
+                        <span>Mô tả bối cảnh & hình ảnh:</span>
+                      </div>
+                      <p className="text-fg-muted pl-2.5 border-l border-line leading-relaxed">
+                        {scene.visualVi}
+                      </p>
+                    </div>
+
+                    {/* English Master Prompt */}
+                    <div className="space-y-1 bg-subtle p-2.5 rounded-lg border border-line">
+                      <div className="flex items-center justify-between">
+                        <span className="font-mono text-[10px] font-semibold text-fg">
+                          🤖 MASTER PROMPT (AI VIDEO):
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => handleCopy(scene.aiPromptEn, `p_${scene.sceneNumber}`, `Prompt cảnh ${scene.sceneNumber}`)}
+                          className="text-[11px] text-fg-subtle hover:text-fg flex items-center gap-1"
+                        >
+                          <Copy className="h-3 w-3" /> Copy
+                        </button>
+                      </div>
+                      <p className="font-mono text-[11px] text-fg-muted leading-relaxed select-all">
+                        {scene.aiPromptEn}
+                      </p>
+                    </div>
+
+                    {/* Voiceover & Sound */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 text-xs">
+                      <div className="space-y-0.5">
+                        <span className="text-fg-subtle font-medium flex items-center gap-1">
+                          <Volume2 className="h-3 w-3" /> Lời bình (Voiceover):
+                        </span>
+                        <p className="text-fg italic pl-2 border-l border-line leading-relaxed">
+                          "{scene.voiceover}"
+                        </p>
+                      </div>
+
+                      <div className="space-y-0.5">
+                        <span className="text-fg-subtle font-medium">
+                          🎵 Âm thanh (SFX):
+                        </span>
+                        <p className="text-fg-muted pl-2 border-l border-line leading-relaxed">
+                          {scene.sound}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Ending note */}
+              <div className="p-3 rounded-lg bg-subtle border border-line text-xs text-fg-muted">
+                <strong>Lời kết lắng đọng:</strong> "{selectedScript.endingNote}"
+              </div>
+            </div>
+
+            {/* Modal Sticky Bottom Action Bar */}
+            <div className="sticky bottom-0 z-10 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 border-t border-line bg-surface/95 backdrop-blur px-4 py-3 sm:px-6">
+              <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-1 sm:pb-0">
                 <Button
                   variant="secondary"
                   size="sm"
-                  icon={copiedKey === 'modal_voice' ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Volume2 className="h-3.5 w-3.5" />}
-                  onClick={() => handleCopy(extractNostalgiaVoiceover(selectedScript), 'modal_voice', 'Lời thuyết minh')}
-                  className="text-xs"
+                  icon={copiedKey === 'modal_voice' ? <Check className="h-3.5 w-3.5" /> : <Volume2 className="h-3.5 w-3.5" />}
+                  onClick={() => handleCopy(extractNostalgiaVoiceover(selectedScript), 'modal_voice', 'Lời bình')}
+                  className="text-xs px-2.5 whitespace-nowrap"
                 >
-                  Copy Lời Bình (CapCut/TTS)
+                  Copy Lời bình
                 </Button>
 
                 <Button
                   variant="secondary"
                   size="sm"
-                  icon={copiedKey === 'modal_prompts' ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
-                  onClick={() => handleCopy(extractNostalgiaAIPrompts(selectedScript), 'modal_prompts', 'Master Prompt AI')}
-                  className="text-xs"
+                  icon={copiedKey === 'modal_prompts' ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+                  onClick={() => handleCopy(extractNostalgiaAIPrompts(selectedScript), 'modal_prompts', 'Prompt AI')}
+                  className="text-xs px-2.5 whitespace-nowrap"
                 >
-                  Copy Prompt AI (Kling/Midjourney)
+                  Copy Prompt AI
                 </Button>
 
                 <Button
@@ -953,9 +1003,9 @@ export function DramaScriptsPage() {
                   size="sm"
                   icon={<FileText className="h-3.5 w-3.5" />}
                   onClick={() => handleCopy(formatNostalgiaProductionScript(selectedScript), 'modal_full', 'Toàn bộ kịch bản')}
-                  className="text-xs"
+                  className="text-xs px-2.5 whitespace-nowrap hidden sm:inline-flex"
                 >
-                  Copy Kịch Bản Chi Tiết
+                  Copy kịch bản
                 </Button>
               </div>
 
@@ -967,107 +1017,12 @@ export function DramaScriptsPage() {
                   setSelectedScript(null);
                   handleSendToStudio(selectedScript);
                 }}
-                className="bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-xs sm:text-sm"
+                className="text-xs sm:text-sm font-medium w-full sm:w-auto"
               >
-                🚀 Dựng Video Tập Này (Studio)
+                Dựng Video (Studio)
               </Button>
             </div>
-
-            {/* 5 Scenes Detailed Breakdown */}
-            <div className="space-y-4">
-              <h4 className="font-semibold text-xs text-fg uppercase tracking-wider flex items-center gap-2">
-                <Film className="h-4 w-4 text-amber-400" />
-                <span>Chi tiết 5 phân cảnh chuẩn 2 phút (Mô tả bối cảnh & Master Prompt):</span>
-              </h4>
-
-              {selectedScript.scenes.map((scene) => (
-                <div
-                  key={scene.sceneNumber}
-                  className="rounded-lg border border-line p-4 space-y-3 bg-canvas/60 text-xs"
-                >
-                  {/* Scene Header */}
-                  <div className="flex items-center justify-between border-b border-line/60 pb-2">
-                    <span className="font-semibold text-amber-400 text-sm">
-                      Phân cảnh {scene.sceneNumber}: {scene.title}
-                    </span>
-                    <span className="font-mono text-xs text-fg-subtle bg-muted px-2 py-0.5 rounded">
-                      ⏱️ {scene.timecode} ({scene.durationSeconds}s)
-                    </span>
-                  </div>
-
-                  {/* Visual Description in Vietnamese */}
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-1.5 text-amber-200 font-medium">
-                      <Camera className="h-3.5 w-3.5" />
-                      <span>Mô tả hình ảnh bối cảnh làng quê 8x 9x (Chi tiết nhà đất, áo quần, dép, bùn lầy):</span>
-                    </div>
-                    <p className="text-fg-muted pl-3 border-l-2 border-amber-500/40 leading-relaxed text-xs">
-                      {scene.visualVi}
-                    </p>
-                  </div>
-
-                  {/* AI Video Prompt in English */}
-                  <div className="space-y-1.5 bg-black/40 p-3 rounded-md border border-line/70">
-                    <div className="flex items-center justify-between">
-                      <span className="font-mono text-[11px] font-semibold text-emerald-400">
-                        🤖 MASTER PROMPT CHO AI VIDEO GENERATOR (KLING AI / MIDJOURNEY / HAILUO / RUNWAY):
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => handleCopy(scene.aiPromptEn, `prompt_scene_${scene.sceneNumber}`, `Prompt cảnh ${scene.sceneNumber}`)}
-                        className="text-[11px] text-fg-subtle hover:text-emerald-400 flex items-center gap-1"
-                      >
-                        <Copy className="h-3 w-3" /> Copy
-                      </button>
-                    </div>
-                    <p className="font-mono text-[11px] text-fg leading-relaxed select-all">
-                      {scene.aiPromptEn}
-                    </p>
-                  </div>
-
-                  {/* Voiceover & Sound */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-                    <div className="space-y-1">
-                      <span className="text-fg-subtle font-semibold flex items-center gap-1">
-                        <Volume2 className="h-3 w-3 text-brand" /> Lời bình (Voiceover nghẹn ngào):
-                      </span>
-                      <p className="text-fg italic pl-2 border-l-2 border-brand/40">
-                        "{scene.voiceover}"
-                      </p>
-                    </div>
-
-                    <div className="space-y-1">
-                      <span className="text-fg-subtle font-semibold">
-                        🎵 Âm thanh môi trường (SFX):
-                      </span>
-                      <p className="text-fg-muted pl-2 border-l-2 border-line">
-                        {scene.sound}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            {/* Ending Note */}
-            <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/20 text-xs text-amber-200">
-              <strong>Lời kết đọng lại nghẹn ngào:</strong> "{selectedScript.endingNote}"
-            </div>
-
-            {/* Modal Footer */}
-            <div className="flex justify-end pt-2 border-t border-line">
-              <Button
-                variant="primary"
-                onClick={() => {
-                  setSelectedScript(null);
-                  handleSendToStudio(selectedScript);
-                }}
-                className="bg-emerald-600 hover:bg-emerald-500 text-white font-medium"
-              >
-                🚀 Chuyển Thẳng Sang Studio Dựng Video AI
-              </Button>
-            </div>
-          </Card>
+          </div>
         </div>
       )}
     </div>
