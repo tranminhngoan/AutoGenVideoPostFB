@@ -346,10 +346,15 @@ export function DramaScriptsPage() {
                   <div className="space-y-3">
                     {/* Top row: Genre & Views */}
                     <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex items-center gap-1.5 flex-wrap">
                         <Badge tone="info" className="text-[11px]">
                           {drama.genre}
                         </Badge>
+                        {drama.isFullSeries && (
+                          <Badge tone="success" className="text-[10px] font-semibold">
+                            Full Trọn Bộ ({drama.episodes.length} tập)
+                          </Badge>
+                        )}
                         <span className="flex items-center gap-0.5 text-[11px] font-semibold text-amber-500">
                           ⭐ {drama.addictionRating.toFixed(1)}
                         </span>
@@ -1009,8 +1014,11 @@ export function DramaScriptsPage() {
           <Card className="max-h-[90vh] w-full max-w-3xl overflow-y-auto p-6 space-y-5 shadow-2xl">
             <div className="flex items-start justify-between border-b border-line pb-3">
               <div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <Badge tone="info">{previewDrama.genre}</Badge>
+                  {previewDrama.isFullSeries && (
+                    <Badge tone="success">Trọn Bộ Đầy Đủ ({previewDrama.episodes.length} tập đến Đại Kết Cục)</Badge>
+                  )}
                   <span className="text-xs text-amber-500 font-semibold">
                     ⭐ {previewDrama.addictionRating.toFixed(1)} ({previewDrama.viewsEstimate})
                   </span>

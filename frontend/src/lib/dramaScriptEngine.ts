@@ -156,16 +156,41 @@ export function generateEpisodesFromPlot(options: RewriteOptions): DramaEpisode[
 
   const toneMod = getToneModifiers(tone);
 
-  for (let i = 1; i <= Math.max(1, numEpisodes); i++) {
+  // Phân bổ các giai đoạn câu chuyện theo tiến trình kinh điển 5 hồi:
+  // Hồi 1 (Mở đầu & Sỉ nhục) -> Hồi 2 (Cạm bẫy & Mâu thuẫn) -> Hồi 3 (Đảo chiều & Thân phận) -> Hồi 4 (Đỉnh điểm đối đầu) -> Hồi 5 (Đại kết cục viên mãn)
+  const total = Math.max(1, numEpisodes);
+
+  for (let i = 1; i <= total; i++) {
     const isFirst = i === 1;
-    const isLast = i === numEpisodes;
-    const epTitle = `Tập ${i}: ${
-      isFirst
-        ? 'Sóng Gió Nổi Lên & Cú Sốc Đầu Tiên'
-        : isLast
-        ? 'Đại Kết Cục: Vả Mặt Sảng Khoái & Tuyên Bố Vương Giả'
-        : `Cao Trào Tiếp Diễn: Sự Thật Được Hé Lộ (Hồi ${i})`
-    }`;
+    const isLast = i === total;
+    // Tính tiến độ câu chuyện từ 0.0 -> 1.0
+    const progress = total === 1 ? 1 : (i - 1) / (total - 1);
+
+    let epTitle = '';
+    let stageDesc = '';
+    let cliffhangerText = '';
+
+    if (isFirst) {
+      epTitle = `Tập 1: Sóng Gió Bùng Nổ & Cú Sốc Đầu Tiên`;
+      stageDesc = `Mở màn xung đột gay gắt: nhân vật chính bị sỉ nhục và đẩy vào thế khó.`;
+      cliffhangerText = `Một sự biến chấn động xuất hiện đúng khoảnh khắc nguy cấp nhất khiến tất cả câm lặng!`;
+    } else if (isLast) {
+      epTitle = `Tập ${i} (Đại Kết Cục): Vả Mặt Triệt Để & Đỉnh Cao Vinh Quang`;
+      stageDesc = `Đại kết cục trọn vẹn: toàn bộ kẻ phản diện sụp đổ, chịu sự trừng phạt của pháp luật và công lý. Nhân vật chính vinh quang đoàn tụ hạnh phúc!`;
+      cliffhangerText = `Khép lại trọn bộ series: kẻ ác đền tội, người tốt hưởng trọn vẹn vinh hoa hạnh phúc!`;
+    } else if (progress < 0.4) {
+      epTitle = `Tập ${i}: Cạm Bẫy Kẻ Ác & Mâu Thuẫn Dâng Cao`;
+      stageDesc = `Kẻ phản diện đắc chí giăng bẫy chèn ép, nhân vật chính âm thầm tích lũy sức mạnh.`;
+      cliffhangerText = `Cuộc gọi bí mật từ đại nhân vật quyền lực khiến tình thế bắt đầu rục rịch đảo chiều!`;
+    } else if (progress < 0.7) {
+      epTitle = `Tập ${i}: Thân Phận Thật Hé Lộ & Cú Vả Mặt Bước Đầu`;
+      stageDesc = `Tài năng phi phàm hoặc thân phận tỷ phú bắt đầu rò rỉ, cú phản đòn đầu tiên giáng xuống.`;
+      cliffhangerText = `Bằng chứng đanh thép xuất hiện ngay trước mắt khiến phe phản diện run rẩy bàng hoàng!`;
+    } else {
+      epTitle = `Tập ${i}: Đỉnh Điểm Đối Đầu Tại Đại Hội & Bóc Mẽ Kẻ Ác`;
+      stageDesc = `Cuộc đối đầu trực diện tại sảnh tiệc thượng lưu, vạch trần mọi âm mưu trước bàn dân thiên hạ.`;
+      cliffhangerText = `Lệnh phong sát và cảnh sát ập tới, hồi chuông báo tử cho gia tộc phản diện vang lên!`;
+    }
 
     const rawRefSentence = sentences[(i - 1) % sentences.length] || cleanSource.slice(0, 100);
 
@@ -173,59 +198,73 @@ export function generateEpisodesFromPlot(options: RewriteOptions): DramaEpisode[
       {
         sceneNumber: 1,
         timecode: '0:00 - 0:15',
-        title: 'Hook 5s đầu - Cú sốc bùng nổ',
-        visual: `Cận cảnh góc máy nghiêng ấn tượng. Nhân vật chính đối diện với sự cố bất ngờ: ${rawRefSentence.slice(0, 80)}. Biểu cảm xung quanh chuyển từ kiêu ngạo sang kinh hoàng.`,
+        title: isFirst ? 'Hook mở màn 5s - Cú sốc bùng nổ' : `Nút thắt tập ${i} - Cao trào dồn dập`,
+        visual: `Cận cảnh góc máy nghiêng ấn tượng. Tình huống: ${rawRefSentence.slice(0, 80)}. Biểu cảm xung quanh chuyển từ kiêu ngạo sang kinh hoàng.`,
         voiceover: isFirst
           ? `Ngay tại thời khắc này, mọi nhẫn nhịn suốt bấy lâu nay đã chính thức vượt quá giới hạn! Ai cũng nghĩ người đứng trước mặt là một kẻ vô dụng, nhưng không ai ngờ được thân phận thực sự phía sau!`
-          : `Tưởng chừng mọi chuyện đã kết thúc, nhưng một sự biến động chấn động hơn vừa mới bắt đầu giáng xuống đầu những kẻ ngạo mạn!`,
+          : isLast
+          ? `Giờ phút phán xét cuối cùng đã điểm! Những kẻ từng ngạo mạn giẫm đạp lên người khác, hôm nay sẽ phải trả giá gấp trăm ngàn lần!`
+          : `Không khí tại hiện trường nghẹt thở đến từng giây! Cứ ngỡ đối phương đã cùng đường, nhưng một quân bài tẩy kinh hoàng vừa được lật mở!`,
         sound: 'Tiếng va chạm kim loại chát chúa, tiếng thở gấp, nhịp trống dồn dập mở màn.'
       },
       {
         sceneNumber: 2,
         timecode: '0:15 - 0:45',
-        title: 'Mâu thuẫn bùng nổ - Kẻ ác ép bức',
-        visual: `Góc trung quay toàn cảnh phòng khách sang trọng. Phản diện hếch cằm ra lệnh, vứt giấy tờ hoặc xấp tiền xuống trước mặt nhân vật chính. Đám đông xung quanh phụ họa châm chọc.`,
-        voiceover: `Kẻ phản diện cười khẩy: "Dựa vào một kẻ khố rách áo ôm như mày mà cũng dám mơ trèo cao sao? Hôm nay nếu không quỳ xuống dập đầu nhận sai, đừng hòng bước ra khỏi cánh cửa này lành lặn!". Từng lời nói cay nghiệt như những nhát dao đâm vào danh dự.`,
-        sound: 'Tiếng cười nhạo chói tai, nhạc nền căng thẳng rít lên theo từng lời thoại.'
+        title: isLast ? 'Kẻ phản diện sụp đổ quỳ lạy' : 'Mâu thuẫn bùng nổ - Kẻ ác ép bức',
+        visual: isLast
+          ? `Cận cảnh kẻ phản diện mặt cắt không còn giọt máu, hai đầu gối khuỵu xuống sàn đá cẩm thạch van xin trong tuyệt vọng.`
+          : `Góc trung quay toàn cảnh phòng khách sang trọng. Phản diện hếch cằm ra lệnh, vứt giấy tờ hoặc xấp tiền xuống trước mặt nhân vật chính.`,
+        voiceover: isLast
+          ? `Kẻ phản diện run rẩy bò lết dưới sàn: "Tôi sai rồi! Xin tha cho tôi một con đường sống!". Nhưng tiếng cười lạnh lùng của nhân vật chính đã dập tắt mọi hy vọng trốn tội!`
+          : `Kẻ phản diện cười khẩy: "Dựa vào một kẻ khố rách áo ôm như mày mà cũng dám mơ trèo cao sao? Hôm nay nếu không quỳ xuống dập đầu nhận sai, đừng hòng bước ra khỏi cánh cửa này lành lặn!".`,
+        sound: isLast ? 'Tiếng đập đầu chan chát xuống sàn, tiếng khóc than xin tha.' : 'Tiếng cười nhạo chói tai, nhạc nền căng thẳng rít lên theo từng lời thoại.'
       },
       {
         sceneNumber: 3,
         timecode: '0:45 - 1:15',
-        title: 'Diễn biến đẩy cao - Sự phản kháng sắc lạnh',
-        visual: 'Cận cảnh ánh mắt nhân vật chính. Đồng tử co lại, nụ cười nửa miệng xuất hiện đầy tự tin và bí hiểm. Đôi bàn tay nhẹ nhàng gạt phăng mọi sự uy hiếp.',
-        voiceover: `Nhưng đáp lại sự hung hãn đó chỉ là một nụ cười lạnh lùng: "Nhà các người nghĩ tiền tài và quyền lực của mình có thể che được cả bầu trời này sao? Để xem, ai mới là người phải quỳ gối xin tha!". Từng bước chân tiến lên khiến kẻ phản diện bất giác phải lùi lại.`,
-        sound: 'Tiếng bước giày da vang vọng đanh thép, tiếng thì thầm xôn xao kinh ngạc.'
+        title: isLast ? 'Tiếp quản quyền lực & Đền tội' : 'Diễn biến đẩy cao - Sự phản kháng sắc lạnh',
+        visual: isLast
+          ? `Đội ngũ luật sư và cảnh sát xuất hiện, trao quyền thừa kế và còng tay kẻ phạm tội lôi ra xe đặc chủng.`
+          : `Cận cảnh ánh mắt nhân vật chính. Đồng tử co lại, nụ cười nửa miệng xuất hiện đầy tự tin và bí hiểm. Đôi bàn tay nhẹ nhàng gạt phăng mọi sự uy hiếp.`,
+        voiceover: isLast
+          ? `Bản hợp đồng chuyển nhượng toàn bộ gia sản chính thức ký kết! Kẻ ác cúi đầu tra tay vào còng số 8 trong sự khinh bỉ của toàn xã hội!`
+          : `Nhưng đáp lại sự hung hãn đó chỉ là một nụ cười lạnh lùng: "Nhà các người nghĩ tiền tài và quyền lực của mình có thể che được cả bầu trời này sao? Để xem, ai mới là người phải quỳ gối xin tha!".`,
+        sound: isLast ? 'Tiếng còng số 8 khóa cạch, tiếng còi xe cảnh sát hú vang.' : 'Tiếng bước giày da vang vọng đanh thép, tiếng thì thầm xôn xao kinh ngạc.'
       },
       {
         sceneNumber: 4,
         timecode: '1:15 - 1:45',
-        title: 'Điểm đảo chiều - Cú vả mặt bước 1',
-        visual: `Góc máy quét nhanh từ dưới lên trên. Một bằng chứng bất ngờ xuất hiện (chiếc thẻ đen, cuộc điện thoại từ cấp trên, đoàn xe hộ tống ập tới). Sắc mặt kẻ phản diện lập tức đổi màu tái mét.`,
-        voiceover: `${toneMod.climaxAction}! Lời tuyên bố vang lên như sấm sét giữa trời quang. Những kẻ vừa giây trước còn cười cợt, nay hai chân run lẩy bẩy, mồ hôi vã ra như tắm khi nhận ra sự thật kinh hoàng!`,
-        sound: toneMod.sfxClimax
+        title: isLast ? 'Vinh quang & Hạnh phúc trọn vẹn' : 'Điểm đảo chiều - Cú vả mặt chấn động',
+        visual: isLast
+          ? `Nhân vật chính nắm tay người mình yêu sải bước trên thảm đỏ, ánh hào quang của vương giả rực rỡ, xung quanh vạn người chúc tụng.`
+          : `Góc máy quét nhanh từ dưới lên trên. Một bằng chứng bất ngờ xuất hiện (chiếc thẻ đen, cuộc điện thoại từ cấp trên, đoàn xe hộ tống ập tới).`,
+        voiceover: isLast
+          ? `Trước mặt hàng triệu người ngưỡng mộ, lời hẹn ước trăm năm được trao gửi. Sóng gió qua đi, chỉ còn lại tình yêu bất diệt và ngai vàng quyền lực tối thượng!`
+          : `${toneMod.climaxAction}! Lời tuyên bố vang lên như sấm sét giữa trời quang. Những kẻ vừa giây trước còn cười cợt, nay hai chân run lẩy bẩy, mồ hôi vã ra như tắm!`,
+        sound: isLast ? 'Nhạc giao hưởng hoành tráng du dương, tiếng pháo hoa rộn rã.' : toneMod.sfxClimax
       },
       {
         sceneNumber: 5,
         timecode: '1:45 - 2:00',
-        title: 'Cao trào & Cliffhanger - Dừng lại ở giây phút nghẹt thở',
-        visual: 'Góc máy cận xoay tròn 360 độ quanh nhân vật chính đang đứng sừng sững uy nghiêm, trong khi kẻ phản diện quỵ ngã. Đúng khoảnh khắc chiếc điện thoại reo vang hoặc một nhân vật bí ẩn bước vào, khung hình đóng băng!',
+        title: isLast ? 'Đại kết cục hoàn mỹ - Trọn bộ viên mãn' : 'Cao trào & Cliffhanger - Dừng lại ở giây phút nghẹt thở',
+        visual: isLast
+          ? `Khung cảnh toàn cảnh lâu đài pháo hoa sáng rực rỡ trên bầu trời đêm. Nụ cười hạnh phúc rạng ngời kết thúc toàn bộ thiên truyện.`
+          : `Góc máy cận xoay tròn 360 độ quanh nhân vật chính đang đứng sừng sững uy nghiêm, trong khi kẻ phản diện quỵ ngã. Đúng khoảnh khắc then chốt, khung hình đóng băng!`,
         voiceover: isLast
-          ? `Bản án thích đáng đã được thực thi! Kẻ gieo gió nay phải gặt bão. Nhưng trước mắt nhân vật chính, một thế giới quyền lực hoàn toàn mới đang mở ra!`
+          ? `Một hành trình báo thù và nghịch tập hoàn mỹ đã chính thức khép lại! Khổ tận cam lai, vương giả quy vị, trọn vẹn đến từng cảm xúc!`
           : `Chuông điện thoại reo vang xé toạc bầu không khí chết lặng! Đầu dây bên kia gào thét: "Mày đắc tội với ai? Cả gia tộc chúng ta sắp bị xóa sổ rồi!". Sự việc tiếp theo sẽ ra sao? Bấm ngay tập tiếp theo!`,
-        sound: 'Tiếng bass drop rung rinh màng loa, tiếng tim đập hồi hộp, dứt khoát ngắt nhạc tạo cú sốc!'
+        sound: isLast ? 'Tiếng chuông ngân vang, ca khúc kết phim hùng tráng trọn vẹn!' : 'Tiếng bass drop rung rinh màng loa, tiếng tim đập hồi hộp, dứt khoát ngắt nhạc tạo cú sốc!'
       }
     ];
 
     episodes.push({
       episodeNumber: i,
       title: epTitle,
-      hook: `Tình huống giật gân ${i}: ${toneMod.hookVerb}!`,
-      cliffhanger: isLast
-        ? 'Kết thúc hoàn hảo, vả mặt trọn vẹn!'
-        : 'Cuộc gọi tử thần báo hiệu gia tộc sụp đổ, màn hình đóng băng đúng lúc nghẹt thở nhất!',
+      hook: `Tình huống giật gân tập ${i}: ${toneMod.hookVerb}!`,
+      cliffhanger: cliffhangerText,
       durationSeconds: 120,
       scenes,
-      notes: `Tập ${i} được tối ưu hóa cho độ dài 2 phút (khoảng 300 từ lời thoại) với cấu trúc giữ chân người xem Douyin / TikTok.`
+      notes: `Tập ${i}/${total} (${isLast ? 'TẬP CUỐI - ĐẠI KẾT CỤC' : 'Giai đoạn cốt truyện: ' + stageDesc}) - Tối ưu 2 phút chuẩn kịch bản Douyin.`
     });
   }
 

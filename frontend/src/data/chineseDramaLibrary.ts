@@ -37,6 +37,7 @@ export interface ChineseDrama {
   characters: DramaCharacter[];
   viralHighlights: string[];
   suggestedEpisodes: number;
+  isFullSeries: boolean; // Đánh dấu đã có trọn bộ cốt truyện từ Mở đầu đến Đại Kết Cục
   episodes: DramaEpisode[];
 }
 
@@ -54,17 +55,18 @@ export const DRAMA_GENRES = [
 ] as const;
 
 export const CHINESE_DRAMAS: ChineseDrama[] = [
+  // 1. CHIẾN THẦN Ở RỂ (TRỌN BỘ 3 TẬP CHUẨN 2 PHÚT)
   {
     id: 'zhan-shen-long-te',
     title: 'Chiến Thần Ở Rể: 100 Tỷ Đô Xuất Kích',
     originalTitle: '战神龙婿: 赘婿逆袭 (Chiến Thần Long Tế)',
     genre: 'Chiến Thần / Ở Rể',
     genreKey: 'zhan_shen',
-    tags: ['Vả mặt', 'Ở rể', 'Thân phận thật', 'Long Vương', 'Gia tộc khinh bỉ'],
+    tags: ['Vả mặt', 'Ở rể', 'Thân phận thật', 'Long Vương', 'Trọn bộ Full Arc'],
     addictionRating: 5.0,
     viewsEstimate: '2.4 Tỷ lượt xem Douyin',
     hook: 'Làm rể 3 năm quỳ rửa chân cho mẹ vợ, ngày thượng thọ bị đuổi ra đường, 10 chiếc trực thăng quân đoàn bất ngờ hạ cánh!',
-    synopsis: 'Diệp Thần vì lời thề với sư phụ mà ẩn thân làm rể hèn nhà họ Lâm suốt 3 năm, chịu đủ trăm bề nhục nhã. Đúng ngày đại thọ 70 của lão thái thái, mẹ vợ ép anh ký đơn ly hôn để gả vợ anh cho thiếu gia tập đoàn họ Vương. Khi hợp đồng hôn nhân vừa xé, 10 chiếc trực thăng vũ trang của Chiến Thần Điện bất ngờ phủ kín bầu trời thành phố, vạn binh sĩ quỳ rạp: "Kính chào Long Vương trở về!".',
+    synopsis: 'Diệp Thần vì lời thề với sư phụ mà ẩn thân làm rể hèn nhà họ Lâm suốt 3 năm, chịu đủ trăm bề nhục nhã. Đúng ngày đại thọ 70 của lão thái thái, mẹ vợ ép anh ký đơn ly hôn để gả vợ anh cho thiếu gia tập đoàn họ Vương. Khi hợp đồng hôn nhân vừa xé, 10 chiếc trực thăng vũ trang của Chiến Thần Điện bất ngờ phủ kín bầu trời thành phố, vạn binh sĩ quỳ rạp nghênh đón Long Vương quy vị, trừng phạt kẻ bạc ác và đưa vợ yêu lên đỉnh cao vinh quang!',
     characters: [
       { name: 'Diệp Thần', role: 'Nam chính', description: 'Long Vương Chiến Thần thống lĩnh 10 vạn thiết vệ, giả nghèo làm rể để báo ân.' },
       { name: 'Lâm Thanh Uyển', role: 'Nữ chính', description: 'Vợ Diệp Thần, xinh đẹp nhân hậu nhưng bị gia tộc chèn ép buộc phải tái giá.' },
@@ -77,6 +79,7 @@ export const CHINESE_DRAMAS: ChineseDrama[] = [
       'Chiếc thẻ đen Black Card vô hạn mức ném thẳng vào bàn tiệc.',
     ],
     suggestedEpisodes: 3,
+    isFullSeries: true,
     episodes: [
       {
         episodeNumber: 1,
@@ -178,7 +181,7 @@ export const CHINESE_DRAMAS: ChineseDrama[] = [
       },
       {
         episodeNumber: 3,
-        title: 'Tập 3: Mẹ Vợ Quỳ Lạy & Ân Đoạn Nghĩa Tuyệt',
+        title: 'Tập 3 (Đại Kết Cục): Mẹ Vợ Quỳ Lạy & Ân Đoạn Nghĩa Tuyệt',
         hook: 'Mẹ vợ bò lết dưới sàn ôm chặt ống quần Diệp Thần, khóc lóc van xin tha thứ!',
         cliffhanger: 'Diệp Thần nắm tay Thanh Uyển bước lên chuyên cơ, để lại cả gia tộc chìm trong biển hối hận khôn nguôi!',
         durationSeconds: 120,
@@ -186,7 +189,7 @@ export const CHINESE_DRAMAS: ChineseDrama[] = [
           {
             sceneNumber: 1,
             timecode: '0:00 - 0:15',
-            title: 'Hook tập 3 - Sự sụp đổ của kẻ phản diện',
+            title: 'Sự sụp đổ của kẻ phản diện',
             visual: 'Vương Khắc ôm đầu quỳ sụp, mắt đờ đẫn nhìn Diệp Thần. Mẹ vợ lùi lại vài bước rồi ngã ngồi xuống ghế sô pha, mặt trắng bệch.',
             voiceover: 'Chỉ trong đúng 3 phút, một đế chế tài chính hàng đầu đã bị san phẳng. Toàn bộ người nhà họ Lâm lúc này mới nhận ra, kẻ ăn bám suốt 3 năm qua chính là vị chúa tể mà họ không bao giờ với tới!',
             sound: 'Tiếng thở dốc của Vương Khắc, tiếng khóc thút thít của mẹ vợ.'
@@ -218,26 +221,28 @@ export const CHINESE_DRAMAS: ChineseDrama[] = [
           {
             sceneNumber: 5,
             timecode: '1:45 - 2:00',
-            title: 'Đại kết cục tập phim - Khởi hành đỉnh cao',
+            title: 'Đại kết cục viên mãn - Long Vương thăng hoa',
             visual: 'Hai người sải bước ra thảm đỏ dẫn lên chuyên cơ Long Vương. Phía sau lưng, cả gia tộc họ Lâm đập đầu van xin xin tha thứ nhưng cánh cửa phi cơ đã khép lại.',
-            voiceover: 'Cánh cửa đóng lại, động cơ gầm vang. Một hành trình mới bắt đầu: Long Vương tái xuất, thiên hạ khuynh đảo!',
+            voiceover: 'Cánh cửa đóng lại, động cơ gầm vang. Một hành trình mới bắt đầu: Long Vương tái xuất, thiên hạ khuynh đảo, kẻ bạc nghĩa nhận lấy bài học muôn đời!',
             sound: 'Tiếng phản lực xé gió bay lên bầu trời xanh, nhạc chiến thắng vang dội đầy thỏa mãn!'
           }
         ]
       }
     ]
   },
+
+  // 2. TRÙNG SINH BÁO THÙ (TRỌN BỘ 3 TẬP CHUẨN 2 PHÚT)
   {
     id: 'trung-sinh-bao-thu-thien-kim',
     title: 'Trùng Sinh Báo Thù: Thiên Kim Thật Trở Về',
     originalTitle: '真假千金: 重生复仇 (Chân Giả Thiên Kim: Trọng Sinh Phục Thù)',
     genre: 'Trùng Sinh / Báo Thù',
     genreKey: 'trung_sinh',
-    tags: ['Trùng sinh', 'Vả mặt trà xanh', 'Thiên kim thật', 'Hào môn', 'Báo thù'],
+    tags: ['Trùng sinh', 'Vả mặt trà xanh', 'Thiên kim thật', 'Hào môn', 'Trọn bộ Full Arc'],
     addictionRating: 4.9,
     viewsEstimate: '1.8 Tỷ lượt xem Douyin',
     hook: 'Kiếp trước bị trà xanh hãm hại lấy tủy rồi ném xuống biển, kiếp này trùng sinh đúng ngày xét nghiệm ADN nhận thân!',
-    synopsis: 'Kiếp trước, Ninh Duệ là thiên kim thật của gia tộc giàu có nhất thủ đô nhưng bị cô em nuôi trà xanh vu oan giá họa, cha mẹ ruột ruồng bỏ ép hiến tủy cho con nuôi rồi chết thảm nơi đáy biển lạnh giá. Trùng sinh về năm 20 tuổi đúng buổi tiệc công bố kết quả ADN, Ninh Duệ mang theo bản báo cáo pháp y quốc tế, vạch trần âm mưu tráo đổi con gái và liên minh với vị hôn phu quyền lực nhất Bắc Kinh để vả mặt từng kẻ phản bội!',
+    synopsis: 'Kiếp trước, Ninh Duệ là thiên kim thật của gia tộc giàu có nhất thủ đô nhưng bị cô em nuôi trà xanh vu oan giá họa, cha mẹ ruột ruồng bỏ ép hiến tủy cho con nuôi rồi chết thảm nơi đáy biển lạnh giá. Trùng sinh về năm 20 tuổi đúng buổi tiệc công bố kết quả ADN, Ninh Duệ mang theo bản báo cáo pháp y quốc tế, vạch trần âm mưu tráo đổi con gái và liên minh với vị hôn phu quyền lực nhất Bắc Kinh để tống cổ ả trà xanh vào tù, lấy lại toàn bộ gia sản!',
     characters: [
       { name: 'Ninh Duệ', role: 'Nữ chính', description: 'Trùng sinh mang theo ký ức và tài năng y học thiên tài, quyết tâm đòi lại tất cả.' },
       { name: 'Ninh Tuyết', role: 'Trà xanh phản diện', description: 'Con gái nuôi giả tạo, bề ngoài ngây thơ yếu đuối nhưng lòng dạ độc như rắn rết.' },
@@ -247,9 +252,10 @@ export const CHINESE_DRAMAS: ChineseDrama[] = [
     viralHighlights: [
       'Ném bản xét nghiệm ADN thật và đoạn ghi âm tráo đổi con vào máy chiếu hội nghị.',
       'Trà xanh quỳ gối xin tha nhưng bị tát liên tiếp hai bạt tai vang dội.',
-      'Tổng tài Phó Tư Viễn xuất hiện tuyên bố: "Ai dám đụng vào vợ tôi, chuẩn bị mua đất nghĩa trang!".',
+      'Phó Tư Viễn tuyên bố huỷ diệt kẻ bắt nạt vợ và tổ chức hôn lễ thế kỷ.',
     ],
     suggestedEpisodes: 3,
+    isFullSeries: true,
     episodes: [
       {
         episodeNumber: 1,
@@ -348,20 +354,71 @@ export const CHINESE_DRAMAS: ChineseDrama[] = [
             sound: 'Tiếng giày da nện trên thảm đỏ chậm rãi uy nghiêm, nhạc bass rền vang.'
           }
         ]
+      },
+      {
+        episodeNumber: 3,
+        title: 'Tập 3 (Đại Kết Cục): Tống Kẻ Ác Vào Tù & Hôn Lễ Thế Kỷ',
+        hook: 'Cảnh sát hình sự ập vào sảnh tiệc còng tay ả trà xanh và gã tình nhân trước ống kính truyền hình trực tiếp!',
+        cliffhanger: 'Phó Tư Viễn quỳ một gối trao nhẫn kim cương 100 carat cho Ninh Duệ, tuyên bố trao tặng một nửa tập đoàn cho phu nhân!',
+        durationSeconds: 120,
+        scenes: [
+          {
+            sceneNumber: 1,
+            timecode: '0:00 - 0:15',
+            title: 'Còng số 8 sáng loáng',
+            visual: 'Đội cảnh sát kinh tế và hình sự bước vào hội trường, rút thẻ ngành và lệnh bắt giữ khẩn cấp.',
+            voiceover: 'Cảnh sát trưởng: "Ninh Tuyết, Triệu Tuấn! Hai người bị bắt vì tội cố ý mưu sát, gian lận thương mại và rửa tiền xuyên quốc gia!". Tiếng còng số 8 khóa chặt cổ tay hai kẻ ác.',
+            sound: 'Tiếng còng kim loại "cạch", tiếng phóng viên bấm máy liên hồi.'
+          },
+          {
+            sceneNumber: 2,
+            timecode: '0:15 - 0:45',
+            title: 'Lời van xin muộn màng của cha mẹ',
+            visual: 'Ông bà Ninh nghẹn ngào bước tới nắm tay con gái ruột Ninh Duệ, nước mắt giàn giụa xin tha thứ vì đã nghi oan bao năm.',
+            voiceover: 'Bà Ninh: "Con gái ơi, mẹ sai rồi! Mẹ mù quáng để kẻ ngoài hãm hại con, con hãy tha thứ cho cha mẹ!". Nhưng Ninh Duệ chỉ khẽ rút tay lại, ánh mắt bình thản như nước.',
+            sound: 'Nhạc vĩ cầm da diết, tiếng nức nở hối hận.'
+          },
+          {
+            sceneNumber: 3,
+            timecode: '0:45 - 1:15',
+            title: 'Tiếp quản tập đoàn gia tộc',
+            visual: 'Luật sư trưởng của Phó thị bước lên bục, trình ra bản hợp đồng chuyển nhượng 51% cổ phần kiểm soát toàn bộ Ninh Thị cho Ninh Duệ.',
+            voiceover: 'Ninh Duệ đứng trước bục phát biểu: "Từ hôm nay, Ninh thị do tôi toàn quyền tiếp quản. Bất kỳ kẻ nào từng hãm hại tôi, tôi sẽ thanh trừng từng người một!". Cả khán phòng vỗ tay sấm dậy.',
+            sound: 'Tiếng vỗ tay rền vang, nhạc chiến thắng ngân nga đầy kiêu hãnh.'
+          },
+          {
+            sceneNumber: 4,
+            timecode: '1:15 - 1:45',
+            title: 'Màn cầu hôn chấn động',
+            visual: 'Phó Tư Viễn sải bước đến bên cạnh cô, trước mặt hàng triệu khán giả xem truyền hình, anh quỳ xuống một chân mở chiếc hộp nhung đỏ.',
+            voiceover: 'Phó Tư Viễn: "Kiếp trước anh đến muộn để em chịu khổ, kiếp này anh xin dùng cả sinh mệnh và đế chế Phó Thị để bảo bọc em trọn đời. Em đồng ý làm vợ anh chứ?".',
+            sound: 'Nhạc tình yêu ngọt ngào sâu lắng, tiếng trầm trồ của hàng ngàn người.'
+          },
+          {
+            sceneNumber: 5,
+            timecode: '1:45 - 2:00',
+            title: 'Đại kết cục viên mãn - Hạnh phúc trọn vẹn',
+            visual: 'Ninh Duệ mỉm cười gật đầu, chiếc nhẫn kim cương lấp lánh được đeo vào ngón tay. Hai người trao nhau cái ôm ấm áp giữa pháo hoa rực sáng.',
+            voiceover: 'Mối thù kiếp trước đã trả sạch, kiếp này tái sinh nắm trọn quyền lực và tình yêu đích thực. Một chương mới rực rỡ bắt đầu!',
+            sound: 'Tiếng pháo hoa nổ vang trời, giai điệu hào hùng khép lại toàn bộ series đầy thỏa mãn!'
+          }
+        ]
       }
     ]
   },
+
+  // 3. GIẢ NGHÈO XEM MẮT (TRỌN BỘ 3 TẬP CHUẨN 2 PHÚT)
   {
     id: 'gia-ngheo-xem-mat-nu-tong-tai',
     title: 'Giả Nghèo Đi Xem Mắt Gặp Ngay Nữ Tổng Tài',
     originalTitle: '装穷相亲: 闪婚万亿女总裁 (Trang Cùng Tương Thân: Thiểm Hôn Nữ Tổng Tài)',
     genre: 'Giả Nghèo / Xem Mắt',
     genreKey: 'gia_ngheo',
-    tags: ['Giả nghèo', 'Xem mắt', 'Chủ tịch giấu nghề', 'Hài hước', 'Vả mặt'],
+    tags: ['Giả nghèo', 'Xem mắt', 'Chủ tịch giấu nghề', 'Hài hước', 'Trọn bộ Full Arc'],
     addictionRating: 4.9,
     viewsEstimate: '2.1 Tỷ lượt xem Douyin',
     hook: 'Chủ tịch tập đoàn nghìn tỷ mặc áo shipper đi xem mắt bị gái thực dụng tạt nước, nữ chủ tịch bàn bên kéo tay đi đăng ký kết hôn!',
-    synopsis: 'Lục Phong - chủ tịch tập đoàn công nghệ Lục Thị nghìn tỷ, vì chán ngấy những cô nàng đào mỏ nên quyết định mặc đồ shipper đi xem mắt. Bị cô gái thực dụng mắng chửi thậm tệ và đòi tiền đền bù thời gian, đúng lúc này, nữ tổng tài số 1 thành phố Thẩm Nhược Hy ngồi bàn bên cạnh bỗng đứng dậy: "Anh này em lấy! Bây giờ mang sổ hộ khẩu đi đăng ký kết hôn luôn!". Kể từ đó là chuỗi ngày vừa giả nghèo vừa cưng chiều vợ tổng tài, tiện tay vả mặt từng kẻ coi thường!',
+    synopsis: 'Lục Phong - chủ tịch tập đoàn công nghệ Lục Thị nghìn tỷ, vì chán ngấy những cô nàng đào mỏ nên quyết định mặc đồ shipper đi xem mắt. Bị cô gái thực dụng mắng chửi thậm tệ, nữ tổng tài số 1 thành phố Thẩm Nhược Hy ngồi bàn bên cạnh bỗng đứng dậy kéo anh đi đăng ký kết hôn chớp nhoáng. Qua 3 tập phim kịch tính và hài hước, Lục Phong vừa giả nghèo vừa bảo vệ vợ khỏi gia tộc chèn ép, để rồi trong tiệc mừng công bố thân phận chủ tịch vạn tỷ khiến tất cả kẻ khinh thường phải sụp đổ!',
     characters: [
       { name: 'Lục Phong', role: 'Nam chính', description: 'Chủ tịch tỷ đô ẩn thân làm shipper để tìm kiếm chân ái đời mình.' },
       { name: 'Thẩm Nhược Hy', role: 'Nữ chính', description: 'Nữ chủ tịch xinh đẹp khí chất ngời ngời, đang cần tìm người kết hôn gấp để đối phó gia tộc ép hôn.' },
@@ -371,9 +428,10 @@ export const CHINESE_DRAMAS: ChineseDrama[] = [
     viralHighlights: [
       'Gái thực dụng đòi quà 1 tỷ bị bóc phốt hóa đơn thuê túi hiệu.',
       'Nữ tổng tài kéo tay shipper đi đăng ký kết hôn trước mắt cả nhà hàng.',
-      'Mở cốp xe máy cà tàng nhưng bên trong là chìa khóa siêu xe Pagani và hợp đồng mua lại toàn bộ khu phố thương mại.',
+      'Lục Phong mở cốp xe máy cà tàng ném ra hợp đồng thâu tóm toàn bộ cao ốc của kẻ phản diện.',
     ],
     suggestedEpisodes: 3,
+    isFullSeries: true,
     episodes: [
       {
         episodeNumber: 1,
@@ -423,20 +481,120 @@ export const CHINESE_DRAMAS: ChineseDrama[] = [
             sound: 'Nhạc tình yêu pha chút hồi hộp giật gân, tiếng drumroll kết tập cực cuốn!'
           }
         ]
+      },
+      {
+        episodeNumber: 2,
+        title: 'Tập 2: Ra Mắt Gia Tộc Hào Môn & Thiếu Gia Khiêu Khích',
+        hook: 'Vừa dắt chồng mới cưới về dinh thự, gã thiếu gia phản diện ném chùm chìa khóa Ferrari trúng chân Lục Phong!',
+        cliffhanger: 'Lý thiếu gọi điện triệu tập tổng giám đốc tập đoàn Lục Thị đến sa thải Lục Phong, nhưng đầu dây bên kia bảo chủ tịch đang ở ngay trong nhà!',
+        durationSeconds: 120,
+        scenes: [
+          {
+            sceneNumber: 1,
+            timecode: '0:00 - 0:15',
+            title: 'Bước vào dinh thự hào môn',
+            visual: 'Lục Phong vẫn mặc áo thun giản dị đi cạnh Thẩm Nhược Hy bước vào biệt phủ nhà họ Thẩm. Họ hàng nhìn anh với ánh mắt dè bỉu.',
+            voiceover: 'Vừa ký giấy kết hôn xong, Thẩm Nhược Hy dẫn ngay người chồng shipper về ra mắt để dập tắt âm mưu ép gả của gia đình. Một trận sóng gió lập tức bùng nổ!',
+            sound: 'Tiếng bước chân trong sảnh đá cẩm thạch, tiếng cười khẩy của họ hàng.'
+          },
+          {
+            sceneNumber: 2,
+            timecode: '0:15 - 0:45',
+            title: 'Lý thiếu gia ra oai',
+            visual: 'Lý thiếu ngậm điếu xì gà, xoay chiếc chìa khóa Ferrari trên tay: "Nhược Hy, em vì trốn tránh anh mà nhặt một tên ăn mày ngoài đường về làm chồng sao?".',
+            voiceover: 'Hắn ném tờ séc 10 tỷ xuống chân Lục Phong: "Cầm lấy số tiền này mà mua xe mới, rồi cút khỏi tầm mắt của bổn thiếu gia ngay lập tức!".',
+            sound: 'Tiếng cười ha hả trịch thượng của đám công tử con nhà giàu.'
+          },
+          {
+            sceneNumber: 3,
+            timecode: '0:45 - 1:15',
+            title: 'Sự bảo vệ của nữ tổng tài',
+            visual: 'Thẩm Nhược Hy lập tức bước lên chắn trước mặt Lục Phong, gạt phăng tờ séc của Lý thiếu.',
+            voiceover: 'Thẩm Nhược Hy: "Lý thiếu gia, anh ấy là chồng hợp pháp của tôi! Dù anh ấy có nghèo, cũng hơn vạn lần loại người đạo đức giả như anh!". Lục Phong nhìn bóng lưng vợ, trong lòng dâng lên cảm giác ấm áp.',
+            sound: 'Tiếng giấy rơi lả tả, ánh mắt Lục Phong trở nên thâm trầm.'
+          },
+          {
+            sceneNumber: 4,
+            timecode: '1:15 - 1:45',
+            title: 'Lý thiếu dùng quyền lực bức bách',
+            visual: 'Lý thiếu tức giận rút điện thoại: "Một thằng shipper quèn dám đọ với tao? Tập đoàn giao hàng của mày do tập đoàn Lục Thị nắm quyền kiểm soát! Tao gọi một cuộc điện thoại là mày mất việc ra đường ăn xin!".',
+            voiceover: 'Hắn bấm loa ngoài gọi cho Tổng Giám Đốc chi nhánh Lục Thị, kiêu ngạo ra lệnh sa thải nhân viên tên Lục Phong ngay lập tức.',
+            sound: 'Tiếng chuông điện thoại tút tút, nhạc nền dồn dập.'
+          },
+          {
+            sceneNumber: 5,
+            timecode: '1:45 - 2:00',
+            title: 'Cao trào & Cliffhanger - Cuộc gọi phản tác dụng',
+            visual: 'Loa ngoài vang lên giọng nói run rẩy của Tổng Giám Đốc chi nhánh.',
+            voiceover: 'Tổng Giám Đốc: "Lý thiếu gia điên rồi sao? Lục Phong chính là Chủ Tịch Sáng Lập kiêm Cổ Đông Lớn Nhất của tập đoàn Lục Thị! Ngài ấy đang ở cạnh anh sao?". Lý thiếu đứng hình như tượng đá!',
+            sound: 'Tiếng thở dốc nghẹn ngào từ điện thoại, tiếng bass drop rung chuyển cả sảnh tiệc!'
+          }
+        ]
+      },
+      {
+        episodeNumber: 3,
+        title: 'Tập 3 (Đại Kết Cục): Thân Phận Chủ Tịch Vạn Tỷ & Đám Cưới Thế Kỷ',
+        hook: 'Đoàn xe 20 chiếc Rolls-Royce cùng dàn lãnh đạo tập đoàn Lục Thị bước vào sảnh cung kính cúi đầu chào Chủ Tịch!',
+        cliffhanger: 'Thẩm Nhược Hy đỏ mặt khi phát hiện người chồng shipper cô bao nuôi thực chất sở hữu khối tài sản gấp 10 lần gia tộc cô!',
+        durationSeconds: 120,
+        scenes: [
+          {
+            sceneNumber: 1,
+            timecode: '0:00 - 0:15',
+            title: 'Sự thật hé lộ',
+            visual: 'Cửa biệt phủ mở toang, 20 vệ sĩ vest đen cùng các thành viên Hội Đồng Quản Trị tập đoàn công nghệ Lục Thị sải bước vào, đồng loạt cúi gập người 90 độ trước mặt Lục Phong.',
+            voiceover: 'Toàn thể ban giám đốc đồng thanh: "Kính chào Lục Chủ Tịch! Mọi thủ tục thâu tóm toàn bộ chuỗi bất động sản của nhà họ Lý đã hoàn tất!".',
+            sound: 'Tiếng bước chân đồng bộ rầm rập, tiếng hô vang dội làm rung cả trần nhà.'
+          },
+          {
+            sceneNumber: 2,
+            timecode: '0:15 - 0:45',
+            title: 'Sự sụp đổ của Lý thiếu gia',
+            visual: 'Lý thiếu trượt chân ngã ngồi xuống sàn, mắt nhìn Lục Phong như nhìn thấy quái vật. Chiếc chìa khóa Ferrari rơi khỏi tay lăn lóc.',
+            voiceover: 'Lý thiếu run rẩy bò tới: "Lục... Lục tổng! Tôi có mắt như mù không nhận ra Thái Sơn, xin ngài giơ cao đánh khẽ tha cho tập đoàn nhà tôi!". Lục Phong chỉ lạnh lùng bước qua.',
+            sound: 'Tiếng khóc lóc van xin thảm thiết, tiếng cười nhạo của khách mời.'
+          },
+          {
+            sceneNumber: 3,
+            timecode: '0:45 - 1:15',
+            title: 'Vả mặt gia tộc họ Thẩm',
+            visual: 'Những người cô bác họ hàng từng dè bỉu Lục Phong lúc này xúm lại đon đả rót trà, cúi đầu tạ tội xin được tha thứ.',
+            voiceover: 'Lục Phong mỉm cười nắm tay Thẩm Nhược Hy: "Nhà họ Thẩm các người chê tôi nghèo, vậy thì số cổ phần 500 tỷ này, tôi xin tặng lại riêng cho vợ tôi là Nhược Hy đứng tên!".',
+            sound: 'Tiếng trầm trồ kinh ngạc tột độ của toàn thể quan khách.'
+          },
+          {
+            sceneNumber: 4,
+            timecode: '1:15 - 1:45',
+            title: 'Lời tỏ tình chân thật',
+            visual: 'Lục Phong nhìn sâu vào đôi mắt long lanh của Thẩm Nhược Hy, rút từ túi áo ra chiếc nhẫn kim cương hồng quý hiếm nhất thế giới.',
+            voiceover: 'Lục Phong: "Em từng nói sẽ bao nuôi anh cả đời, hôm nay anh xin đổi lại: để anh bảo vệ và cưng chiều em suốt cả cuộc đời này!". Nhược Hy xúc động ôm chầm lấy anh.',
+            sound: 'Nhạc tình yêu du dương ngọt ngào, tiếng vỗ tay rộn rã.'
+          },
+          {
+            sceneNumber: 5,
+            timecode: '1:45 - 2:00',
+            title: 'Đại kết cục viên mãn',
+            visual: 'Khung cảnh chuyển sang hôn lễ thế kỷ hoành tráng bên bờ biển, hai người trao nhau nụ hôn ngọt ngào dưới ánh hoàng hôn tuyệt đẹp.',
+            voiceover: 'Từ một buổi xem mắt giả nghèo đến hôn nhân thế kỷ vạn người ngưỡng mộ. Chân tình đổi lấy chân tâm, hạnh phúc trọn vẹn mãi mãi về sau!',
+            sound: 'Tiếng chuông nhà thờ ngân vang, tiếng hò reo chúc phúc kết thúc series cực kỳ viên mãn!'
+          }
+        ]
       }
     ]
   },
+
+  // 4. MẸ KẾ ĐỘC ÁC VÀ MANH BẢO TRIỆU ĐÔ (TRỌN BỘ 3 TẬP CHUẨN 2 PHÚT)
   {
     id: 'me-ke-manh-bao-trieu-do',
     title: 'Mẹ Kế Độc Ác và Hài Nhi Thiên Tài Triệu Đô',
     originalTitle: '后妈恶毒: 天才萌宝找爹地 (Hậu Ma Ác Độc: Thiên Tài Manh Bảo)',
     genre: 'Mẹ Kế / Manh Bảo',
     genreKey: 'manh_bao',
-    tags: ['Manh bảo thiên tài', 'Mẹ kế độc ác', 'Tổng tài tìm vợ', 'Hài hước', 'Gia đấu'],
+    tags: ['Manh bảo thiên tài', 'Mẹ kế độc ác', 'Tổng tài tìm vợ', 'Hài hước', 'Trọn bộ Full Arc'],
     addictionRating: 5.0,
     viewsEstimate: '2.5 Tỷ lượt xem Douyin',
     hook: 'Hai nhóc tì 5 tuổi hack toàn bộ màn hình LED tòa nhà chọc trời để bóc phốt mẹ kế độc ác và tìm bố đền mẹ!',
-    synopsis: '5 năm trước cô bị mẹ kế và em gái hãm hại mang thai đôi rồi bị đuổi ra nước ngoài trong tủi nhục. 5 năm sau dắt 2 bảo bối thiên tài về nước: bé anh là hacker đứng đầu tổ chức ngầm quốc tế, bé em là thần đồng đầu tư chứng khoán triệu đô. Vừa về tới sân bay, hai nhóc phát hiện bố mình sắp cưới ả mẹ kế độc ác, liền lập tức tấn công hệ thống màn hình LED toàn thành phố để phát tán bằng chứng tội ác!',
+    synopsis: '5 năm trước cô bị mẹ kế và em gái hãm hại mang thai đôi rồi bị đuổi ra nước ngoài trong tủi nhục. 5 năm sau dắt 2 bảo bối thiên tài về nước: bé anh là hacker đứng đầu tổ chức ngầm quốc tế, bé em là thần đồng đầu tư chứng khoán triệu đô. Hai nhóc lập tức vạch trần tội ác của ả mẹ kế trà xanh, trừng phạt kẻ xấu và ép Cố tổng phải dốc hết tài sản quỳ xin mẹ tái hôn!',
     characters: [
       { name: 'Kỷ Thư Nghi', role: 'Nữ chính', description: 'Mẹ đơn thân kiên cường, nhà thiết kế thời trang quốc tế ẩn danh.' },
       { name: 'Cố Thừa Trạch', role: 'Tổng tài', description: 'Chủ tịch tập đoàn Cố Thị, tìm kiếm tung tích mẹ của con mình suốt 5 năm.' },
@@ -449,6 +607,7 @@ export const CHINESE_DRAMAS: ChineseDrama[] = [
       'Cố tổng quỳ một gối trước mặt Kỷ Thư Nghi trước sự chứng kiến của 2 con.',
     ],
     suggestedEpisodes: 3,
+    isFullSeries: true,
     episodes: [
       {
         episodeNumber: 1,
@@ -498,20 +657,120 @@ export const CHINESE_DRAMAS: ChineseDrama[] = [
             sound: 'Tiếng thở dốc nghẹn ngào, nhạc cao trào dồn dập khiến người xem sốt ruột chờ tập sau!'
           }
         ]
+      },
+      {
+        episodeNumber: 2,
+        title: 'Tập 2: Hai Manh Bảo Vả Mặt Mẹ Kế & Sự Thật 5 Năm',
+        hook: 'Ả mẹ kế lao vào định cào rách mặt Kỷ Thư Nghi thì bị hai nhóc tì bắn súng nước cay xè mắt!',
+        cliffhanger: 'Cố tổng ra lệnh phong tỏa toàn bộ tài sản của gia tộc họ Bạch, tống cổ ả mẹ kế ra khỏi biệt thự!',
+        durationSeconds: 120,
+        scenes: [
+          {
+            sceneNumber: 1,
+            timecode: '0:00 - 0:15',
+            title: 'Ả mẹ kế điên cuồng phản đòn',
+            visual: 'Bạch Linh gào thét lao tới định tấn công Kỷ Thư Nghi. Hai bé con nhanh như chớp rút từ balo ra khẩu súng bắn bột màu và nước ớt bắn thẳng vào mặt ả.',
+            voiceover: 'Bé Bối Bối hét lớn: "Dám bắt nạt mẹ tôi hả đồ đàn bà độc ác!". Bạch Linh ôm mặt la hét đau đớn, lớp phấn trang điểm trôi tuột lộ vẻ nhếch nhác.',
+            sound: 'Tiếng xịt nước "phụt phụt", tiếng gào rú thất thanh của Bạch Linh.'
+          },
+          {
+            sceneNumber: 2,
+            timecode: '0:15 - 0:45',
+            title: 'Bằng chứng ADN đanh thép',
+            visual: 'Bé Bảo Bảo mở máy tính bảng cầm tay, chiếu trực tiếp kết quả xét nghiệm ADN của Cố tổng và hai bé lên màn hình lớn.',
+            voiceover: 'Bảo Bảo: "Tỷ lệ trùng khớp gen 99.9%. Bố Cố, năm xưa bà ta lừa bố nói con của bố đã chết, nhưng thực ra mẹ con tôi bị bà ta thuê người bắt cóc vứt ra biển!".',
+            sound: 'Tiếng máy ảnh chớp nhoáng, khách khứa la ó phẫn nộ với tội ác tày trời.'
+          },
+          {
+            sceneNumber: 3,
+            timecode: '0:45 - 1:15',
+            title: 'Cố Thừa Trạch trừng phạt thích đáng',
+            visual: 'Cố tổng siết chặt nắm đấm, ánh mắt bốc hỏa nhìn ả mẹ kế đang quỳ lết dưới sàn.',
+            voiceover: 'Cố Thừa Trạch gầm lên: "Bảo vệ đâu! Lôi người phụ nữ này giao cho viện kiểm sát. Tất cả các hợp đồng làm ăn với nhà họ Bạch, lập tức hủy bỏ toàn bộ!".',
+            sound: 'Tiếng vệ sĩ kéo lê kẻ ác trên sàn đá, tiếng khóc than xin tha bị dập tắt.'
+          },
+          {
+            sceneNumber: 4,
+            timecode: '1:15 - 1:45',
+            title: 'Mẹ con kiên quyết rời đi',
+            visual: 'Kỷ Thư Nghi nắm tay hai con xoay người rời đi: "Con tôi, tôi tự nuôi. Cố tổng, chúng ta không có quan hệ gì!".',
+            voiceover: 'Năm năm chịu đựng tủi nhục không thể xóa nhòa trong một sớm một chiều. Dù Cố tổng tha thiết gọi với theo, cô vẫn kiên quyết sải bước ra cửa.',
+            sound: 'Tiếng giày cao gót dứt khoát, tiếng bước chân vội vã đuổi theo của Cố tổng.'
+          },
+          {
+            sceneNumber: 5,
+            timecode: '1:45 - 2:00',
+            title: 'Cao trào & Cliffhanger - Màn truy thê nghẹt thở',
+            visual: 'Cố tổng chạy ra sảnh, chặn ngay trước mũi xe taxi của ba mẹ con, hai đầu gối khuỵu xuống giữa trời mưa!',
+            voiceover: 'Cố Thừa Trạch nghẹn ngào: "Thư Nghi, nếu em không tha thứ cho anh, hôm nay anh sẽ quỳ ở đây đến khi em chịu quay về!". Hai nhóc tì nhìn nhau che miệng cười!',
+            sound: 'Tiếng phanh xe gấp "két", tiếng sấm rền vang kết thúc tập đầy gay cấn!'
+          }
+        ]
+      },
+      {
+        episodeNumber: 3,
+        title: 'Tập 3 (Đại Kết Cục): Cố Tổng Quỳ Cầu Hôn & Gia Đình Đoàn Tụ',
+        hook: 'Hai nhóc tì ra điều kiện: "Bố muốn rước mẹ về thì phải nộp hết sổ đỏ và thẻ ngân hàng cho mẹ giữ!"',
+        cliffhanger: 'Đại gia đình 4 người hạnh phúc bước vào lễ đường thế kỷ, kẻ ác nhận án tù 20 năm!',
+        durationSeconds: 120,
+        scenes: [
+          {
+            sceneNumber: 1,
+            timecode: '0:00 - 0:15',
+            title: 'Điều kiện của hai manh bảo',
+            visual: 'Hai bé con đứng trước mặt Cố tổng đang ướt sũng dưới mưa, đưa ra bản cam kết dài 10 trang.',
+            voiceover: 'Bảo Bảo dõng dạc: "Điều 1: Bố không được để mẹ khóc. Điều 2: Toàn bộ cổ phần Cố Thị sang tên mẹ. Bố làm được thì mẹ con tôi mới cân nhắc!".',
+            sound: 'Tiếng mưa rơi nhẹ dần, tiếng lật giấy rột roạt.'
+          },
+          {
+            sceneNumber: 2,
+            timecode: '0:15 - 0:45',
+            title: 'Tổng tài không ngần ngại ký tên',
+            visual: 'Cố Thừa Trạch mỉm cười không hề do dự, cầm bút ký ngay vào góc hợp đồng rồi giao toàn bộ con dấu tập đoàn cho Kỷ Thư Nghi.',
+            voiceover: 'Cố tổng: "Đừng nói là gia sản, tính mạng của anh từ 5 năm trước đã thuộc về ba mẹ con em rồi!". Kỷ Thư Nghi rơi nước mắt, mở chiếc dù che lên đầu anh.',
+            sound: 'Nhạc tình yêu ấm áp vang lên xua tan bầu không khí u ám.'
+          },
+          {
+            sceneNumber: 3,
+            timecode: '0:45 - 1:15',
+            title: 'Bản án thích đáng cho kẻ ác',
+            visual: 'Bản tin truyền hình trực tiếp phát hình ảnh Bạch Linh mặc áo phạm nhân, cúi đầu nhận bản án 20 năm tù vì tội ác năm xưa.',
+            voiceover: 'Công lý đã được thực thi. Kẻ gieo rắc đau khổ cuối cùng phải trả giá trong song sắt, vĩnh viễn không còn cơ hội ngóc đầu lên!',
+            sound: 'Tiếng búa đập của thẩm phán vang lên đanh thép.'
+          },
+          {
+            sceneNumber: 4,
+            timecode: '1:15 - 1:45',
+            title: 'Lễ cưới bù đắp cổ tích',
+            visual: 'Khung cảnh chuyển sang lễ đường nguy nga rực rỡ hoa hồng trắng. Hai bé con làm phù dâu phù rể nhí cực kỳ đáng yêu dắt tay mẹ bước vào.',
+            voiceover: 'Cố Thừa Trạch đón lấy bàn tay nhỏ bé của người phụ nữ anh yêu nhất, trao nhau nụ hôn minh chứng cho tình yêu vượt qua muôn ngàn trắc trở.',
+            sound: 'Tiếng đàn vĩ cầm ngọt ngào, tiếng vỗ tay rộn ràng của toàn thể người thân bạn bè.'
+          },
+          {
+            sceneNumber: 5,
+            timecode: '1:45 - 2:00',
+            title: 'Đại kết cục viên mãn',
+            visual: 'Bức ảnh chụp gia đình 4 người hạnh phúc rạng ngời được đóng khung mạ vàng, hai nhóc tì cười toe toét bên cha mẹ.',
+            voiceover: 'Trải qua bão giông mới thấu hiểu chân tình. Từ nay về sau, chỉ còn yêu thương, bình yên và tiếng cười rộn rã bên mái ấm trọn vẹn!',
+            sound: 'Giai điệu ca khúc kết phim ấm áp du dương, khép lại trọn bộ series đầy mỹ mãn!'
+          }
+        ]
       }
     ]
   },
+
+  // 5. LY HÔN RỒI VỢ CŨ LÀ ĐẠI LÃO (TRỌN BỘ 3 TẬP CHUẨN 2 PHÚT)
   {
     id: 'vo-cu-tro-ve-tong-tai-hoi-han',
     title: 'Ly Hôn Rồi, Tổng Tài Mới Biết Vợ Cũ Là Đại Lão',
     originalTitle: '离婚后前夫追妻火葬场 (Ly Hôn Hậu Tiền Phu Truy Thê Hỏa Táng Tràng)',
     genre: 'Vợ Cũ Đại Lão / Ngược',
     genreKey: 'nguoc_luyen',
-    tags: ['Vợ cũ trở về', 'Hối hận', 'Truy thê', 'Đại lão ẩn danh', 'Ngược nam chính'],
+    tags: ['Vợ cũ trở về', 'Hối hận', 'Truy thê', 'Đại lão ẩn danh', 'Trọn bộ Full Arc'],
     addictionRating: 4.8,
     viewsEstimate: '1.9 Tỷ lượt xem Douyin',
     hook: 'Vừa ký đơn ly hôn dứt áo ra đi, ngày hôm sau cô xuất hiện trên thảm đỏ với tư cách chủ tịch tập đoàn đối thủ!',
-    synopsis: 'Hạ Vy vì yêu Mộ Kính Thần mà nhẫn nhịn làm người vợ hiền thục suốt 3 năm, chịu đựng sự lạnh nhạt và lời sỉ nhục từ gia đình chồng. Khi bạch nguyệt quang của anh ta trở về, cô dứt khoát ký đơn ly hôn không lấy một xu. Ngày hôm sau, trong buổi lễ ký kết dự án 50 tỷ đô, Mộ tổng kinh hoàng khi thấy vị phu nhân ngoan ngoãn ngày nào đang ngồi ghế chủ tọa, thân phận thật là người sáng lập tập đoàn tài chính lớn nhất châu lục!',
+    synopsis: 'Hạ Vy vì yêu Mộ Kính Thần mà nhẫn nhịn làm người vợ hiền thục suốt 3 năm, chịu đựng sự lạnh nhạt và lời sỉ nhục từ gia đình chồng. Khi bạch nguyệt quang của anh ta trở về, cô dứt khoát ký đơn ly hôn không lấy một xu. Ngày hôm sau, cô lột xác thành chủ tịch Rose - người đứng đầu đế chế tài chính lớn nhất châu lục, vả mặt trà xanh tại sàn đấu giá, khiến người chồng cũ phải quỳ dưới mưa hối hận khôn nguôi!',
     characters: [
       { name: 'Hạ Vy', role: 'Nữ chính', description: 'Đại lão tài chính và nhà thiết kế ẩn danh, sau ly hôn hoàn toàn bùng nổ nhan sắc và quyền lực.' },
       { name: 'Mộ Kính Thần', role: 'Tổng tài hối hận', description: 'Tổng tài mù quáng sau khi mất vợ mới nhận ra ai là người quan trọng nhất cuộc đời mình.' },
@@ -523,6 +782,7 @@ export const CHINESE_DRAMAS: ChineseDrama[] = [
       'Vả mặt bạch nguyệt quang tại sàn đấu giá trang sức quốc tế.',
     ],
     suggestedEpisodes: 3,
+    isFullSeries: true,
     episodes: [
       {
         episodeNumber: 1,
@@ -572,20 +832,120 @@ export const CHINESE_DRAMAS: ChineseDrama[] = [
             sound: 'Tiếng ly pha lê vỡ toang dưới sàn, tiếng nhạc bùng nổ cảm xúc tột đỉnh!'
           }
         ]
+      },
+      {
+        episodeNumber: 2,
+        title: 'Tập 2: Sàn Đấu Giá Kim Cương & Vả Mặt Trà Xanh',
+        hook: 'Bạch Nguyệt vênh váo đòi tranh mua sợi dây chuyền Trái Tim Đại Dương, Hạ Vy giơ biển nâng giá 100 triệu USD trong chớp mắt!',
+        cliffhanger: 'Mộ Kính Thần phát hiện nhật ký năm xưa: người cứu anh trong tai nạn tuyết lở là Hạ Vy chứ không phải Bạch Nguyệt!',
+        durationSeconds: 120,
+        scenes: [
+          {
+            sceneNumber: 1,
+            timecode: '0:00 - 0:15',
+            title: 'Đụng độ tại sàn đấu giá quốc tế',
+            visual: 'Tại sàn đấu giá trang sức xa hoa nhất thành phố, Bạch Nguyệt khoác tay Mộ Kính Thần bước vào, nhìn thấy Hạ Vy đang ngồi tại hàng ghế danh dự VIP 1.',
+            voiceover: 'Bạch Nguyệt mỉa mai: "Một kẻ bị ruồng bỏ như cô lấy tiền đâu vào đây? Chắc là bám víu lão đại gia nào rồi!".',
+            sound: 'Tiếng búa gõ khai mạc phiên đấu giá "cộp cộp".'
+          },
+          {
+            sceneNumber: 2,
+            timecode: '0:15 - 0:45',
+            title: 'Cuộc chiến kim tiền nghẹt thở',
+            visual: 'Vật phẩm đắt giá nhất - sợi dây chuyền Trái Tim Đại Dương trị giá 20 triệu USD được mang ra. Mộ Kính Thần giơ biển trả giá 30 triệu USD để làm hài lòng người tình.',
+            voiceover: 'Hạ Vy bình thản giơ biển: "100 triệu USD tiền mặt!". Cả khán phòng đồng loạt đứng bật dậy kinh hoàng trước mức giá kỷ lục.',
+            sound: 'Tiếng trầm trồ ồ lên của hàng trăm tỷ phú, tiếng tim đập thình thịch.'
+          },
+          {
+            sceneNumber: 3,
+            timecode: '0:45 - 1:15',
+            title: 'Trà xanh muối mặt',
+            visual: 'Mộ Kính Thần không thể theo giá nổi, đành cắn răng buông biển. Người bán đấu giá gõ búa tuyên bố vật phẩm thuộc về chủ tịch Rose.',
+            voiceover: 'Hạ Vy bước lên sân khấu nhận dây chuyền, quay sang mỉm cười sắc sảo: "Mộ tổng, tiền tài và đẳng cấp... không phải thứ mà kẻ phản bội như anh có thể đụng tới!".',
+            sound: 'Tiếng vỗ tay rầm rộ, mặt Bạch Nguyệt tím tái xấu hổ.'
+          },
+          {
+            sceneNumber: 4,
+            timecode: '1:15 - 1:45',
+            title: 'Sự thật tai nạn năm xưa',
+            visual: 'Trợ lý riêng của Mộ Kính Thần chạy vào hớt hải đưa tập hồ sơ y tế năm xưa bị giấu kín.',
+            voiceover: 'Trợ lý: "Mộ tổng! Người năm xưa bò trên tuyết cõng anh suốt 10 cây số tới bệnh viện chính là phu nhân Hạ Vy! Bạch Nguyệt chỉ là kẻ mạo danh cướp công!".',
+            sound: 'Nhạc nền rung chuyển bi tráng, mắt Mộ Kính Thần long sòng sọc.'
+          },
+          {
+            sceneNumber: 5,
+            timecode: '1:45 - 2:00',
+            title: 'Cao trào & Cliffhanger - Sự ân hận tột cùng',
+            visual: 'Mộ Kính Thần quay sang bóp chặt cổ tay Bạch Nguyệt, hất ngã cô ta xuống sàn rồi chạy thục mạng ra mưa đuổi theo chiếc xe của Hạ Vy.',
+            voiceover: 'Mộ Kính Thần khóc gào trong mưa: "Hạ Vy! Anh sai rồi... Em mới là người anh tìm kiếm cả đời!". Nhưng chiếc siêu xe đã lao vụt đi trong màn đêm lạnh giá!',
+            sound: 'Tiếng sấm sét rạch ngang trời, tiếng gào khóc tuyệt vọng trong mưa kết thúc tập!'
+          }
+        ]
+      },
+      {
+        episodeNumber: 3,
+        title: 'Tập 3 (Đại Kết Cục): Dầm Mưa Quỳ Gối & Nữ Vương Độc Lập',
+        hook: 'Mộ tổng quỳ gối 3 ngày 3 đêm trước cổng biệt thự của Hạ Vy, kiệt sức đổ gục dưới cơn mưa tầm tã!',
+        cliffhanger: 'Hạ Vy ký lệnh mua lại toàn bộ cổ phần Mộ Thị, chính thức trở thành nữ vương tối cao của giới tài chính!',
+        durationSeconds: 120,
+        scenes: [
+          {
+            sceneNumber: 1,
+            timecode: '0:00 - 0:15',
+            title: 'Mộ tổng quỳ dưới mưa xin tha thứ',
+            visual: 'Trời mưa như trút nước. Mộ Kính Thần quỳ gối trên nền đường nhựa lạnh buốt trước cổng dinh thự, hai mắt đỏ hoe ngước nhìn lên cửa sổ phòng Hạ Vy.',
+            voiceover: 'Ba ngày ba đêm không ăn không uống, vị tổng tài kiêu ngạo ngày nào giờ chỉ còn là một kẻ thảm hại van xin một ánh nhìn từ người vợ cũ.',
+            sound: 'Tiếng mưa rơi rả rích, tiếng thở dốc kiệt quệ.'
+          },
+          {
+            sceneNumber: 2,
+            timecode: '0:15 - 0:45',
+            title: 'Chiếc ô đen che mưa',
+            visual: 'Cánh cổng biệt thự mở ra, Hạ Vy mặc áo măng-tô đen, tay cầm chiếc ô tiến lại gần người đàn ông đang quỳ.',
+            voiceover: 'Mộ Kính Thần ngước lên mừng rỡ ôm lấy chân cô: "Vy Vy... Em chịu tha thứ cho anh rồi đúng không? Anh sẽ trả lại tất cả cho em!".',
+            sound: 'Tiếng nước bắn tung tóe, tiếng nghẹn ngào van lơn.'
+          },
+          {
+            sceneNumber: 3,
+            timecode: '0:45 - 1:15',
+            title: 'Đoạn tuyệt dứt khoát',
+            visual: 'Hạ Vy buông chiếc ô xuống che cho anh, nhưng ánh mắt cô hoàn toàn lạnh lùng, không còn một tia vướng bận tình cảm.',
+            voiceover: 'Hạ Vy: "Mộ Kính Thần, tôi đến không phải để tha thứ, mà để nói cho anh biết: Gương vỡ thì không lành lại được. Sự nhẫn nhịn năm xưa tôi dành cho anh đã chết rồi!".',
+            sound: 'Nhạc dương cầm buồn bã nhưng dứt khoát, tiếng mưa đập vào tán dù.'
+          },
+          {
+            sceneNumber: 4,
+            timecode: '1:15 - 1:45',
+            title: 'Thâu tóm toàn diện đế chế',
+            visual: 'Cô rút ra bản thông báo tiếp quản tập đoàn: "Công ty nhà anh đã bị quỹ đầu tư của tôi mua lại toàn bộ. Từ nay, anh chỉ là một nhân viên làm thuê!".',
+            voiceover: 'Từng câu chữ như nhát dao chấm dứt mọi ảo tưởng của gã đàn ông phản bội. Mộ Kính Thần gục mặt xuống vũng nước trong cay đắng tột cùng.',
+            sound: 'Tiếng chuông điện thoại báo tin ngân hàng phong tỏa tài sản.'
+          },
+          {
+            sceneNumber: 5,
+            timecode: '1:45 - 2:00',
+            title: 'Đại kết cục viên mãn - Khởi đầu huy hoàng',
+            visual: 'Hạ Vy quay lưng bước vào xe chuyên dụng. Ánh bình minh xua tan mây đen bão tố, chiếu sáng rực rỡ lên bóng hình người phụ nữ kiên cường độc lập.',
+            voiceover: 'Rời bỏ kẻ không xứng đáng để tìm lại chính mình. Nữ vương đã trở lại ngai vàng, tự tay viết nên cuộc đời vĩ đại và kiêu hãnh của chính mình!',
+            sound: 'Giai điệu chiến thắng hào hùng bùng nổ, khép lại trọn bộ series với cảm xúc sảng khoái tuyệt đối!'
+          }
+        ]
       }
     ]
   },
+
+  // 6. THẦN Y HẠ SƠN (TRỌN BỘ 3 TẬP CHUẨN 2 PHÚT)
   {
     id: 'than-y-ha-son-huy-hon',
     title: 'Thần Y Hạ Sơn: 9 Hôn Thư Của Tài Phiệt',
     originalTitle: '神医下山: 开局退婚 (Thần Y Hạ Sơn: Khai Cục Thoái Hôn)',
     genre: 'Thần Y / Dị Năng',
     genreKey: 'than_y',
-    tags: ['Thần y', 'Hạ sơn', 'Hủy hôn', 'Cứu người', 'Vả mặt'],
+    tags: ['Thần y', 'Hạ sơn', 'Hủy hôn', 'Cứu người', 'Trọn bộ Full Arc'],
     addictionRating: 4.8,
     viewsEstimate: '1.6 Tỷ lượt xem Douyin',
     hook: 'Cầm 9 lá hôn thư xuống núi hủy hôn bị thiên kim tiểu thư ném tiền vào mặt, 5 phút sau ông cụ tài phiệt ngã gục chỉ có anh cứu được!',
-    synopsis: 'Lâm Tiêu tu luyện y thuật và võ đạo tuyệt đỉnh trên núi Côn Lôn 10 năm, sư phụ phó thác 9 bức hôn thư của 9 đại gia tộc giàu có nhất thiên hạ bảo anh xuống núi hủy hôn. Vừa tới biệt thự họ Giang, đại tiểu thư kiêu ngạo đã ném xấp tiền 100 triệu bảo anh cút về núi. Đúng lúc này lão thái gia lên cơn nhồi máu cơ tim thập tử nhất sinh, mọi danh y bó tay, Lâm Tiêu chỉ dùng 3 cây ngân châm kéo ông cụ từ cõi chết trở về!',
+    synopsis: 'Lâm Tiêu tu luyện y thuật và võ đạo tuyệt đỉnh trên núi Côn Lôn 10 năm, sư phụ phó thác 9 bức hôn thư của 9 đại gia tộc giàu có nhất thiên hạ bảo anh xuống núi hủy hôn. Sau khi cứu sống Giang lão gia từ cõi chết, đại tiểu thư kiêu ngạo hối hận bám riết theo anh, nhưng Lâm Tiêu một lòng lập lại trật tự y đạo, vạch trần âm mưu đầu độc của gia tộc đối thủ và trở thành Y Thần vạn người kính ngưỡng!',
     characters: [
       { name: 'Lâm Tiêu', role: 'Nam chính', description: 'Đệ nhất thần y Côn Lôn, tay trái châm cứu cải tử hoàn sinh, tay phải võ công vô địch.' },
       { name: 'Giang Vũ Mộng', role: 'Tiểu thư kiêu căng', description: 'Đại tiểu thư gia tộc họ Giang, mắt cao hơn đầu nhưng sau đó hối hận bám theo cầu hôn.' },
@@ -594,8 +954,10 @@ export const CHINESE_DRAMAS: ChineseDrama[] = [
     viralHighlights: [
       'Kỹ thuật châm cứu Cửu Chuyển Hoàn Hồn Châm làm bừng sáng phòng cấp cứu.',
       'Tiểu thư quỳ gối xin tha và đòi kết hôn nhưng bị Lâm Tiêu từ chối thẳng thừng.',
+      'Một chưởng đánh bay sát thủ ngoại quốc, dùng y thuật phong tỏa huyệt đạo kẻ phản đồ.',
     ],
     suggestedEpisodes: 3,
+    isFullSeries: true,
     episodes: [
       {
         episodeNumber: 1,
@@ -645,20 +1007,120 @@ export const CHINESE_DRAMAS: ChineseDrama[] = [
             sound: 'Tiếng máy đo tim đập rộn ràng trở lại, nhạc cao trào vỡ òa kinh ngạc!'
           }
         ]
+      },
+      {
+        episodeNumber: 2,
+        title: 'Tập 2: Vạch Trần Âm Mưu Thuốc Độc & Tiểu Thư Hối Hận',
+        hook: 'Giang Vũ Mộng quỳ xuống ôm chân Lâm Tiêu xin tha thứ, nhưng anh chỉ chỉ tay vào chén thuốc bổ trên bàn: "Đây là thuốc kịch độc!"',
+        cliffhanger: 'Gã bác sĩ phản bội rút dao găm định đâm lén, Lâm Tiêu búng tay một cái bẻ gãy lưỡi thép làm đôi!',
+        durationSeconds: 120,
+        scenes: [
+          {
+            sceneNumber: 1,
+            timecode: '0:00 - 0:15',
+            title: 'Màn hối hận của đại tiểu thư',
+            visual: 'Giang Vũ Mộng bò tới trước mặt Lâm Tiêu, hai tay chắp lại van xin: "Thần y! Là em sai rồi, em ngu dốt khinh thường ngài, xin ngài đừng hủy hôn!".',
+            voiceover: 'Chỉ vừa vài phút trước còn hất tiền vào mặt người ta, nay tiểu thư đệ nhất phải hạ mình quỳ lạy trước mặt chàng trai áo vải.',
+            sound: 'Tiếng khóc thút thít xấu hổ, tiếng thì thầm xôn xao của đám đông.'
+          },
+          {
+            sceneNumber: 2,
+            timecode: '0:15 - 0:45',
+            title: 'Vạch mặt chén thuốc độc',
+            visual: 'Lâm Tiêu không buồn nhìn cô ta, bước tới cầm chén thuốc bắc trên bàn ngửi nhẹ rồi đổ xuống chậu cây cảnh. Cây lập tức khô héo bốc khói đen xì!',
+            voiceover: 'Lâm Tiêu: "Ông cụ không phải đột quỵ ngẫu nhiên, mà bị trúng Đoạt Mệnh Tán ngấm ngầm suốt nửa năm qua. Người dâng chén thuốc này là ai?".',
+            sound: 'Tiếng xèo xèo bốc khói độc, tiếng mọi người lùi lại kinh hãi.'
+          },
+          {
+            sceneNumber: 3,
+            timecode: '0:45 - 1:15',
+            title: 'Kẻ chủ mưu lộ diện',
+            visual: 'Vị viện trưởng thân tín của gia tộc toan lén lút lùi ra cửa sổ thì bị Giang lão gia quát lớn: "Bắt nó lại!".',
+            voiceover: 'Kẻ phản bội cùng đường rút từ thắt lưng ra một con dao găm tẩm độc lao thẳng về phía Giang lão gia hòng diệt khẩu.',
+            sound: 'Tiếng rút dao rít lên sắc lạnh, tiếng phụ nữ hét thất thanh.'
+          },
+          {
+            sceneNumber: 4,
+            timecode: '1:15 - 1:45',
+            title: 'Tuyệt kỹ điểm huyệt Côn Lôn',
+            visual: 'Lâm Tiêu không thèm quay đầu lại. Hai ngón tay anh kẹp lấy mũi dao kim loại, nhẹ nhàng xoay nhẹ, lưỡi dao gãy đôi "keng" một tiếng. Một chỉ điểm vào ngực kẻ phản đồ.',
+            voiceover: 'Lâm Tiêu: "Ở trước mặt tôi dám múa rìu qua mắt thợ?". Gã bác sĩ lập tức đông cứng toàn thân, ngã gục không thể cử động dù chỉ một ngón tay.',
+            sound: 'Tiếng kim loại gãy đôi vang dội, tiếng rơi bịch xuống sàn.'
+          },
+          {
+            sceneNumber: 5,
+            timecode: '1:45 - 2:00',
+            title: 'Cao trào & Cliffhanger - Lệnh bài Y Thần',
+            visual: 'Lâm Tiêu rút từ ngực áo ra tấm ngọc bội khắc chữ "Côn Lôn Y Thần". Toàn bộ danh y và thị trưởng vừa có mặt ngoài cửa đều run rẩy quỳ rạp chào đón.',
+            voiceover: 'Thị trưởng quỳ gối: "Tham kiến Côn Lôn Y Thần đại nhân!". Giang Vũ Mộng lúc này mới nhận ra, người đàn ông cô vừa ruồng bỏ chính là vị thần bảo hộ của cả một quốc gia!',
+            sound: 'Nhạc uy nghiêm rền vang, tiếng thở dài nuối tiếc cùng cực của tiểu thư!'
+          }
+        ]
+      },
+      {
+        episodeNumber: 3,
+        title: 'Tập 3 (Đại Kết Cục): Thiên Hạ Tôn Sùng & Lên Đỉnh Y Đạo',
+        hook: '9 đại gia tộc tài phiệt xếp hàng dài cả cây số trước cổng biệt thự dâng sính lễ cầu xin Y Thần chọn làm rể!',
+        cliffhanger: 'Lâm Tiêu thu hồi 9 hôn thư, tiêu sái cất bước vào đời cứu nhân độ thế, lưu danh muôn thuở!',
+        durationSeconds: 120,
+        scenes: [
+          {
+            sceneNumber: 1,
+            timecode: '0:00 - 0:15',
+            title: 'Đoàn xe 9 đại gia tộc đổ bộ',
+            visual: 'Cả con đường dẫn vào biệt thự bị tắc nghẽn bởi hàng trăm siêu xe mạ vàng. Người đứng đầu 9 đại gia tộc quyền lực nhất tề tựu đông đủ.',
+            voiceover: 'Tin tức Côn Lôn Y Thần hạ sơn đã lan truyền khắp giới thượng lưu. Tất cả đều đem theo bảo vật gia truyền và 100 tỷ sính lễ mong được kết thân.',
+            sound: 'Tiếng còi xe rộn rã, tiếng bước chân náo nhiệt.'
+          },
+          {
+            sceneNumber: 2,
+            timecode: '0:15 - 0:45',
+            title: 'Giang Vũ Mộng tự chuốc lấy cay đắng',
+            visual: 'Giang Vũ Mộng đứng trong góc nhìn các tiểu thư gia tộc khác tranh nhau dâng hoa cho Lâm Tiêu mà ruột gan đau như cắt.',
+            voiceover: 'Hôn thư vốn đã ở trong tay cô, nhưng chính sự kiêu căng nông cạn đã khiến cô tự tay vứt bỏ cơ hội bước lên đỉnh cao danh vọng.',
+            sound: 'Nhạc bi ai châm biếm, tiếng thở dài nuối tiếc.'
+          },
+          {
+            sceneNumber: 3,
+            timecode: '0:45 - 1:15',
+            title: 'Thành lập Y Viện Cứu Thế',
+            visual: 'Lâm Tiêu đứng trên khán đài cao, tuyên bố thành lập Trung Tâm Y Thuật Côn Lôn miễn phí chữa bệnh cho người nghèo trong thiên hạ.',
+            voiceover: 'Lâm Tiêu: "Y đạo là để cứu đời, không phải để cầu vinh hoa phú quý! Bất kỳ ai có lòng hướng thiện, Côn Lôn đều sẵn lòng che chở!".',
+            sound: 'Tiếng hoan hô vang dội như sấm truyền khắp phố phường.'
+          },
+          {
+            sceneNumber: 4,
+            timecode: '1:15 - 1:45',
+            title: 'Thu hồi hôn thư tiêu sái',
+            visual: 'Lâm Tiêu thản nhiên cất lại các lá hôn thư vào túi vải, mỉm cười chào tạm biệt Giang lão gia.',
+            voiceover: 'Lâm Tiêu: "Giang lão gia, ân nghĩa giữa sư phụ và ngài nay đã trả xong. Từ nay duyên phận khép lại, chúc ngài trường thọ!".',
+            sound: 'Tiếng sáo trúc du dương thanh thoát.'
+          },
+          {
+            sceneNumber: 5,
+            timecode: '1:45 - 2:00',
+            title: 'Đại kết cục viên mãn - Tiêu sái giang hồ',
+            visual: 'Lâm Tiêu sải bước trên con đường lớn, tà áo tung bay trong gió sớm, bóng lưng tự tại uy nghiêm của bậc kỳ tài.',
+            voiceover: 'Xuống núi cứu thế, đập tan mưu gian, vung tay chấn hưng y đạo thiên hạ! Thần Y hạ sơn, truyền kỳ muôn đời bất hủ!',
+            sound: 'Khúc ca hùng tráng vang vọng non sông, kết thúc toàn bộ series đầy khí phách!'
+          }
+        ]
       }
     ]
   },
+
+  // 7. ĐOÀN SỦNG 5 ANH TRAI (TRỌN BỘ 3 TẬP CHUẨN 2 PHÚT)
   {
     id: 'doan-sung-thien-kim-5-anh-trai',
     title: 'Thiên Kim Thật Bị Đuổi: 5 Anh Trai Tỷ Phú Đến Đón',
     originalTitle: '真千金被逐: 五个大佬哥哥杀疯了 (Chân Thiên Kim Bị Trục: Ngũ Ca Ca Sát Phong Liễu)',
     genre: 'Đoàn Sủng / Thiên Kim',
     genreKey: 'doan_sung',
-    tags: ['Đoàn sủng', '5 anh trai đại lão', 'Gia tộc hối hận', 'Vả mặt', 'Ngọt ngào'],
+    tags: ['Đoàn sủng', '5 anh trai đại lão', 'Gia tộc hối hận', 'Vả mặt', 'Trọn bộ Full Arc'],
     addictionRating: 4.9,
     viewsEstimate: '2.3 Tỷ lượt xem Douyin',
     hook: 'Bị gia đình nuôi vứt đồ ra đường giữa cơn mưa bão, 5 phút sau đoàn xe 50 chiếc Rolls-Royce hộ tống 5 anh trai tỷ phú tới rước em gái!',
-    synopsis: 'An An bị gia đình cha mẹ nuôi ngược đãi, bóc lột sức lao động để nuôi con trai cưng của họ. Ngày sinh nhật 18 tuổi, cô bị đuổi ra khỏi nhà giữa trời mưa tuyết lạnh giá chỉ vì làm vỡ chiếc bát mẻ. Nhưng họ không hề biết, gia đình thực sự của An An là gia tộc đứng đầu thế giới đang ráo riết tìm kiếm cô suốt 15 năm qua! Năm người anh ruột gồm: Trùm tài phiệt, Thống đốc quân đội, Viện trưởng y khoa, Vua đua xe F1 và Siêu sao âm nhạc quốc tế lập tức phong tỏa toàn thành phố để đón tiểu công chúa về cung phụng!',
+    synopsis: 'An An bị gia đình cha mẹ nuôi ngược đãi, bóc lột sức lao động để nuôi con trai cưng của họ. Ngày sinh nhật 18 tuổi, cô bị đuổi ra khỏi nhà giữa trời mưa tuyết lạnh giá chỉ vì làm vỡ chiếc bát mẻ. Nhưng họ không hề biết, gia đình thực sự của An An là gia tộc đứng đầu thế giới! Năm người anh ruột lập tức phong tỏa toàn thành phố đón cô về, tịch thu toàn bộ tài sản của gia đình nuôi và mở tiệc thượng lưu tuyên bố em gái là người thừa kế duy nhất!',
     characters: [
       { name: 'An An', role: 'Nữ chính bé nhỏ', description: 'Cô gái ngoan ngoãn thuần khiết, chịu đựng bất hạnh từ nhỏ nhưng nay trở thành viên ngọc quý.' },
       { name: 'Đại ca - Cố Lẫm', role: 'Trùm tài phiệt', description: 'Chủ tịch tập đoàn tài chính đa quốc gia, sẵn sàng chi tiền mua cả thành phố cho em gái chơi.' },
@@ -668,9 +1130,10 @@ export const CHINESE_DRAMAS: ChineseDrama[] = [
     viralHighlights: [
       'Đoàn xe 50 chiếc Rolls-Royce dừng kín cả con hẻm nghèo.',
       '5 người anh trai quỳ xuống che dù và đi giày ấm cho em gái.',
-      'Ngay lập tức tịch thu toàn bộ tài sản của gia đình nuôi bất nhân.',
+      'Tịch thu toàn bộ sổ đỏ của gia đình nuôi, đưa em gái về sống trong lâu đài triệu đô.',
     ],
     suggestedEpisodes: 3,
+    isFullSeries: true,
     episodes: [
       {
         episodeNumber: 1,
@@ -718,6 +1181,104 @@ export const CHINESE_DRAMAS: ChineseDrama[] = [
             visual: 'Nhị ca Cố Tiêu đứng dậy, quân hàm Thống Đốc lấp lánh dưới mưa, ánh mắt nhìn thẳng vào gia đình nuôi độc ác như nhìn những xác chết.',
             voiceover: 'Cố Tiêu ra lệnh dứt khoát: "Đội Vệ Binh! Phong tỏa khu vực này. Kẻ nào dám làm em gái ta phải ướt mưa... Lập tức bắt giữ điều tra toàn bộ nguồn tiền bất chính!". Mặt mẹ nuôi tái ngắt ngã xỉu!',
             sound: 'Tiếng nạp đạn của vệ binh, tiếng gào khóc xin tha bị cắt ngang dứt khoát!'
+          }
+        ]
+      },
+      {
+        episodeNumber: 2,
+        title: 'Tập 2: Thu Hồi Căn Nhà & Vả Mặt Cả Dòng Họ Bất Nhân',
+        hook: 'Gã con trai cưng của mẹ nuôi lao ra đòi đánh các anh trai, bị vệ sĩ khóa tay ấn đầu xuống vũng nước bùn!',
+        cliffhanger: 'Đại ca ném ra xấp giấy tờ nợ nần: "Căn nhà các người đang ở là do em gái ta kiếm tiền mua, hôm nay tịch thu toàn bộ!"',
+        durationSeconds: 120,
+        scenes: [
+          {
+            sceneNumber: 1,
+            timecode: '0:00 - 0:15',
+            title: 'Kẻ bất tài giở thói côn đồ',
+            visual: 'Gã con trai cưng cầm cây gậy sắt lao ra chửi bới: "Lũ chó nào dám cản trở chuyện cưới xin của tao?". Vệ sĩ áo đen chỉ dùng một tay tóm chặt gậy, bẻ gập cổ tay hắn.',
+            voiceover: 'Một tiếng rắc vang lên! Gã con trai la hét quỳ sụp xuống vũng bùn trước mặt các vị tướng lĩnh uy nghi.',
+            sound: 'Tiếng khớp xương rắc, tiếng la hét thảm thiết của gã con trai cưng.'
+          },
+          {
+            sceneNumber: 2,
+            timecode: '0:15 - 0:45',
+            title: 'Mẹ nuôi trơ trẽn xin tiền chuộc',
+            visual: 'Bà mẹ nuôi bò tới van lạy Cố Lẫm: "Các ông là người giàu có, muốn đón con bé đi thì phải đền bù công nuôi dưỡng 50 tỷ cho tôi!".',
+            voiceover: 'Đại ca Cố Lẫm khinh bỉ nhìn mụ đàn bà tham lam: "Công nuôi dưỡng? Suốt 10 năm qua em gái tôi đi làm từ 5 giờ sáng, tiền viện phí, tiền mua nhà đều từ mồ hôi nước mắt của em ấy!".',
+            sound: 'Tiếng cười khinh miệt của 5 người anh trai.'
+          },
+          {
+            sceneNumber: 3,
+            timecode: '0:45 - 1:15',
+            title: 'Tịch thu toàn bộ tài sản bất chính',
+            visual: 'Tam ca - Luật sư đứng đầu quốc gia rút ra bản kê khai tài chính và lệnh niêm phong nhà đất của Tòa án Tối cao.',
+            voiceover: 'Tam ca: "Căn nhà này đứng tên người được ủy thác là An An. Trong vòng 10 phút, tất cả đồ đạc của các người phải dọn sạch ra khỏi đây!".',
+            sound: 'Tiếng con dấu đỏ đóng cộp lên lệnh niêm phong.'
+          },
+          {
+            sceneNumber: 4,
+            timecode: '1:15 - 1:45',
+            title: 'Sự sụp đổ của gia đình nuôi',
+            visual: 'Chủ nợ cờ bạc của gã con trai cũng vừa kéo tới siết nợ. Hai mẹ con bị đuổi ra đường trong sự cười chê của toàn bộ hàng xóm láng giềng.',
+            voiceover: 'Gieo nhân nào gặt quả nấy. Kẻ từng nhẫn tâm đuổi cô bé 18 tuổi ra mưa, nay chính mình phải nếm trải cảnh không nơi nương tựa giữa đêm đông!',
+            sound: 'Tiếng khóc lóc kêu trời, tiếng hàng xóm xì xào thỏa mãn.'
+          },
+          {
+            sceneNumber: 5,
+            timecode: '1:45 - 2:00',
+            title: 'Cao trào & Cliffhanger - Khăn ấm và xe hoa',
+            visual: 'Tứ ca - Siêu sao âm nhạc choàng chiếc áo lông chồn trắng tinh ấm áp lên vai An An, ngũ ca - Vua đua xe mở cửa chiếc xe hoa màu hồng cổ tích.',
+            voiceover: 'Năm người anh trai đồng thanh: "An An, về nhà thôi! Từ nay em chính là tiểu công chúa độc nhất vô nhị của gia tộc Cố thị!". Khung hình dừng lại ở nụ cười rạng rỡ của An An.',
+            sound: 'Nhạc cổ tích ngọt ngào ấm áp vang lên làm tan chảy mọi trái tim!'
+          }
+        ]
+      },
+      {
+        episodeNumber: 3,
+        title: 'Tập 3 (Đại Kết Cục): Đại Tiệc Thừa Kế & Công Chúa Hào Môn',
+        hook: 'Toàn bộ giới tài phiệt thủ đô cúi đầu trước cô công chúa nhỏ lộng lẫy trong chiếc vương miện kim cương 500 carat!',
+        cliffhanger: '5 người anh trai tuyên bố: "Ai dám làm An An buồn, 5 tập đoàn lớn nhất nước sẽ hợp lực san phẳng!"',
+        durationSeconds: 120,
+        scenes: [
+          {
+            sceneNumber: 1,
+            timecode: '0:00 - 0:15',
+            title: 'Lâu đài nguy nga rực rỡ',
+            visual: 'Khung cảnh lâu đài cổ tích Cố gia tráng lệ giữa thủ đô. Thảm đỏ trải dài hàng trăm mét chào đón tiểu thư duy nhất của gia tộc trở về.',
+            voiceover: 'Một buổi tiệc thượng lưu hoành tráng chưa từng có được tổ chức để chính thức công bố danh phận người thừa kế gia tộc Cố thị.',
+            sound: 'Tiếng kèn đồng hoàng gia ngân vang, tiếng pháo hoa rực rỡ ban ngày.'
+          },
+          {
+            sceneNumber: 2,
+            timecode: '0:15 - 0:45',
+            title: 'Màn lột xác thành công chúa',
+            visual: 'An An bước xuống từ cầu thang xoắn ốc lộng lẫy trong bộ váy dạ hội công chúa đính hàng vạn viên kim cương Swarovski, nhan sắc thuần khiết toát lên vẻ quý phái ngút ngàn.',
+            voiceover: 'Không còn là cô bé lam lũ ướt mưa ngày nào, nay An An là bảo bối được 5 đại lão nâng như nâng trứng, hứng như hứng hoa.',
+            sound: 'Tiếng trầm trồ kinh ngạc của hàng ngàn quan khách thượng lưu.'
+          },
+          {
+            sceneNumber: 3,
+            timecode: '0:45 - 1:15',
+            title: 'Món quà ra mắt của 5 anh trai',
+            visual: '5 người anh trai lần lượt bước lên trao quà: Đảo riêng Thái Bình Dương, Hạm đội du thuyền, 50% cổ phần tập đoàn tài chính và tòa tháp cao nhất thành phố.',
+            voiceover: 'Đại ca Cố Lẫm dõng dạc tuyên bố: "Toàn bộ tài sản này đều đứng tên một mình em gái Cố An An! Kẻ nào dám có ý đồ xấu với em gái ta, hãy tự chuẩn bị hậu sự!".',
+            sound: 'Tiếng vỗ tay vang dội như sấm truyền khắp khán phòng.'
+          },
+          {
+            sceneNumber: 4,
+            timecode: '1:15 - 1:45',
+            title: 'Gia đình nuôi hối hận quỳ ngoài cổng',
+            visual: 'Mẹ nuôi và gã con trai rách rưới đứng quỳ ngoài cổng lâu đài xa hoa, nhìn qua màn hình LED thấy An An rạng ngời mà đấm ngực hối hận đến hộc máu.',
+            voiceover: 'Từng có cơ hội làm mẹ của vị thiên kim giàu nhất thế giới, nhưng lòng tham và sự độc ác đã tước đoạt tất cả của mụ đàn bà bất nhân.',
+            sound: 'Nhạc đối lập giữa xa hoa bên trong và thê thảm bên ngoài.'
+          },
+          {
+            sceneNumber: 5,
+            timecode: '1:45 - 2:00',
+            title: 'Đại kết cục viên mãn - Hạnh phúc trọn đời',
+            visual: 'Năm người anh trai cùng ôm lấy An An giữa pháo hoa rực rỡ trên bầu trời lâu đài. Nụ cười hạnh phúc nở trên môi cô bé.',
+            voiceover: 'Khổ tận cam lai! Sau những năm tháng bão giông, viên ngọc quý đã trở về với vị trí thuộc về mình, được yêu thương và bảo bọc đến trọn đời!',
+            sound: 'Khúc ca chiến thắng và tình cảm gia đình vang dội, khép lại trọn bộ series đầy thỏa mãn và xúc động!'
           }
         ]
       }
