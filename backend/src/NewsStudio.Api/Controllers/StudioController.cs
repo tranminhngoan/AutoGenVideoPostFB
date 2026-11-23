@@ -144,6 +144,10 @@ public class StudioController : ControllerBase
     public async Task<IActionResult> DeleteVideo(Guid id, CancellationToken ct) =>
         Denied() ?? await Run(async () => { await _studio.DeleteVideoAsync(id, ct); return null; });
 
+    [HttpPost("videos/import")]
+    public async Task<IActionResult> ImportScript([FromBody] StudioScriptImportDto input, CancellationToken ct) =>
+        Denied() ?? await Run(async () => await _studio.ImportScriptAsync(input, ct));
+
     [HttpPost("videos/{id:guid}/plan")]
     public async Task<IActionResult> Plan(Guid id, CancellationToken ct) =>
         Denied() ?? await Run(async () => await _studio.StartPlanAsync(id, ct));

@@ -37,8 +37,8 @@ import {
   NostalgiaScript,
   getNostalgiaScriptById,
 } from '../data/nostalgiaScriptLibrary';
+import { queueStudioImport } from '../lib/studioImport';
 import {
-  convertNostalgiaScenesToStudioShots,
   extractNostalgiaVoiceover,
   formatNostalgiaProductionScript,
   extractNostalgiaAIPrompts,
@@ -133,22 +133,12 @@ export function DramaScriptsPage() {
     toast.success(isFav ? 'Đã lưu vào yêu thích' : 'Đã bỏ yêu thích');
   };
 
-  // 1-Click transfer to Studio Video AI
+  // 1-Click transfer to Studio Video AI: the whole script goes over (hook, ending, mood, every scene with its English
+  // prompt, narration, sound and camera); the studio builds the video from it exactly — no AI planning step.
   const handleSendToStudio = (script: NostalgiaScript) => {
-    try {
-      const fullScript = formatNostalgiaProductionScript(script);
-      const convertedShots = convertNostalgiaScenesToStudioShots(script.scenes);
-
-      sessionStorage.setItem('studio_prefill_script', fullScript);
-      sessionStorage.setItem('studio_prefill_title', `${script.title} (${script.code})`);
-      sessionStorage.setItem('studio_prefill_duration', String(script.targetDurationSeconds || 120));
-      sessionStorage.setItem('studio_prefill_shots', JSON.stringify(convertedShots));
-
-      toast.success(`Đã nạp 5 phân cảnh của "${script.title}" vào Studio!`);
-      navigate('/studio/new');
-    } catch (e: any) {
-      toast.error('Lỗi khi nạp kịch bản vào Studio: ' + (e?.message || 'Không xác định'));
-    }
+    queueStudioImport(script);
+    toast.success(`Đã chuyển kịch bản "${script.title}" sang Studio — chọn Page, model, nhạc rồi bấm Tạo video.`);
+    navigate('/studio/new');
   };
 
   // Generate Custom Script

@@ -92,7 +92,11 @@ public class StudioService
             if (string.IsNullOrWhiteSpace(c.Name) || b.Character(c.Name) != null) continue;
             var gender = c.Gender?.Trim().ToLowerInvariant() is "female" or "f" or "nữ" ? "female" : "male";
             var voice = StudioVoices.IsKnown(c.Voice) ? c.Voice : StudioVoices.Pick(gender, b.Characters.Select(x => x.Voice));
-            b.Characters.Add(new StudioCharacterDto { Name = c.Name.Trim(), Gender = gender, Look = (c.Look ?? "").Trim(), Voice = voice });
+            b.Characters.Add(new StudioCharacterDto
+            {
+                Name = c.Name.Trim(), Gender = gender, Look = (c.Look ?? "").Trim(), Voice = voice,
+                Speed = string.IsNullOrWhiteSpace(c.Speed) ? null : StudioVoices.NormalizeSpeed(c.Speed)
+            });
         }
         foreach (var l in locations ?? Enumerable.Empty<StudioLocationDto>())
         {
@@ -105,6 +109,12 @@ public class StudioService
     /// <summary>Whether a speaker is the off-screen narrator (nobody talks on screen).</summary>
     public static bool IsNarrator(string? speaker) =>
         string.IsNullOrWhiteSpace(speaker) || speaker.Trim().ToLowerInvariant() is "lời dẫn" or "người dẫn chuyện" or "dẫn chuyện" or "narrator" or "voiceover";
+
+    /// <summary>Reading speed of a line's speaker (same lookup as <see cref="VoiceFor"/>).</summary>
+    public static string SpeedFor(Bible bible, string? speaker) =>
+        bible.Character(speaker)?.Speed is { Length: > 0 } s ? s
+        : IsNarrator(speaker) && bible.Character(StudioVoices.NarratorName)?.Speed is { Length: > 0 } n ? n
+        : "+0%";
 
     /// <summary>The TTS voice of a line's speaker (narrator / unknown speaker → the narrator's or default voice).</summary>
     public static string VoiceFor(Bible bible, string? speaker) =>
@@ -349,7 +359,8 @@ public class StudioService
         Apply(v, input);
         // a character given another voice: their lines must be read again
         var bibleAfter = ReadBible(v.BibleJson);
-        foreach (var s in v.Shots.Where(s => s.VoiceBlobId != null && VoiceFor(bibleBefore, s.Speaker) != VoiceFor(bibleAfter, s.Speaker)))
+        foreach (var s in v.Shots.Where(s => s.VoiceBlobId != null &&
+                     (VoiceFor(bibleBefore, s.Speaker) != VoiceFor(bibleAfter, s.Speaker) || SpeedFor(bibleBefore, s.Speaker) != SpeedFor(bibleAfter, s.Speaker))))
         {
             await DeleteBlobAsync(s.VoiceBlobId!.Value, ct);
             s.VoiceBlobId = null;
@@ -510,7 +521,12 @@ public class StudioService
     /// Asks each plan model in turn, with light thinking and a time limit per model: an overloaded model (503 / 429,
     /// or one that hangs) no longer sinks the whole plan — the next one takes over.
     /// </summary>
-    private async Task<(FilmGeminiClient.TextResult Result, string Model)> PlanWithFallbackAsync(StudioVideo v, string system, string user, CancellationToken ct)
+    private Task<(FilmGeminiClient.TextResult Result, string Model)> PlanWithFallbackAsync(StudioVideo v, string system, string user, CancellationToken ct) =>
+        AskWithFallbackAsync(v, system, user, text => ParsePlan(text, new HashSet<Guid>()), "Gemini đang đọc kịch bản, dựng hồ sơ nhân vật và chia shot", ct);
+
+    /// <summary>Asks the plan models in turn (light thinking, time limit each); <paramref name="validate"/> must accept the answer.</summary>
+    private async Task<(FilmGeminiClient.TextResult Result, string Model)> AskWithFallbackAsync(StudioVideo v, string system, string user,
+        Action<string> validate, string doing, CancellationToken ct)
     {
         var errors = new List<string>();
         var models = PlanModels();
@@ -518,7 +534,7 @@ public class StudioService
         {
             var model = models[i];
             v.Progress = i == 0
-                ? $"Gemini ({model}) đang đọc kịch bản, dựng hồ sơ nhân vật và chia shot…"
+                ? $"{doing} ({model})…"
                 : $"{models[i - 1]} không trả lời được — đang thử {model} ({i + 1}/{models.Count})…";
             await _db.SaveChangesAsync(CancellationToken.None);
             using var attempt = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -526,7 +542,7 @@ public class StudioService
             try
             {
                 var result = await _gemini.GenerateJsonAsync(system, user, 32768, 0.6, attempt.Token, model, lightThinking: true);
-                ParsePlan(result.Text, new HashSet<Guid>()); // must at least be a usable plan
+                validate(result.Text); // must at least be usable
                 return (result, model);
             }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
@@ -539,7 +555,7 @@ public class StudioService
             }
             _logger.LogWarning("Studio plan: {Error}", errors[^1]);
         }
-        throw new InvalidOperationException("Không model Gemini nào lập được kế hoạch — " + string.Join(" | ", errors));
+        throw new InvalidOperationException("Không model Gemini nào trả lời được — " + string.Join(" | ", errors));
     }
 
     public static (string System, string User) BuildPlanPrompt(StudioVideo v, IReadOnlyList<StudioMusicTrack> music)
@@ -725,6 +741,172 @@ Trả về JSON:
         + (s.Dialogue != null && s.VoiceBlobId == null ? Math.Round(SecondsToSay(s.Dialogue) * _voices.PricePerSecond, 4) : 0m)
         + (v.SfxEnabled && s.SfxBlobId == null ? _sfx.EstimateCost(s.DurationSeconds) : 0m);
 
+    // ═══════════════════════════════ Import from the script library ═══════════════════════════════
+
+    /// <summary>
+    /// Creates a video from a finished library script, shot for shot (see <see cref="StudioScriptImporter"/>): no AI
+    /// planning. A short background step then translates the sound notes for the effects model, writes the caption and
+    /// picks the music; with <see cref="StudioScriptImportDto.AutoGenerate"/> the clips start right after it.
+    /// </summary>
+    public async Task<StudioVideoDto> ImportScriptAsync(StudioScriptImportDto input, CancellationToken ct)
+    {
+        if (input.Scenes.Count == 0) throw new ArgumentException("Kịch bản không có phân cảnh nào.");
+        var planned = StudioScriptImporter.BuildShots(input);
+        if (planned.Count == 0) throw new ArgumentException("Kịch bản không có phân cảnh nào dựng được (thiếu mô tả hình ảnh).");
+
+        var narrator = StudioScriptImporter.NarratorFor(input.Mood);
+        var v = new StudioVideo
+        {
+            Title = string.IsNullOrWhiteSpace(input.Title) ? "Video " + DateTime.UtcNow.AddHours(7).ToString("dd/MM HH:mm", CultureInfo.InvariantCulture)
+                : (input.Code is { Length: > 0 } code ? $"{input.Title.Trim()} ({code})" : input.Title.Trim()),
+            Script = (input.Script ?? "").Trim(),
+            VideoModel = SeedanceVideoClient.NormalizeModel(input.VideoModel ?? _video.DefaultModel),
+            Resolution = SeedanceVideoClient.NormalizeResolution(input.Resolution ?? _configuration["Studio:DefaultResolution"]),
+            AspectRatio = input.AspectRatio == "16:9" ? "16:9" : "9:16",
+            StyleNotes = string.IsNullOrWhiteSpace(input.StyleNotes) ? StudioScriptImporter.StyleFor(input) : input.StyleNotes.Trim(),
+            FacebookAccountId = input.FacebookAccountId is { } page && page != Guid.Empty ? page : null,
+            MusicMode = input.MusicMode is "Manual" or "None" ? input.MusicMode : "Auto",
+            MusicTrackId = input.MusicTrackId is { } mt && mt != Guid.Empty ? mt : null,
+            MusicVolume = Math.Clamp(input.MusicVolume ?? 0.15, 0, 1),
+            SfxEnabled = input.SfxEnabled ?? true,
+            SfxVolume = Math.Clamp(input.SfxVolume ?? 0.7, 0, 1.5),
+            Caption = input.Hook?.Trim(),
+            PlanNotes = $"Dựng đúng theo kịch bản thư viện: {input.Scenes.Count} phân cảnh → {planned.Count} shot. Tâm trạng: {input.Mood}.",
+            Seed = NewSeed(),
+            BibleJson = WriteBible(NormalizeBible(new[]
+            {
+                new StudioCharacterDto
+                {
+                    Name = StudioVoices.NarratorName, Gender = narrator.Gender,
+                    Voice = StudioVoices.IsKnown(input.NarratorVoice) ? input.NarratorVoice! : narrator.Voice,
+                    Speed = string.IsNullOrWhiteSpace(input.NarratorSpeed) ? narrator.Speed : input.NarratorSpeed,
+                    Look = "Off-screen narrator — not visible in the picture."
+                }
+            }, null))
+        };
+        _db.StudioVideos.Add(v);
+        var index = 1;
+        foreach (var s in planned)
+        {
+            _db.StudioShots.Add(new StudioShot
+            {
+                StudioVideoId = v.Id, Index = index++, DurationSeconds = s.Duration, Action = s.Action, Camera = s.Camera,
+                Speaker = s.Dialogue == null ? null : StudioVoices.NarratorName, Dialogue = s.Dialogue, Sound = s.Sound,
+                Location = input.Scenes[s.Scene].Title is { Length: > 0 } t ? (t.Length > 200 ? t[..200] : t) : null
+            });
+        }
+        v.TargetDurationSeconds = planned.Sum(s => s.Duration);
+        await _db.SaveChangesAsync(ct);
+        v = await _db.StudioVideos.Include(x => x.Shots).FirstAsync(x => x.Id == v.Id, ct);
+        v.EstimatedCostUsd = EstimateVideoCost(v);
+
+        if (input.AutoGenerate)
+        {
+            if (!_video.IsConfigured)
+                throw new InvalidOperationException("Chưa có khoá Vercel AI Gateway (biến AI_GATEWAY_API_KEY trên Railway) — video đã được tạo, nhưng chưa tạo clip được.");
+            await EnsureBudgetAsync(v.EstimatedCostUsd, ct);
+        }
+        v.Status = "Planning";
+        v.Progress = input.AutoGenerate
+            ? "Đang chuẩn bị kịch bản (dịch âm thanh, chọn nhạc, viết chú thích) rồi tạo video…"
+            : "Đang chuẩn bị kịch bản (dịch âm thanh, chọn nhạc, viết chú thích)…";
+        await _db.SaveChangesAsync(ct);
+        _jobs.Enqueue<StudioService>(x => x.RunPrepareImportAsync(v.Id, input.AutoGenerate, CancellationToken.None));
+        return await GetVideoAsync(v.Id, ct);
+    }
+
+    [Queue("critical")]
+    [AutomaticRetry(Attempts = 0)]
+    public async Task RunPrepareImportAsync(Guid id, bool autoGenerate, CancellationToken ct)
+    {
+        var v = await _db.StudioVideos.Include(x => x.Shots).FirstOrDefaultAsync(x => x.Id == id, ct);
+        if (v == null || v.Status != "Planning") return;
+        var music = await _db.StudioMusicTracks.AsNoTracking().OrderBy(m => m.UseCount).ToListAsync(ct);
+        var sounds = v.Shots.Select(s => s.Sound).Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s!).Distinct().ToList();
+        try
+        {
+            var (system, user) = BuildPreparePrompt(v, sounds, music);
+            var (result, model) = await AskWithFallbackAsync(v, system, user, text => ParsePrepare(text, sounds.Count, new HashSet<Guid>()),
+                "Gemini đang dịch âm thanh, chọn nhạc và viết chú thích", ct);
+            var prep = ParsePrepare(result.Text, sounds.Count, music.Select(m => m.Id).ToHashSet());
+            var english = sounds.Zip(prep.Sounds, (vi, en) => (vi, en)).Where(p => !string.IsNullOrWhiteSpace(p.en)).ToDictionary(p => p.vi, p => p.en);
+            foreach (var s in v.Shots)
+                if (s.Sound != null && english.TryGetValue(s.Sound, out var en)) s.Sound = en.Length > 500 ? en[..500] : en;
+            if (!string.IsNullOrWhiteSpace(prep.Caption)) v.Caption = prep.Caption;
+            if (v.MusicMode == "Auto" && v.MusicTrackId == null) v.MusicTrackId = prep.MusicTrackId ?? music.FirstOrDefault()?.Id;
+            _db.StudioCostRecords.Add(new StudioCostRecord
+            {
+                StudioVideoId = v.Id, Kind = "Plan", Model = model, Tokens = result.Tokens, CostUsd = result.CostUsd,
+                Note = "chuẩn bị kịch bản thư viện" + (result.FreeKey ? " (khoá miễn phí)" : "")
+            });
+            v.ActualCostUsd += result.CostUsd;
+            v.ErrorMessage = null;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // the script itself is complete: carry on with the Vietnamese sound notes and the hook as caption
+            _logger.LogWarning(ex, "Studio import preparation failed for {Id}", id);
+            if (v.MusicMode == "Auto" && v.MusicTrackId == null) v.MusicTrackId = music.FirstOrDefault()?.Id;
+            v.ErrorMessage = "Chưa dịch được ghi chú âm thanh / viết chú thích (" + ex.Message + ") — video vẫn dựng đúng kịch bản.";
+        }
+        v.EstimatedCostUsd = EstimateVideoCost(v);
+        if (autoGenerate && _video.IsConfigured)
+        {
+            foreach (var s in v.Shots.Where(s => s.ClipBlobId == null)) { s.Status = "Pending"; s.ErrorMessage = null; }
+            v.Status = "Generating";
+            v.Progress = $"Chờ tạo {v.Shots.Count} clip (~{v.EstimatedCostUsd:0.00} USD)…";
+            await _db.SaveChangesAsync(CancellationToken.None);
+            _jobs.Enqueue<StudioService>(x => x.RunGenerationAsync(id, null, CancellationToken.None));
+            return;
+        }
+        v.Status = "Planned";
+        v.Progress = null;
+        await _db.SaveChangesAsync(CancellationToken.None);
+    }
+
+    public static (string System, string User) BuildPreparePrompt(StudioVideo v, IReadOnlyList<string> sounds, IReadOnlyList<StudioMusicTrack> music)
+    {
+        var system = "Bạn là biên tập viên hậu kỳ video ngắn cho Facebook. Chỉ trả về JSON hợp lệ.";
+        var sb = new StringBuilder();
+        sb.AppendLine($"VIDEO: {v.Title}");
+        sb.AppendLine($"Mở đầu (hook): {v.Caption}");
+        sb.AppendLine($"Ghi chú: {v.PlanNotes}");
+        sb.AppendLine("\nGHI CHÚ ÂM THANH (tiếng Việt), theo thứ tự:");
+        for (var i = 0; i < sounds.Count; i++) sb.AppendLine($"{i + 1}. {sounds[i]}");
+        sb.AppendLine("\nKHO NHẠC NỀN (chọn 1 bài hợp tâm trạng video, hoặc null):");
+        if (music.Count == 0) sb.AppendLine("- (trống)");
+        foreach (var m in music) sb.AppendLine($"- id={m.Id} | {m.Name} | tâm trạng: {m.Mood}");
+        sb.AppendLine(@"
+VIỆC CẦN LÀM:
+- ""sounds"": dịch từng ghi chú âm thanh sang TIẾNG ANH ngắn gọn cho model tạo hiệu ứng âm thanh (tiếng động, không khí); giữ đúng thứ tự
+  và đúng số lượng; bỏ mọi tiếng nói / lời thoại / nhạc (vd ""tiếng mẹ thở dài"" → ""a soft sigh"", ""tiếng mưa trên lá chuối"" → ""rain pattering on banana leaves"").
+- ""caption"": chú thích Facebook tiếng Việt 1–3 câu gợi cảm xúc, mở bằng ý của hook, kèm 3–5 hashtag.
+- ""musicTrackId"": id bài nhạc hợp nhất hoặc null.
+
+Trả về JSON: { ""sounds"": [""...""], ""caption"": ""..."", ""musicTrackId"": ""id hoặc null"" }");
+        return (system, sb.ToString());
+    }
+
+    public sealed record Prepared(List<string> Sounds, string? Caption, Guid? MusicTrackId);
+
+    public static Prepared ParsePrepare(string json, int soundCount, ISet<Guid> knownMusic)
+    {
+        var text = json.Trim();
+        var start = text.IndexOf('{');
+        var end = text.LastIndexOf('}');
+        if (start < 0 || end <= start) throw new InvalidOperationException("Gemini không trả về JSON.");
+        using var doc = JsonDocument.Parse(text[start..(end + 1)]);
+        var root = doc.RootElement;
+        var sounds = new List<string>();
+        if (root.TryGetProperty("sounds", out var a) && a.ValueKind == JsonValueKind.Array)
+            foreach (var x in a.EnumerateArray()) sounds.Add(x.ValueKind == JsonValueKind.String ? x.GetString()?.Trim() ?? "" : "");
+        if (sounds.Count != soundCount) throw new InvalidOperationException($"Gemini dịch {sounds.Count}/{soundCount} ghi chú âm thanh.");
+        string? caption = root.TryGetProperty("caption", out var c) && c.ValueKind == JsonValueKind.String ? c.GetString()?.Trim() : null;
+        Guid? music = root.TryGetProperty("musicTrackId", out var m) && m.ValueKind == JsonValueKind.String
+                      && Guid.TryParse(m.GetString(), out var g) && knownMusic.Contains(g) ? g : null;
+        return new Prepared(sounds, caption, music);
+    }
+
     // ═══════════════════════════════ Voices ═══════════════════════════════
 
     /// <summary>Reads the lines aloud (all missing ones, or one shot's again) so they can be heard before paying for clips.</summary>
@@ -785,7 +967,7 @@ Trả về JSON:
     {
         if (s.Dialogue == null) return;
         var voice = VoiceFor(bible, s.Speaker);
-        var (audio, seconds, fromCache) = await _voices.SpeakAsync(v.Id, s.Dialogue, voice, ct);
+        var (audio, seconds, fromCache) = await _voices.SpeakAsync(v.Id, s.Dialogue, voice, SpeedFor(bible, s.Speaker), ct);
         if (seconds + VoiceTail > SeedanceVideoClient.MaxSeconds)
             throw new InvalidOperationException($"Câu thoại đọc mất {seconds:0.0}s — dài hơn 1 clip ({SeedanceVideoClient.MaxSeconds}s). Tách câu này thành 2 shot.");
         if (s.VoiceBlobId != null) await DeleteBlobAsync(s.VoiceBlobId.Value, ct);

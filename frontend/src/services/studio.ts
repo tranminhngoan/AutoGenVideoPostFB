@@ -111,6 +111,44 @@ export interface StudioCharacter {
   gender: 'male' | 'female' | string;
   look: string;
   voice: string;
+  speed?: string | null;
+}
+
+export interface StudioSceneImport {
+  title?: string;
+  visualVi?: string;
+  promptEn?: string;
+  voiceover?: string;
+  sound?: string;
+  camera?: string;
+  durationSeconds: number;
+}
+
+/** A finished library script, imported shot for shot (no AI planning), with the video options chosen before creating. */
+export interface StudioScriptImport {
+  title: string;
+  code?: string;
+  synopsis?: string;
+  mood?: string;
+  region?: string;
+  era?: string;
+  hook?: string;
+  ending?: string;
+  script?: string;
+  scenes: StudioSceneImport[];
+  facebookAccountId?: string | null;
+  videoModel?: string;
+  resolution?: string;
+  aspectRatio?: string;
+  styleNotes?: string;
+  narratorVoice?: string;
+  narratorSpeed?: string;
+  musicMode?: string;
+  musicTrackId?: string | null;
+  musicVolume?: number;
+  sfxEnabled?: boolean;
+  sfxVolume?: number;
+  autoGenerate?: boolean;
 }
 
 export interface StudioLocation {
@@ -245,6 +283,12 @@ export const studio = {
       musicTrackId: input.musicTrackId === undefined ? undefined : empty(input.musicTrackId),
     }),
   deleteVideo: (id: string) => call<void>('DELETE', `/videos/${id}`),
+  importScript: (input: StudioScriptImport) =>
+    call<StudioVideo>('POST', '/videos/import', {
+      ...input,
+      facebookAccountId: input.facebookAccountId || undefined,
+      musicTrackId: input.musicTrackId || undefined,
+    }),
   plan: (id: string) => call<StudioVideo>('POST', `/videos/${id}/plan`),
   saveShots: (id: string, shots: StudioShotInput[]) => call<StudioVideo>('PUT', `/videos/${id}/shots`, shots),
   generate: (id: string) => call<StudioVideo>('POST', `/videos/${id}/generate`),

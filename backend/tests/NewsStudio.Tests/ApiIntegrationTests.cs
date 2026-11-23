@@ -248,6 +248,39 @@ public class ApiIntegrationTests : IClassFixture<WebApplicationFactory<Program>>
     }
 
     [Fact]
+    public Task Studio_ImportsALibraryScriptShotForShot() => WithStudioKey(async () =>
+    {
+        var body = """
+            {"title":"Nồi Cơm Độn Sắn","code":"BCN-01","mood":"Nghẹn ngào rớt nước mắt","region":"Bắc Bộ","era":"8x",
+             "hook":"Có những đứa trẻ lớn lên bằng nồi cơm độn sắn.","ending":"Con tìm đâu lại được hạt cơm năm xưa.",
+             "scenes":[{"title":"Khói bếp","durationSeconds":15,"camera":"wide establishing shot","promptEn":"A mud-brick kitchen in the rain.",
+                        "voiceover":"Những năm chín mươi ấy, nhà nào ở quê cũng nghèo.","sound":"Tiếng mưa"},
+                       {"title":"Bát cơm","durationSeconds":30,"camera":"medium close-up","promptEn":"The mother gives her son the rice.",
+                        "voiceover":"Mẹ gạt hết hạt cơm trắng sang bát con.","sound":"Tiếng thở dài"}],
+             "resolution":"480p","musicMode":"None","autoGenerate":false}
+            """;
+        var res = await _client.SendAsync(StudioRequest("POST", "/api/studio/videos/import", body, StudioKey));
+        res.StatusCode.Should().Be(HttpStatusCode.OK, await res.Content.ReadAsStringAsync());
+        var video = JsonDocument.Parse(await res.Content.ReadAsStringAsync()).RootElement;
+        video.GetProperty("title").GetString().Should().Be("Nồi Cơm Độn Sắn (BCN-01)");
+        video.GetProperty("resolution").GetString().Should().Be("480p");
+        var narrator = video.GetProperty("characters").EnumerateArray().Single();
+        narrator.GetProperty("name").GetString().Should().Be("Lời dẫn");
+        narrator.GetProperty("voice").GetString().Should().Be("gemini:Sulafat");
+        narrator.GetProperty("speed").GetString().Should().Be("-8%");
+        var shots = video.GetProperty("shots").EnumerateArray().ToList();
+        shots.Count.Should().BeGreaterThanOrEqualTo(4); // 15 s + 30 s of scenes → several clips
+        shots[0].GetProperty("dialogue").GetString().Should().StartWith("Có những đứa trẻ");
+        shots[0].GetProperty("speaker").GetString().Should().Be("Lời dẫn");
+        shots.Should().OnlyContain(s => s.GetProperty("durationSeconds").GetInt32() <= 12);
+
+        var missing = await _client.SendAsync(StudioRequest("POST", "/api/studio/videos/import", "{\"title\":\"x\",\"scenes\":[]}", StudioKey));
+        missing.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await _client.SendAsync(StudioRequest("POST", "/api/studio/videos/import", body, null))).StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        await _client.SendAsync(StudioRequest("DELETE", $"/api/studio/videos/{video.GetProperty("id").GetString()}", "", StudioKey));
+    });
+
+    [Fact]
     public Task Studio_ReadsStayOpen() => WithStudioKey(async () =>
     {
         (await _client.GetAsync("/api/studio/videos")).StatusCode.Should().Be(HttpStatusCode.OK);

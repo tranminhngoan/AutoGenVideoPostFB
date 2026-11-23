@@ -41,6 +41,8 @@ public class StudioCharacterDto
     public string Gender { get; set; } = "male";
     public string Look { get; set; } = string.Empty;
     public string Voice { get; set; } = string.Empty;
+    /// <summary>Reading speed for TTS, e.g. "-6%" (slower, for emotional narration) … "+8%".</summary>
+    public string? Speed { get; set; }
 }
 
 public class StudioLocationDto
@@ -180,4 +182,47 @@ public class StudioSettingsDto
     public decimal VoicePricePerSecondUsd { get; set; }
     public bool SfxConfigured { get; set; }
     public decimal SfxPricePerSecondUsd { get; set; }
+}
+
+/// <summary>A finished script from the script library, imported shot for shot (no AI planning).</summary>
+public class StudioScriptImportDto
+{
+    public string Title { get; set; } = string.Empty;
+    public string? Code { get; set; }
+    public string? Synopsis { get; set; }
+    public string? Mood { get; set; }
+    public string? Region { get; set; }
+    public string? Era { get; set; }
+    public string? Hook { get; set; }
+    public string? Ending { get; set; }
+    /// <summary>The full readable script, kept on the video for reference.</summary>
+    public string? Script { get; set; }
+    public List<StudioSceneImportDto> Scenes { get; set; } = new();
+
+    // video options chosen before creating
+    public Guid? FacebookAccountId { get; set; }
+    public string? VideoModel { get; set; }
+    public string? Resolution { get; set; }
+    public string? AspectRatio { get; set; }
+    public string? StyleNotes { get; set; }
+    public string? NarratorVoice { get; set; }
+    public string? NarratorSpeed { get; set; }
+    public string? MusicMode { get; set; }
+    public Guid? MusicTrackId { get; set; }
+    public double? MusicVolume { get; set; }
+    public bool? SfxEnabled { get; set; }
+    public double? SfxVolume { get; set; }
+    /// <summary>Start generating the clips as soon as the script is ready (after the budget check).</summary>
+    public bool AutoGenerate { get; set; }
+}
+
+public class StudioSceneImportDto
+{
+    public string? Title { get; set; }
+    public string? VisualVi { get; set; }
+    public string? PromptEn { get; set; }
+    public string? Voiceover { get; set; }
+    public string? Sound { get; set; }
+    public string? Camera { get; set; }
+    public int DurationSeconds { get; set; } = 15;
 }

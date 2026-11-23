@@ -7,10 +7,11 @@ import { useConfirm, useToast } from '../feedback';
 import {
   BUSY, STATUS_LABEL, StudioCharacter, StudioLocation, StudioMusic, StudioPage, StudioSettings, StudioShot, StudioShotInput, StudioVideo,
   StudioVideoInput, studio, usd,
+  StudioScriptImport,
 } from '../../services/studio';
 import { navigate } from '../../lib/router';
 import { ALL_NOSTALGIA_SCRIPTS, NOSTALGIA_CATEGORIES, NostalgiaScript } from '../../data/nostalgiaScriptLibrary';
-import { convertNostalgiaScenesToStudioShots, formatNostalgiaProductionScript } from '../../lib/nostalgiaScriptEngine';
+import { SPEEDS, estimateImport, narratorFor, takeStudioImport, toStudioImport } from '../../lib/studioImport';
 
 /** Facebook only takes Reels up to 90 s; longer videos go up as ordinary Page videos. */
 const REELS_MAX_SECONDS = 90;
@@ -148,6 +149,17 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
   const [remaining, setRemaining] = useState<number | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [showDramaPicker, setShowDramaPicker] = useState(false);
+  /** A library script waiting to be turned into a video (shot for shot, no planning). */
+  const [importing, setImporting] = useState<StudioScriptImport | null>(null);
+  const [narratorVoice, setNarratorVoice] = useState('gemini:Charon');
+  const [narratorSpeed, setNarratorSpeed] = useState('+0%');
+  const loadImport = (s: StudioScriptImport) => {
+    const n = narratorFor(s.mood);
+    setImporting(s);
+    setNarratorVoice(n.voice);
+    setNarratorSpeed(n.speed);
+    setForm((prev) => ({ ...prev, title: s.code ? `${s.title} (${s.code})` : s.title, script: s.script ?? '' }));
+  };
   const [pickerQuery, setPickerQuery] = useState('');
   const [pickerCategory, setPickerCategory] = useState<string>('all');
 
@@ -166,20 +178,11 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
     });
   }, [pickerCategory, pickerQuery]);
 
-  // Apply a nostalgia childhood script directly into this Video Editor
+  // Pick a library script from inside the editor: it is built shot for shot, like "Dựng video" on the script page
   const applyNostalgiaScript = (script: NostalgiaScript) => {
-    const fullScript = formatNostalgiaProductionScript(script);
-    const convertedShots = convertNostalgiaScenesToStudioShots(script.scenes);
-    setForm((prev) => ({
-      ...prev,
-      title: `${script.title} (${script.code})`,
-      script: fullScript,
-      targetDurationSeconds: script.targetDurationSeconds || 120,
-    }));
-    setShots(convertedShots);
-    setShotsDirty(true);
+    loadImport(toStudioImport(script));
     setShowDramaPicker(false);
-    toast.success(`Đã nạp kịch bản "${script.title}" kèm ${convertedShots.length} phân cảnh vào editor!`);
+    toast.success(`Đã chọn kịch bản "${script.title}" — chọn Page, model, nhạc rồi bấm Tạo video.`);
   };
 
   // ── loading ──
@@ -229,32 +232,13 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [videoId]);
 
-  // Check for prefilled drama script when creating a new video
+  // A script sent from the script page ("Dựng video")
   useEffect(() => {
-    if (isNew) {
-      const prefill = sessionStorage.getItem('studio_prefill_script');
-      const prefillTitle = sessionStorage.getItem('studio_prefill_title');
-      const prefillShots = sessionStorage.getItem('studio_prefill_shots');
-      if (prefill) {
-        setForm((prev) => ({ ...prev, script: prefill, title: prefillTitle || prev.title, targetDurationSeconds: 120 }));
-        if (prefillShots) {
-          try {
-            const parsed = JSON.parse(prefillShots);
-            if (Array.isArray(parsed) && parsed.length > 0) {
-              setShots(parsed.map((x: any) => ({ ...x, id: undefined, cast: Array.isArray(x.cast) ? x.cast : [] })));
-              setShotsDirty(true);
-            }
-          } catch (e) {
-            console.error('Lỗi khi nạp shots:', e);
-          }
-          sessionStorage.removeItem('studio_prefill_shots');
-        }
-        sessionStorage.removeItem('studio_prefill_script');
-        sessionStorage.removeItem('studio_prefill_title');
-        toast.success('Đã nạp kịch bản & phân cảnh shot từ kho kịch bản!');
-      }
-    }
-  }, [isNew, toast]);
+    if (!isNew) return;
+    const pending = takeStudioImport();
+    if (pending) loadImport(pending);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isNew]);
 
   // poll while the server works on it
   const serverBusy = !!video && BUSY.includes(video.status);
@@ -324,6 +308,45 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
     ...form, caption, targetDurationSeconds: Math.max(1, scriptEstimate.seconds),
     ...(bibleDirty ? { characters, locations } : {}),
   });
+
+  const importEstimate = useMemo(() => (importing ? estimateImport(importing) : null), [importing]);
+  const importCost = importEstimate
+    ? importEstimate.seconds * perSecond + importEstimate.seconds * voicePrice * 0.8 + (form.sfxEnabled ? importEstimate.seconds * sfxPrice : 0)
+    : 0;
+
+  const createFromScript = (autoGenerate: boolean) =>
+    guarded(autoGenerate ? 'import-go' : 'import', async () => {
+      if (!importing) return;
+      if (autoGenerate) {
+        const label = models.find((m) => m.id === form.videoModel)?.label ?? form.videoModel;
+        if (!(await confirm({
+          title: `Tạo video "${importing.title}" ngay?`,
+          description: `Dựng đúng theo kịch bản: ${importing.scenes.length} phân cảnh → khoảng ${importEstimate?.shots} clip, ~${fmtDuration(importEstimate?.seconds ?? 0)} bằng ${label} ${form.resolution}. Ước tính ~${usd(importCost)} (video + giọng đọc${form.sfxEnabled ? ' + hiệu ứng âm thanh' : ''}). Lời bình đọc bằng giọng ${voiceName(narratorVoice)}${form.musicMode !== 'None' ? ', có nhạc nền' : ''}. Mỗi clip mất vài phút; trang tự cập nhật.`,
+          confirmLabel: `Tạo video (~${usd(importCost)})`,
+        }))) return;
+      }
+      const v = await studio.importScript({
+        ...importing,
+        title: importing.title,
+        facebookAccountId: form.facebookAccountId,
+        videoModel: form.videoModel,
+        resolution: form.resolution,
+        aspectRatio: form.aspectRatio,
+        styleNotes: form.styleNotes?.trim() || undefined,
+        narratorVoice,
+        narratorSpeed,
+        musicMode: form.musicMode,
+        musicTrackId: form.musicTrackId,
+        musicVolume: form.musicVolume,
+        sfxEnabled: form.sfxEnabled,
+        sfxVolume: form.sfxVolume,
+        autoGenerate,
+      });
+      toast.success(autoGenerate
+        ? 'Đã nhận kịch bản — đang chuẩn bị rồi tạo video, trang tự cập nhật.'
+        : 'Đã dựng các shot đúng theo kịch bản — xem, nghe thử giọng rồi bấm Tạo video.');
+      navigate(`/studio/videos/${v.id}`);
+    });
 
   const saveDetails = () =>
     guarded('save', async () => {
@@ -538,10 +561,59 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
             <Input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="vd: Đại nhân cũng biết sợ vợ" disabled={locked} />
           </Field>
         </div>
-        <Field label="Kịch bản" hint="Mỗi câu thoại 1 dòng dạng “Tên: lời thoại”, hành động / bối cảnh ở dòng riêng. Video dài đúng theo kịch bản — AI không thêm, không cắt. Lời thoại được đọc bằng giọng AI.">
-          <Textarea rows={10} value={form.script} onChange={(e) => setForm({ ...form, script: e.target.value })} disabled={locked} />
-        </Field>
-        {form.script?.trim() && (
+        {isNew && importing ? (
+          <div className="space-y-3 rounded-lg border border-accent/30 bg-accent/[0.04] p-3">
+            <div className="flex flex-wrap items-start gap-2">
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-semibold text-fg">🎬 Dựng đúng theo kịch bản: {importing.title}{importing.code ? ` (${importing.code})` : ''}</div>
+                <div className="mt-0.5 text-xs text-fg-muted">
+                  {[importing.mood, importing.region, importing.era].filter(Boolean).join(' · ')} · {importing.scenes.length} phân cảnh → khoảng{' '}
+                  <b className="text-fg">{importEstimate?.shots} clip, ~{fmtDuration(importEstimate?.seconds ?? 0)}</b>
+                  {(importEstimate?.seconds ?? 0) > REELS_MAX_SECONDS ? ' (quá 90s → đăng thành video thường, không vào Reels)' : ' (≤ 90s → Reels)'}
+                </div>
+              </div>
+              <Button size="sm" variant="ghost" onClick={() => setImporting(null)} disabled={locked}>Bỏ kịch bản này</Button>
+            </div>
+            {importing.hook && <p className="text-xs text-fg"><b>Hook mở đầu:</b> {importing.hook}</p>}
+            <ol className="space-y-1 text-xs text-fg-muted">
+              {importing.scenes.map((sc, i) => (
+                <li key={i}>
+                  <b className="text-fg">Cảnh {i + 1}</b> ({sc.durationSeconds}s) — {sc.title}
+                  {sc.sound ? <span className="text-fg-subtle"> · 🔊 {sc.sound}</span> : null}
+                </li>
+              ))}
+            </ol>
+            <p className="text-[11px] text-fg-subtle">
+              Mỗi phân cảnh dùng đúng prompt tiếng Anh của kịch bản, chia thành các clip ≤ 12s với góc máy khác nhau; lời bình (kèm hook và lời kết)
+              đọc bằng giọng AI theo cảm xúc; ghi chú âm thanh được dịch sang tiếng Anh để AI tạo tiếng động khớp hình; nhạc nền AI chọn hợp tâm trạng.
+            </p>
+            <div className="grid gap-2 sm:grid-cols-[1fr_180px]">
+              <Field label="Giọng lời bình (chọn theo cảm xúc kịch bản, đổi được)">
+                <div className="flex gap-1">
+                  <Select value={narratorVoice} onChange={(e) => setNarratorVoice(e.target.value)} disabled={locked}>
+                    {voices.map((v) => (
+                      <option key={v.id} value={v.id}>{v.name} — {v.description}</option>
+                    ))}
+                  </Select>
+                  <Button size="sm" variant="ghost" icon={audio.playing === 'narrator' ? <Square className="h-3.5 w-3.5" /> : <Volume2 className="h-3.5 w-3.5" />}
+                    onClick={() => audio.toggle('narrator', studio.voicePreviewUrl(narratorVoice))} aria-label="Nghe thử giọng" title="Nghe thử giọng" />
+                </div>
+              </Field>
+              <Field label="Tốc độ đọc">
+                <Select value={narratorSpeed} onChange={(e) => setNarratorSpeed(e.target.value)} disabled={locked}>
+                  {SPEEDS.map((sp) => (
+                    <option key={sp.id} value={sp.id}>{sp.label}</option>
+                  ))}
+                </Select>
+              </Field>
+            </div>
+          </div>
+        ) : (
+          <Field label="Kịch bản" hint="Mỗi câu thoại 1 dòng dạng “Tên: lời thoại”, hành động / bối cảnh ở dòng riêng. Video dài đúng theo kịch bản — AI không thêm, không cắt. Lời thoại được đọc bằng giọng AI.">
+            <Textarea rows={10} value={form.script} onChange={(e) => setForm({ ...form, script: e.target.value })} disabled={locked} />
+          </Field>
+        )}
+        {!(isNew && importing) && form.script?.trim() && (
           <div className={cn('rounded-lg border px-3 py-2 text-xs', scriptEstimate.seconds > REELS_MAX_SECONDS ? 'border-warning/40 bg-warning/[0.06]' : 'border-line bg-subtle')}>
             Ước tính theo kịch bản: <b className="text-fg">~{fmtDuration(scriptEstimate.seconds)}</b> ({scriptEstimate.lines} câu thoại, {scriptEstimate.actions} dòng hành động)
             · chi phí ~<b className="text-fg">{usd(scriptEstimate.seconds * perSecond)}</b> ·{' '}
@@ -615,6 +687,20 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
             </Field>
           )}
         </div>
+        {isNew && importing ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="primary" icon={<Sparkles className="h-4 w-4" />} loading={busy === 'import-go'} disabled={locked || !settings?.videoConfigured} onClick={() => createFromScript(true)}>
+              Tạo video ngay (~{usd(importCost)})
+            </Button>
+            <Button variant="secondary" icon={<Save className="h-4 w-4" />} loading={busy === 'import'} disabled={locked} onClick={() => createFromScript(false)}>
+              Dựng shot để xem / sửa trước
+            </Button>
+            <span className="text-xs text-fg-muted">
+              Không cần lập kế hoạch: app dựng đúng kịch bản. "Xem / sửa trước" cho phép nghe giọng, sửa shot rồi mới bấm tạo.
+              {settings && !settings.videoConfigured && ' Chưa có khoá Vercel AI Gateway nên chưa tạo video được.'}
+            </span>
+          </div>
+        ) : (
         <div className="flex flex-wrap gap-2">
           <Button variant="primary" icon={<Save className="h-4 w-4" />} loading={busy === 'save'} disabled={locked} onClick={saveDetails}>
             {isNew ? 'Lưu và sang bước lập kế hoạch' : 'Lưu thông tin'}
@@ -630,6 +716,7 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
             </Button>
           )}
         </div>
+        )}
       </Card>
 
       {!isNew && video && (
@@ -655,7 +742,7 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
             ) : (
               <div className="space-y-2">
                 {characters.map((c, i) => (
-                  <div key={i} className="grid gap-2 rounded-lg border border-line p-2.5 sm:grid-cols-[150px_100px_1fr_220px]">
+                  <div key={i} className="grid gap-2 rounded-lg border border-line p-2.5 sm:grid-cols-[150px_100px_1fr_220px_130px]">
                     <Field label="Nhân vật">
                       <Input value={c.name} disabled={locked} onChange={(e) => updateCharacter(i, { name: e.target.value })} />
                     </Field>
@@ -678,6 +765,13 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
                         <Button size="sm" variant="ghost" icon={audio.playing === 'sample-' + i ? <Square className="h-3.5 w-3.5" /> : <Volume2 className="h-3.5 w-3.5" />}
                           onClick={() => audio.toggle('sample-' + i, studio.voicePreviewUrl(c.voice))} aria-label="Nghe thử giọng" title="Nghe thử giọng" />
                       </div>
+                    </Field>
+                    <Field label="Tốc độ đọc">
+                      <Select value={c.speed ?? '+0%'} disabled={locked} onChange={(e) => updateCharacter(i, { speed: e.target.value })}>
+                        {SPEEDS.map((sp) => (
+                          <option key={sp.id} value={sp.id}>{sp.label}</option>
+                        ))}
+                      </Select>
                     </Field>
                   </div>
                 ))}

@@ -46,6 +46,16 @@ public class StudioVoices
 
     public static bool IsKnown(string? voice) => All.Any(v => v.Id == voice);
 
+    /// <summary>"-6%", "+4%"… within -20 % … +30 %; anything else reads at normal speed.</summary>
+    public static string NormalizeSpeed(string? speed)
+    {
+        var m = System.Text.RegularExpressions.Regex.Match(speed?.Trim() ?? "", @"^([+-]?)(\d{1,2})%?$");
+        if (!m.Success) return "+0%";
+        var value = int.Parse(m.Groups[2].Value) * (m.Groups[1].Value == "-" ? -1 : 1);
+        value = Math.Clamp(value, -20, 30);
+        return (value < 0 ? "" : "+") + value + "%";
+    }
+
     /// <summary>A voice nobody in the cast has yet, of the right gender (falls back to any of that gender).</summary>
     public static string Pick(string? gender, IEnumerable<string> taken)
     {
@@ -72,14 +82,14 @@ public class StudioVoices
         decimal.TryParse(_configuration["Studio:VoicePricePerSecondUsd"], NumberStyles.Number, CultureInfo.InvariantCulture, out var p) && p >= 0 ? p : 0.0003m;
 
     /// <summary>One spoken line as a compact AAC file (kept in the database: a few KB a second) and its length.</summary>
-    public async Task<(byte[] Audio, double Seconds, bool FromCache)> SpeakAsync(Guid videoId, string line, string voice, CancellationToken ct)
+    public async Task<(byte[] Audio, double Seconds, bool FromCache)> SpeakAsync(Guid videoId, string line, string voice, string? speed, CancellationToken ct)
     {
         var result = await _tts.SynthesizeSpeechWithSubtitlesAsync(new TtsSynthesisRequest
         {
             ProjectId = videoId,
             Text = line.Trim(),
             Voice = IsKnown(voice) ? voice : DefaultNarratorVoice,
-            Speed = "+0%",
+            Speed = NormalizeSpeed(speed),
             Provider = TtsProviderType.GoogleTts
         }, ct);
         try

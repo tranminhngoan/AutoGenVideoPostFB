@@ -319,6 +319,95 @@ public class StudioTests
         }
     }
 
+    // ───────────── Script library import (shot for shot, no planning) ─────────────
+
+    private static StudioScriptImportDto LibraryScript() => new()
+    {
+        Title = "Nồi Cơm Độn Sắn Của Mẹ", Code = "BCN-01", Mood = "Nghẹn ngào rớt nước mắt", Region = "Bắc Bộ", Era = "8x",
+        Hook = "Có những đứa trẻ lớn lên bằng nồi cơm độn sắn mốc, để rồi cả đời đi xa vẫn không sao quên được giọt nước mắt của mẹ bên bếp củi chiều mưa...",
+        Ending = "Bây giờ mâm cao cỗ đầy, nhưng con tìm đâu lại được một hạt cơm trắng ngập tràn tình mẹ năm xưa...",
+        Scenes =
+        {
+            new StudioSceneImportDto
+            {
+                Title = "Khói bếp lam chiều", DurationSeconds = 15, Camera = "slow wide cinematic establishing shot",
+                PromptEn = "Cinematic 1994 rural Vietnam 35mm film still, Kodak Portra 400. A rustic mud-brick kitchen hut in heavy rain. Photorealistic 8k, raw emotional atmosphere.",
+                Voiceover = "Những năm chín mươi ấy, nhà nào ở quê cũng nghèo rớt mồng tơi. Bữa cơm chiều tháng ba giáp hạt bao giờ cũng đẫm mùi khói rơm rạ và vị sắn khô cay nồng...",
+                Sound = "Tiếng mưa rào rơi lộp độp trên lá chuối ngoài hiên"
+            },
+            new StudioSceneImportDto
+            {
+                Title = "Bát cơm của mẹ", DurationSeconds = 30, Camera = "slow push-in medium close-up",
+                PromptEn = "Emotional medium close-up: the mother scraping the scarce white rice into her son's bowl.",
+                Voiceover = "Mẹ khẽ cười, gạt hết những hạt cơm trắng hiếm hoi sang bát con, bảo: \"Con ăn đi cho chóng lớn, mẹ thích ăn sắn hơn\". Mãi sau này lớn khôn con mới hiểu, mẹ chưa bao giờ thích ăn sắn...",
+                Sound = "Tiếng mẹ khẽ thở dài nghẹn ngào"
+            },
+        }
+    };
+
+    [Fact]
+    public void Library_script_becomes_clip_sized_shots_that_keep_every_word()
+    {
+        var script = LibraryScript();
+        var shots = StudioScriptImporter.BuildShots(script);
+
+        shots.Should().OnlyContain(s => s.Duration >= 2 && s.Duration <= 12);                      // every shot fits one Seedance clip
+        shots.Where(s => s.Dialogue != null).Should().OnlyContain(s => StudioService.SecondsToSay(s.Dialogue) <= 12);
+        string Words(string t) => System.Text.RegularExpressions.Regex.Replace(t, @"\s+", " ").Trim();
+        var spoken = Words(string.Join(" ", shots.Where(s => s.Dialogue != null).Select(s => s.Dialogue)));
+        spoken.Should().StartWith("Có những đứa trẻ lớn lên");                                          // hook opens the video
+        spoken.Should().EndWith("ngập tràn tình mẹ năm xưa...");                                        // ending closes it
+        spoken.Should().Contain(Words(script.Scenes[0].Voiceover!)).And.Contain(Words(script.Scenes[1].Voiceover!)); // nothing dropped
+        shots.Where(s => s.Scene == 1).Should().HaveCountGreaterThanOrEqualTo(3);                       // a 30 s scene → several clips
+        shots.Where(s => s.Scene == 1).Select(s => s.Camera).Distinct().Should().HaveCountGreaterThan(1); // varied framing
+        shots.First().Camera.Should().Be("slow wide cinematic establishing shot");                    // the script's own camera first
+        shots.First().Action.Should().Contain("35mm film footage").And.NotContain("film still").And.NotContain("8k");
+        shots.Should().OnlyContain(s => s.Sound != null);
+    }
+
+    [Fact]
+    public void Narration_splits_on_sentences_then_commas_never_mid_word()
+    {
+        var text = string.Join(" ", Enumerable.Repeat("Một hai ba bốn năm sáu bảy tám chín mười.", 5));
+        var pieces = StudioScriptImporter.SplitNarration(text, 28);
+        pieces.Should().OnlyContain(p => p.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length <= 28);
+        string.Join(" ", pieces).Should().Be(text);
+        StudioScriptImporter.SplitNarration(string.Join(", ", Enumerable.Repeat("chữ chữ chữ chữ chữ chữ chữ chữ chữ chữ", 6)), 28)
+            .Should().OnlyContain(p => p.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length <= 28);
+        StudioScriptImporter.SplitNarration("  ").Should().BeEmpty();
+    }
+
+    [Theory]
+    [InlineData("Nghẹn ngào rớt nước mắt", "gemini:Sulafat", "-8%")]
+    [InlineData("Da diết nhớ cha mẹ", "gemini:Charon", "-6%")]
+    [InlineData("Hóm hỉnh ngây ngô", "gemini:Puck", "+0%")]
+    [InlineData("Ấm áp hoài niệm", "gemini:Aoede", "-4%")]
+    public void Narrator_voice_follows_the_mood(string mood, string voice, string speed)
+    {
+        var n = StudioScriptImporter.NarratorFor(mood);
+        n.Voice.Should().Be(voice);
+        n.Speed.Should().Be(speed);
+        StudioVoices.IsKnown(n.Voice).Should().BeTrue();
+    }
+
+    [Theory]
+    [InlineData("-8%", "-8%")]
+    [InlineData("5", "+5%")]
+    [InlineData("-50%", "-20%")]
+    [InlineData("fast", "+0%")]
+    public void Speed_is_normalized(string input, string expected) => StudioVoices.NormalizeSpeed(input).Should().Be(expected);
+
+    [Fact]
+    public void Prepare_answer_must_translate_every_sound()
+    {
+        var song = Guid.NewGuid();
+        var ok = StudioService.ParsePrepare($$"""{"sounds":["rain on banana leaves","a soft sigh"],"caption":"Nồi cơm của mẹ #kyuc","musicTrackId":"{{song}}"}""", 2, new HashSet<Guid> { song });
+        ok.Sounds.Should().Equal("rain on banana leaves", "a soft sigh");
+        ok.MusicTrackId.Should().Be(song);
+        var act = () => StudioService.ParsePrepare("""{"sounds":["one"]}""", 2, new HashSet<Guid>());
+        act.Should().Throw<InvalidOperationException>();
+    }
+
     // ───────────── Bible, planning, prompts ─────────────
 
     [Fact]

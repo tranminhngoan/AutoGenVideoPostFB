@@ -1,55 +1,11 @@
 import { NostalgiaScript, NostalgiaScene, NostalgiaCategoryKey } from '../data/nostalgiaScriptLibrary';
 
-export interface StudioShotExport {
-  durationSeconds: number;
-  action: string;
-  camera: string;
-  speaker: string;
-  dialogue: string;
-  sound: string;
-  cast: string[];
-  location?: string;
-}
-
 export interface CustomScriptOptions {
   userMemory: string;
   region: 'Bắc Bộ' | 'Miền Trung' | 'Miền Tây' | 'Chung';
   era: '8x' | '9x';
   mood: 'Nghẹn ngào rớt nước mắt' | 'Da diết nhớ cha mẹ' | 'Ấm áp hoài niệm' | 'Xót xa thương quê' | 'Hóm hỉnh ngây ngô';
   categoryKey?: NostalgiaCategoryKey;
-}
-
-/**
- * Chuyển đổi các phân cảnh Ký ức tuổi thơ thành danh sách Shot chuẩn của Studio Video AI.
- * Thời lượng mỗi shot được phân bổ chuẩn xác theo độ dài câu thoại và thời lượng cảnh.
- */
-export function convertNostalgiaScenesToStudioShots(scenes: NostalgiaScene[]): StudioShotExport[] {
-  return scenes.map((s, idx) => {
-    let speaker = 'Người dẫn chuyện';
-    let dialogue = s.voiceover;
-    const match = /^([^:：]{2,25})[:：]\s*(.+)$/s.exec(s.voiceover);
-    if (match) {
-      speaker = match[1].trim();
-      dialogue = match[2].trim();
-    }
-    const words = dialogue.trim().split(/\s+/).filter(Boolean).length;
-    // Thời lượng shot trong khoảng 5s - 12s chuẩn Seedance
-    const duration = words > 0 ? Math.min(12, Math.max(5, Math.ceil(words / 2.8 + 1))) : s.durationSeconds || 6;
-
-    // Action kết hợp mô tả tiếng Việt và master prompt tiếng Anh cho model sinh video AI
-    const actionText = `${s.visualVi}\n[AI Prompt]: ${s.aiPromptEn}`;
-
-    return {
-      durationSeconds: duration,
-      action: actionText,
-      camera: s.camera || (idx === 0 ? 'wide establishing shot' : idx === scenes.length - 1 ? 'slow drone pull-back' : 'medium-wide shot'),
-      speaker,
-      dialogue,
-      sound: s.sound,
-      cast: speaker === 'Người dẫn chuyện' ? [] : [speaker],
-      location: s.visualVi.slice(0, 50),
-    };
-  });
 }
 
 /**
