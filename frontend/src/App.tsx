@@ -26,7 +26,7 @@ const TITLES: Record<string, string> = {
   activity: 'Hoạt động',
   settings: 'Cài đặt',
   studio: 'Studio Video AI',
-  'drama-scripts': 'Kịch bản phim ngắn TQ',
+  'drama-scripts': 'Lên kịch bản',
 };
 
 export function App() {

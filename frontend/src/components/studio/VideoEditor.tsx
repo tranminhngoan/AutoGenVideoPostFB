@@ -9,8 +9,8 @@ import {
   StudioVideoInput, studio, usd,
 } from '../../services/studio';
 import { navigate } from '../../lib/router';
-import { CHINESE_DRAMAS } from '../../data/chineseDramaLibrary';
-import { convertScenesToStudioShots, formatProductionScript } from '../../lib/dramaScriptEngine';
+import { ALL_NOSTALGIA_SCRIPTS, NOSTALGIA_CATEGORIES, NostalgiaScript } from '../../data/nostalgiaScriptLibrary';
+import { convertNostalgiaScenesToStudioShots, formatNostalgiaProductionScript } from '../../lib/nostalgiaScriptEngine';
 
 /** Facebook only takes Reels up to 90 s; longer videos go up as ordinary Page videos. */
 const REELS_MAX_SECONDS = 90;
@@ -148,16 +148,38 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
   const [remaining, setRemaining] = useState<number | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [showDramaPicker, setShowDramaPicker] = useState(false);
+  const [pickerQuery, setPickerQuery] = useState('');
+  const [pickerCategory, setPickerCategory] = useState<string>('all');
 
-  // Apply a drama episode directly into this Video Editor
-  const applyDramaEpisode = (dramaTitle: string, ep: any) => {
-    const fullScript = formatProductionScript(ep);
-    const convertedShots = convertScenesToStudioShots(ep.scenes);
-    setForm((prev) => ({ ...prev, title: `${dramaTitle} - ${ep.title}`, script: fullScript, targetDurationSeconds: 120 }));
+  const filteredPickerScripts = useMemo(() => {
+    return ALL_NOSTALGIA_SCRIPTS.filter((s) => {
+      if (pickerCategory !== 'all' && s.category !== pickerCategory) return false;
+      if (pickerQuery.trim()) {
+        const q = pickerQuery.toLowerCase().trim();
+        return (
+          s.title.toLowerCase().includes(q) ||
+          s.code.toLowerCase().includes(q) ||
+          s.hook.toLowerCase().includes(q)
+        );
+      }
+      return true;
+    });
+  }, [pickerCategory, pickerQuery]);
+
+  // Apply a nostalgia childhood script directly into this Video Editor
+  const applyNostalgiaScript = (script: NostalgiaScript) => {
+    const fullScript = formatNostalgiaProductionScript(script);
+    const convertedShots = convertNostalgiaScenesToStudioShots(script.scenes);
+    setForm((prev) => ({
+      ...prev,
+      title: `${script.title} (${script.code})`,
+      script: fullScript,
+      targetDurationSeconds: script.targetDurationSeconds || 120,
+    }));
     setShots(convertedShots);
     setShotsDirty(true);
     setShowDramaPicker(false);
-    toast.success(`Đã nạp ${ep.title} kèm ${convertedShots.length} phân cảnh shot vào editor!`);
+    toast.success(`Đã nạp kịch bản "${script.title}" kèm ${convertedShots.length} phân cảnh vào editor!`);
   };
 
   // ── loading ──
@@ -476,9 +498,9 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
           <div className="flex items-center gap-2 text-sm font-semibold text-fg">
             <Clapperboard className="h-4 w-4" /> 1. Thông tin video
           </div>
-          <Button variant="secondary" size="sm" icon={<Sparkles className="h-3.5 w-3.5 text-brand" />} onClick={() => setShowDramaPicker(true)}
-            className="border-brand/40 text-brand hover:bg-brand/10 text-xs font-medium">
-            🎭 Chọn Kịch Bản Phim Miền Tây
+          <Button variant="secondary" size="sm" icon={<Sparkles className="h-3.5 w-3.5 text-amber-400" />} onClick={() => setShowDramaPicker(true)}
+            className="border-amber-500/40 text-amber-300 hover:bg-amber-500/10 text-xs font-medium">
+            📜 Chọn Kịch Bản Ký Ức Tuổi Thơ 8x 9x
           </Button>
         </div>
         <div className="grid gap-3 sm:grid-cols-2">
@@ -869,17 +891,17 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
         </>
       )}
 
-      {/* Drama Scripts Picker Modal */}
+      {/* Childhood Nostalgia Scripts Picker Modal */}
       {showDramaPicker && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
-          <Card className="max-h-[85vh] w-full max-w-2xl overflow-y-auto p-5 space-y-4 shadow-2xl">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm">
+          <Card className="max-h-[88vh] w-full max-w-3xl overflow-y-auto p-5 space-y-4 shadow-2xl border-amber-500/30">
             <div className="flex items-center justify-between border-b border-line pb-3">
               <div>
                 <h4 className="font-bold text-fg text-base flex items-center gap-2">
-                  <Sparkles className="h-4 w-4 text-brand" /> Kho Kịch Bản Phim Miền Tây & Việt Hóa
+                  <Sparkles className="h-4 w-4 text-amber-400" /> Kho Kịch Bản Ký Ức Tuổi Thơ 8x 9x (300 Kịch Bản)
                 </h4>
                 <p className="text-xs text-fg-subtle">
-                  Chọn tập phim để nạp thẳng kịch bản và 5 phân cảnh shot vào Studio dựng video.
+                  Chọn kịch bản để tự động nạp toàn bộ 5 phân cảnh chuẩn AI và lời dẫn vào Studio.
                 </p>
               </div>
               <Button variant="ghost" size="sm" onClick={() => setShowDramaPicker(false)}>
@@ -887,36 +909,71 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
               </Button>
             </div>
 
-            <div className="space-y-3">
-              {CHINESE_DRAMAS.map((drama) => (
-                <div key={drama.id} className="rounded-lg border border-line p-3 space-y-2 bg-surface">
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <h5 className="font-semibold text-fg text-sm">{drama.title}</h5>
-                      <p className="text-[11px] text-fg-subtle">{drama.vietnameseSetting}</p>
+            {/* Filter and Search inside picker */}
+            <div className="flex flex-col sm:flex-row gap-2">
+              <input
+                type="text"
+                placeholder="Tìm kịch bản: cơm độn, kem mút, diều, mẹ vá áo, dép tổ ong..."
+                value={pickerQuery}
+                onChange={(e) => setPickerQuery(e.target.value)}
+                className="flex-1 rounded-md border border-line bg-canvas px-3 py-1.5 text-xs text-fg focus:outline-none focus:border-brand"
+              />
+              <select
+                value={pickerCategory}
+                onChange={(e) => setPickerCategory(e.target.value)}
+                className="rounded-md border border-line bg-canvas px-2.5 py-1.5 text-xs text-fg focus:outline-none"
+              >
+                <option value="all">Tất cả 6 chủ đề ({ALL_NOSTALGIA_SCRIPTS.length})</option>
+                {NOSTALGIA_CATEGORIES.map((cat) => (
+                  <option key={cat.id} value={cat.id}>
+                    {cat.icon} {cat.name} (50)
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Script List */}
+            <div className="space-y-2 max-h-[50vh] overflow-y-auto pr-1">
+              {filteredPickerScripts.slice(0, 50).map((script) => (
+                <div
+                  key={script.id}
+                  className="rounded-lg border border-line p-3 hover:border-amber-500/50 hover:bg-muted/30 transition-all flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 group"
+                >
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-mono text-[10px] font-semibold text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded">
+                        {script.code}
+                      </span>
+                      <span className="text-[10px] text-fg-subtle">
+                        {script.region} • {script.era}
+                      </span>
+                      <span className="text-[10px] text-rose-400 font-medium">
+                        {script.mood}
+                      </span>
                     </div>
-                    <Badge tone="success" className="text-[10px] shrink-0 font-medium">
-                      Full Trọn Bộ ({drama.episodes.length} tập)
-                    </Badge>
+                    <h5 className="font-semibold text-fg text-xs group-hover:text-amber-300 transition-colors">
+                      {script.title}
+                    </h5>
+                    <p className="text-[11px] text-fg-subtle line-clamp-1 italic">
+                      "{script.hook}"
+                    </p>
                   </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1">
-                    {drama.episodes.map((ep) => (
-                      <button
-                        key={ep.episodeNumber}
-                        type="button"
-                        onClick={() => applyDramaEpisode(drama.title, ep)}
-                        className="rounded border border-line hover:border-brand bg-muted/40 hover:bg-brand/10 p-2 text-left transition-colors space-y-1 group"
-                      >
-                        <p className="font-semibold text-xs text-fg group-hover:text-brand">
-                          Tập {ep.episodeNumber}
-                        </p>
-                        <p className="text-[11px] text-fg-subtle line-clamp-1">{ep.title.replace(/^Tập \d+:\s*/, '')}</p>
-                        <span className="text-[10px] text-brand font-medium">⚡ Dùng tập này</span>
-                      </button>
-                    ))}
-                  </div>
+
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    onClick={() => applyNostalgiaScript(script)}
+                    className="shrink-0 text-xs bg-emerald-600 hover:bg-emerald-500 text-white font-medium"
+                  >
+                    ⚡ Nạp Kịch Bản Này
+                  </Button>
                 </div>
               ))}
+              {filteredPickerScripts.length > 50 && (
+                <p className="text-center text-xs text-fg-subtle py-2">
+                  Đang hiển thị 50 / {filteredPickerScripts.length} kết quả. Hãy dùng ô tìm kiếm để lọc chính xác hơn.
+                </p>
+              )}
             </div>
           </Card>
         </div>
