@@ -54,7 +54,9 @@ import {
   extractVisualPrompts,
   exportAllEpisodes,
   generateEpisodesFromPlot,
+  convertScenesToStudioShots,
   DramaStyleTone,
+  VietnameseSettingOption,
 } from '../lib/dramaScriptEngine';
 import {
   dramaStorage,
@@ -80,6 +82,7 @@ export function DramaScriptsPage() {
   const [studioSourcePlot, setStudioSourcePlot] = useState('');
   const [studioNumEpisodes, setStudioNumEpisodes] = useState<number>(3);
   const [studioTone, setStudioTone] = useState<DramaStyleTone>('va_mat');
+  const [studioSetting, setStudioSetting] = useState<VietnameseSettingOption>('mien_tay');
   const [studioEpisodes, setStudioEpisodes] = useState<DramaEpisode[]>([]);
   const [selectedEpIndex, setSelectedEpIndex] = useState<number>(0);
   const [isEditingScene, setIsEditingScene] = useState<number | null>(null);
@@ -155,6 +158,7 @@ export function DramaScriptsPage() {
       numEpisodes: studioNumEpisodes,
       targetDurationSeconds: 120,
       tone: studioTone,
+      vietnameseSetting: studioSetting,
     });
 
     setStudioEpisodes(eps);
@@ -186,13 +190,16 @@ export function DramaScriptsPage() {
   // Transfer episode to Video Studio (/studio/new)
   const handleTransferToStudio = (episode: DramaEpisode) => {
     const fullScript = formatProductionScript(episode);
+    const convertedShots = convertScenesToStudioShots(episode.scenes);
+
     sessionStorage.setItem('studio_prefill_script', fullScript);
-    sessionStorage.setItem('studio_prefill_title', `${studioTitle || 'Phim Ngắn TQ'} - ${episode.title}`);
+    sessionStorage.setItem('studio_prefill_title', `${studioTitle || 'Phim Ngắn Miền Tây'} - ${episode.title}`);
+    sessionStorage.setItem('studio_prefill_shots', JSON.stringify(convertedShots));
     
     // Also copy to clipboard so they can paste in CapCut or external editor
     navigator.clipboard.writeText(fullScript).catch(() => {});
     
-    toast.success('Đã nạp kịch bản vào Studio Dựng Phim & sao chép vào bộ nhớ tạm!');
+    toast.success('Đã nạp kịch bản & 5 phân cảnh shot sang Studio Dựng Phim!');
     navigate('/studio/new');
   };
 
@@ -379,7 +386,10 @@ export function DramaScriptsPage() {
                       <h3 className="font-semibold text-fg text-base line-clamp-1 group-hover:text-brand">
                         {drama.title}
                       </h3>
-                      <p className="text-xs text-fg-subtle line-clamp-1 italic">
+                      <p className="text-xs text-brand font-medium line-clamp-1 mt-0.5">
+                        📍 {drama.vietnameseSetting}
+                      </p>
+                      <p className="text-[11px] text-fg-subtle line-clamp-1 italic">
                         {drama.originalTitle}
                       </p>
                     </div>
@@ -517,6 +527,18 @@ export function DramaScriptsPage() {
                     <option value="5">5 tập (Mini series 10 phút)</option>
                     <option value="8">8 tập (Phim dài)</option>
                     <option value="10">10 tập (Đại kết cục)</option>
+                  </Select>
+                </Field>
+
+                <Field label="Bối cảnh Việt hóa:">
+                  <Select
+                    value={studioSetting}
+                    onChange={(e) => setStudioSetting(e.target.value as VietnameseSettingOption)}
+                  >
+                    <option value="mien_tay">🌾 Miền Tây sông nước (Bến Tre, Cần Thơ, Bến Đò Sông Hậu)</option>
+                    <option value="dien_chu_bac_lieu">🏛️ Điền chủ Bạc Liêu / Nhà cổ Nam Bộ</option>
+                    <option value="sai_gon">🏙️ Đô thị Sài Gòn / Hào môn Quận 1 - Thảo Điền</option>
+                    <option value="generic_vn">🇻🇳 Bối cảnh Việt Nam chung</option>
                   </Select>
                 </Field>
 
@@ -692,14 +714,14 @@ export function DramaScriptsPage() {
 
                         {/* 4. One-Click Transfer to Built-in Video Studio */}
                         <Button
-                          variant="secondary"
+                          variant="primary"
                           size="sm"
                           icon={<ExternalLink className="h-3.5 w-3.5" />}
                           onClick={() => handleTransferToStudio(currentEpisode)}
-                          className="border-brand/40 text-brand hover:bg-brand/10"
-                          title="Nạp thẳng kịch bản này vào Studio Video AI của hệ thống"
+                          className="bg-brand text-white shadow-card hover:bg-brand/90 font-medium"
+                          title="Nạp thẳng kịch bản và 5 phân cảnh shot vào Studio Video AI của hệ thống"
                         >
-                          🚀 Mở Trong Studio Dựng Phim
+                          🚀 Dựng Video Tập Này (Studio)
                         </Button>
                       </div>
                     </div>
@@ -1024,6 +1046,7 @@ export function DramaScriptsPage() {
                   </span>
                 </div>
                 <h3 className="text-lg font-bold text-fg mt-1">{previewDrama.title}</h3>
+                <p className="text-xs text-brand font-medium mt-0.5">📍 Bối cảnh: {previewDrama.vietnameseSetting}</p>
                 <p className="text-xs text-fg-subtle italic">{previewDrama.originalTitle}</p>
               </div>
               <Button

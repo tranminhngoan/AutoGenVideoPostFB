@@ -9,6 +9,8 @@ import {
 } from '../../services/studio';
 import { navigate } from '../../lib/router';
 import { AssetPicker, VideoCastPicker } from './AssetLibrary';
+import { CHINESE_DRAMAS } from '../../data/chineseDramaLibrary';
+import { convertScenesToStudioShots, formatProductionScript } from '../../lib/dramaScriptEngine';
 
 /** Facebook only takes Reels up to 90 s; longer videos go up as ordinary Page videos. */
 const REELS_MAX_SECONDS = 90;
@@ -117,6 +119,23 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
   const [price, setPrice] = useState<Record<string, number>>({});
   const [remaining, setRemaining] = useState<number | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [showDramaPicker, setShowDramaPicker] = useState(false);
+
+  // Apply a drama episode directly into this Video Editor
+  const applyDramaEpisode = (dramaTitle: string, ep: any) => {
+    const fullScript = formatProductionScript(ep);
+    const convertedShots = convertScenesToStudioShots(ep.scenes);
+    setForm((prev) => ({
+      ...prev,
+      title: `${dramaTitle} - ${ep.title}`,
+      script: fullScript,
+      targetDurationSeconds: 120,
+    }));
+    setShots(convertedShots);
+    setShotsDirty(true);
+    setShowDramaPicker(false);
+    toast.success(`Đã nạp ${ep.title} kèm 5 phân cảnh shot vào editor!`);
+  };
 
   // ── loading ──
   const applyVideo = (v: StudioVideo, resetShots = true) => {
@@ -166,6 +185,7 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
     if (isNew) {
       const prefill = sessionStorage.getItem('studio_prefill_script');
       const prefillTitle = sessionStorage.getItem('studio_prefill_title');
+      const prefillShots = sessionStorage.getItem('studio_prefill_shots');
       if (prefill) {
         setForm((prev) => ({
           ...prev,
@@ -173,9 +193,21 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
           title: prefillTitle || prev.title,
           targetDurationSeconds: 120,
         }));
+        if (prefillShots) {
+          try {
+            const parsed = JSON.parse(prefillShots);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              setShots(parsed);
+              setShotsDirty(true);
+            }
+          } catch (e) {
+            console.error('Lỗi khi nạp shots:', e);
+          }
+          sessionStorage.removeItem('studio_prefill_shots');
+        }
         sessionStorage.removeItem('studio_prefill_script');
         sessionStorage.removeItem('studio_prefill_title');
-        toast.success('Đã nạp kịch bản phim ngắn từ kho kịch bản!');
+        toast.success('Đã nạp kịch bản & phân cảnh shot từ kho kịch bản!');
       }
     }
   }, [isNew, toast]);
@@ -387,8 +419,39 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
 
       {/* 1. Details */}
       <Card className="space-y-4 p-4">
-        <div className="flex items-center gap-2 text-sm font-semibold text-fg">
-          <Clapperboard className="h-4 w-4" /> 1. Thông tin video
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 border-b border-line pb-3">
+          <div className="flex items-center gap-2 text-sm font-semibold text-fg">
+            <Clapperboard className="h-4 w-4" /> 1. Thông tin video
+          </div>
+          <Button
+            variant="secondary"
+            size="sm"
+            icon={<Sparkles className="h-3.5 w-3.5 text-brand" />}
+            onClick={() => setShowDramaPicker(true)}
+            className="border-brand/40 text-brand hover:bg-brand/10 text-xs font-medium"
+          >
+            🎭 Chọn Kịch Bản Phim Miền Tây
+          </Button>
+        </div>
+
+        {/* Quick drama helper banner */}
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5 rounded-lg border border-brand/30 bg-brand/[0.04] p-3 text-xs">
+          <div className="flex items-center gap-2">
+            <Sparkles className="h-4 w-4 text-brand shrink-0" />
+            <div>
+              <p className="font-semibold text-fg">Kịch bản phim ngắn Miền Tây & Việt Hóa</p>
+              <p className="text-fg-subtle">Nạp nhanh trọn bộ kịch bản 2 phút (Chàng rể miền Tây, Trùng sinh Bạc Liêu...) kèm 5 shot dựng sẵn</p>
+            </div>
+          </div>
+          <Button
+            variant="secondary"
+            size="sm"
+            icon={<Wand2 className="h-3.5 w-3.5 text-brand" />}
+            onClick={() => setShowDramaPicker(true)}
+            className="border-brand/40 text-brand hover:bg-brand/10 text-xs shrink-0"
+          >
+            Mở Kho Kịch Bản
+          </Button>
         </div>
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label="Page sẽ đăng" hint="Tên Page (và logo trong brand kit) được gắn chìm lên video, tự đổi vị trí mỗi 7 giây để chống reup. Đổi Page sau khi ghép thì video tự ghép lại.">
@@ -685,6 +748,59 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
             </div>
           </Card>
         </>
+      )}
+
+      {/* Drama Scripts Picker Modal */}
+      {showDramaPicker && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+          <Card className="max-h-[85vh] w-full max-w-2xl overflow-y-auto p-5 space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-line pb-3">
+              <div>
+                <h4 className="font-bold text-fg text-base flex items-center gap-2">
+                  <Sparkles className="h-4 w-4 text-brand" /> Kho Kịch Bản Phim Miền Tây & Việt Hóa
+                </h4>
+                <p className="text-xs text-fg-subtle">
+                  Chọn tập phim để nạp thẳng kịch bản và 5 phân cảnh shot vào Studio dựng video.
+                </p>
+              </div>
+              <Button variant="ghost" size="sm" onClick={() => setShowDramaPicker(false)}>
+                ✕ Đóng
+              </Button>
+            </div>
+
+            <div className="space-y-3">
+              {CHINESE_DRAMAS.map((drama) => (
+                <div key={drama.id} className="rounded-lg border border-line p-3 space-y-2 bg-surface">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <h5 className="font-semibold text-fg text-sm">{drama.title}</h5>
+                      <p className="text-[11px] text-fg-subtle">{drama.vietnameseSetting}</p>
+                    </div>
+                    <Badge tone="success" className="text-[10px] shrink-0 font-medium">
+                      Full Trọn Bộ ({drama.episodes.length} tập)
+                    </Badge>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1">
+                    {drama.episodes.map((ep) => (
+                      <button
+                        key={ep.episodeNumber}
+                        type="button"
+                        onClick={() => applyDramaEpisode(drama.title, ep)}
+                        className="rounded border border-line hover:border-brand bg-muted/40 hover:bg-brand/10 p-2 text-left transition-colors space-y-1 group"
+                      >
+                        <p className="font-semibold text-xs text-fg group-hover:text-brand">
+                          Tập {ep.episodeNumber}
+                        </p>
+                        <p className="text-[11px] text-fg-subtle line-clamp-1">{ep.title.replace(/^Tập \d+:\s*/, '')}</p>
+                        <span className="text-[10px] text-brand font-medium">⚡ Dùng tập này</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Card>
+        </div>
       )}
     </div>
   );

@@ -1,6 +1,7 @@
 import { DramaEpisode, DramaScene } from '../data/chineseDramaLibrary';
 
 export type DramaStyleTone = 'va_mat' | 'kich_tinh' | 'nguoc_luyen' | 'hai_huoc';
+export type VietnameseSettingOption = 'mien_tay' | 'sai_gon' | 'dien_chu_bac_lieu' | 'generic_vn';
 
 export interface RewriteOptions {
   title: string;
@@ -8,8 +9,49 @@ export interface RewriteOptions {
   numEpisodes: number;
   targetDurationSeconds?: number; // default 120 (2 minutes)
   tone?: DramaStyleTone;
+  vietnameseSetting?: VietnameseSettingOption;
   includeVisualPrompts?: boolean;
   includeSoundEffects?: boolean;
+}
+
+export interface StudioShotExport {
+  id: string;
+  durationSeconds: number;
+  action: string;
+  camera: string;
+  speaker: string;
+  dialogue: string;
+  sound: string;
+  assetIds: string[];
+  continueFromPrevious: boolean;
+}
+
+/**
+ * Chuyển đổi các phân cảnh của tập phim thành danh sách Shot chuẩn của Studio Video AI.
+ * Giúp người dùng chuyển thẳng sang Studio dựng phim mà có sẵn từng shot (thời lượng, góc máy, lời thoại, âm thanh)!
+ */
+export function convertScenesToStudioShots(scenes: DramaScene[]): StudioShotExport[] {
+  return scenes.map((s, idx) => {
+    let speaker = 'Lời dẫn';
+    let dialogue = s.voiceover;
+    const match = /^([^:：]{2,25})[:：]\s*(.+)$/s.exec(s.voiceover);
+    if (match) {
+      speaker = match[1].trim();
+      dialogue = match[2].trim();
+    }
+
+    return {
+      id: `shot_${idx + 1}_${Math.random().toString(36).slice(2, 7)}`,
+      durationSeconds: Math.min(15, Math.max(3, Math.round(120 / scenes.length))),
+      action: s.visual,
+      camera: idx === 0 ? 'Cận cảnh (Close-up) góc nghiêng' : idx === scenes.length - 1 ? 'Toàn cảnh (Wide shot) flycam' : 'Trung cảnh (Medium shot)',
+      speaker,
+      dialogue,
+      sound: s.sound,
+      assetIds: [],
+      continueFromPrevious: idx > 0,
+    };
+  });
 }
 
 /**
@@ -19,7 +61,6 @@ export interface RewriteOptions {
 export function estimateReadingTime(text: string): { words: number; seconds: number; formatted: string } {
   const clean = text.replace(/\[[^\]]*\]/g, ' ').replace(/[*_`>#]/g, ' ').trim();
   const words = clean.split(/\s+/).filter(Boolean).length;
-  // Khoảng 140 - 150 từ / phút cho tốc độ đọc phim ngắn Douyin dồn dập
   const seconds = Math.round((words / 2.5) + (text.split('\n\n').length * 1.2));
   const mins = Math.floor(seconds / 60);
   const secs = seconds % 60;
@@ -54,14 +95,14 @@ export function formatProductionScript(episode: DramaEpisode): string {
   lines.push(`🎬 ${episode.title.toUpperCase()}`);
   lines.push(`⏱️ Thời lượng mục tiêu: ~${Math.round(episode.durationSeconds / 60)} phút (${episode.durationSeconds} giây)`);
   if (episode.hook) lines.push(`🔥 Hook mở màn (0-5s): ${episode.hook}`);
-  if (episode.cliffhanger) lines.push(`⚡ Cliffhanger kết tập: ${episode.cliffhanger}`);
+  if (episode.cliffhanger) lines.push(`⚡ Cliffhanger nối tập: ${episode.cliffhanger}`);
   lines.push(`================================================================\n`);
 
   for (const s of episode.scenes) {
     lines.push(`[PHÂN CẢNH ${s.sceneNumber}] (${s.timecode}) - ${s.title}`);
-    lines.push(`🎥 HÌNH ẢNH / VISUAL: ${s.visual}`);
+    lines.push(`🎥 HÌNH ẢNH / BỐI CẢNH VN: ${s.visual}`);
     lines.push(`🎙️ LỜI THOẠI / VOICE: ${s.voiceover}`);
-    lines.push(`🎵 ÂM THANH / BGM-SFX: ${s.sound}`);
+    lines.push(`🎵 ÂM THANH / SFX: ${s.sound}`);
     lines.push(`----------------------------------------------------------------`);
   }
 
@@ -69,17 +110,17 @@ export function formatProductionScript(episode: DramaEpisode): string {
 }
 
 /**
- * Trích xuất riêng danh sách Prompt Visual (cho AI vẽ ảnh / AI tạo video như Grok Imagine, Kling, Runway, Midjourney)
+ * Trích xuất riêng danh sách Prompt Visual (cho AI vẽ ảnh / AI tạo video bối cảnh Việt Nam / Miền Tây sông nước)
  */
 export function extractVisualPrompts(episode: DramaEpisode): string {
   const lines: string[] = [];
-  lines.push(`# DANH SÁCH PROMPT HÌNH ẢNH - ${episode.title.toUpperCase()}`);
+  lines.push(`# DANH SÁCH PROMPT HÌNH ẢNH (BỐI CẢNH VIỆT NAM) - ${episode.title.toUpperCase()}`);
   lines.push(`# Copy từng dòng vào các công cụ AI Video (Grok Imagine, Runway Gen-2, Kling AI, Midjourney)\n`);
 
   for (const s of episode.scenes) {
     lines.push(`[Cảnh ${s.sceneNumber} - ${s.timecode}]`);
     lines.push(`Tiếng Việt: ${s.visual}`);
-    lines.push(`Gợi ý AI Video: 9:16 vertical short drama style, cinematic lighting, high emotional expression, dynamic angle, 4k ultra realistic, Chinese web drama aesthetics`);
+    lines.push(`AI Prompt: 9:16 vertical short drama cinematic shot, Vietnam Mekong river delta / Saigon scenery, Vietnamese actors with intense emotional facial expressions, dramatic lighting, 4k ultra realistic`);
     lines.push('');
   }
 
@@ -100,19 +141,15 @@ export function exportAllEpisodes(episodes: DramaEpisode[], mode: 'voiceover' | 
 }
 
 /**
- * Thuật toán phân rã và viết lại kịch bản ngắn theo phong cách phim gây nghiện Trung Quốc (Douyin Short Drama Engine):
- * Đảm bảo mỗi tập chuẩn ~2 phút (khoảng 280 - 340 từ), có đủ 5 nấc cảm xúc:
- * 1. Hook mở đầu sốc (0-15s)
- * 2. Mâu thuẫn chèn ép (15-45s)
- * 3. Đẩy cao trào nghẹt thở (45-75s)
- * 4. Đảo ngược vả mặt (75-105s)
- * 5. Cắt ngang cliffhanger cực cuốn (105-120s)
+ * Thuật toán phân rã và viết lại kịch bản ngắn bối cảnh Việt Nam (Miền Tây sông nước / Đô thị Sài Gòn):
+ * - Đảm bảo mỗi tập chuẩn ~2 phút (~300 từ lời đọc lồng tiếng).
+ * - Cốt truyện 5 hồi liên kết chặt chẽ (Tập 1 kết đâu -> Tập 2 mở màn đúng câu đó).
+ * - Nhân vật, địa danh, câu thoại thuần phong mỹ tục Việt Nam.
  */
 export function generateEpisodesFromPlot(options: RewriteOptions): DramaEpisode[] {
-  const { title, sourceText, numEpisodes = 3, tone = 'va_mat' } = options;
+  const { title, sourceText, numEpisodes = 3, tone = 'va_mat', vietnameseSetting = 'mien_tay' } = options;
   const episodes: DramaEpisode[] = [];
 
-  // Trích xuất các ý chính từ sourceText nếu có
   const cleanSource = sourceText.trim() || title;
   const sentences = cleanSource.split(/[.?!;\n]+/).map(s => s.trim()).filter(s => s.length > 5);
 
@@ -120,50 +157,46 @@ export function generateEpisodesFromPlot(options: RewriteOptions): DramaEpisode[
     switch (toneKey) {
       case 'va_mat':
         return {
-          hookVerb: 'bị sỉ nhục thậm tệ và quẳng đồ đạc vào mặt',
-          conflictStyle: 'kẻ phản diện đắc chí giễu cợt, dùng tiền bạc thế lực đè bẹp đối phương',
-          climaxAction: 'rút ra thẻ đen vô hạn mức và lệnh điều động vạn người xuất hiện',
-          reversalTone: 'cái tát vang dội xé toạc sự ngạo mạn giả tạo',
-          sfxClimax: 'Tiếng tát tai vang dội, tiếng gốm sứ vỡ vụn, tiếng còi xe quân đội/trực thăng rền vang bầu trời.'
+          hookVerb: 'bị má vợ hắt xô nước rửa chén sỉ nhục đuổi khỏi bến đò',
+          conflictStyle: 'gã thiếu gia hách dịch vứt xấp tiền cọc đòi ép gả người yêu',
+          climaxAction: 'đoàn cano vũ trang cùng trực thăng xé nước sông Hậu đổ bộ cứu giá',
+          reversalTone: 'cái tát vang trời giáng xuống mặt kẻ kiêu ngạo',
+          sfxClimax: 'Tiếng tát tai vang dội, tiếng còi cano báo động, tiếng trực thăng gầm rú rung chuyển bến sông.'
         };
       case 'nguoc_luyen':
         return {
-          hookVerb: 'ký đơn ly hôn trong sự lạnh nhạt vô tình của người từng thề hẹn',
-          conflictStyle: 'bạch nguyệt quang giả tạo khóc lóc gài bẫy, tổng tài u mê trách móc',
-          climaxAction: 'thân phận đại lão đứng đầu đế chế tài chính chính thức hé lộ',
-          reversalTone: 'tổng tài quỳ sụp dưới mưa nhận ra mình đã đánh mất cả thế giới',
-          sfxClimax: 'Tiếng ly rượu rơi vỡ toang, tiếng mưa rơi xối xả, tiếng violin bi thương xé ruột.'
+          hookVerb: 'ký đơn ly hôn dứt áo ra đi trong cơn mưa dông bên bờ sông',
+          conflictStyle: 'ả trà xanh con nuôi giả khóc gài bẫy, chồng cũ u mê trách móc',
+          climaxAction: 'thân phận bà trùm chuỗi vựa lúa xuất khẩu chính thức lộ diện',
+          reversalTone: 'chồng cũ dầm mưa quỳ gối xin tha thứ nhưng nhận lại sự lạnh lùng',
+          sfxClimax: 'Tiếng ly trà rơi vỡ tan tành, tiếng mưa dông quất vào rặng dừa, tiếng vĩ cầm xé ruột.'
         };
       case 'hai_huoc':
         return {
-          hookVerb: 'giả nghèo đi xem mắt với bộ dạng hài hước khiến ai cũng ngã ngửa',
-          conflictStyle: 'đối phương đòi quà cưới trên trời và tự vạch áo cho người xem lưng',
-          climaxAction: 'vô tình làm rơi chìa khóa siêu xe và thẻ ngân hàng nghìn tỷ',
-          reversalTone: 'mọi người trố mắt kinh ngạc, kẻ đào mỏ xấu hổ chạy mất dép',
-          sfxClimax: 'Nhạc nền châm biếm rộn rã, tiếng cười cợt biến thành tiếng ho sặc sụa kinh ngạc.'
+          hookVerb: 'chạy xe ôm cà tàng đi coi mắt bị chê nghèo hắt ly nước mía',
+          conflictStyle: 'đối phương đòi quà cưới 5 tỷ và đòi sang tên sổ đỏ miệt vườn',
+          climaxAction: 'làm rơi chìa khóa du thuyền triệu đô và thẻ ngân hàng vạn tỷ',
+          reversalTone: 'cả gia đình đối phương há hốc mồm, cô gái xấu hổ trốn mất dép',
+          sfxClimax: 'Nhạc nền châm biếm rộn rã, tiếng cười cợt chuyển sang tiếng sặc nước kinh ngạc.'
         };
       case 'kich_tinh':
       default:
         return {
-          hookVerb: 'phát hiện bí mật động trời về thân phận thực sự của người thân cận',
-          conflictStyle: 'cuộc đối đầu nghẹt thở giữa hai thế lực hắc bạch trong bóng tối',
-          climaxAction: 'bằng chứng thép được tung lên máy chiếu trước mặt toàn bộ giới truyền thông',
+          hookVerb: 'phát hiện bí mật động trời về nguồn gốc người thừa kế gia tộc',
+          conflictStyle: 'cuộc đấu trí nghẹt thở tại tiệc gia tộc giữa các phe cánh điền chủ',
+          climaxAction: 'bản kết luận giám định pháp y ADN mộc đỏ được tung ra ngay bàn thờ tổ',
           reversalTone: 'kẻ chủ mưu sụp đổ hoàn toàn trước sự thật không thể chối cãi',
-          sfxClimax: 'Tiếng nhịp tim đập thình thịch, tiếng còi cảnh sát hú dồn dập, tiếng bass drop rung chuyển.'
+          sfxClimax: 'Tiếng còi cảnh sát hú dồn dập trên cầu sông Hậu, tiếng trống trận rền vang.'
         };
     }
   };
 
   const toneMod = getToneModifiers(tone);
-
-  // Phân bổ các giai đoạn câu chuyện theo tiến trình kinh điển 5 hồi:
-  // Hồi 1 (Mở đầu & Sỉ nhục) -> Hồi 2 (Cạm bẫy & Mâu thuẫn) -> Hồi 3 (Đảo chiều & Thân phận) -> Hồi 4 (Đỉnh điểm đối đầu) -> Hồi 5 (Đại kết cục viên mãn)
   const total = Math.max(1, numEpisodes);
 
   for (let i = 1; i <= total; i++) {
     const isFirst = i === 1;
     const isLast = i === total;
-    // Tính tiến độ câu chuyện từ 0.0 -> 1.0
     const progress = total === 1 ? 1 : (i - 1) / (total - 1);
 
     let epTitle = '';
@@ -171,25 +204,25 @@ export function generateEpisodesFromPlot(options: RewriteOptions): DramaEpisode[
     let cliffhangerText = '';
 
     if (isFirst) {
-      epTitle = `Tập 1: Sóng Gió Bùng Nổ & Cú Sốc Đầu Tiên`;
-      stageDesc = `Mở màn xung đột gay gắt: nhân vật chính bị sỉ nhục và đẩy vào thế khó.`;
-      cliffhangerText = `Một sự biến chấn động xuất hiện đúng khoảnh khắc nguy cấp nhất khiến tất cả câm lặng!`;
+      epTitle = `Tập 1: Sóng Gió Nổi Lên & Nút Thắt Đầu Tiên`;
+      stageDesc = `Mở màn xung đột: nhân vật chính bị sỉ nhục bên bến sông, giọt nước tràn ly.`;
+      cliffhangerText = `Tiếng động cơ gầm vang xé toạc màn sương ngã ba sông, lực lượng quân đoàn bất ngờ xuất hiện bến đò!`;
     } else if (isLast) {
-      epTitle = `Tập ${i} (Đại Kết Cục): Vả Mặt Triệt Để & Đỉnh Cao Vinh Quang`;
-      stageDesc = `Đại kết cục trọn vẹn: toàn bộ kẻ phản diện sụp đổ, chịu sự trừng phạt của pháp luật và công lý. Nhân vật chính vinh quang đoàn tụ hạnh phúc!`;
-      cliffhangerText = `Khép lại trọn bộ series: kẻ ác đền tội, người tốt hưởng trọn vẹn vinh hoa hạnh phúc!`;
+      epTitle = `Tập ${i} (Đại Kết Cục): Vả Mặt Triệt Để & Đám Cưới Thế Kỷ Bên Sông`;
+      stageDesc = `Đại kết cục: kẻ phản diện phá sản quỳ lạy, công lý thực thi, rước dâu bằng du thuyền 5 sao!`;
+      cliffhangerText = `Khép lại trọn bộ series: kẻ ác đền tội, người tốt hưởng vinh hoa hạnh phúc trọn đời!`;
     } else if (progress < 0.4) {
-      epTitle = `Tập ${i}: Cạm Bẫy Kẻ Ác & Mâu Thuẫn Dâng Cao`;
-      stageDesc = `Kẻ phản diện đắc chí giăng bẫy chèn ép, nhân vật chính âm thầm tích lũy sức mạnh.`;
-      cliffhangerText = `Cuộc gọi bí mật từ đại nhân vật quyền lực khiến tình thế bắt đầu rục rịch đảo chiều!`;
+      epTitle = `Tập ${i}: Kẻ Ác Giăng Bẫy & Mâu Thuẫn Dâng Cao`;
+      stageDesc = `Thiếu gia và má vợ dùng tiền tài ép vào đường cùng, nhân vật chính bắt đầu phản kháng.`;
+      cliffhangerText = `Cuộc gọi từ tập đoàn mẹ báo tin khẩn cấp: "Tập đoàn nhà chúng ta sắp phá sản rồi!"`;
     } else if (progress < 0.7) {
-      epTitle = `Tập ${i}: Thân Phận Thật Hé Lộ & Cú Vả Mặt Bước Đầu`;
-      stageDesc = `Tài năng phi phàm hoặc thân phận tỷ phú bắt đầu rò rỉ, cú phản đòn đầu tiên giáng xuống.`;
-      cliffhangerText = `Bằng chứng đanh thép xuất hiện ngay trước mắt khiến phe phản diện run rẩy bàng hoàng!`;
+      epTitle = `Tập ${i}: Thân Phận Đại Lão Hé Lộ & Cú Vả Mặt Bước Đầu`;
+      stageDesc = `Thẻ đen trăm tỷ xuất hiện, vạch trần bộ mặt tham lam của kẻ phản diện.`;
+      cliffhangerText = `Bằng chứng pháp y ADN và hồ sơ điều tra được tung lên khiến cả dòng họ chấn động!`;
     } else {
-      epTitle = `Tập ${i}: Đỉnh Điểm Đối Đầu Tại Đại Hội & Bóc Mẽ Kẻ Ác`;
-      stageDesc = `Cuộc đối đầu trực diện tại sảnh tiệc thượng lưu, vạch trần mọi âm mưu trước bàn dân thiên hạ.`;
-      cliffhangerText = `Lệnh phong sát và cảnh sát ập tới, hồi chuông báo tử cho gia tộc phản diện vang lên!`;
+      epTitle = `Tập ${i}: Đỉnh Điểm Đối Đầu Tại Đại Tiệc Hào Môn`;
+      stageDesc = `Cuộc chạm trán nảy lửa trước mặt toàn bộ giới làm ăn Nam Bộ, lật mặt kẻ phản đồ.`;
+      cliffhangerText = `Cảnh sát hình sự ập vào bến tàu còng tay kẻ chủ mưu áp giải lên xe đặc chủng!`;
     }
 
     const rawRefSentence = sentences[(i - 1) % sentences.length] || cleanSource.slice(0, 100);
@@ -198,62 +231,64 @@ export function generateEpisodesFromPlot(options: RewriteOptions): DramaEpisode[
       {
         sceneNumber: 1,
         timecode: '0:00 - 0:15',
-        title: isFirst ? 'Hook mở màn 5s - Cú sốc bùng nổ' : `Nút thắt tập ${i} - Cao trào dồn dập`,
-        visual: `Cận cảnh góc máy nghiêng ấn tượng. Tình huống: ${rawRefSentence.slice(0, 80)}. Biểu cảm xung quanh chuyển từ kiêu ngạo sang kinh hoàng.`,
+        title: isFirst ? 'Hook mở màn 5s - Bị sỉ nhục bến đò' : `Nối tiếp tập ${i - 1} - Đòn phản công bất ngờ`,
+        visual: isFirst
+          ? `Góc máy nghiêng quay cận cảnh bến đò miền Tây sông nước. Nhân vật chính bị xô ngã, xô nước bẩn hắt tung tóe lên đôi ủng cũ: ${rawRefSentence.slice(0, 80)}. Xung quanh họ hàng cười nhạo.`
+          : `Góc máy nối tiếp ngay khoảnh khắc tập trước. Vị tướng lĩnh hoặc đại lão bước lên cầu tàu gỗ, quỳ một gối trước mặt nhân vật chính giữa sự bàng hoàng của cả xóm làng.`,
         voiceover: isFirst
-          ? `Ngay tại thời khắc này, mọi nhẫn nhịn suốt bấy lâu nay đã chính thức vượt quá giới hạn! Ai cũng nghĩ người đứng trước mặt là một kẻ vô dụng, nhưng không ai ngờ được thân phận thực sự phía sau!`
+          ? `Ba năm làm rể miệt vườn, cắn răng nhẫn nhục che chở gia đình. Nhưng hôm nay, những kẻ tham tiền đã đẩy mọi chuyện vượt quá giới hạn chịu đựng!`
           : isLast
-          ? `Giờ phút phán xét cuối cùng đã điểm! Những kẻ từng ngạo mạn giẫm đạp lên người khác, hôm nay sẽ phải trả giá gấp trăm ngàn lần!`
-          : `Không khí tại hiện trường nghẹt thở đến từng giây! Cứ ngỡ đối phương đã cùng đường, nhưng một quân bài tẩy kinh hoàng vừa được lật mở!`,
-        sound: 'Tiếng va chạm kim loại chát chúa, tiếng thở gấp, nhịp trống dồn dập mở màn.'
+          ? `Giờ phút đền tội cuối cùng đã điểm! Những kẻ từng đem tiền ra chà đạp danh dự người nghèo, hôm nay phải trả giá gấp trăm ngàn lần!`
+          : `Tiếng xôn xao chết lặng cả khúc sông! Không ai ngờ được người đàn ông nghèo hèn bấy lâu nay lại nắm giữ sinh mệnh kinh tế của cả một vùng đất!`,
+        sound: isFirst ? 'Tiếng nước sông vỗ bì bõm, tiếng xô nhựa đập chát chúa, nhạc u ám.' : 'Tiếng bốt da nện trên ván gỗ rầm rập, tiếng hô nghiêm trang.'
       },
       {
         sceneNumber: 2,
         timecode: '0:15 - 0:45',
-        title: isLast ? 'Kẻ phản diện sụp đổ quỳ lạy' : 'Mâu thuẫn bùng nổ - Kẻ ác ép bức',
+        title: isLast ? 'Kẻ phản diện quỳ lạy xin tha' : 'Mâu thuẫn leo thang - Kẻ ác ép bức',
         visual: isLast
-          ? `Cận cảnh kẻ phản diện mặt cắt không còn giọt máu, hai đầu gối khuỵu xuống sàn đá cẩm thạch van xin trong tuyệt vọng.`
-          : `Góc trung quay toàn cảnh phòng khách sang trọng. Phản diện hếch cằm ra lệnh, vứt giấy tờ hoặc xấp tiền xuống trước mặt nhân vật chính.`,
+          ? `Thiếu gia và má vợ phản diện mặt cắt không còn giọt máu, quỳ sụp dưới sình lầy dập đầu van xin.`
+          : `Góc trung trong sảnh nhà cổ miền Tây. Phản diện vứt xấp tiền hoặc hợp đồng xuống đất, hếch cằm ra lệnh trịch thượng.`,
         voiceover: isLast
-          ? `Kẻ phản diện run rẩy bò lết dưới sàn: "Tôi sai rồi! Xin tha cho tôi một con đường sống!". Nhưng tiếng cười lạnh lùng của nhân vật chính đã dập tắt mọi hy vọng trốn tội!`
-          : `Kẻ phản diện cười khẩy: "Dựa vào một kẻ khố rách áo ôm như mày mà cũng dám mơ trèo cao sao? Hôm nay nếu không quỳ xuống dập đầu nhận sai, đừng hòng bước ra khỏi cánh cửa này lành lặn!".`,
-        sound: isLast ? 'Tiếng đập đầu chan chát xuống sàn, tiếng khóc than xin tha.' : 'Tiếng cười nhạo chói tai, nhạc nền căng thẳng rít lên theo từng lời thoại.'
+          ? `Kẻ phản diện ôm chân khóc ròng: "Tôi sai rồi! Xin Chủ Tịch mở lượng hải hà tha cho gia tộc tôi!". Nhưng tiếng cười sắc lạnh đã dập tắt mọi hy vọng.`
+          : `Kẻ phản diện cười khẩy: "Dựa vào thứ khố rách áo ôm như mày mà đòi cưới tiểu thư sao? Không quỳ xuống dập đầu nhận lỗi thì đừng hòng rời khỏi bến sông này lành lặn!".`,
+        sound: isLast ? 'Tiếng đập đầu chan chát xuống sàn, tiếng khóc than xin tha.' : 'Tiếng cười nhạo chói tai, nhạc nền dồn dập gay cấn.'
       },
       {
         sceneNumber: 3,
         timecode: '0:45 - 1:15',
-        title: isLast ? 'Tiếp quản quyền lực & Đền tội' : 'Diễn biến đẩy cao - Sự phản kháng sắc lạnh',
+        title: isLast ? 'Tiếp quản quyền lực & Tra tay vào còng' : 'Diễn biến đẩy cao - Sự phản kháng sắc bén',
         visual: isLast
-          ? `Đội ngũ luật sư và cảnh sát xuất hiện, trao quyền thừa kế và còng tay kẻ phạm tội lôi ra xe đặc chủng.`
-          : `Cận cảnh ánh mắt nhân vật chính. Đồng tử co lại, nụ cười nửa miệng xuất hiện đầy tự tin và bí hiểm. Đôi bàn tay nhẹ nhàng gạt phăng mọi sự uy hiếp.`,
+          ? `Công an kinh tế và kiểm sát viên xuất hiện niêm phong toàn bộ tài sản bất chính của kẻ phản diện.`
+          : `Cận cảnh ánh mắt nhân vật chính. Nụ cười nửa miệng đầy khí phách xuất hiện. Đôi bàn tay nhẹ nhàng xé toạc mọi tờ giấy ép bức.`,
         voiceover: isLast
-          ? `Bản hợp đồng chuyển nhượng toàn bộ gia sản chính thức ký kết! Kẻ ác cúi đầu tra tay vào còng số 8 trong sự khinh bỉ của toàn xã hội!`
-          : `Nhưng đáp lại sự hung hãn đó chỉ là một nụ cười lạnh lùng: "Nhà các người nghĩ tiền tài và quyền lực của mình có thể che được cả bầu trời này sao? Để xem, ai mới là người phải quỳ gối xin tha!".`,
-        sound: isLast ? 'Tiếng còng số 8 khóa cạch, tiếng còi xe cảnh sát hú vang.' : 'Tiếng bước giày da vang vọng đanh thép, tiếng thì thầm xôn xao kinh ngạc.'
+          ? `Bản án thích đáng đã được thực thi! Kẻ ác cúi đầu tra tay vào còng số 8 trong sự khinh bỉ của toàn thể bà con lối xóm!`
+          : `Nhưng đáp lại chỉ là sự khinh miệt lạnh lùng: "Nhà các người nghĩ mấy đồng tiền mỏ cát có thể che được bầu trời này sao? Để xem, ai mới là người phải quỳ lạy xin tha!".`,
+        sound: isLast ? 'Tiếng còng số 8 khóa cạch, tiếng còi xe cảnh sát hú vang.' : 'Tiếng bước chân đanh thép, tiếng thở dốc bàng hoàng.'
       },
       {
         sceneNumber: 4,
         timecode: '1:15 - 1:45',
-        title: isLast ? 'Vinh quang & Hạnh phúc trọn vẹn' : 'Điểm đảo chiều - Cú vả mặt chấn động',
+        title: isLast ? 'Vinh quang & Hạnh phúc trọn vẹn' : 'Điểm đảo chiều - Cú vả mặt sấm sét',
         visual: isLast
-          ? `Nhân vật chính nắm tay người mình yêu sải bước trên thảm đỏ, ánh hào quang của vương giả rực rỡ, xung quanh vạn người chúc tụng.`
-          : `Góc máy quét nhanh từ dưới lên trên. Một bằng chứng bất ngờ xuất hiện (chiếc thẻ đen, cuộc điện thoại từ cấp trên, đoàn xe hộ tống ập tới).`,
+          ? `Nhân vật chính nắm tay người yêu bước lên du thuyền 5 sao, pháo hoa rực sáng trên bầu trời sông quê.`
+          : `Góc máy quét nhanh từ dưới lên trên. Chiếc thẻ đen trăm tỷ rơi keng xuống mâm đồng, hoặc lệnh triệu tập hạm đội tàu ập tới.`,
         voiceover: isLast
-          ? `Trước mặt hàng triệu người ngưỡng mộ, lời hẹn ước trăm năm được trao gửi. Sóng gió qua đi, chỉ còn lại tình yêu bất diệt và ngai vàng quyền lực tối thượng!`
-          : `${toneMod.climaxAction}! Lời tuyên bố vang lên như sấm sét giữa trời quang. Những kẻ vừa giây trước còn cười cợt, nay hai chân run lẩy bẩy, mồ hôi vã ra như tắm!`,
-        sound: isLast ? 'Nhạc giao hưởng hoành tráng du dương, tiếng pháo hoa rộn rã.' : toneMod.sfxClimax
+          ? `Trước mặt hàng ngàn người ngưỡng mộ, nhẫn kim cương được trao tay. Khổ tận cam lai, chỉ còn lại tình yêu bất diệt và hạnh phúc viên mãn trọn đời!`
+          : `${toneMod.climaxAction}! Lời tuyên bố vang lên như sấm sét giữa trời quang. Kẻ kiêu ngạo nay hai chân run lẩy bẩy, mồ hôi vã ra như tắm!`,
+        sound: isLast ? 'Nhạc đờn ca giao hưởng hùng tráng xúc động, tiếng pháo hoa rộn rã.' : toneMod.sfxClimax
       },
       {
         sceneNumber: 5,
         timecode: '1:45 - 2:00',
-        title: isLast ? 'Đại kết cục hoàn mỹ - Trọn bộ viên mãn' : 'Cao trào & Cliffhanger - Dừng lại ở giây phút nghẹt thở',
+        title: isLast ? 'Đại kết cục viên mãn' : 'Cao trào & Cliffhanger nối tập',
         visual: isLast
-          ? `Khung cảnh toàn cảnh lâu đài pháo hoa sáng rực rỡ trên bầu trời đêm. Nụ cười hạnh phúc rạng ngời kết thúc toàn bộ thiên truyện.`
-          : `Góc máy cận xoay tròn 360 độ quanh nhân vật chính đang đứng sừng sững uy nghiêm, trong khi kẻ phản diện quỵ ngã. Đúng khoảnh khắc then chốt, khung hình đóng băng!`,
+          ? `Toàn cảnh bến đò sông nước rực rỡ cờ hoa và ánh bình minh. Nụ cười hạnh phúc rạng ngời khép lại bộ phim.`
+          : `Cận cảnh 360 độ xoay quanh nhân vật chính uy nghi đứng giữa sảnh đường, điện thoại kẻ phản diện réo vang, khung hình đóng băng đúng tích tắc gay cấn nhất!`,
         voiceover: isLast
-          ? `Một hành trình báo thù và nghịch tập hoàn mỹ đã chính thức khép lại! Khổ tận cam lai, vương giả quy vị, trọn vẹn đến từng cảm xúc!`
-          : `Chuông điện thoại reo vang xé toạc bầu không khí chết lặng! Đầu dây bên kia gào thét: "Mày đắc tội với ai? Cả gia tộc chúng ta sắp bị xóa sổ rồi!". Sự việc tiếp theo sẽ ra sao? Bấm ngay tập tiếp theo!`,
-        sound: isLast ? 'Tiếng chuông ngân vang, ca khúc kết phim hùng tráng trọn vẹn!' : 'Tiếng bass drop rung rinh màng loa, tiếng tim đập hồi hộp, dứt khoát ngắt nhạc tạo cú sốc!'
+          ? `Một thiên truyện nghịch tập miền Tây trọn vẹn và hoàn mỹ! Ở hiền gặp lành, kẻ ác gieo gió gặt bão, vương giả quy vị đắc nhân tâm!`
+          : `Chuông điện thoại réo vang xé toạc bầu không khí chết lặng! Đầu dây bên kia gào thét: "Mày đắc tội với ai? Cả nhà mình sắp phá sản rồi!". Chuyện gì sẽ xảy ra? Xem ngay tập tiếp theo!`,
+        sound: isLast ? 'Tiếng chuông ngân vang, khúc ca khép lại trọn bộ series đầy thỏa mãn!' : 'Tiếng bass drop rung chuyển, tiếng tim đập hồi hộp ngắt tập!'
       }
     ];
 
@@ -264,7 +299,7 @@ export function generateEpisodesFromPlot(options: RewriteOptions): DramaEpisode[
       cliffhanger: cliffhangerText,
       durationSeconds: 120,
       scenes,
-      notes: `Tập ${i}/${total} (${isLast ? 'TẬP CUỐI - ĐẠI KẾT CỤC' : 'Giai đoạn cốt truyện: ' + stageDesc}) - Tối ưu 2 phút chuẩn kịch bản Douyin.`
+      notes: `Tập ${i}/${total} (${isLast ? 'TẬP CUỐI - ĐẠI KẾT CỤC' : 'Giai đoạn: ' + stageDesc}) - Chuẩn 2 phút lồng tiếng Việt, bối cảnh sông nước Nam Bộ.`
     });
   }
 
