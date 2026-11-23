@@ -8,6 +8,7 @@ public static class StudioRegistration
     {
         services.AddHttpClient<SeedanceVideoClient>(c => c.Timeout = TimeSpan.FromMinutes(3));
         services.AddScoped<StudioVoices>();
+        services.AddHttpClient<SoundEffectsClient>(c => c.Timeout = TimeSpan.FromMinutes(3));
         services.AddSingleton<StudioMedia>();
         services.AddSingleton<StudioFileStore>();
         services.AddHostedService<StudioStorageMigrator>();

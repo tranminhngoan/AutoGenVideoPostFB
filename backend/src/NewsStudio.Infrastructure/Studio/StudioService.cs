@@ -35,13 +35,14 @@ public class StudioService
     private readonly StudioMedia _media;
     private readonly StudioFileStore _files;
     private readonly StudioVoices _voices;
+    private readonly SoundEffectsClient _sfx;
     private readonly IFacebookPublishingService _facebook;
     private readonly IBackgroundJobClient _jobs;
     private readonly IConfiguration _configuration;
     private readonly ILogger<StudioService> _logger;
 
     public StudioService(IApplicationDbContext db, SeedanceVideoClient video, FilmGeminiClient gemini, StudioMedia media, StudioFileStore files,
-        StudioVoices voices, IFacebookPublishingService facebook, IBackgroundJobClient jobs, IConfiguration configuration, ILogger<StudioService> logger)
+        StudioVoices voices, SoundEffectsClient sfx, IFacebookPublishingService facebook, IBackgroundJobClient jobs, IConfiguration configuration, ILogger<StudioService> logger)
     {
         _db = db;
         _video = video;
@@ -49,6 +50,7 @@ public class StudioService
         _media = media;
         _files = files;
         _voices = voices;
+        _sfx = sfx;
         _facebook = facebook;
         _jobs = jobs;
         _configuration = configuration;
@@ -226,6 +228,9 @@ public class StudioService
     public async Task<Guid?> ShotVoiceBlobIdAsync(Guid shotId, CancellationToken ct) =>
         await _db.StudioShots.Where(s => s.Id == shotId).Select(s => s.VoiceBlobId).FirstOrDefaultAsync(ct);
 
+    public async Task<Guid?> ShotSfxBlobIdAsync(Guid shotId, CancellationToken ct) =>
+        await _db.StudioShots.Where(s => s.Id == shotId).Select(s => s.SfxBlobId).FirstOrDefaultAsync(ct);
+
     public async Task<Guid?> FinalBlobIdAsync(Guid videoId, CancellationToken ct) =>
         await _db.StudioVideos.Where(v => v.Id == videoId).Select(v => v.FinalBlobId).FirstOrDefaultAsync(ct);
 
@@ -294,6 +299,8 @@ public class StudioService
         dto.StyleNotes = v.StyleNotes;
         dto.Characters = bible.Characters;
         dto.Locations = bible.Locations;
+        dto.SfxEnabled = v.SfxEnabled;
+        dto.SfxVolume = v.SfxVolume;
         dto.MusicMode = v.MusicMode;
         dto.MusicTrackId = v.MusicTrackId;
         dto.MusicName = v.MusicTrackId == null ? null
@@ -308,7 +315,7 @@ public class StudioService
         {
             Id = s.Id, Index = s.Index, DurationSeconds = s.DurationSeconds, Action = s.Action, Camera = s.Camera,
             Location = s.Location, Cast = Names(s.CastJson), Speaker = s.Speaker, Dialogue = s.Dialogue, Sound = s.Sound,
-            HasVoice = s.VoiceBlobId != null, VoiceSeconds = s.VoiceSeconds, Status = s.Status,
+            HasVoice = s.VoiceBlobId != null, VoiceSeconds = s.VoiceSeconds, HasSfx = s.SfxBlobId != null, Status = s.Status,
             HasClip = s.ClipBlobId != null, CostUsd = s.CostUsd, Attempts = s.Attempts, ErrorMessage = s.ErrorMessage,
             EstimatedCostUsd = ShotCost(v, s)
         }).ToList();
@@ -372,6 +379,7 @@ public class StudioService
         {
             if (s.ClipBlobId != null) await DeleteBlobAsync(s.ClipBlobId.Value, ct);
             if (s.VoiceBlobId != null) await DeleteBlobAsync(s.VoiceBlobId.Value, ct);
+            if (s.SfxBlobId != null) await DeleteBlobAsync(s.SfxBlobId.Value, ct);
             if (s.KeyframeBlobId != null) await DeleteBlobAsync(s.KeyframeBlobId.Value, ct);
         }
         if (v.FinalBlobId != null) await DeleteBlobAsync(v.FinalBlobId.Value, ct);
@@ -395,6 +403,8 @@ public class StudioService
             var current = ReadBible(v.BibleJson);
             v.BibleJson = WriteBible(NormalizeBible(i.Characters ?? current.Characters, i.Locations ?? current.Locations));
         }
+        if (i.SfxEnabled != null) v.SfxEnabled = i.SfxEnabled.Value;
+        if (i.SfxVolume != null) v.SfxVolume = Math.Clamp(i.SfxVolume.Value, 0, 1.5);
         if (i.MusicMode != null) v.MusicMode = i.MusicMode is "Manual" or "None" ? i.MusicMode : "Auto";
         if (i.MusicTrackId != null) v.MusicTrackId = i.MusicTrackId == Guid.Empty ? null : i.MusicTrackId;
         if (i.MusicVolume != null) v.MusicVolume = Math.Clamp(i.MusicVolume.Value, 0, 1);
@@ -438,6 +448,7 @@ public class StudioService
             foreach (var old in v.Shots)
             {
                 if (old.VoiceBlobId != null) await DeleteBlobAsync(old.VoiceBlobId.Value, ct);
+                if (old.SfxBlobId != null) await DeleteBlobAsync(old.SfxBlobId.Value, ct);
                 if (old.KeyframeBlobId != null) await DeleteBlobAsync(old.KeyframeBlobId.Value, ct);
             }
             _db.StudioShots.RemoveRange(v.Shots);
@@ -566,7 +577,9 @@ SHOT:
   KHÔNG dùng cận cảnh miệng (extreme close-up).
 - ""camera"": shot đầu mỗi cảnh là wide establishing shot; còn lại ưu tiên medium-wide / two-shot thấy rõ người và bối cảnh;
   close-up tối đa 1/4 số shot (chỉ cho biểu cảm / đòn gây cười).
-- ""action"", ""camera"", ""sound"" viết bằng TIẾNG ANH, cụ thể, dễ quay: ai làm gì, cảm xúc, cử chỉ có chủ đích; cỡ cảnh + chuyển động máy.
+- ""action"", ""camera"" viết bằng TIẾNG ANH, cụ thể, dễ quay: ai làm gì, cảm xúc, cử chỉ có chủ đích; cỡ cảnh + chuyển động máy.
+- ""sound"": hiệu ứng âm thanh của shot bằng TIẾNG ANH (AI sẽ tạo tiếng khớp hình): tiếng động và không khí cụ thể — gió, mưa, chim,
+  côn trùng, bước chân, đập bàn, cửa mở, tiếng cười / xì xào đám đông, chợ, sông nước… KHÔNG ghi nhạc, KHÔNG ghi lời nói.
 - ""caption"": chú thích đăng Facebook bằng tiếng Việt, 1–3 câu cuốn hút + 2–4 hashtag.
 
 Trả về JSON:
@@ -660,6 +673,11 @@ Trả về JSON:
                               || shot.Location != NullIfEmpty(input.Location);
                 if (changed && shot.Status == "Done") shot.Status = "Pending"; // edited → the clip no longer matches; regenerate
                 if (changed) shot.InteractionId = null; // a pending job made from the old text must not be picked up
+                if (changed && shot.SfxBlobId != null)
+                {
+                    await DeleteBlobAsync(shot.SfxBlobId.Value, ct);
+                    shot.SfxBlobId = null;
+                }
                 if (lineChanged && shot.VoiceBlobId != null)
                 {
                     await DeleteBlobAsync(shot.VoiceBlobId.Value, ct);
@@ -687,6 +705,7 @@ Trả về JSON:
         {
             if (gone.ClipBlobId != null) await DeleteBlobAsync(gone.ClipBlobId.Value, ct);
             if (gone.VoiceBlobId != null) await DeleteBlobAsync(gone.VoiceBlobId.Value, ct);
+            if (gone.SfxBlobId != null) await DeleteBlobAsync(gone.SfxBlobId.Value, ct);
             if (gone.KeyframeBlobId != null) await DeleteBlobAsync(gone.KeyframeBlobId.Value, ct);
             _db.StudioShots.Remove(gone);
             v.Shots.Remove(gone);
@@ -703,7 +722,8 @@ Trả về JSON:
     /// <summary>Clip seconds × the model's price, plus reading the line when it has no voice yet.</summary>
     private decimal ShotCost(StudioVideo v, StudioShot s) =>
         _video.EstimateCost(v.VideoModel, v.Resolution, s.DurationSeconds)
-        + (s.Dialogue != null && s.VoiceBlobId == null ? Math.Round(SecondsToSay(s.Dialogue) * _voices.PricePerSecond, 4) : 0m);
+        + (s.Dialogue != null && s.VoiceBlobId == null ? Math.Round(SecondsToSay(s.Dialogue) * _voices.PricePerSecond, 4) : 0m)
+        + (v.SfxEnabled && s.SfxBlobId == null ? _sfx.EstimateCost(s.DurationSeconds) : 0m);
 
     // ═══════════════════════════════ Voices ═══════════════════════════════
 
@@ -783,6 +803,90 @@ Trả về JSON:
             StudioVideoId = v.Id, StudioShotId = s.Id, Kind = "Voice", Model = voice, Seconds = seconds, CostUsd = cost,
             Note = $"giọng shot {s.Index}" + (fromCache ? " (dùng lại, miễn phí)" : "")
         });
+        await _db.SaveChangesAsync(ct);
+    }
+
+    // ═══════════════════════════════ Sound effects ═══════════════════════════════
+
+    /// <summary>
+    /// Sound effects for one clip (MMAudio watches it and adds wind, footsteps, laughter…). A failure is shown on the
+    /// shot but never fails the clip: the video can still be made, just without that shot's effects.
+    /// </summary>
+    private async Task TryMakeSfxAsync(StudioVideo v, StudioShot s, byte[] clip, CancellationToken ct)
+    {
+        try
+        {
+            var seconds = await _media.ProbeSecondsAsync(clip, ".mp4", ct);
+            if (seconds <= 0) seconds = s.DurationSeconds;
+            // fal downloads the clip from the app's public address (open media endpoint); without one it goes inline
+            var clipUrl = _sfx.PublicBaseUrl() is { } baseUrl && s.ClipBlobId != null ? $"{baseUrl}/api/studio/shots/{s.Id}/clip" : null;
+            var result = await _sfx.GenerateAsync(clipUrl, clip, SoundEffectsClient.BuildPrompt(s.Sound, s.Action), seconds, v.Seed, ct);
+            var audio = await _media.ExtractAudioAsync(result, ct);
+            if (s.SfxBlobId != null) await DeleteBlobAsync(s.SfxBlobId.Value, ct);
+            var blob = new StudioBlob { MimeType = "audio/mp4", Data = audio, SizeBytes = audio.Length };
+            _db.StudioBlobs.Add(blob);
+            s.SfxBlobId = blob.Id;
+            if (s.ErrorMessage?.StartsWith("Hiệu ứng âm thanh") == true) s.ErrorMessage = null;
+            var cost = _sfx.EstimateCost(seconds);
+            s.CostUsd += cost;
+            v.ActualCostUsd += cost;
+            _db.StudioCostRecords.Add(new StudioCostRecord
+            {
+                StudioVideoId = v.Id, StudioShotId = s.Id, Kind = "Sfx", Model = "fal-ai/mmaudio-v2", Seconds = seconds, CostUsd = cost,
+                Note = $"hiệu ứng âm thanh shot {s.Index}"
+            });
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Sound effects failed for shot {Index}", s.Index);
+            s.ErrorMessage = "Hiệu ứng âm thanh: " + ex.Message;
+        }
+        await _db.SaveChangesAsync(ct);
+    }
+
+    /// <summary>Adds sound effects to clips that have none (or redoes one shot's), then composes the video again.</summary>
+    public async Task<StudioVideoDto> StartEffectsAsync(Guid id, Guid? shotId, CancellationToken ct)
+    {
+        if (!_sfx.IsConfigured) throw new InvalidOperationException("Chưa có khoá fal.ai (biến FAL_KEY trên Railway) — chưa tạo được hiệu ứng âm thanh.");
+        await ReconcileLostFilesAsync(id, ct);
+        var v = await _db.StudioVideos.Include(x => x.Shots).FirstOrDefaultAsync(x => x.Id == id, ct) ?? throw new KeyNotFoundException("Không tìm thấy video.");
+        EnsureNotBusy(v);
+        var todo = v.Shots.Where(s => s.ClipBlobId != null && (shotId != null ? s.Id == shotId : s.SfxBlobId == null)).ToList();
+        if (todo.Count == 0)
+            throw new InvalidOperationException(shotId != null ? "Shot này chưa có clip — tạo clip trước." : "Mọi clip đều đã có hiệu ứng âm thanh (hoặc chưa có clip nào).");
+        var cost = todo.Sum(s => _sfx.EstimateCost(s.DurationSeconds));
+        await EnsureBudgetAsync(cost, ct);
+        v.SfxEnabled = true;
+        v.Status = "Generating";
+        v.Progress = $"Đang tạo hiệu ứng âm thanh cho {todo.Count} clip (~{cost:0.000} USD)…";
+        v.ErrorMessage = null;
+        await _db.SaveChangesAsync(ct);
+        _jobs.Enqueue<StudioService>(s => s.RunEffectsAsync(id, shotId, CancellationToken.None));
+        return await GetVideoAsync(id, ct);
+    }
+
+    [Queue("render")]
+    [AutomaticRetry(Attempts = 0)]
+    [DisableConcurrentExecution(1800)]
+    public async Task RunEffectsAsync(Guid id, Guid? shotId, CancellationToken ct)
+    {
+        var v = await _db.StudioVideos.Include(x => x.Shots).FirstOrDefaultAsync(x => x.Id == id, ct);
+        if (v == null || v.Status != "Generating") return;
+        var todo = v.Shots.OrderBy(s => s.Index).Where(s => s.ClipBlobId != null && (shotId != null ? s.Id == shotId : s.SfxBlobId == null)).ToList();
+        var n = 0;
+        foreach (var s in todo)
+        {
+            v.Progress = $"Đang tạo hiệu ứng âm thanh {++n}/{todo.Count} (shot {s.Index})…";
+            await _db.SaveChangesAsync(ct);
+            if (await GetBlobAsync(s.ClipBlobId!.Value, ct) is { } clip) await TryMakeSfxAsync(v, s, clip.Data, ct);
+        }
+        if (v.Shots.Count > 0 && v.Shots.All(s => s.ClipBlobId != null))
+        {
+            await ComposeInternalAsync(v, ct); // put the new effects into the final video
+            return;
+        }
+        v.Status = "Planned";
+        v.Progress = null;
         await _db.SaveChangesAsync(ct);
     }
 
@@ -880,6 +984,11 @@ Trả về JSON:
                         await _db.SaveChangesAsync(CancellationToken.None);
                     });
                     if (shot.ClipBlobId != null) await DeleteBlobAsync(shot.ClipBlobId.Value, ct);
+                    if (shot.SfxBlobId != null)
+                    {
+                        await DeleteBlobAsync(shot.SfxBlobId.Value, ct); // made from the old clip
+                        shot.SfxBlobId = null;
+                    }
                     var b = await StoreOnDiskAsync(clip.Video, clip.MimeType, ct);
                     shot.ClipBlobId = b.Id;
                     shot.InteractionId = clip.RequestId;
@@ -894,6 +1003,7 @@ Trả về JSON:
                         Note = $"shot {shot.Index}, {SeedanceVideoClient.NormalizeResolution(v.Resolution)}" + (clip.CostUsd == 0 ? ", lấy lại job đã trả tiền" : "")
                     });
                     await _db.SaveChangesAsync(ct);
+                    if (v.SfxEnabled && _sfx.IsConfigured) await TryMakeSfxAsync(v, shot, clip.Video, ct);
                     break;
                 }
                 catch (VideoAccountException ex)
@@ -1099,13 +1209,14 @@ Trả về JSON:
     private async Task ComposeInternalAsync(StudioVideo v, CancellationToken ct)
     {
         v.Status = "Composing";
-        v.Progress = "Đang ghép video, giọng đọc và nhạc nền…";
+        v.Progress = "Đang ghép video, giọng đọc, hiệu ứng âm thanh và nhạc nền…";
         await _db.SaveChangesAsync(ct);
         var dir = StudioMedia.TempDir();
         try
         {
             var clips = new List<string>();
             var voices = new List<string?>();
+            var effects = new List<string?>();
             foreach (var s in v.Shots.OrderBy(s => s.Index))
             {
                 var blob = s.ClipBlobId == null ? null : await GetBlobAsync(s.ClipBlobId.Value, ct);
@@ -1120,6 +1231,13 @@ Trả về JSON:
                     await File.WriteAllBytesAsync(voicePath, vb.Data, ct);
                 }
                 voices.Add(voicePath);
+                string? fxPath = null;
+                if (v.SfxEnabled && s.SfxBlobId != null && await GetBlobAsync(s.SfxBlobId.Value, ct) is { } fb)
+                {
+                    fxPath = Path.Combine(dir, $"sfx_{s.Index:D3}.m4a");
+                    await File.WriteAllBytesAsync(fxPath, fb.Data, ct);
+                }
+                effects.Add(fxPath);
             }
 
             string? musicPath = null;
@@ -1143,7 +1261,7 @@ Trả về JSON:
 
             var output = Path.Combine(dir, "final.mp4");
             // delivered at 1080p whatever the clip resolution (Facebook keeps a sharper copy of 1080p uploads)
-            var duration = await _media.ComposeAsync(clips, musicPath, v.MusicVolume, v.AspectRatio, DeliveryResolution, output, ct, watermark, brand, voices);
+            var duration = await _media.ComposeAsync(clips, musicPath, v.MusicVolume, v.AspectRatio, DeliveryResolution, output, ct, watermark, brand, voices, effects, v.SfxVolume);
             var bytes = await File.ReadAllBytesAsync(output, ct);
             if (v.FinalBlobId != null) await DeleteBlobAsync(v.FinalBlobId.Value, ct);
             var final = await StoreOnDiskAsync(bytes, "video/mp4", ct);
@@ -1280,7 +1398,9 @@ Trả về JSON:
         VideoModel = _video.DefaultModel,
         Models = ModelDtos(),
         Voices = StudioVoices.Dtos().ToList(),
-        VoicePricePerSecondUsd = _voices.PricePerSecond
+        VoicePricePerSecondUsd = _voices.PricePerSecond,
+        SfxConfigured = _sfx.IsConfigured,
+        SfxPricePerSecondUsd = _sfx.PricePerSecond
     };
 
     private List<StudioModelDto> ModelDtos() => _video.Models()

@@ -1815,6 +1815,9 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                         .HasMaxLength(200)
                         .HasColumnType("character varying(200)");
 
+                    b.Property<Guid?>("SfxBlobId")
+                        .HasColumnType("uuid");
+
                     b.Property<string>("Sound")
                         .HasColumnType("text");
 
@@ -1926,6 +1929,12 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
 
                     b.Property<int>("Seed")
                         .HasColumnType("integer");
+
+                    b.Property<bool>("SfxEnabled")
+                        .HasColumnType("boolean");
+
+                    b.Property<double>("SfxVolume")
+                        .HasColumnType("double precision");
 
                     b.Property<string>("Status")
                         .IsRequired()

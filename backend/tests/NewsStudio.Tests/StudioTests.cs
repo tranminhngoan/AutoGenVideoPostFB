@@ -204,6 +204,121 @@ public class StudioTests
             new((System.Net.HttpStatusCode)status) { Content = new StringContent(JsonSerializer.Serialize(new { error = new { message, type } })) };
     }
 
+    // ───────────── Sound effects (fal.ai MMAudio) ─────────────
+
+    [Fact]
+    public void Sfx_request_keeps_voices_and_music_out()
+    {
+        var prompt = SoundEffectsClient.BuildPrompt("wind through bamboo, birds chirping.", "A farmer walks along the canal");
+        prompt.Should().Be("wind through bamboo, birds chirping. A farmer walks along the canal. Realistic sound effects and ambience only.");
+        var body = SoundEffectsClient.BuildRequest("https://app.test/api/studio/shots/1/clip", prompt, 45, 70000);
+        body["video_url"]!.GetValue<string>().Should().Be("https://app.test/api/studio/shots/1/clip");
+        body["negative_prompt"]!.GetValue<string>().Should().Contain("speech").And.Contain("music");
+        body["duration"]!.GetValue<double>().Should().Be(30); // model max
+        body["seed"]!.GetValue<int>().Should().Be(70000 % 65536);
+        SoundEffectsClient.BuildPrompt(null, "").Should().StartWith("natural ambient sound");
+    }
+
+    [Theory]
+    [InlineData("""{"video":{"url":"https://fal.media/out.mp4","content_type":"application/octet-stream"}}""", "https://fal.media/out.mp4")]
+    [InlineData("""{"audio":{"url":"https://fal.media/out.wav"}}""", "https://fal.media/out.wav")]
+    [InlineData("""{"other":1}""", null)]
+    public void Sfx_result_file_is_found(string json, string? url) => SoundEffectsClient.ParseResultUrl(json).Should().Be(url);
+
+    [Fact]
+    public async Task Sfx_job_is_queued_polled_and_downloaded()
+    {
+        var fal = new FakeFal();
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["Ai:Fal:ApiKey"] = "test-fal-key" }).Build();
+        var client = new SoundEffectsClient(new HttpClient(fal), config, Microsoft.Extensions.Logging.Abstractions.NullLogger<SoundEffectsClient>.Instance)
+        {
+            PollInterval = TimeSpan.FromMilliseconds(1)
+        };
+        var bytes = await client.GenerateAsync(null, new byte[] { 1, 2, 3 }, "rain", 6, 1, CancellationToken.None);
+
+        bytes.Should().Equal(FakeFal.Output);
+        fal.Auth.Should().OnlyContain(a => a == "Key test-fal-key");
+        fal.Submitted!["video_url"]!.GetValue<string>().Should().Be("data:video/mp4;base64,AQID"); // no public URL → inline
+        fal.Polls.Should().Be(2);
+        client.EstimateCost(10).Should().Be(0.01m);
+    }
+
+    private sealed class FakeFal : HttpMessageHandler
+    {
+        public static readonly byte[] Output = { 9, 8, 7, 6 };
+        public JsonObject? Submitted { get; private set; }
+        public int Polls { get; private set; }
+        public List<string> Auth { get; } = new();
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            var url = request.RequestUri!.ToString();
+            if (url == "https://fal.media/out.mp4") return new HttpResponseMessage(System.Net.HttpStatusCode.OK) { Content = new ByteArrayContent(Output) };
+            Auth.Add(request.Headers.Authorization?.ToString() ?? "");
+            if (request.Method == HttpMethod.Post && url == "https://queue.fal.run/fal-ai/mmaudio-v2")
+            {
+                Submitted = JsonNode.Parse(await request.Content!.ReadAsStringAsync(ct))!.AsObject();
+                return Json("""{"request_id":"r1","status_url":"https://queue.fal.run/fal-ai/mmaudio-v2/requests/r1/status","response_url":"https://queue.fal.run/fal-ai/mmaudio-v2/requests/r1"}""");
+            }
+            if (url.EndsWith("/requests/r1/status"))
+                return Json(++Polls < 2 ? """{"status":"IN_PROGRESS"}""" : """{"status":"COMPLETED"}""");
+            if (url.EndsWith("/requests/r1")) return Json("""{"video":{"url":"https://fal.media/out.mp4"}}""");
+            return new HttpResponseMessage(System.Net.HttpStatusCode.NotFound);
+        }
+
+        private static HttpResponseMessage Json(string body) =>
+            new(System.Net.HttpStatusCode.OK) { Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json") };
+    }
+
+    [Fact]
+    public async Task Music_ducks_under_speech_but_not_under_sound_effects()
+    {
+        var ffmpeg = StudioMedia.LocateFfmpeg();
+        if (ffmpeg == null) return;
+        var dir = StudioMedia.TempDir();
+        try
+        {
+            async Task<string> Run(string args)
+            {
+                using var p = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(ffmpeg, "-hide_banner -y " + args)
+                    { UseShellExecute = false, RedirectStandardError = true, StandardErrorEncoding = System.Text.Encoding.UTF8 })!;
+                var err = await p.StandardError.ReadToEndAsync();
+                await p.WaitForExitAsync();
+                p.ExitCode.Should().Be(0, err);
+                return err;
+            }
+            var a = Path.Combine(dir, "a.mp4");
+            var b = Path.Combine(dir, "b.mp4");
+            var voice = Path.Combine(dir, "voice.m4a");   // speech stand-in: 300 Hz
+            var fx = Path.Combine(dir, "fx.m4a");         // effects stand-in: 3 kHz, loud
+            var music = Path.Combine(dir, "music.m4a");   // music stand-in: 1 kHz
+            await Run($"-loglevel error -f lavfi -i testsrc=size=720x1280:rate=24 -t 4 -c:v libx264 -pix_fmt yuv420p \"{a}\"");
+            await Run($"-loglevel error -f lavfi -i testsrc=size=720x1280:rate=24 -t 4 -c:v libx264 -pix_fmt yuv420p \"{b}\"");
+            await Run($"-loglevel error -f lavfi -i sine=f=300:sample_rate=48000 -t 4 -c:a aac \"{voice}\"");
+            await Run($"-loglevel error -f lavfi -i sine=f=3000:sample_rate=48000 -t 4 -c:a aac \"{fx}\"");
+            await Run($"-loglevel error -f lavfi -i sine=f=1000:sample_rate=48000 -t 10 -c:a aac \"{music}\"");
+
+            var media = new StudioMedia(new ConfigurationBuilder().Build());
+            var output = Path.Combine(dir, "final.mp4");
+            await media.ComposeAsync(new[] { a, b }, music, 0.5, "9:16", "720p", output, CancellationToken.None,
+                voices: new string?[] { voice, null }, effects: new string?[] { null, fx }, effectsVolume: 1.0);
+
+            async Task<double> MusicLevel(double from)
+            {
+                var log = await Run($"-ss {from.ToString(System.Globalization.CultureInfo.InvariantCulture)} -t 1.5 -i \"{output}\" -af \"bandpass=f=1000:width_type=q:w=8,volumedetect\" -f null -");
+                return double.Parse(System.Text.RegularExpressions.Regex.Match(log, @"mean_volume: (-?[\d.]+) dB").Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture);
+            }
+            var underSpeech = await MusicLevel(1.5);   // clip a: voice talking
+            var underEffects = await MusicLevel(5.5);  // clip b: effects only
+            underEffects.Should().BeGreaterThan(underSpeech + 4, "music is pushed down only while someone speaks");
+            (await Run($"-i \"{output}\" -f null -")).Should().Contain("Audio:");
+        }
+        finally
+        {
+            StudioMedia.TryDelete(dir);
+        }
+    }
+
     // ───────────── Bible, planning, prompts ─────────────
 
     [Fact]

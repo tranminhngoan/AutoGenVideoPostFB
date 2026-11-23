@@ -81,6 +81,7 @@ export interface StudioShot {
   sound?: string | null;
   hasVoice: boolean;
   voiceSeconds?: number | null;
+  hasSfx: boolean;
   status: 'Pending' | 'Generating' | 'Done' | 'Failed';
   hasClip: boolean;
   costUsd: number;
@@ -125,6 +126,8 @@ export interface StudioVideo extends StudioVideoSummary {
   styleNotes?: string | null;
   characters: StudioCharacter[];
   locations: StudioLocation[];
+  sfxEnabled: boolean;
+  sfxVolume: number;
   musicMode: 'Auto' | 'Manual' | 'None';
   musicTrackId?: string | null;
   musicName?: string | null;
@@ -148,6 +151,8 @@ export interface StudioVideoInput {
   styleNotes?: string;
   characters?: StudioCharacter[];
   locations?: StudioLocation[];
+  sfxEnabled?: boolean;
+  sfxVolume?: number;
   musicMode?: string;
   musicTrackId?: string | null;
   musicVolume?: number;
@@ -198,6 +203,8 @@ export interface StudioSettings {
   models: StudioModel[];
   voices: StudioVoiceOption[];
   voicePricePerSecondUsd: number;
+  sfxConfigured: boolean;
+  sfxPricePerSecondUsd: number;
 }
 
 export interface StudioPage {
@@ -244,6 +251,8 @@ export const studio = {
   generateShot: (id: string, shotId: string) => call<StudioVideo>('POST', `/videos/${id}/shots/${shotId}/generate`),
   voices: (id: string) => call<StudioVideo>('POST', `/videos/${id}/voices`),
   shotVoice: (id: string, shotId: string) => call<StudioVideo>('POST', `/videos/${id}/shots/${shotId}/voice`),
+  effects: (id: string) => call<StudioVideo>('POST', `/videos/${id}/effects`),
+  shotEffects: (id: string, shotId: string) => call<StudioVideo>('POST', `/videos/${id}/shots/${shotId}/effects`),
   compose: (id: string) => call<StudioVideo>('POST', `/videos/${id}/compose`),
   recoverClips: (id: string) => call<StudioVideo>('POST', `/videos/${id}/recover-clips`),
   publish: (id: string, caption: string) => call<StudioVideo>('POST', `/videos/${id}/publish`, { caption }),
@@ -251,6 +260,7 @@ export const studio = {
   finalUrl: (id: string, download = false) => `${BASE}/videos/${id}/final${download ? '?download=true' : ''}`,
   clipUrl: (shotId: string) => `${BASE}/shots/${shotId}/clip`,
   voiceUrl: (shotId: string) => `${BASE}/shots/${shotId}/voice`,
+  effectsUrl: (shotId: string) => `${BASE}/shots/${shotId}/effects`,
   voicePreviewUrl: (voice: string) => `/api/system/voice-preview?voice=${encodeURIComponent(voice)}`,
 
   costs: () => call<StudioCosts>('GET', '/costs'),

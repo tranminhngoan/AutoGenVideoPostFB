@@ -168,6 +168,18 @@ public class StudioController : ControllerBase
     public async Task<IActionResult> ShotVoice(Guid id, Guid shotId, CancellationToken ct) =>
         Denied() ?? await Run(async () => await _studio.StartVoicesAsync(id, shotId, ct));
 
+    [HttpPost("videos/{id:guid}/effects")]
+    public async Task<IActionResult> Effects(Guid id, CancellationToken ct) =>
+        Denied() ?? await Run(async () => await _studio.StartEffectsAsync(id, null, ct));
+
+    [HttpPost("videos/{id:guid}/shots/{shotId:guid}/effects")]
+    public async Task<IActionResult> ShotEffects(Guid id, Guid shotId, CancellationToken ct) =>
+        Denied() ?? await Run(async () => await _studio.StartEffectsAsync(id, shotId, ct));
+
+    [HttpGet("shots/{shotId:guid}/effects")]
+    public async Task<IActionResult> EffectsAudio(Guid shotId, CancellationToken ct) =>
+        await BlobResult(await _studio.ShotSfxBlobIdAsync(shotId, ct), null, ct);
+
     [HttpGet("shots/{shotId:guid}/voice")]
     public async Task<IActionResult> VoiceAudio(Guid shotId, CancellationToken ct) =>
         await BlobResult(await _studio.ShotVoiceBlobIdAsync(shotId, ct), null, ct);

@@ -25,6 +25,7 @@ public class StudioShotDto
     public string? Sound { get; set; }
     public bool HasVoice { get; set; }
     public double? VoiceSeconds { get; set; }
+    public bool HasSfx { get; set; }
     public string Status { get; set; } = "Pending";
     public bool HasClip { get; set; }
     public decimal CostUsd { get; set; }
@@ -74,6 +75,8 @@ public class StudioVideoDto : StudioVideoSummaryDto
     public string? StyleNotes { get; set; }
     public List<StudioCharacterDto> Characters { get; set; } = new();
     public List<StudioLocationDto> Locations { get; set; } = new();
+    public bool SfxEnabled { get; set; } = true;
+    public double SfxVolume { get; set; } = 0.7;
     public string MusicMode { get; set; } = "Auto";
     public Guid? MusicTrackId { get; set; }
     public string? MusicName { get; set; }
@@ -99,6 +102,8 @@ public class StudioVideoInputDto
     public string? StyleNotes { get; set; }
     public List<StudioCharacterDto>? Characters { get; set; }
     public List<StudioLocationDto>? Locations { get; set; }
+    public bool? SfxEnabled { get; set; }
+    public double? SfxVolume { get; set; }
     public string? MusicMode { get; set; }
     public Guid? MusicTrackId { get; set; }
     public double? MusicVolume { get; set; }
@@ -173,4 +178,6 @@ public class StudioSettingsDto
     public List<StudioModelDto> Models { get; set; } = new();
     public List<StudioVoiceDto> Voices { get; set; } = new();
     public decimal VoicePricePerSecondUsd { get; set; }
+    public bool SfxConfigured { get; set; }
+    public decimal SfxPricePerSecondUsd { get; set; }
 }

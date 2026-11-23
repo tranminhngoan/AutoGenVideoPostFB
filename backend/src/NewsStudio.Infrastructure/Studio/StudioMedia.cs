@@ -225,85 +225,130 @@ public class StudioMedia
 
     /// <summary>
     /// Joins the clips in order (every clip re-encoded once to the same size, the first clip's frame rate and 48 kHz
-    /// stereo — a clip without sound gets silence, so joins never drift; the watermark is burned in during that same
-    /// encode) and, when a music file is given, loops it under the whole video at
-    /// <paramref name="musicVolume"/>, ducked while people speak, with a fade in/out. With <paramref name="watermarkPng"/>
-    /// the Page watermark is burned in (moving, see <see cref="WatermarkFilter"/>); <paramref name="brand"/> also goes
-    /// into the file's metadata. Returns the duration in seconds.
+    /// stereo, the watermark burned in during that same encode) and, when a music file is given, loops it under the
+    /// whole video at <paramref name="musicVolume"/> with a fade in/out, ducked while people SPEAK (sound effects don't
+    /// push the music down). <paramref name="brand"/> also goes into the file's metadata. Returns the duration in seconds.
+    /// A clip with neither a voice nor effects keeps its own audio (silence when it has none); each clip's sound is cut /
+    /// padded to the clip.
     /// </summary>
-    /// <param name="voices">Per clip, the spoken line (TTS) to use as that clip's sound, or null to keep the clip's own
-    /// audio (silence when it has none). The voice starts a quarter second in and is padded / cut to the clip.</param>
+    /// <param name="voices">Per clip, the spoken line (TTS), starting a quarter second in.</param>
+    /// <param name="effects">Per clip, its sound effects (MMAudio), mixed at <paramref name="effectsVolume"/>.</param>
     public async Task<double> ComposeAsync(IReadOnlyList<string> clips, string? music, double musicVolume,
         string aspectRatio, string resolution, string output, CancellationToken ct, string? watermarkPng = null, string? brand = null,
-        IReadOnlyList<string?>? voices = null)
+        IReadOnlyList<string?>? voices = null, IReadOnlyList<string?>? effects = null, double effectsVolume = 0.7)
     {
         var meta = MetadataArgs(brand);
         if (clips.Count == 0) throw new InvalidOperationException("Chưa có clip nào để ghép.");
         var (w, h) = FrameSize(aspectRatio, resolution);
+        const string fmt = "aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo";
+        var fxVol = Math.Clamp(effectsVolume, 0, 2).ToString("F3", CultureInfo.InvariantCulture);
+        var withKey = music != null; // a speech-only track that tells the music when to duck
         var dir = TempDir();
         try
         {
             var parts = new List<string>();
+            var keys = new List<string>();
             var fps = await ProbeFrameRateAsync(clips[0], ct);
             var offset = 0.0;
             for (var i = 0; i < clips.Count; i++)
             {
                 var part = Path.Combine(dir, $"part_{i:D3}.mp4");
+                var key = Path.Combine(dir, $"key_{i:D3}.m4a");
                 var voice = voices != null && i < voices.Count ? voices[i] : null;
-                var hasAudio = voice == null && await HasAudioAsync(clips[i], ct);
+                var fx = effects != null && i < effects.Count ? effects[i] : null;
+                var own = voice == null && fx == null && await HasAudioAsync(clips[i], ct);
+                var seconds = (await ProbeSecondsAsync(clips[i], ct)).ToString("F3", CultureInfo.InvariantCulture);
+
                 var inputs = $"-i \"{clips[i]}\"";
-                var audioInput = 0;
-                var nextInput = 1;
-                if (voice != null) { inputs += $" -i \"{voice}\""; audioInput = nextInput++; }
-                else if (!hasAudio) { inputs += " -f lavfi -i anullsrc=r=48000:cl=stereo"; audioInput = nextInput++; }
+                var next = 1;
+                int vi = -1, fi = -1;
+                if (voice != null) { inputs += $" -i \"{voice}\""; vi = next++; }
+                if (fx != null) { inputs += $" -i \"{fx}\""; fi = next++; }
                 var graph = $"[0:v]scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={fps}[base];";
                 if (watermarkPng != null)
                 {
                     inputs += $" -i \"{watermarkPng}\"";
-                    graph += WatermarkFilter(aspectRatio, nextInput, "base", offset) + ";";
+                    graph += WatermarkFilter(aspectRatio, next, "base", offset) + ";";
                 }
                 else
                 {
                     graph += "[base]format=yuv420p[v];";
                 }
-                graph += voice != null
-                    ? $"[{audioInput}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,adelay=250|250,apad[a]"
-                    : $"[{audioInput}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo[a]";
-                var (code, _, err) = await RunAsync(_ffmpeg,
-                    $"-hide_banner -y {inputs} -filter_complex \"{graph}\" -map \"[v]\" -map \"[a]\" -shortest " +
-                    $"-c:v libx264 -preset fast -crf 19 -maxrate 10M -bufsize 20M -c:a aac -b:a 192k -ar 48000 -ac 2 \"{part}\"", ct);
+
+                if (voice != null) graph += $"[{vi}:a]{fmt},adelay=250|250,apad" + (withKey ? ",asplit=2[sp][k];" : "[sp];");
+                if (fx != null) graph += $"[{fi}:a]{fmt},volume={fxVol},apad[fx];";
+                graph += (voice, fx) switch
+                {
+                    (not null, not null) => "[sp][fx]amix=inputs=2:duration=longest:dropout_transition=0:normalize=0[a]",
+                    (not null, null) => "[sp]anull[a]",
+                    (null, not null) => "[fx]anull[a]",
+                    _ => own ? $"[0:a]{fmt}" + (withKey ? ",asplit=2[a][k]" : "[a]") : "anullsrc=r=48000:cl=stereo[a]"
+                };
+                if (withKey && voice == null && !own) graph += ";anullsrc=r=48000:cl=stereo[k]";
+
+                var args = $"-hide_banner -y {inputs} -filter_complex \"{graph}\" -map \"[v]\" -map \"[a]\" -t {seconds} " +
+                           $"-c:v libx264 -preset fast -crf 19 -maxrate 10M -bufsize 20M -c:a aac -b:a 192k -ar 48000 -ac 2 \"{part}\"";
+                if (withKey) args += $" -map \"[k]\" -t {seconds} -c:a aac -b:a 96k -ar 48000 -ac 2 \"{key}\"";
+                var (code, _, err) = await RunAsync(_ffmpeg, args, ct);
                 if (code != 0 || !File.Exists(part)) throw new InvalidOperationException($"FFmpeg không chuẩn hoá được clip {i + 1}: {Tail(err)}");
                 parts.Add(part);
+                if (withKey) keys.Add(key);
                 offset += await ProbeSecondsAsync(part, ct);
             }
 
-            var list = Path.Combine(dir, "list.txt");
-            var sb = new StringBuilder();
-            foreach (var p in parts) sb.Append("file '").Append(p.Replace("\\", "/").Replace("'", "'\\''")).Append("'\n");
-            await File.WriteAllTextAsync(list, sb.ToString(), new UTF8Encoding(false), ct);
-
             var joined = music == null ? output : Path.Combine(dir, "joined.mp4");
-            var (jc, _, jerr) = await RunAsync(_ffmpeg, $"-hide_banner -y -f concat -safe 0 -i \"{list}\" -c copy{meta} -movflags +faststart \"{joined}\"", ct);
-            if (jc != 0 || !File.Exists(joined)) throw new InvalidOperationException($"FFmpeg không ghép được các clip: {Tail(jerr)}");
+            await ConcatAsync(parts, joined, meta + " -movflags +faststart", dir, "list.txt", ct);
 
             var duration = await ProbeSecondsAsync(joined, ct);
             if (music != null)
             {
+                var speech = Path.Combine(dir, "speech.m4a");
+                await ConcatAsync(keys, speech, "", dir, "keys.txt", ct);
                 var d = duration.ToString("F3", CultureInfo.InvariantCulture);
                 var fadeOut = Math.Max(0, duration - 2).ToString("F3", CultureInfo.InvariantCulture);
                 var vol = Math.Clamp(musicVolume, 0, 1).ToString("F3", CultureInfo.InvariantCulture);
                 var filter =
-                    "[0:a]asplit=2[voice][key];" +
-                    $"[1:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,volume={vol},atrim=0:{d},afade=t=in:d=1.5,afade=t=out:st={fadeOut}:d=2[m];" +
+                    $"[1:a]{fmt},volume={vol},atrim=0:{d},afade=t=in:d=1.5,afade=t=out:st={fadeOut}:d=2[m];" +
+                    $"[2:a]{fmt},apad[key];" +
                     "[m][key]sidechaincompress=threshold=0.03:ratio=6:attack=20:release=500[ducked];" +
-                    "[voice][ducked]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[a]";
+                    "[0:a][ducked]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[a]";
                 var (mc, _, merr) = await RunAsync(_ffmpeg,
-                    $"-hide_banner -y -i \"{joined}\" -stream_loop -1 -i \"{music}\" -filter_complex \"{filter}\" " +
+                    $"-hide_banner -y -i \"{joined}\" -stream_loop -1 -i \"{music}\" -i \"{speech}\" -filter_complex \"{filter}\" " +
                     $"-map 0:v -map \"[a]\" -c:v copy -c:a aac -b:a 192k -ar 48000 -t {d}{meta} -movflags +faststart \"{output}\"", ct);
                 if (mc != 0 || !File.Exists(output)) throw new InvalidOperationException($"FFmpeg không trộn được nhạc nền: {Tail(merr)}");
                 duration = await ProbeSecondsAsync(output, ct);
             }
             return duration;
+        }
+        finally
+        {
+            TryDelete(dir);
+        }
+    }
+
+    private async Task ConcatAsync(IReadOnlyList<string> files, string output, string extraArgs, string dir, string listName, CancellationToken ct)
+    {
+        var list = Path.Combine(dir, listName);
+        var sb = new StringBuilder();
+        foreach (var p in files) sb.Append("file '").Append(p.Replace("\\", "/").Replace("'", "'\\''")).Append("'\n");
+        await File.WriteAllTextAsync(list, sb.ToString(), new UTF8Encoding(false), ct);
+        var (code, _, err) = await RunAsync(_ffmpeg, $"-hide_banner -y -f concat -safe 0 -i \"{list}\" -c copy{extraArgs} \"{output}\"", ct);
+        if (code != 0 || !File.Exists(output)) throw new InvalidOperationException($"FFmpeg không ghép được các đoạn: {Tail(err)}");
+    }
+
+    /// <summary>The soundtrack of a video file (MMAudio returns the clip with its new audio) as compact AAC.</summary>
+    public async Task<byte[]> ExtractAudioAsync(byte[] video, CancellationToken ct)
+    {
+        var dir = TempDir();
+        try
+        {
+            var input = Path.Combine(dir, "in.mp4");
+            var output = Path.Combine(dir, "sound.m4a");
+            await File.WriteAllBytesAsync(input, video, ct);
+            if (!await HasAudioAsync(input, ct)) throw new InvalidOperationException("File trả về không có âm thanh.");
+            var (code, _, err) = await RunAsync(_ffmpeg, $"-hide_banner -y -i \"{input}\" -vn -map 0:a:0 -c:a aac -b:a 128k -ar 48000 -ac 2 -movflags +faststart \"{output}\"", ct);
+            if (code != 0 || !File.Exists(output)) throw new InvalidOperationException($"Không tách được âm thanh: {Tail(err)}");
+            return await File.ReadAllBytesAsync(output, ct);
         }
         finally
         {

@@ -134,7 +134,7 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
   const [video, setVideo] = useState<StudioVideo | null>(null);
   const [form, setForm] = useState<StudioVideoInput>({
     title: '', script: '', targetDurationSeconds: 30, videoModel: '', aspectRatio: '9:16', resolution: '720p', styleNotes: '',
-    musicMode: 'Auto', musicTrackId: null, musicVolume: 0.15, facebookAccountId: null,
+    sfxEnabled: true, sfxVolume: 0.7, musicMode: 'Auto', musicTrackId: null, musicVolume: 0.15, facebookAccountId: null,
   });
   const [characters, setCharacters] = useState<StudioCharacter[]>([]);
   const [locations, setLocations] = useState<StudioLocation[]>([]);
@@ -187,7 +187,8 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
     setVideo(v);
     setForm({
       title: v.title, script: v.script, targetDurationSeconds: v.targetDurationSeconds, videoModel: v.videoModel, aspectRatio: v.aspectRatio,
-      resolution: v.resolution, styleNotes: v.styleNotes ?? '', musicMode: v.musicMode, musicTrackId: v.musicTrackId ?? null,
+      resolution: v.resolution, styleNotes: v.styleNotes ?? '', sfxEnabled: v.sfxEnabled, sfxVolume: v.sfxVolume,
+      musicMode: v.musicMode, musicTrackId: v.musicTrackId ?? null,
       musicVolume: v.musicVolume, facebookAccountId: v.facebookAccountId ?? null,
     });
     setCaption(v.caption ?? '');
@@ -283,6 +284,7 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
   const models = settings?.models ?? [];
   const voices = settings?.voices ?? [];
   const voicePrice = settings?.voicePricePerSecondUsd ?? 0.0003;
+  const sfxPrice = settings?.sfxPricePerSecondUsd ?? 0.001;
   const model = models.find((m) => m.id === form.videoModel) ?? models[0];
   const rateOf = (modelId?: string, res?: string) => {
     const m = models.find((x) => x.id === modelId) ?? model;
@@ -290,8 +292,10 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
   };
   const perSecond = rateOf(form.videoModel, form.resolution);
   const shotCost = (x: { id?: string; durationSeconds: number; dialogue?: string | null }, rate = perSecond) => {
-    const hasVoice = !!video?.shots.find((s) => s.id === x.id)?.hasVoice;
-    return clampSecs(x.durationSeconds) * rate + (x.dialogue?.trim() && !hasVoice ? secondsToSay(x.dialogue) * voicePrice : 0);
+    const st = video?.shots.find((s) => s.id === x.id);
+    return clampSecs(x.durationSeconds) * rate
+      + (x.dialogue?.trim() && !st?.hasVoice ? secondsToSay(x.dialogue) * voicePrice : 0)
+      + (form.sfxEnabled && !st?.hasSfx ? clampSecs(x.durationSeconds) * sfxPrice : 0);
   };
   const shotSeconds = shots.reduce((s, x) => s + clampSecs(x.durationSeconds), 0);
   const estimate = shots.reduce((s, x) => s + shotCost(x), 0);
@@ -299,6 +303,7 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
   const pendingSeconds = pendingShots.reduce((s, x) => s + clampSecs(x.durationSeconds), 0);
   const pendingCost = pendingShots.reduce((s, x) => s + shotCost(x), 0);
   const missingVoices = (video?.shots ?? []).filter((s) => s.dialogue?.trim() && !s.hasVoice).length;
+  const clipsWithoutSfx = (video?.shots ?? []).filter((s) => s.hasClip && !s.hasSfx);
   const scriptEstimate = useMemo(() => estimateScriptSeconds(form.script ?? ''), [form.script]);
   const onScreen = characters.filter((c) => !isNarrator(c.name));
   const voiceName = (id: string) => voices.find((v) => v.id === id)?.name ?? id.replace('gemini:', '');
@@ -399,6 +404,23 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
     });
 
   const compose = () => guarded('compose', async () => applyVideo(await studio.compose(videoId!), true));
+
+  const addEffects = () =>
+    guarded('effects', async () => {
+      const cost = clipsWithoutSfx.reduce((s, x) => s + clampSecs(x.durationSeconds) * sfxPrice, 0);
+      if (!(await confirm({
+        title: `Thêm hiệu ứng âm thanh cho ${clipsWithoutSfx.length} clip?`,
+        description: `AI xem từng clip rồi tạo tiếng động khớp hình (gió, mưa, bước chân, tiếng cười, chim…), khoảng ${usd(cost, 3)}. Xong thì video tự ghép lại, nhạc nền vẫn giữ.`,
+        confirmLabel: `Thêm (~${usd(cost, 3)})`,
+      }))) return;
+      applyVideo(await studio.effects(videoId!), true);
+    });
+
+  const redoEffects = (s: StudioShotInput) =>
+    guarded('fx-' + s.id, async () => {
+      if (shotsDirty) applyVideo(await studio.saveShots(videoId!, shots), true);
+      applyVideo(await studio.shotEffects(videoId!, s.id!), true);
+    });
 
   const recover = () =>
     guarded('recover', async () => {
@@ -554,6 +576,20 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
         <Field label="Phong cách / ghi chú cho đạo diễn AI" optional hint="vd: phim cổ trang hài, nắng chiều vàng, màu điện ảnh ấm, máy quay cầm tay nhẹ">
           <Input value={form.styleNotes} onChange={(e) => setForm({ ...form, styleNotes: e.target.value })} disabled={locked} />
         </Field>
+        <div className="grid gap-3 sm:grid-cols-3">
+          <Field label="Hiệu ứng âm thanh AI" hint={settings && !settings.sfxConfigured ? 'Chưa có khoá fal.ai (FAL_KEY trên Railway) — thêm khoá để bật.' : `Tiếng gió, mưa, bước chân, tiếng cười… khớp hình · ~${usd(sfxPrice, 3)}/giây`}>
+            <Select value={form.sfxEnabled ? 'on' : 'off'} onChange={(e) => setForm({ ...form, sfxEnabled: e.target.value === 'on' })} disabled={locked}>
+              <option value="on">Có — AI tạo tiếng động khớp từng clip</option>
+              <option value="off">Không</option>
+            </Select>
+          </Field>
+          {form.sfxEnabled && (
+            <Field label={`Âm lượng hiệu ứng: ${Math.round((form.sfxVolume ?? 0.7) * 100)}%`} hint="Giọng nói luôn rõ hơn; nhạc nền không bị hiệu ứng làm nhỏ đi.">
+              <input type="range" min={0} max={1.5} step={0.05} value={form.sfxVolume ?? 0.7}
+                onChange={(e) => setForm({ ...form, sfxVolume: Number(e.target.value) })} className="w-full" disabled={locked} />
+            </Field>
+          )}
+        </div>
         <div className="grid gap-3 sm:grid-cols-3">
           <Field label="Nhạc nền">
             <Select value={form.musicMode} onChange={(e) => setForm({ ...form, musicMode: e.target.value })} disabled={locked}>
@@ -758,7 +794,7 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
                             <Field label="Góc máy">
                               <Input value={s.camera} disabled={locked} onChange={(e) => updateShot(i, { camera: e.target.value })} />
                             </Field>
-                            <Field label="Âm thanh (ghi chú)">
+                            <Field label="Hiệu ứng âm thanh (tiếng Anh, AI tạo khớp hình)">
                               <Input value={s.sound ?? ''} disabled={locked} onChange={(e) => updateShot(i, { sound: e.target.value })} />
                             </Field>
                           </div>
@@ -785,6 +821,20 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
                           ) : (
                             <div className={cn('flex w-full items-center justify-center rounded-lg bg-muted text-xs text-fg-subtle', video.aspectRatio === '16:9' ? 'aspect-video' : 'aspect-[9/16]')}>
                               {st?.status === 'Generating' ? 'Đang tạo…' : 'Chưa có clip'}
+                            </div>
+                          )}
+                          {st?.hasClip && s.id && form.sfxEnabled && (
+                            <div className="mt-1 flex flex-wrap gap-1">
+                              {st.hasSfx && (
+                                <Button size="sm" variant="ghost" icon={audio.playing === 'fx-' + s.id ? <Square className="h-3.5 w-3.5" /> : <Volume2 className="h-3.5 w-3.5" />}
+                                  onClick={() => audio.toggle('fx-' + s.id, studio.effectsUrl(s.id!) + `?v=${st.costUsd}`)}>
+                                  Nghe hiệu ứng
+                                </Button>
+                              )}
+                              <Button size="sm" variant="ghost" icon={<Wand2 className="h-3.5 w-3.5" />} loading={busy === 'fx-' + s.id}
+                                disabled={locked || !settings?.sfxConfigured} onClick={() => redoEffects(s)}>
+                                {st.hasSfx ? 'Tạo lại hiệu ứng' : 'Tạo hiệu ứng'}
+                              </Button>
                             </div>
                           )}
                         </div>
@@ -823,8 +873,8 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
             ) : (
               <p className="text-xs text-fg-muted">
                 Mỗi shot là một <b>đoạn video chuyển động như phim</b> do <b>{models.find((m) => m.id === video.videoModel)?.label ?? video.videoModel}</b> tạo từ mô tả,
-                ở <b>{video.resolution}</b> ({usd(rateOf(video.videoModel, video.resolution), 4)}/giây). Video không có tiếng: lời thoại được đọc bằng giọng AI rồi
-                lồng vào, thêm nhạc nền, ghép liền và xuất 1080p. Còn {pendingSeconds}s chưa tạo, ước tính <b>{usd(pendingCost)}</b>
+                ở <b>{video.resolution}</b> ({usd(rateOf(video.videoModel, video.resolution), 4)}/giây). Video gốc không có tiếng: lời thoại được đọc bằng giọng AI,
+                {form.sfxEnabled ? ' AI tạo thêm tiếng động khớp hình (gió, mưa, bước chân, tiếng cười…),' : ''} rồi trộn với nhạc nền, ghép liền và xuất 1080p. Còn {pendingSeconds}s chưa tạo, ước tính <b>{usd(pendingCost)}</b>
                 {remaining != null && <> · ngân sách tháng còn <b>{usd(remaining)}</b></>}.
               </p>
             )}
@@ -838,6 +888,11 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
               <Button variant="primary" icon={<Sparkles className="h-4 w-4" />} loading={busy === 'generate'} disabled={locked || shots.length === 0} onClick={generate}>
                 {video.shots.some((s) => s.hasClip) ? 'Tạo các clip còn thiếu' : 'Tạo video'}
               </Button>
+              {form.sfxEnabled && settings?.sfxConfigured && clipsWithoutSfx.length > 0 && !serverBusy && (
+                <Button variant="secondary" icon={<Volume2 className="h-4 w-4" />} loading={busy === 'effects'} disabled={locked} onClick={addEffects}>
+                  Thêm hiệu ứng âm thanh cho {clipsWithoutSfx.length} clip
+                </Button>
+              )}
               <Button variant="secondary" icon={<RefreshCw className="h-4 w-4" />} loading={busy === 'compose'}
                 disabled={locked || video.shots.length === 0 || video.shots.some((s) => !s.hasClip)} onClick={compose}>
                 Ghép lại (đổi nhạc / thứ tự / giọng)
