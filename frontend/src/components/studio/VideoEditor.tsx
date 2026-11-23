@@ -161,6 +161,25 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [videoId]);
 
+  // Check for prefilled drama script when creating a new video
+  useEffect(() => {
+    if (isNew) {
+      const prefill = sessionStorage.getItem('studio_prefill_script');
+      const prefillTitle = sessionStorage.getItem('studio_prefill_title');
+      if (prefill) {
+        setForm((prev) => ({
+          ...prev,
+          script: prefill,
+          title: prefillTitle || prev.title,
+          targetDurationSeconds: 120,
+        }));
+        sessionStorage.removeItem('studio_prefill_script');
+        sessionStorage.removeItem('studio_prefill_title');
+        toast.success('Đã nạp kịch bản phim ngắn từ kho kịch bản!');
+      }
+    }
+  }, [isNew, toast]);
+
   // poll while the server works on it
   const serverBusy = !!video && BUSY.includes(video.status);
   useEffect(() => {

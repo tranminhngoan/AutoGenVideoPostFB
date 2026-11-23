@@ -5,6 +5,7 @@ import {
   CalendarClock,
   Film,
   Clapperboard,
+  Sparkles,
   Newspaper,
   History,
   Settings,
@@ -88,6 +89,7 @@ function SidebarContent({
     { id: 'activity', path: '/activity', label: 'Hoạt động', icon: History },
   ];
   const studio: NavItem[] = [
+    { id: 'drama-scripts', path: '/drama-scripts', label: 'Kịch bản phim TQ', icon: Sparkles },
     { id: 'studio', path: '/studio', label: 'Studio Video AI', icon: Clapperboard },
   ];
   const secondary: NavItem[] = [{ id: 'settings', path: '/settings', label: 'Cài đặt', icon: Settings }];

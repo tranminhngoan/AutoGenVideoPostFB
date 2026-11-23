@@ -11,6 +11,7 @@ import { ActivityPage } from './pages/ActivityPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { AutoPostPage } from './pages/AutoPostPage';
 import { StudioPage } from './pages/StudioPage';
+import { DramaScriptsPage } from './pages/DramaScriptsPage';
 import { SystemConfig, VideoProject } from './types';
 import { api } from './services/api';
 import { useRoute } from './lib/router';
@@ -25,6 +26,7 @@ const TITLES: Record<string, string> = {
   activity: 'Hoạt động',
   settings: 'Cài đặt',
   studio: 'Studio Video AI',
+  'drama-scripts': 'Kịch bản phim ngắn TQ',
 };
 
 export function App() {
@@ -107,6 +109,9 @@ export function App() {
         break;
       case 'studio':
         page = <StudioPage segments={route.segments.slice(1)} />;
+        break;
+      case 'drama-scripts':
+        page = <DramaScriptsPage />;
         break;
       default:
         page = <DashboardPage projects={projects} onCreated={refreshProjects} apiHealthy={apiHealthy} />;
