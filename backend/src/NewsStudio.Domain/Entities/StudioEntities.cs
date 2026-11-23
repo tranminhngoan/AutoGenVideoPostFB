@@ -47,7 +47,16 @@ public class StudioVideo : BaseEntity
     public string AspectRatio { get; set; } = "9:16";
     public string Resolution { get; set; } = "720p";
     public string? StyleNotes { get; set; }
-    public string AssetIdsJson { get; set; } = "[]";
+    public string AssetIdsJson { get; set; } = "[]"; // unused since text-to-video (kept for old rows)
+    /// <summary>Video model id (Vercel AI Gateway), e.g. bytedance/seedance-v1.0-pro-fast.</summary>
+    public string VideoModel { get; set; } = "bytedance/seedance-v1.0-pro-fast";
+    /// <summary>
+    /// Character / location bible written by the planner and editable by the user: fixed English looks reused in every
+    /// shot prompt (text-to-video has no reference images) and each character's TTS voice. JSON.
+    /// </summary>
+    public string BibleJson { get; set; } = "{}";
+    /// <summary>Same seed for every clip of the video, to keep faces and look as alike as text-to-video allows.</summary>
+    public int Seed { get; set; }
 
     public string MusicMode { get; set; } = "Auto"; // Auto, Manual, None
     public Guid? MusicTrackId { get; set; }
@@ -69,7 +78,7 @@ public class StudioVideo : BaseEntity
     public ICollection<StudioShot> Shots { get; set; } = new List<StudioShot>();
 }
 
-/// <summary>One generated clip (1–15 s) of a video.</summary>
+/// <summary>One generated clip (2–12 s) of a video, with its spoken line read by TTS.</summary>
 public class StudioShot : BaseEntity
 {
     public Guid StudioVideoId { get; set; }
@@ -86,9 +95,17 @@ public class StudioShot : BaseEntity
     public bool ContinueFromPrevious { get; set; }
     /// <summary>Opening frame built by the image model with every character of the shot in place (small JPEG, in the DB).</summary>
     public Guid? KeyframeBlobId { get; set; }
+    /// <summary>Names of the bible characters visible in the shot (JSON array).</summary>
+    public string CastJson { get; set; } = "[]";
+    /// <summary>Name of the bible location the shot takes place in.</summary>
+    public string? Location { get; set; }
+    /// <summary>The spoken line read by TTS (small AAC in the database) and its length.</summary>
+    public Guid? VoiceBlobId { get; set; }
+    public double? VoiceSeconds { get; set; }
 
     public string Status { get; set; } = "Pending"; // Pending, Generating, Done, Failed
     public Guid? ClipBlobId { get; set; }
+    /// <summary>The provider's job (Vercel "operation" JSON) of the paid clip, to resume / recover it.</summary>
     public string? InteractionId { get; set; }
     public decimal CostUsd { get; set; }
     public int Attempts { get; set; }

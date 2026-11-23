@@ -11,15 +11,14 @@ using NewsStudio.Infrastructure.Studio;
 namespace NewsStudio.Api.Controllers;
 
 /// <summary>
-/// AI video studio API (Grok Imagine). The app has no login, so every call that spends money or writes data needs
-/// X-Studio-Key equal to the server's xAI key, its paid Gemini key or Security:AdminApiKey. Media downloads (images, music, clips, final video) stay
+/// AI video studio API (Seedance text-to-video + Gemini TTS). The app has no login, so every call that spends money or
+/// writes data needs X-Studio-Key equal to the server's Vercel AI Gateway key, its paid Gemini key or Security:AdminApiKey. Media downloads (images, music, clips, final video) stay
 /// open so the page can show them in &lt;img&gt;/&lt;video&gt; tags.
 /// </summary>
 [ApiController]
 [Route("api/studio")]
 public class StudioController : ControllerBase
 {
-    private const long MaxImageBytes = 15 * 1024 * 1024;
     private const long MaxMusicBytes = 25 * 1024 * 1024;
 
     private readonly StudioService _studio;
@@ -38,7 +37,7 @@ public class StudioController : ControllerBase
     /// <summary>Null when allowed; otherwise a 401 the page turns into its unlock box.</summary>
     private IActionResult? Denied()
     {
-        var keys = new[] { GrokVideoClient.ApiKey(_configuration), GeminiKeys.Paid(_configuration), _configuration["Security:AdminApiKey"] }
+        var keys = new[] { SeedanceVideoClient.ApiKey(_configuration), GeminiKeys.Paid(_configuration), _configuration["Security:AdminApiKey"] }
             .Where(k => !string.IsNullOrWhiteSpace(k)).Select(k => k!.Trim()).ToList();
         if (keys.Count == 0) return null; // nothing configured to compare with (and nothing paid can run either)
         var given = Request.Headers.TryGetValue("X-Studio-Key", out var h) ? h.ToString().Trim() : "";
@@ -51,8 +50,8 @@ public class StudioController : ControllerBase
         {
             needsStudioKey = true,
             message = given.Length == 0
-                ? "Cần mở khoá Studio bằng khoá xAI (XAI_API_KEY) hoặc khoá Gemini đang đặt trên Railway (chỉ lưu trên trình duyệt này)."
-                : "Khoá không khớp với khoá xAI / Gemini đang cấu hình trên server."
+                ? "Cần mở khoá Studio bằng khoá Vercel AI Gateway (AI_GATEWAY_API_KEY) hoặc khoá Gemini đang đặt trên Railway (chỉ lưu trên trình duyệt này)."
+                : "Khoá không khớp với khoá Vercel / Gemini đang cấu hình trên server."
         });
     }
 
@@ -86,49 +85,12 @@ public class StudioController : ControllerBase
 
     // ───────────── assets ─────────────
 
-    public class AssetUploadForm
-    {
-        public IFormFile? File { get; set; }
-        public string? Name { get; set; }
-        public string? Kind { get; set; }
-        public string? Description { get; set; }
-    }
-
     public class MusicUploadForm
     {
         public IFormFile? File { get; set; }
         public string? Name { get; set; }
         public string? Mood { get; set; }
     }
-
-    [HttpGet("assets")]
-    public Task<IActionResult> Assets(CancellationToken ct) => Run(async () => await _studio.ListAssetsAsync(ct));
-
-    [HttpPost("assets")]
-    [RequestSizeLimit(MaxImageBytes + 1024 * 1024)]
-    public async Task<IActionResult> AddAsset([FromForm] AssetUploadForm form, CancellationToken ct)
-    {
-        if (Denied() is { } d) return d;
-        var file = form.File;
-        if (file == null || file.Length == 0) return BadRequest(new { message = "Chưa chọn ảnh." });
-        if (file.Length > MaxImageBytes) return BadRequest(new { message = "Ảnh quá lớn (tối đa 15 MB)." });
-        var bytes = await ReadAsync(file, ct);
-        return await Run(async () => await _studio.AddAssetAsync(form.Name ?? "", form.Kind ?? "Character", form.Description, bytes, Path.GetExtension(file.FileName), ct));
-    }
-
-    public class AssetUpdate { public string? Name { get; set; } public string? Kind { get; set; } public string? Description { get; set; } }
-
-    [HttpPut("assets/{id:guid}")]
-    public async Task<IActionResult> UpdateAsset(Guid id, [FromBody] AssetUpdate req, CancellationToken ct) =>
-        Denied() ?? await Run(async () => await _studio.UpdateAssetAsync(id, req.Name, req.Kind, req.Description, ct));
-
-    [HttpDelete("assets/{id:guid}")]
-    public async Task<IActionResult> DeleteAsset(Guid id, CancellationToken ct) =>
-        Denied() ?? await Run(async () => { await _studio.DeleteAssetAsync(id, ct); return null; });
-
-    [HttpGet("assets/{id:guid}/image")]
-    public async Task<IActionResult> AssetImage(Guid id, CancellationToken ct) =>
-        await BlobResult(await _studio.AssetBlobIdAsync(id, ct), null, ct);
 
     // ───────────── music ─────────────
 
@@ -198,17 +160,17 @@ public class StudioController : ControllerBase
     public async Task<IActionResult> GenerateShot(Guid id, Guid shotId, CancellationToken ct) =>
         Denied() ?? await Run(async () => await _studio.StartGenerateAsync(id, shotId, ct));
 
-    [HttpPost("videos/{id:guid}/keyframes")]
-    public async Task<IActionResult> Keyframes(Guid id, CancellationToken ct) =>
-        Denied() ?? await Run(async () => await _studio.StartKeyframesAsync(id, null, ct));
+    [HttpPost("videos/{id:guid}/voices")]
+    public async Task<IActionResult> Voices(Guid id, CancellationToken ct) =>
+        Denied() ?? await Run(async () => await _studio.StartVoicesAsync(id, null, ct));
 
-    [HttpPost("videos/{id:guid}/shots/{shotId:guid}/keyframe")]
-    public async Task<IActionResult> ShotKeyframe(Guid id, Guid shotId, CancellationToken ct) =>
-        Denied() ?? await Run(async () => await _studio.StartKeyframesAsync(id, shotId, ct));
+    [HttpPost("videos/{id:guid}/shots/{shotId:guid}/voice")]
+    public async Task<IActionResult> ShotVoice(Guid id, Guid shotId, CancellationToken ct) =>
+        Denied() ?? await Run(async () => await _studio.StartVoicesAsync(id, shotId, ct));
 
-    [HttpGet("shots/{shotId:guid}/keyframe")]
-    public async Task<IActionResult> KeyframeImage(Guid shotId, CancellationToken ct) =>
-        await BlobResult(await _studio.ShotKeyframeBlobIdAsync(shotId, ct), null, ct);
+    [HttpGet("shots/{shotId:guid}/voice")]
+    public async Task<IActionResult> VoiceAudio(Guid shotId, CancellationToken ct) =>
+        await BlobResult(await _studio.ShotVoiceBlobIdAsync(shotId, ct), null, ct);
 
     [HttpPost("videos/{id:guid}/recover-clips")]
     public async Task<IActionResult> RecoverClips(Guid id, CancellationToken ct) =>

@@ -14,80 +14,101 @@ using NewsStudio.Infrastructure.FilmFactory;
 namespace NewsStudio.Infrastructure.Studio;
 
 /// <summary>
-/// AI video studio: script → shot plan (Gemini text) → one Grok Imagine clip per shot (each starting from an asset
-/// image or the previous clip's last frame) → joined with music and upscaled to 1080p → posted to a Facebook Page. Every paid call is recorded in StudioCostRecords and checked against the monthly studio budget
-/// before it is made. Files live in StudioBlobs (the host disk is wiped on deploy).
+/// AI video studio (text-to-video): script → Gemini plan (a character / location bible with fixed looks and TTS voices,
+/// then shots) → each spoken line read by Gemini TTS → one Seedance clip per shot through the Vercel AI Gateway (silent;
+/// its length fitted to the line) → joined with the voices, ducked music and the Page watermark at 1080p → posted to a
+/// Facebook Page. Every paid call is recorded in StudioCostRecords and checked against the monthly studio budget first.
+/// Small files (voices, music) live in the database; clips and final videos on the app disk (see StudioFileStore).
 /// </summary>
 public class StudioService
 {
     public const string BudgetKey = "Studio.MonthlyBudgetUsd";
     public const string DeliveryResolution = "1080p";
-    public const int MaxShotAssets = 5;
+    /// <summary>A spoken line needs this much video after it (seconds) so the cut doesn't clip the last word.</summary>
+    private const double VoiceTail = 0.6;
     private const int MaxAttemptsPerRun = 2;
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
     private readonly IApplicationDbContext _db;
-    private readonly GrokVideoClient _video;
+    private readonly SeedanceVideoClient _video;
     private readonly FilmGeminiClient _gemini;
     private readonly StudioMedia _media;
     private readonly StudioFileStore _files;
+    private readonly StudioVoices _voices;
     private readonly IFacebookPublishingService _facebook;
     private readonly IBackgroundJobClient _jobs;
     private readonly IConfiguration _configuration;
     private readonly ILogger<StudioService> _logger;
 
-    public StudioService(IApplicationDbContext db, GrokVideoClient video, FilmGeminiClient gemini, StudioMedia media, StudioFileStore files,
-        IFacebookPublishingService facebook, IBackgroundJobClient jobs, IConfiguration configuration, ILogger<StudioService> logger)
+    public StudioService(IApplicationDbContext db, SeedanceVideoClient video, FilmGeminiClient gemini, StudioMedia media, StudioFileStore files,
+        StudioVoices voices, IFacebookPublishingService facebook, IBackgroundJobClient jobs, IConfiguration configuration, ILogger<StudioService> logger)
     {
         _db = db;
         _video = video;
         _gemini = gemini;
         _media = media;
         _files = files;
+        _voices = voices;
         _facebook = facebook;
         _jobs = jobs;
         _configuration = configuration;
         _logger = logger;
     }
 
-    // ═══════════════════════════════ Assets ═══════════════════════════════
+    // ═══════════════════════════════ Bible ═══════════════════════════════
 
-    public async Task<List<StudioAssetDto>> ListAssetsAsync(CancellationToken ct) =>
-        (await _db.StudioAssets.AsNoTracking().OrderBy(a => a.Kind).ThenBy(a => a.Name).ToListAsync(ct)).Select(ToDto).ToList();
-
-    public async Task<StudioAssetDto> AddAssetAsync(string name, string kind, string? description, byte[] data, string extension, CancellationToken ct)
+    /// <summary>The video's characters (look + voice) and locations, shared by every shot.</summary>
+    public sealed class Bible
     {
-        if (data.Length == 0) throw new ArgumentException("File ảnh trống.");
-        var jpeg = await _media.NormalizeImageAsync(data, extension, ct);
-        var blob = new StudioBlob { MimeType = "image/jpeg", Data = jpeg, SizeBytes = jpeg.Length };
-        var asset = new StudioAsset
+        public List<StudioCharacterDto> Characters { get; set; } = new();
+        public List<StudioLocationDto> Locations { get; set; } = new();
+
+        public StudioCharacterDto? Character(string? name) =>
+            string.IsNullOrWhiteSpace(name) ? null : Characters.FirstOrDefault(c => SameName(c.Name, name));
+
+        public StudioLocationDto? Location(string? name) =>
+            string.IsNullOrWhiteSpace(name) ? null : Locations.FirstOrDefault(l => SameName(l.Name, name));
+    }
+
+    public static bool SameName(string a, string b) => string.Equals(a.Trim(), b.Trim(), StringComparison.OrdinalIgnoreCase);
+
+    public static Bible ReadBible(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return new Bible();
+        try { return JsonSerializer.Deserialize<Bible>(json, Json) ?? new Bible(); }
+        catch (JsonException) { return new Bible(); }
+    }
+
+    private static string WriteBible(Bible b) => JsonSerializer.Serialize(b, Json);
+
+    /// <summary>Cleans a bible from the user / planner: named entries only, known voices, one voice per character where possible.</summary>
+    public static Bible NormalizeBible(IEnumerable<StudioCharacterDto>? characters, IEnumerable<StudioLocationDto>? locations)
+    {
+        var b = new Bible();
+        foreach (var c in characters ?? Enumerable.Empty<StudioCharacterDto>())
         {
-            Name = Required(name, "Tên"), Kind = NormalizeKind(kind), Description = (description ?? "").Trim(),
-            BlobId = blob.Id, MimeType = blob.MimeType, SizeBytes = jpeg.Length
-        };
-        _db.StudioBlobs.Add(blob);
-        _db.StudioAssets.Add(asset);
-        await _db.SaveChangesAsync(ct);
-        return ToDto(asset);
+            if (string.IsNullOrWhiteSpace(c.Name) || b.Character(c.Name) != null) continue;
+            var gender = c.Gender?.Trim().ToLowerInvariant() is "female" or "f" or "nữ" ? "female" : "male";
+            var voice = StudioVoices.IsKnown(c.Voice) ? c.Voice : StudioVoices.Pick(gender, b.Characters.Select(x => x.Voice));
+            b.Characters.Add(new StudioCharacterDto { Name = c.Name.Trim(), Gender = gender, Look = (c.Look ?? "").Trim(), Voice = voice });
+        }
+        foreach (var l in locations ?? Enumerable.Empty<StudioLocationDto>())
+        {
+            if (string.IsNullOrWhiteSpace(l.Name) || b.Location(l.Name) != null) continue;
+            b.Locations.Add(new StudioLocationDto { Name = l.Name.Trim(), Look = (l.Look ?? "").Trim() });
+        }
+        return b;
     }
 
-    public async Task<StudioAssetDto> UpdateAssetAsync(Guid id, string? name, string? kind, string? description, CancellationToken ct)
-    {
-        var a = await _db.StudioAssets.FirstOrDefaultAsync(x => x.Id == id, ct) ?? throw new KeyNotFoundException("Không tìm thấy ảnh.");
-        if (!string.IsNullOrWhiteSpace(name)) a.Name = name.Trim();
-        if (!string.IsNullOrWhiteSpace(kind)) a.Kind = NormalizeKind(kind);
-        if (description != null) a.Description = description.Trim();
-        await _db.SaveChangesAsync(ct);
-        return ToDto(a);
-    }
+    /// <summary>Whether a speaker is the off-screen narrator (nobody talks on screen).</summary>
+    public static bool IsNarrator(string? speaker) =>
+        string.IsNullOrWhiteSpace(speaker) || speaker.Trim().ToLowerInvariant() is "lời dẫn" or "người dẫn chuyện" or "dẫn chuyện" or "narrator" or "voiceover";
 
-    public async Task DeleteAssetAsync(Guid id, CancellationToken ct)
-    {
-        var a = await _db.StudioAssets.FirstOrDefaultAsync(x => x.Id == id, ct) ?? throw new KeyNotFoundException("Không tìm thấy ảnh.");
-        await DeleteBlobAsync(a.BlobId, ct);
-        _db.StudioAssets.Remove(a);
-        await _db.SaveChangesAsync(ct);
-    }
+    /// <summary>The TTS voice of a line's speaker (narrator / unknown speaker → the narrator's or default voice).</summary>
+    public static string VoiceFor(Bible bible, string? speaker) =>
+        bible.Character(speaker)?.Voice is { Length: > 0 } v ? v
+        : IsNarrator(speaker) && bible.Character(StudioVoices.NarratorName)?.Voice is { Length: > 0 } n ? n
+        : StudioVoices.DefaultNarratorVoice;
 
     // ═══════════════════════════════ Music ═══════════════════════════════
 
@@ -130,6 +151,8 @@ public class StudioService
         _db.StudioMusicTracks.Remove(m);
         await _db.SaveChangesAsync(ct);
     }
+
+    // ═══════════════════════════════ Files ═══════════════════════════════
 
     /// <summary>The file with its bytes, wherever it lives (database row or app disk); null when gone.</summary>
     public async Task<StudioBlob?> GetBlobAsync(Guid blobId, CancellationToken ct)
@@ -180,7 +203,7 @@ public class StudioService
             await DeleteBlobAsync(s.ClipBlobId!.Value, ct);
             s.ClipBlobId = null;
             s.Status = "Pending";
-            s.ErrorMessage = "Clip đã mất do server khởi động lại — cần tạo lại shot này.";
+            s.ErrorMessage = "Clip đã mất do server khởi động lại — bấm \"Lấy lại clip đã trả tiền\" (miễn phí) hoặc tạo lại shot.";
             changed = true;
         }
         if (v.FinalBlobId is { } f && Lost(f))
@@ -188,20 +211,20 @@ public class StudioService
             await DeleteBlobAsync(f, ct);
             v.FinalBlobId = null;
             if (v.Status == "Ready") v.Status = "Planned";
-            v.ErrorMessage = "Video cuối đã mất do server khởi động lại — bấm Ghép lại (hoặc tạo các clip còn thiếu).";
+            v.ErrorMessage = "Video cuối đã mất do server khởi động lại — bấm Ghép lại (hoặc lấy lại clip trước).";
             changed = true;
         }
         if (changed) await _db.SaveChangesAsync(ct);
     }
-
-    public async Task<Guid?> AssetBlobIdAsync(Guid assetId, CancellationToken ct) =>
-        await _db.StudioAssets.Where(a => a.Id == assetId).Select(a => (Guid?)a.BlobId).FirstOrDefaultAsync(ct);
 
     public async Task<Guid?> MusicBlobIdAsync(Guid musicId, CancellationToken ct) =>
         await _db.StudioMusicTracks.Where(a => a.Id == musicId).Select(a => (Guid?)a.BlobId).FirstOrDefaultAsync(ct);
 
     public async Task<Guid?> ShotClipBlobIdAsync(Guid shotId, CancellationToken ct) =>
         await _db.StudioShots.Where(s => s.Id == shotId).Select(s => s.ClipBlobId).FirstOrDefaultAsync(ct);
+
+    public async Task<Guid?> ShotVoiceBlobIdAsync(Guid shotId, CancellationToken ct) =>
+        await _db.StudioShots.Where(s => s.Id == shotId).Select(s => s.VoiceBlobId).FirstOrDefaultAsync(ct);
 
     public async Task<Guid?> FinalBlobIdAsync(Guid videoId, CancellationToken ct) =>
         await _db.StudioVideos.Where(v => v.Id == videoId).Select(v => v.FinalBlobId).FirstOrDefaultAsync(ct);
@@ -211,7 +234,7 @@ public class StudioService
     /// <summary>
     /// Frees videos left in a background step by a run that was cut off (server restart, database outage): planning
     /// after 10 min, composing / publishing after 30 min, generating after 45 min without any progress (every clip
-    /// saved refreshes the timestamp, and one clip never waits longer than 20 min).
+    /// saved refreshes the timestamp, and one clip never waits longer than 15 min).
     /// </summary>
     private async Task ReleaseStalePlanningAsync(CancellationToken ct)
     {
@@ -228,7 +251,7 @@ public class StudioService
         foreach (var v in stuck)
         {
             var step = v.Status;
-            foreach (var s in v.Shots.Where(s => s.Status == "Generating")) s.Status = "Pending"; // its paid job id is kept → resumed
+            foreach (var s in v.Shots.Where(s => s.Status == "Generating")) s.Status = "Pending"; // its paid job is kept → resumed
             v.Status = step switch
             {
                 "Publishing" => "Ready",
@@ -262,12 +285,15 @@ public class StudioService
         var v = await _db.StudioVideos.AsNoTracking().Include(x => x.Shots).FirstOrDefaultAsync(x => x.Id == id, ct)
                 ?? throw new KeyNotFoundException("Không tìm thấy video.");
         var pages = await PageNamesAsync(ct);
+        var bible = ReadBible(v.BibleJson);
         var dto = FillSummary(new StudioVideoDto(), v, pages);
         dto.Script = v.Script;
+        dto.VideoModel = SeedanceVideoClient.NormalizeModel(v.VideoModel);
         dto.AspectRatio = v.AspectRatio;
-        dto.Resolution = v.Resolution;
+        dto.Resolution = SeedanceVideoClient.NormalizeResolution(v.Resolution);
         dto.StyleNotes = v.StyleNotes;
-        dto.AssetIds = Ids(v.AssetIdsJson);
+        dto.Characters = bible.Characters;
+        dto.Locations = bible.Locations;
         dto.MusicMode = v.MusicMode;
         dto.MusicTrackId = v.MusicTrackId;
         dto.MusicName = v.MusicTrackId == null ? null
@@ -281,8 +307,8 @@ public class StudioService
         dto.Shots = v.Shots.OrderBy(s => s.Index).Select(s => new StudioShotDto
         {
             Id = s.Id, Index = s.Index, DurationSeconds = s.DurationSeconds, Action = s.Action, Camera = s.Camera,
-            Speaker = s.Speaker, Dialogue = s.Dialogue, Sound = s.Sound, AssetIds = Ids(s.AssetIdsJson),
-            ContinueFromPrevious = s.ContinueFromPrevious, HasKeyframe = s.KeyframeBlobId != null, Status = s.Status,
+            Location = s.Location, Cast = Names(s.CastJson), Speaker = s.Speaker, Dialogue = s.Dialogue, Sound = s.Sound,
+            HasVoice = s.VoiceBlobId != null, VoiceSeconds = s.VoiceSeconds, Status = s.Status,
             HasClip = s.ClipBlobId != null, CostUsd = s.CostUsd, Attempts = s.Attempts, ErrorMessage = s.ErrorMessage,
             EstimatedCostUsd = ShotCost(v, s)
         }).ToList();
@@ -293,8 +319,10 @@ public class StudioService
     {
         var v = new StudioVideo
         {
-            Resolution = _configuration["Studio:DefaultResolution"] ?? "720p",
-            AspectRatio = _configuration["Studio:DefaultAspectRatio"] ?? "9:16"
+            Resolution = SeedanceVideoClient.NormalizeResolution(_configuration["Studio:DefaultResolution"]),
+            AspectRatio = _configuration["Studio:DefaultAspectRatio"] ?? "9:16",
+            VideoModel = _video.DefaultModel,
+            Seed = NewSeed()
         };
         Apply(v, input);
         if (string.IsNullOrWhiteSpace(v.Title)) v.Title = "Video " + DateTime.UtcNow.AddHours(7).ToString("dd/MM HH:mm", CultureInfo.InvariantCulture);
@@ -303,13 +331,25 @@ public class StudioService
         return await GetVideoAsync(v.Id, ct);
     }
 
+    private static int NewSeed() => Random.Shared.Next(1, int.MaxValue);
+
     public async Task<StudioVideoDto> UpdateVideoAsync(Guid id, StudioVideoInputDto input, CancellationToken ct)
     {
         var v = await _db.StudioVideos.Include(x => x.Shots).FirstOrDefaultAsync(x => x.Id == id, ct) ?? throw new KeyNotFoundException("Không tìm thấy video.");
         EnsureNotBusy(v);
         var pageBefore = v.FacebookAccountId;
+        var bibleBefore = ReadBible(v.BibleJson);
         Apply(v, input);
-        if (v.Shots.Count > 0) v.TargetDurationSeconds = v.Shots.Sum(s => GrokVideoClient.ClampSeconds(s.DurationSeconds)); // real length wins
+        // a character given another voice: their lines must be read again
+        var bibleAfter = ReadBible(v.BibleJson);
+        foreach (var s in v.Shots.Where(s => s.VoiceBlobId != null && VoiceFor(bibleBefore, s.Speaker) != VoiceFor(bibleAfter, s.Speaker)))
+        {
+            await DeleteBlobAsync(s.VoiceBlobId!.Value, ct);
+            s.VoiceBlobId = null;
+            s.VoiceSeconds = null;
+        }
+        if (v.Shots.Count > 0) v.TargetDurationSeconds = v.Shots.Sum(s => SeedanceVideoClient.ClampSeconds(s.DurationSeconds)); // real length wins
+        v.EstimatedCostUsd = EstimateVideoCost(v);
         // the final video carries the Page's name: a different Page means composing it again with the new watermark
         var rebrand = v.FacebookAccountId != pageBefore && v.FinalBlobId != null && v.Status != "Published";
         if (rebrand)
@@ -328,8 +368,12 @@ public class StudioService
     {
         var v = await _db.StudioVideos.Include(x => x.Shots).FirstOrDefaultAsync(x => x.Id == id, ct) ?? throw new KeyNotFoundException("Không tìm thấy video.");
         EnsureNotBusy(v);
-        foreach (var s in v.Shots.Where(s => s.ClipBlobId != null)) await DeleteBlobAsync(s.ClipBlobId!.Value, ct);
-        foreach (var s in v.Shots.Where(s => s.KeyframeBlobId != null)) await DeleteBlobAsync(s.KeyframeBlobId!.Value, ct);
+        foreach (var s in v.Shots)
+        {
+            if (s.ClipBlobId != null) await DeleteBlobAsync(s.ClipBlobId.Value, ct);
+            if (s.VoiceBlobId != null) await DeleteBlobAsync(s.VoiceBlobId.Value, ct);
+            if (s.KeyframeBlobId != null) await DeleteBlobAsync(s.KeyframeBlobId.Value, ct);
+        }
         if (v.FinalBlobId != null) await DeleteBlobAsync(v.FinalBlobId.Value, ct);
         _db.StudioVideos.Remove(v);
         await _db.SaveChangesAsync(ct);
@@ -340,12 +384,17 @@ public class StudioService
         if (i.Title != null) v.Title = i.Title.Trim();
         if (i.FacebookAccountId != null) v.FacebookAccountId = i.FacebookAccountId == Guid.Empty ? null : i.FacebookAccountId;
         if (i.Script != null) v.Script = i.Script.Trim();
-        // only a rough estimate from the script until shots exist; then it is the shots' total (see ShotsTotalSeconds)
+        // only a rough estimate from the script until shots exist; then it is the shots' total
         if (i.TargetDurationSeconds != null) v.TargetDurationSeconds = Math.Clamp(i.TargetDurationSeconds.Value, 1, 3600);
+        if (i.VideoModel != null) v.VideoModel = SeedanceVideoClient.NormalizeModel(i.VideoModel);
         if (i.AspectRatio != null) v.AspectRatio = i.AspectRatio == "16:9" ? "16:9" : "9:16";
-        if (i.Resolution != null) v.Resolution = GrokVideoClient.NormalizeResolution(i.Resolution);
+        if (i.Resolution != null) v.Resolution = SeedanceVideoClient.NormalizeResolution(i.Resolution);
         if (i.StyleNotes != null) v.StyleNotes = i.StyleNotes.Trim();
-        if (i.AssetIds != null) v.AssetIdsJson = JsonSerializer.Serialize(i.AssetIds.Distinct());
+        if (i.Characters != null || i.Locations != null)
+        {
+            var current = ReadBible(v.BibleJson);
+            v.BibleJson = WriteBible(NormalizeBible(i.Characters ?? current.Characters, i.Locations ?? current.Locations));
+        }
         if (i.MusicMode != null) v.MusicMode = i.MusicMode is "Manual" or "None" ? i.MusicMode : "Auto";
         if (i.MusicTrackId != null) v.MusicTrackId = i.MusicTrackId == Guid.Empty ? null : i.MusicTrackId;
         if (i.MusicVolume != null) v.MusicVolume = Math.Clamp(i.MusicVolume.Value, 0, 1);
@@ -355,8 +404,8 @@ public class StudioService
     // ═══════════════════════════════ Planning ═══════════════════════════════
 
     /// <summary>
-    /// Queues the shot planning (Gemini cuts the script into clip-sized shots, replacing the current list). It runs in
-    /// the background: a long script can take Gemini minutes, longer than a browser / proxy keeps a request open.
+    /// Queues the planning (Gemini writes the character / location bible and cuts the script into clip-sized shots,
+    /// replacing the current list). It runs in the background: a long script can take Gemini minutes.
     /// </summary>
     public async Task<StudioVideoDto> StartPlanAsync(Guid id, CancellationToken ct)
     {
@@ -364,9 +413,9 @@ public class StudioService
         EnsureNotBusy(v);
         if (string.IsNullOrWhiteSpace(v.Script)) throw new InvalidOperationException("Hãy nhập kịch bản trước khi lập kế hoạch.");
         if (v.Shots.Any(s => s.ClipBlobId != null))
-            throw new InvalidOperationException("Video đã có clip được tạo — lập kế hoạch lại sẽ bỏ các clip đó. Hãy xoá clip/tạo video mới nếu muốn làm lại từ đầu.");
+            throw new InvalidOperationException("Video đã có clip được tạo — lập kế hoạch lại sẽ bỏ các clip đó. Hãy tạo video mới nếu muốn làm lại từ đầu.");
         v.Status = "Planning";
-        v.Progress = "Gemini đang đọc kịch bản và chia shot (kịch bản dài có thể mất 1–3 phút)…";
+        v.Progress = "Gemini đang đọc kịch bản, dựng hồ sơ nhân vật và chia shot (kịch bản dài có thể mất 1–3 phút)…";
         v.ErrorMessage = null;
         await _db.SaveChangesAsync(ct);
         _jobs.Enqueue<StudioService>(s => s.RunPlanAsync(id, CancellationToken.None));
@@ -381,13 +430,16 @@ public class StudioService
         if (v == null || v.Status != "Planning") return;
         try
         {
-            var assets = await LoadAssetsAsync(Ids(v.AssetIdsJson), ct);
             var music = await _db.StudioMusicTracks.AsNoTracking().OrderBy(m => m.UseCount).ToListAsync(ct);
-            var (system, user) = BuildPlanPrompt(v, assets, music);
+            var (system, user) = BuildPlanPrompt(v, music);
             var (result, planModel) = await PlanWithFallbackAsync(v, system, user, ct);
-            var plan = ParsePlan(result.Text, assets.Select(a => a.Id).ToHashSet(), music.Select(m => m.Id).ToHashSet());
+            var plan = ParsePlan(result.Text, music.Select(m => m.Id).ToHashSet());
 
-            foreach (var old in v.Shots.Where(o => o.KeyframeBlobId != null)) await DeleteBlobAsync(old.KeyframeBlobId!.Value, ct);
+            foreach (var old in v.Shots)
+            {
+                if (old.VoiceBlobId != null) await DeleteBlobAsync(old.VoiceBlobId.Value, ct);
+                if (old.KeyframeBlobId != null) await DeleteBlobAsync(old.KeyframeBlobId.Value, ct);
+            }
             _db.StudioShots.RemoveRange(v.Shots);
             v.Shots.Clear();
             var index = 1;
@@ -395,18 +447,18 @@ public class StudioService
             {
                 // Added through the DbSet: a new entity already carries its Guid, so attaching it via the navigation
                 // would make EF treat it as an existing row (UPDATE → "expected to affect 1 row").
-                var shot = new StudioShot
+                _db.StudioShots.Add(new StudioShot
                 {
-                    StudioVideoId = v.Id, ContinueFromPrevious = index > 1 && s.ContinueFromPrevious,
-                    Index = index++, DurationSeconds = GrokVideoClient.ClampSeconds(s.Duration),
-                    Action = s.Action, Camera = s.Camera, Speaker = NullIfEmpty(s.Speaker), Dialogue = NullIfEmpty(s.Dialogue),
-                    Sound = NullIfEmpty(s.Sound), AssetIdsJson = JsonSerializer.Serialize(s.AssetIds)
-                };
-                _db.StudioShots.Add(shot); // EF fixes up v.Shots itself
+                    StudioVideoId = v.Id, Index = index++, DurationSeconds = s.Duration,
+                    Action = s.Action, Camera = s.Camera, Location = s.Location, CastJson = JsonSerializer.Serialize(s.Cast),
+                    Speaker = NullIfEmpty(s.Speaker), Dialogue = NullIfEmpty(s.Dialogue), Sound = NullIfEmpty(s.Sound)
+                });
             }
+            v.BibleJson = WriteBible(plan.Bible);
+            if (v.Seed == 0) v.Seed = NewSeed();
             if (string.IsNullOrWhiteSpace(v.Caption)) v.Caption = plan.Caption;
             v.PlanNotes = plan.Notes;
-            v.TargetDurationSeconds = Math.Max(1, plan.Shots.Sum(s => GrokVideoClient.ClampSeconds(s.Duration)));
+            v.TargetDurationSeconds = Math.Max(1, plan.Shots.Sum(s => s.Duration));
             if (v.MusicMode == "Auto") v.MusicTrackId = plan.MusicTrackId ?? music.FirstOrDefault()?.Id;
             v.EstimatedCostUsd = EstimateVideoCost(v);
             v.Status = "Planned";
@@ -435,7 +487,7 @@ public class StudioService
     /// <summary>Per-model wait: a healthy model answers a long script in well under a minute with light thinking.</summary>
     private static readonly TimeSpan PlanAttemptTimeout = TimeSpan.FromSeconds(150);
 
-    /// <summary>Models tried in turn for the shot plan (Studio:PlanModels, comma-separated; default: app model, then older Flashes).</summary>
+    /// <summary>Models tried in turn for the plan (Studio:PlanModels, comma-separated; default: app model, then older Flashes).</summary>
     public List<string> PlanModels()
     {
         var configured = (_configuration["Studio:PlanModels"] ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
@@ -455,7 +507,7 @@ public class StudioService
         {
             var model = models[i];
             v.Progress = i == 0
-                ? $"Gemini ({model}) đang đọc kịch bản và chia shot…"
+                ? $"Gemini ({model}) đang đọc kịch bản, dựng hồ sơ nhân vật và chia shot…"
                 : $"{models[i - 1]} không trả lời được — đang thử {model} ({i + 1}/{models.Count})…";
             await _db.SaveChangesAsync(CancellationToken.None);
             using var attempt = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -463,7 +515,7 @@ public class StudioService
             try
             {
                 var result = await _gemini.GenerateJsonAsync(system, user, 32768, 0.6, attempt.Token, model, lightThinking: true);
-                ParsePlan(result.Text, new HashSet<Guid>(), new HashSet<Guid>()); // must at least be a usable plan
+                ParsePlan(result.Text, new HashSet<Guid>()); // must at least be a usable plan
                 return (result, model);
             }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
@@ -479,64 +531,57 @@ public class StudioService
         throw new InvalidOperationException("Không model Gemini nào lập được kế hoạch — " + string.Join(" | ", errors));
     }
 
-    public static (string System, string User) BuildPlanPrompt(StudioVideo v, IReadOnlyList<StudioAsset> assets, IReadOnlyList<StudioMusicTrack> music)
+    public static (string System, string User) BuildPlanPrompt(StudioVideo v, IReadOnlyList<StudioMusicTrack> music)
     {
         var system =
-            "Bạn là đạo diễn phim ngắn người thật cho mạng xã hội. Bạn chia kịch bản thành các shot để model video Grok Imagine tạo " +
-            "(mỗi shot là 1 clip 2–15 giây có cả hình, tiếng động và lời thoại khớp miệng, bắt đầu từ 1 ảnh mở đầu). Chỉ trả về JSON hợp lệ.";
+            "Bạn là đạo diễn phim ngắn người thật cho mạng xã hội. Bạn chia kịch bản thành các shot để model TEXT-TO-VIDEO Seedance " +
+            "tạo (mỗi shot là 1 clip 2–12 giây, video KHÔNG có tiếng — lời thoại được lồng bằng giọng đọc AI, nhạc nền thêm sau). Chỉ trả về JSON hợp lệ.";
         var sb = new StringBuilder();
         sb.AppendLine($"KỊCH BẢN (giữ nguyên lời thoại):\n{v.Script}\n");
         sb.AppendLine($"Khung hình {(v.AspectRatio == "16:9" ? "ngang 16:9" : "dọc 9:16")}. Độ dài video do KỊCH BẢN quyết định — không có thời lượng mục tiêu.");
         if (!string.IsNullOrWhiteSpace(v.StyleNotes)) sb.AppendLine($"Phong cách / ghi chú của người dùng: {v.StyleNotes}");
-        sb.AppendLine("\nDÀN NHÂN VẬT / BỐI CẢNH NGƯỜI DÙNG ĐÃ CHỌN (chỉ dùng các id này):");
-        if (assets.Count == 0) sb.AppendLine("- (không có — mô tả nhân vật và bối cảnh thật chi tiết, nhất quán trong mọi shot)");
-        foreach (var a in assets) sb.AppendLine($"- id={a.Id} | {a.Kind} | {a.Name} | {a.Description}");
+        sb.AppendLine("\nGIỌNG ĐỌC CÓ SẴN (id | giới tính | chất giọng):");
+        foreach (var voice in StudioVoices.All) sb.AppendLine($"- {voice.Id} | {voice.Gender} | {voice.Description}");
         sb.AppendLine("\nKHO NHẠC NỀN (chọn 1 bài hợp không khí, hoặc null):");
         if (music.Count == 0) sb.AppendLine("- (trống)");
         foreach (var m in music) sb.AppendLine($"- id={m.Id} | {m.Name} | tâm trạng: {m.Mood} | {m.DurationSeconds:0}s");
         sb.AppendLine(@"
-NHÂN VẬT:
-- Các nhân vật trong danh sách trên là NHÂN VẬT CHÍNH: khi họ xuất hiện thì dùng đúng ảnh của họ.
-- Mọi nhân vật khác trong kịch bản (vai phụ, quần chúng, người qua đường…) và cảnh vật: KHÔNG có ảnh — tự mô tả bằng tiếng Anh
-  trong ""action"" (ngoại hình, trang phục, tuổi) cho hợp bối cảnh và thời đại của kịch bản, giữ mô tả giống nhau giữa các shot.
-- TUYỆT ĐỐI không dùng ảnh của nhân vật này cho nhân vật khác, và không đưa ảnh nhân vật vào shot mà người đó không có mặt.
+HỒ SƠ NHÂN VẬT & BỐI CẢNH (model video không có ảnh tham chiếu: cùng một mô tả được chép vào MỌI shot để nhân vật trông giống nhau):
+- ""characters"": mọi nhân vật có thoại hoặc xuất hiện ≥ 2 shot. ""name"" đúng tên trong kịch bản; ""gender"": male/female;
+  ""look"": mô tả ngoại hình bằng TIẾNG ANH, cụ thể và CỐ ĐỊNH, 25–45 từ: tuổi, dáng người, khuôn mặt, tóc / râu, trang phục với
+  MÀU SẮC rõ ràng, phụ kiện đặc trưng (vd ""a stout 50-year-old Song dynasty judge, dark tanned face with a crescent mark on the
+  forehead, long black beard, purple official robe embroidered with gold dragons, black winged hat"");
+  ""voice"": id giọng hợp tuổi, giới tính và tính cách — mỗi nhân vật một giọng KHÁC nhau.
+- Kịch bản có lời dẫn chuyện thì thêm nhân vật name ""Lời dẫn"" (không xuất hiện trong hình) với giọng phù hợp.
+- ""locations"": mỗi bối cảnh một mục: ""name"" ngắn, ""look"" bằng TIẾNG ANH 20–40 từ: nơi chốn, thời đại, kiến trúc, đồ vật, ánh sáng, giờ.
 
-CÁCH LÀM VIDEO:
-- Với mỗi shot, hệ thống dựng 1 KHUNG HÌNH MỞ ĐẦU từ ảnh của MỌI nhân vật chính có trong ""assetIds"" (đúng mặt từng người), rồi
-  model video làm chuyển động từ khung đó. Nhân vật chính nào có mặt trong khung hình mà thiếu id thì sẽ bị vẽ sai mặt.
-- ""assetIds"": id của TẤT CẢ nhân vật chính NHÌN THẤY trong shot (người nói + người nghe + người đứng cạnh), cộng ảnh bối cảnh nếu
-  có; tối đa 5. Chỉ đưa người thật sự có mặt — không thêm ai không có trong cảnh.
-- ""continueFromPrevious"": true chỉ khi shot là đoạn tiếp liền của shot trước với CÙNG góc máy và CÙNG những người (clip bắt đầu từ
-  khung cuối của clip trước). Đổi góc máy, đổi người trong khung, đổi cảnh hoặc shot đầu → false.
-
-GÓC MÁY (""camera""):
-- Ưu tiên toàn cảnh / trung cảnh rộng (wide shot, full shot, medium-wide): thấy toàn thân hoặc nửa người của MỌI người trong cảnh và
-  thấy rõ bối cảnh xung quanh (công đường, sân, đồ vật, người hầu ở xa…).
-- Shot đầu mỗi cảnh luôn là wide establishing shot. Cận mặt (close-up) chỉ dùng cho khoảnh khắc biểu cảm / đòn gây cười, tối đa 1/4
-  số shot. Khi 2 người nói qua lại, dùng khung 2 người (two-shot) thay vì cận từng người.
-
-QUY TẮC:
-- Bám sát kịch bản: mỗi câu thoại và mỗi hành động / cảnh được mô tả trong kịch bản thành shot tương ứng, theo đúng thứ tự.
-  KHÔNG thêm shot độn, cảnh phụ hay kéo dài cho đủ giờ; KHÔNG bỏ hay rút gọn phần nào của kịch bản. Video dài đúng bằng nội dung.
-- ""duration"" của mỗi shot vừa đủ cho việc xảy ra trong shot: 2–15 giây (số nguyên); shot chỉ có hành động ngắn thì 3–5 giây.
-- Tiếng Việt diễn xuất nói khoảng 3 chữ/giây: duration của shot có thoại >= số chữ / 3 + 1 (vd câu 20 chữ → 8 giây). Câu dài hơn 40 chữ thì tách sang shot sau.
-- Mỗi shot tối đa 1 người nói. ""dialogue"" là câu thoại nguyên văn tiếng Việt trong kịch bản (không dịch, không thêm). Shot không thoại thì để null.
-- ""action"", ""camera"", ""sound"" viết bằng TIẾNG ANH, cụ thể, dễ quay: ai làm gì, cảm xúc, cử chỉ nhỏ có chủ đích; cỡ cảnh + chuyển động máy; tiếng động môi trường (không nhạc).
-- Giữ liên tục: cùng bối cảnh, trang phục, đạo cụ, thời điểm trong ngày giữa các shot.
+SHOT:
+- ""location"": tên một bối cảnh trong locations. ""cast"": tên các nhân vật NHÌN THẤY trong shot (đúng tên trong characters, kể cả
+  người nghe). Vai phụ / quần chúng không cần hồ sơ: tả trong ""action"".
+- Bám sát kịch bản: mỗi câu thoại và mỗi hành động / cảnh trong kịch bản thành shot tương ứng, đúng thứ tự. KHÔNG thêm shot độn,
+  KHÔNG bỏ hay rút gọn phần nào. Mỗi shot tối đa 1 người nói. ""dialogue"" là câu thoại nguyên văn tiếng Việt (không dịch, không thêm);
+  ""speaker"" là tên người nói (lời dẫn chuyện → ""Lời dẫn""); shot không thoại → null.
+- ""duration"" (giây, số nguyên 2–12): shot có thoại >= số chữ / 3 + 1; câu dài hơn 30 chữ thì tách thành 2 shot liên tiếp.
+- Giọng được LỒNG SAU nên miệng không khớp từng chữ: ưu tiên góc trung cảnh / toàn cảnh, người nói diễn bằng nét mặt và cử chỉ,
+  KHÔNG dùng cận cảnh miệng (extreme close-up).
+- ""camera"": shot đầu mỗi cảnh là wide establishing shot; còn lại ưu tiên medium-wide / two-shot thấy rõ người và bối cảnh;
+  close-up tối đa 1/4 số shot (chỉ cho biểu cảm / đòn gây cười).
+- ""action"", ""camera"", ""sound"" viết bằng TIẾNG ANH, cụ thể, dễ quay: ai làm gì, cảm xúc, cử chỉ có chủ đích; cỡ cảnh + chuyển động máy.
 - ""caption"": chú thích đăng Facebook bằng tiếng Việt, 1–3 câu cuốn hút + 2–4 hashtag.
 
 Trả về JSON:
 { ""caption"": ""..."", ""notes"": ""ghi chú đạo diễn ngắn bằng tiếng Việt"", ""musicTrackId"": ""id hoặc null"",
-  ""shots"": [ { ""duration"": 8, ""assetIds"": [""...""], ""continueFromPrevious"": false, ""action"": ""..."", ""camera"": ""..."", ""speaker"": ""tên hoặc null"", ""dialogue"": ""... hoặc null"", ""sound"": ""..."" } ] }");
+  ""characters"": [ { ""name"": ""..."", ""gender"": ""male"", ""look"": ""..."", ""voice"": ""gemini:..."" } ],
+  ""locations"": [ { ""name"": ""..."", ""look"": ""..."" } ],
+  ""shots"": [ { ""duration"": 6, ""location"": ""..."", ""cast"": [""...""], ""action"": ""..."", ""camera"": ""..."", ""speaker"": ""tên hoặc null"", ""dialogue"": ""... hoặc null"", ""sound"": ""..."" } ] }");
         return (system, sb.ToString());
     }
 
-    public sealed record PlannedShot(int Duration, List<Guid> AssetIds, string Action, string Camera, string? Speaker, string? Dialogue, string? Sound,
-        bool ContinueFromPrevious = false);
-    public sealed record Plan(string? Caption, string? Notes, Guid? MusicTrackId, List<PlannedShot> Shots);
+    public sealed record PlannedShot(int Duration, string? Location, List<string> Cast, string Action, string Camera, string? Speaker, string? Dialogue, string? Sound);
+    public sealed record Plan(string? Caption, string? Notes, Guid? MusicTrackId, Bible Bible, List<PlannedShot> Shots);
 
-    /// <summary>Reads the planner's JSON, keeping only known asset / music ids and valid clip durations.</summary>
-    public static Plan ParsePlan(string json, ISet<Guid> knownAssets, ISet<Guid> knownMusic)
+    /// <summary>Reads the planner's JSON: bible (known voices, one per character), shots with valid durations and names.</summary>
+    public static Plan ParsePlan(string json, ISet<Guid> knownMusic)
     {
         var text = json.Trim();
         var start = text.IndexOf('{');
@@ -546,28 +591,43 @@ Trả về JSON:
         var root = doc.RootElement;
         string? S(JsonElement e, string n) => e.TryGetProperty(n, out var p) && p.ValueKind == JsonValueKind.String ? p.GetString()?.Trim() : null;
 
+        var characters = new List<StudioCharacterDto>();
+        if (root.TryGetProperty("characters", out var ca) && ca.ValueKind == JsonValueKind.Array)
+            foreach (var c in ca.EnumerateArray())
+                characters.Add(new StudioCharacterDto { Name = S(c, "name") ?? "", Gender = S(c, "gender") ?? "male", Look = S(c, "look") ?? "", Voice = S(c, "voice") ?? "" });
+        var locations = new List<StudioLocationDto>();
+        if (root.TryGetProperty("locations", out var la) && la.ValueKind == JsonValueKind.Array)
+            foreach (var l in la.EnumerateArray())
+                locations.Add(new StudioLocationDto { Name = S(l, "name") ?? "", Look = S(l, "look") ?? "" });
+        // the planner sometimes gives two characters the same voice: keep the first, re-pick for the others
+        var seen = new HashSet<string>();
+        foreach (var c in characters)
+            if (!StudioVoices.IsKnown(c.Voice) || !seen.Add(c.Voice)) c.Voice = "";
+        var bible = NormalizeBible(characters, locations);
+
         Guid? musicId = Guid.TryParse(S(root, "musicTrackId"), out var mid) && knownMusic.Contains(mid) ? mid : null;
         var shots = new List<PlannedShot>();
         if (root.TryGetProperty("shots", out var arr) && arr.ValueKind == JsonValueKind.Array)
         {
             foreach (var s in arr.EnumerateArray())
             {
-                var duration = s.TryGetProperty("duration", out var d) && d.TryGetDouble(out var dv) ? (int)Math.Round(dv) : 8;
-                var ids = new List<Guid>();
-                if (s.TryGetProperty("assetIds", out var a) && a.ValueKind == JsonValueKind.Array)
-                    foreach (var x in a.EnumerateArray())
-                        if (Guid.TryParse(x.GetString(), out var g) && knownAssets.Contains(g) && !ids.Contains(g)) ids.Add(g);
                 var action = S(s, "action") ?? "";
-                if (action.Length == 0 && string.IsNullOrWhiteSpace(S(s, "dialogue"))) continue;
-                var cont = shots.Count > 0 && s.TryGetProperty("continueFromPrevious", out var c) && c.ValueKind == JsonValueKind.True;
+                var dialogue = NullIfNull(S(s, "dialogue"));
+                if (action.Length == 0 && dialogue == null) continue;
+                var duration = s.TryGetProperty("duration", out var d) && d.TryGetDouble(out var dv) ? (int)Math.Round(dv) : 6;
                 // the planner often under-times lines: never give a line less time than it takes to say it
-                duration = Math.Max(duration, SecondsToSay(NullIfNull(S(s, "dialogue"))));
-                shots.Add(new PlannedShot(GrokVideoClient.ClampSeconds(duration), ids.Take(MaxShotAssets).ToList(),
-                    action, S(s, "camera") ?? "", NullIfNull(S(s, "speaker")), NullIfNull(S(s, "dialogue")), NullIfNull(S(s, "sound")), cont));
+                duration = SeedanceVideoClient.ClampSeconds(Math.Max(duration, SecondsToSay(dialogue)));
+                var cast = new List<string>();
+                if (s.TryGetProperty("cast", out var c) && c.ValueKind == JsonValueKind.Array)
+                    foreach (var x in c.EnumerateArray())
+                        if (x.ValueKind == JsonValueKind.String && bible.Character(x.GetString()) is { } who && !StudioVoices.NarratorName.Equals(who.Name)
+                            && !cast.Contains(who.Name)) cast.Add(who.Name);
+                var location = bible.Location(S(s, "location"))?.Name ?? NullIfNull(S(s, "location"));
+                shots.Add(new PlannedShot(duration, location, cast, action, S(s, "camera") ?? "", NullIfNull(S(s, "speaker")), dialogue, NullIfNull(S(s, "sound"))));
             }
         }
         if (shots.Count == 0) throw new InvalidOperationException("Gemini trả về kế hoạch không có shot nào.");
-        return new Plan(S(root, "caption"), S(root, "notes"), musicId, shots);
+        return new Plan(S(root, "caption"), S(root, "notes"), musicId, bible, shots);
     }
 
     /// <summary>Time an actor needs for a Vietnamese line: ~3 words (syllables) a second plus a 1 s breath, rounded up.</summary>
@@ -589,49 +649,50 @@ Trả về JSON:
         var index = 1;
         foreach (var input in shots)
         {
+            var castJson = JsonSerializer.Serialize(input.Cast.Where(c => !string.IsNullOrWhiteSpace(c)).Select(c => c.Trim()).Distinct());
             StudioShot shot;
             if (input.Id is { } sid && existing.TryGetValue(sid, out var found))
             {
                 shot = found;
-                var changed = shot.DurationSeconds != GrokVideoClient.ClampSeconds(input.DurationSeconds) || shot.Action != input.Action.Trim()
-                              || shot.Camera != input.Camera.Trim() || shot.Dialogue != NullIfEmpty(input.Dialogue) || shot.Speaker != NullIfEmpty(input.Speaker)
-                              || shot.Sound != NullIfEmpty(input.Sound) || shot.AssetIdsJson != JsonSerializer.Serialize(input.AssetIds)
-                              || shot.ContinueFromPrevious != (index > 1 && input.ContinueFromPrevious);
+                var lineChanged = shot.Dialogue != NullIfEmpty(input.Dialogue) || shot.Speaker != NullIfEmpty(input.Speaker);
+                var changed = lineChanged || shot.DurationSeconds != SeedanceVideoClient.ClampSeconds(input.DurationSeconds) || shot.Action != input.Action.Trim()
+                              || shot.Camera != input.Camera.Trim() || shot.Sound != NullIfEmpty(input.Sound) || shot.CastJson != castJson
+                              || shot.Location != NullIfEmpty(input.Location);
                 if (changed && shot.Status == "Done") shot.Status = "Pending"; // edited → the clip no longer matches; regenerate
-                if (changed) shot.InteractionId = null; // a pending xAI job made from the old text must not be picked up
-                var framingChanged = shot.AssetIdsJson != JsonSerializer.Serialize(input.AssetIds) || shot.Camera != input.Camera.Trim()
-                                     || shot.Action != input.Action.Trim() || shot.ContinueFromPrevious != (index > 1 && input.ContinueFromPrevious);
-                if (framingChanged && shot.KeyframeBlobId != null)
+                if (changed) shot.InteractionId = null; // a pending job made from the old text must not be picked up
+                if (lineChanged && shot.VoiceBlobId != null)
                 {
-                    await DeleteBlobAsync(shot.KeyframeBlobId.Value, ct);
-                    shot.KeyframeBlobId = null;
+                    await DeleteBlobAsync(shot.VoiceBlobId.Value, ct);
+                    shot.VoiceBlobId = null;
+                    shot.VoiceSeconds = null;
                 }
             }
             else
             {
                 shot = new StudioShot { StudioVideoId = v.Id };
-                _db.StudioShots.Add(shot); // via the DbSet: see PlanAsync
+                _db.StudioShots.Add(shot); // via the DbSet: see RunPlanAsync
             }
             keep.Add(shot.Id);
             shot.Index = index++;
-            shot.ContinueFromPrevious = shot.Index > 1 && input.ContinueFromPrevious;
-            shot.DurationSeconds = GrokVideoClient.ClampSeconds(input.DurationSeconds);
+            shot.DurationSeconds = SeedanceVideoClient.ClampSeconds(input.DurationSeconds);
             shot.Action = input.Action.Trim();
             shot.Camera = input.Camera.Trim();
+            shot.Location = NullIfEmpty(input.Location);
+            shot.CastJson = castJson;
             shot.Speaker = NullIfEmpty(input.Speaker);
             shot.Dialogue = NullIfEmpty(input.Dialogue);
             shot.Sound = NullIfEmpty(input.Sound);
-            shot.AssetIdsJson = JsonSerializer.Serialize(input.AssetIds.Distinct().Take(MaxShotAssets));
         }
         foreach (var gone in v.Shots.Where(s => !keep.Contains(s.Id)).ToList())
         {
             if (gone.ClipBlobId != null) await DeleteBlobAsync(gone.ClipBlobId.Value, ct);
+            if (gone.VoiceBlobId != null) await DeleteBlobAsync(gone.VoiceBlobId.Value, ct);
             if (gone.KeyframeBlobId != null) await DeleteBlobAsync(gone.KeyframeBlobId.Value, ct);
             _db.StudioShots.Remove(gone);
             v.Shots.Remove(gone);
         }
         v.EstimatedCostUsd = EstimateVideoCost(v);
-        if (v.Shots.Count > 0) v.TargetDurationSeconds = v.Shots.Sum(s => GrokVideoClient.ClampSeconds(s.DurationSeconds));
+        if (v.Shots.Count > 0) v.TargetDurationSeconds = v.Shots.Sum(s => SeedanceVideoClient.ClampSeconds(s.DurationSeconds));
         if (v.Status is "Draft" or "Ready" or "Failed") v.Status = v.Shots.Count > 0 ? "Planned" : "Draft";
         await _db.SaveChangesAsync(ct);
         return await GetVideoAsync(id, ct);
@@ -639,22 +700,98 @@ Trả về JSON:
 
     private decimal EstimateVideoCost(StudioVideo v) => Math.Round(v.Shots.Sum(s => ShotCost(v, s)), 4);
 
-    /// <summary>Seconds × price, plus the input-image fee when the clip starts from a picture.</summary>
+    /// <summary>Clip seconds × the model's price, plus reading the line when it has no voice yet.</summary>
     private decimal ShotCost(StudioVideo v, StudioShot s) =>
-        _video.EstimateCost(s.DurationSeconds, v.Resolution, s.ContinueFromPrevious || Ids(s.AssetIdsJson).Count > 0)
-        + (NeedsKeyframe(s) && s.KeyframeBlobId == null ? _gemini.EstimatedImageCostUsd : 0m);
+        _video.EstimateCost(v.VideoModel, v.Resolution, s.DurationSeconds)
+        + (s.Dialogue != null && s.VoiceBlobId == null ? Math.Round(SecondsToSay(s.Dialogue) * _voices.PricePerSecond, 4) : 0m);
 
-    /// <summary>A shot that doesn't continue the previous take and shows library pictures starts from a built keyframe.</summary>
-    private static bool NeedsKeyframe(StudioShot s) => !s.ContinueFromPrevious && Ids(s.AssetIdsJson).Count > 0;
+    // ═══════════════════════════════ Voices ═══════════════════════════════
 
-    private string KeyframeModel => _configuration["Studio:KeyframeModel"] is { Length: > 0 } m ? m : "gemini-3.1-flash-image";
+    /// <summary>Reads the lines aloud (all missing ones, or one shot's again) so they can be heard before paying for clips.</summary>
+    public async Task<StudioVideoDto> StartVoicesAsync(Guid id, Guid? shotId, CancellationToken ct)
+    {
+        var v = await _db.StudioVideos.Include(x => x.Shots).FirstOrDefaultAsync(x => x.Id == id, ct) ?? throw new KeyNotFoundException("Không tìm thấy video.");
+        EnsureNotBusy(v);
+        var todo = v.Shots.Where(s => s.Dialogue != null && (shotId != null ? s.Id == shotId : s.VoiceBlobId == null)).ToList();
+        if (todo.Count == 0)
+            throw new InvalidOperationException(shotId != null ? "Shot này không có lời thoại." : "Mọi câu thoại đều đã có giọng đọc — bấm \"Đọc lại\" ở từng shot nếu muốn đổi.");
+        v.Status = "Generating";
+        v.Progress = $"Đang đọc {todo.Count} câu thoại bằng giọng AI…";
+        v.ErrorMessage = null;
+        await _db.SaveChangesAsync(ct);
+        _jobs.Enqueue<StudioService>(s => s.RunVoicesAsync(id, shotId, CancellationToken.None));
+        return await GetVideoAsync(id, ct);
+    }
+
+    [Queue("critical")]
+    [AutomaticRetry(Attempts = 0)]
+    [DisableConcurrentExecution(1800)]
+    public async Task RunVoicesAsync(Guid id, Guid? shotId, CancellationToken ct)
+    {
+        var v = await _db.StudioVideos.Include(x => x.Shots).FirstOrDefaultAsync(x => x.Id == id, ct);
+        if (v == null || v.Status != "Generating") return;
+        var bible = ReadBible(v.BibleJson);
+        var todo = v.Shots.OrderBy(s => s.Index).Where(s => s.Dialogue != null && (shotId != null ? s.Id == shotId : s.VoiceBlobId == null)).ToList();
+        var errors = new List<string>();
+        var n = 0;
+        foreach (var s in todo)
+        {
+            v.Progress = $"Đang đọc câu thoại {++n}/{todo.Count} (shot {s.Index})…";
+            await _db.SaveChangesAsync(ct);
+            try
+            {
+                await MakeVoiceAsync(v, bible, s, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                s.ErrorMessage = "Giọng đọc: " + ex.Message;
+                errors.Add($"shot {s.Index}");
+            }
+            await _db.SaveChangesAsync(ct);
+        }
+        v.TargetDurationSeconds = Math.Max(1, v.Shots.Sum(s => s.DurationSeconds));
+        v.EstimatedCostUsd = EstimateVideoCost(v);
+        v.Status = v.FinalBlobId != null ? "Ready" : "Planned";
+        v.Progress = null;
+        v.ErrorMessage = errors.Count == 0 ? null : $"Chưa đọc được câu thoại của {string.Join(", ", errors)} — xem lỗi ở từng shot.";
+        await _db.SaveChangesAsync(ct);
+    }
+
+    /// <summary>
+    /// Reads a shot's line in its speaker's voice and fits the shot to it (the clip must outlast the line). A line too
+    /// long for one clip is refused before any video is paid for.
+    /// </summary>
+    private async Task MakeVoiceAsync(StudioVideo v, Bible bible, StudioShot s, CancellationToken ct)
+    {
+        if (s.Dialogue == null) return;
+        var voice = VoiceFor(bible, s.Speaker);
+        var (audio, seconds, fromCache) = await _voices.SpeakAsync(v.Id, s.Dialogue, voice, ct);
+        if (seconds + VoiceTail > SeedanceVideoClient.MaxSeconds)
+            throw new InvalidOperationException($"Câu thoại đọc mất {seconds:0.0}s — dài hơn 1 clip ({SeedanceVideoClient.MaxSeconds}s). Tách câu này thành 2 shot.");
+        if (s.VoiceBlobId != null) await DeleteBlobAsync(s.VoiceBlobId.Value, ct);
+        var blob = new StudioBlob { MimeType = "audio/mp4", Data = audio, SizeBytes = audio.Length };
+        _db.StudioBlobs.Add(blob);
+        s.VoiceBlobId = blob.Id;
+        s.VoiceSeconds = seconds;
+        s.DurationSeconds = SeedanceVideoClient.ClampSeconds(Math.Max(s.DurationSeconds, (int)Math.Ceiling(seconds + VoiceTail)));
+        if (s.ErrorMessage?.StartsWith("Giọng đọc") == true) s.ErrorMessage = null;
+        var cost = fromCache ? 0m : Math.Round((decimal)seconds * _voices.PricePerSecond, 5);
+        s.CostUsd += cost;
+        v.ActualCostUsd += cost;
+        _db.StudioCostRecords.Add(new StudioCostRecord
+        {
+            StudioVideoId = v.Id, StudioShotId = s.Id, Kind = "Voice", Model = voice, Seconds = seconds, CostUsd = cost,
+            Note = $"giọng shot {s.Index}" + (fromCache ? " (dùng lại, miễn phí)" : "")
+        });
+        await _db.SaveChangesAsync(ct);
+    }
 
     // ═══════════════════════════════ Generation ═══════════════════════════════
 
     /// <summary>Queues clip generation for every shot without a clip (or only <paramref name="shotId"/>), then composing.</summary>
     public async Task<StudioVideoDto> StartGenerateAsync(Guid id, Guid? shotId, CancellationToken ct)
     {
-        if (!_video.IsConfigured) throw new InvalidOperationException("Chưa có khoá xAI (biến XAI_API_KEY trên Railway) — chưa tạo được video.");
+        if (!_video.IsConfigured) throw new InvalidOperationException("Chưa có khoá Vercel AI Gateway (biến AI_GATEWAY_API_KEY trên Railway) — chưa tạo được video.");
         await ReconcileLostFilesAsync(id, ct);
         var v = await _db.StudioVideos.Include(x => x.Shots).FirstOrDefaultAsync(x => x.Id == id, ct) ?? throw new KeyNotFoundException("Không tìm thấy video.");
         EnsureNotBusy(v);
@@ -687,12 +824,12 @@ Trả về JSON:
         // a second copy of this job (Hangfire re-queues long jobs / jobs cut by a restart) must not pay again for a
         // run that already finished: only a video still marked "Generating" is worked on
         if (v == null || v.Status != "Generating") return;
+        if (v.Seed == 0) v.Seed = NewSeed();
+        var bible = ReadBible(v.BibleJson);
         var todo = v.Shots.OrderBy(s => s.Index)
             .Where(s => shotId != null ? s.Id == shotId : s.Status != "Done" || s.ClipBlobId == null).ToList();
-        var assets = (await LoadAssetsAsync(v.Shots.SelectMany(s => Ids(s.AssetIdsJson)).Distinct().ToList(), ct)).ToDictionary(a => a.Id);
         var failed = new List<string>();
         var done = 0;
-        var ordered = v.Shots.OrderBy(s => s.Index).ToList();
         string? accountProblem = null;
 
         foreach (var shot in todo)
@@ -700,14 +837,28 @@ Trả về JSON:
             v.Progress = $"Đang tạo clip {++done}/{todo.Count} (shot {shot.Index})…";
             // a job already paid for and not turned into a clip yet (restart, timeout, failed download) is picked up
             // again instead of paying for a new one
-            var resumeId = shot.ClipBlobId == null ? shot.InteractionId : null;
+            var resume = shot.ClipBlobId == null ? shot.InteractionId : null;
             shot.Status = "Generating";
             await _db.SaveChangesAsync(ct);
 
-            var seconds = GrokVideoClient.ClampSeconds(shot.DurationSeconds);
+            // 1. the line first: its length decides the clip's length
+            if (shot.Dialogue != null && shot.VoiceBlobId == null)
+            {
+                try { await MakeVoiceAsync(v, bible, shot, ct); }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    shot.Status = "Failed";
+                    shot.ErrorMessage = "Giọng đọc: " + ex.Message;
+                    failed.Add($"shot {shot.Index}: {shot.ErrorMessage}");
+                    await _db.SaveChangesAsync(ct);
+                    continue; // no clip paid for a shot whose line can't be voiced
+                }
+            }
+
+            var seconds = SeedanceVideoClient.ClampSeconds(shot.DurationSeconds);
             try
             {
-                await EnsureBudgetAsync(ShotCost(v, shot), ct);
+                await EnsureBudgetAsync(_video.EstimateCost(v.VideoModel, v.Resolution, seconds), ct);
             }
             catch (InvalidOperationException ex)
             {
@@ -717,30 +868,15 @@ Trả về JSON:
                 break; // budget reached: stop spending
             }
 
-            StartFrame? frame;
-            bool continued;
-            try
-            {
-                (frame, continued) = await StartFrameAsync(v, ordered, shot, assets, ct);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                shot.Status = "Failed";
-                shot.ErrorMessage = ex.Message;
-                failed.Add($"shot {shot.Index}: {ex.Message}");
-                await _db.SaveChangesAsync(ct);
-                continue;
-            }
-            var prompt = BuildShotPrompt(v, shot, assets, continued);
-
+            var prompt = BuildShotPrompt(v, bible, shot);
             for (var attempt = 1; attempt <= MaxAttemptsPerRun; attempt++)
             {
                 shot.Attempts++;
                 try
                 {
-                    var clip = await _video.GenerateAsync(prompt, frame, v.AspectRatio, v.Resolution, seconds, ct, resumeId, async requestId =>
+                    var clip = await _video.GenerateAsync(v.VideoModel, prompt, v.AspectRatio, v.Resolution, seconds, v.Seed, ct, resume, async operation =>
                     {
-                        shot.InteractionId = requestId; // stored at once: the job is billed from here on
+                        shot.InteractionId = operation; // stored at once: the job is billed from here on
                         await _db.SaveChangesAsync(CancellationToken.None);
                     });
                     if (shot.ClipBlobId != null) await DeleteBlobAsync(shot.ClipBlobId.Value, ct);
@@ -753,8 +889,9 @@ Trả về JSON:
                     v.ActualCostUsd += clip.CostUsd;
                     _db.StudioCostRecords.Add(new StudioCostRecord
                     {
-                        StudioVideoId = v.Id, StudioShotId = shot.Id, Kind = "Video", Model = _video.Model, Seconds = clip.Seconds,
-                        CostUsd = clip.CostUsd, Note = $"shot {shot.Index}, {v.Resolution}" + (frame == null ? "" : continued ? ", nối khung cuối" : ", từ ảnh")
+                        StudioVideoId = v.Id, StudioShotId = shot.Id, Kind = "Video", Model = SeedanceVideoClient.NormalizeModel(v.VideoModel),
+                        Seconds = clip.Seconds, CostUsd = clip.CostUsd,
+                        Note = $"shot {shot.Index}, {SeedanceVideoClient.NormalizeResolution(v.Resolution)}" + (clip.CostUsd == 0 ? ", lấy lại job đã trả tiền" : "")
                     });
                     await _db.SaveChangesAsync(ct);
                     break;
@@ -769,28 +906,18 @@ Trả về JSON:
                 }
                 catch (VideoRejectedException ex)
                 {
-                    // refused / filtered (moderation, invalid argument): retrying the same prompt only spends money
+                    // refused (moderation, invalid argument): retrying the same prompt only wastes time
                     shot.Status = "Failed";
                     shot.ErrorMessage = ex.Message;
-                    if (ex.BilledUsd > 0)
-                    {
-                        shot.CostUsd += ex.BilledUsd;
-                        v.ActualCostUsd += ex.BilledUsd;
-                        _db.StudioCostRecords.Add(new StudioCostRecord
-                        {
-                            StudioVideoId = v.Id, StudioShotId = shot.Id, Kind = "Video", Model = _video.Model, Seconds = seconds,
-                            CostUsd = ex.BilledUsd, Note = $"shot {shot.Index}, bị lọc nội dung"
-                        });
-                    }
                     break;
                 }
                 catch (VideoTransientException ex)
                 {
-                    // xAI busy / internal error before anything billable: one more try after a pause
+                    // busy / internal error before anything billable: one more try after a pause
                     _logger.LogWarning(ex, "Video shot {Index} attempt {Attempt}: transient", shot.Index, attempt);
                     shot.Status = "Failed";
                     shot.ErrorMessage = ex.Message;
-                    resumeId = null;
+                    resume = null;
                     if (attempt < MaxAttemptsPerRun) await Task.Delay(TimeSpan.FromSeconds(20), ct);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
@@ -807,6 +934,7 @@ Trả về JSON:
             await _db.SaveChangesAsync(ct);
         }
 
+        v.TargetDurationSeconds = Math.Max(1, v.Shots.Sum(s => s.DurationSeconds));
         if (accountProblem != null)
         {
             var made = v.Shots.Count(s => s.ClipBlobId != null && s.Status == "Done");
@@ -829,185 +957,32 @@ Trả về JSON:
     }
 
     /// <summary>
-    /// Picks the picture a shot starts from: the previous clip's last frame when the shot continues the take (and that
-    /// clip exists), otherwise its first asset image cropped to the video's frame; null → text-to-video.
+    /// The text-to-video prompt of one shot. With no reference images, the look of every visible character and of the
+    /// location is copied word for word from the bible into each shot, and the same seed is used, so people stay alike.
+    /// The video is silent: dialogue is dubbed later, so the speaker acts the line without mouth close-ups.
     /// </summary>
-    private async Task<(StartFrame? Frame, bool Continued)> StartFrameAsync(StudioVideo v, List<StudioShot> ordered, StudioShot shot,
-        IReadOnlyDictionary<Guid, StudioAsset> assets, CancellationToken ct)
+    public static string BuildShotPrompt(StudioVideo v, Bible bible, StudioShot shot)
     {
-        if (shot.ContinueFromPrevious)
-        {
-            var prev = ordered.LastOrDefault(s => s.Index < shot.Index);
-            if (prev?.ClipBlobId is { } clipId && await GetBlobAsync(clipId, ct) is { } clip)
-                return (new StartFrame(await _media.LastFrameAsync(clip.Data, ct), "image/jpeg"), true);
-            // don't spend on a take that would not join up with the previous one
-            if (prev != null)
-                throw new InvalidOperationException($"Shot này nối tiếp shot {prev.Index} nhưng shot {prev.Index} chưa có clip — tạo shot {prev.Index} trước.");
-        }
-        if (!NeedsKeyframe(shot)) return (null, false);
-        var keyframe = shot.KeyframeBlobId is { } kf ? await GetBlobAsync(kf, ct) : null;
-        if (keyframe == null)
-        {
-            await BuildKeyframeAsync(v, shot, assets, ct);
-            keyframe = await GetBlobAsync(shot.KeyframeBlobId!.Value, ct);
-        }
-        return (new StartFrame(keyframe!.Data, keyframe.MimeType), false);
-    }
-
-    /// <summary>
-    /// Builds the opening frame of a shot with the image model: every character of the shot from their own picture
-    /// (right faces, each once), in the location, framed as the shot's camera says. Saved on the shot (small JPEG in
-    /// the database) so it can be previewed before any video money is spent, and reused by the clip.
-    /// </summary>
-    private async Task BuildKeyframeAsync(StudioVideo v, StudioShot shot, IReadOnlyDictionary<Guid, StudioAsset> assets, CancellationToken ct)
-    {
-        var used = Ids(shot.AssetIdsJson).Where(assets.ContainsKey).Select(id => assets[id]).Take(MaxShotAssets).ToList();
-        var refs = new List<FilmGeminiClient.ReferenceImage>();
-        foreach (var a in used)
-            if (await GetBlobAsync(a.BlobId, ct) is { } img) refs.Add(new FilmGeminiClient.ReferenceImage(img.Data, img.MimeType));
-        if (refs.Count == 0) throw new InvalidOperationException("Ảnh nhân vật / bối cảnh của shot đã bị xoá khỏi kho.");
-
-        FilmGeminiClient.ImageResult image;
-        try
-        {
-            image = await _gemini.GenerateImageAsync(BuildKeyframePrompt(v, shot, used), v.AspectRatio == "16:9" ? "16:9" : "9:16", refs, ct, KeyframeModel);
-        }
-        catch (Exception ex) when (ex is InvalidOperationException or HttpRequestException)
-        {
-            throw new InvalidOperationException($"Không dựng được khung mở đầu cho shot {shot.Index} (Gemini: {ex.Message}). " +
-                                                "Chưa tốn tiền tạo clip. Nếu Gemini từ chối ảnh người nổi tiếng, hãy dùng ảnh nhân vật do AI tạo.", ex);
-        }
-        var jpeg = await _media.PrepareStartFrameAsync(image.Bytes, v.AspectRatio, ct);
-        if (shot.KeyframeBlobId != null) await DeleteBlobAsync(shot.KeyframeBlobId.Value, ct);
-        var blob = new StudioBlob { MimeType = "image/jpeg", Data = jpeg, SizeBytes = jpeg.Length };
-        _db.StudioBlobs.Add(blob);
-        shot.KeyframeBlobId = blob.Id;
-        shot.CostUsd += image.CostUsd;
-        v.ActualCostUsd += image.CostUsd;
-        _db.StudioCostRecords.Add(new StudioCostRecord
-        {
-            StudioVideoId = v.Id, StudioShotId = shot.Id, Kind = "Image", Model = KeyframeModel, CostUsd = image.CostUsd,
-            Note = $"khung mở đầu shot {shot.Index}" + (image.FreeKey ? ", khoá miễn phí" : "")
-        });
-        await _db.SaveChangesAsync(ct);
-    }
-
-    /// <summary>The image-model brief for a shot's opening frame (reference pictures go first, in the same order).</summary>
-    public static string BuildKeyframePrompt(StudioVideo v, StudioShot shot, IReadOnlyList<StudioAsset> used)
-    {
-        var people = used.Where(a => a.Kind == "Character").ToList();
-        var places = used.Where(a => a.Kind == "Location").ToList();
-        var props = used.Where(a => a.Kind == "Prop").ToList();
         var sb = new StringBuilder();
-        sb.Append($"Create the opening frame of a live-action film shot: a single photorealistic cinematic still, {(v.AspectRatio == "16:9" ? "horizontal 16:9" : "vertical 9:16")}. ");
-        for (var i = 0; i < used.Count; i++)
-            sb.Append($"Reference image {i + 1} is {(used[i].Kind == "Character" ? "the character" : used[i].Kind == "Location" ? "the location" : "the prop")} \"{used[i].Name}\". ");
-        if (people.Count > 0)
-            sb.Append($"Exactly {people.Count} main {(people.Count == 1 ? "person" : "people")} in frame: ")
-              .Append(string.Join("; ", people.Select(p => $"{p.Name} ({p.Description}) — same face, hair, make-up and costume as their reference image")))
-              .Append(". Each of them appears exactly once — never duplicate anyone; any background extras must look clearly different from them. ");
-        if (places.Count > 0) sb.Append("Setting: ").Append(string.Join("; ", places.Select(l => $"{l.Name} — {l.Description}"))).Append(", as in its reference image. ");
-        if (props.Count > 0) sb.Append("Props: ").Append(string.Join("; ", props.Select(p => $"{p.Name} — {p.Description}"))).Append(". ");
-        sb.Append("Moment: ").Append(shot.Action.TrimEnd('.')).Append(". ");
-        sb.Append("Framing: ").Append(string.IsNullOrWhiteSpace(shot.Camera) ? "medium-wide shot" : shot.Camera.TrimEnd('.'))
-          .Append(" — keep everyone's full head and upper body (or full body) inside the frame and show the surroundings clearly, not a tight face crop. ");
-        if (!string.IsNullOrWhiteSpace(v.StyleNotes)) sb.Append("Style: ").Append(v.StyleNotes!.TrimEnd('.')).Append(". ");
-        sb.Append("Natural cinematic lighting, sharp focus, realistic skin and fabric. The image contains no text, captions, subtitles, logos or watermarks.");
-        return sb.ToString();
-    }
-
-    // ═══════════════════════════════ Keyframes (preview) ═══════════════════════════════
-
-    /// <summary>Builds the opening frames (all missing ones, or one shot's again) so they can be checked before paying for clips.</summary>
-    public async Task<StudioVideoDto> StartKeyframesAsync(Guid id, Guid? shotId, CancellationToken ct)
-    {
-        var v = await _db.StudioVideos.Include(x => x.Shots).FirstOrDefaultAsync(x => x.Id == id, ct) ?? throw new KeyNotFoundException("Không tìm thấy video.");
-        EnsureNotBusy(v);
-        var todo = v.Shots.Where(s => NeedsKeyframe(s) && (shotId != null ? s.Id == shotId : s.KeyframeBlobId == null)).ToList();
-        if (todo.Count == 0)
-            throw new InvalidOperationException(shotId != null
-                ? "Shot này không cần khung mở đầu (đang nối tiếp shot trước hoặc chưa chọn nhân vật)."
-                : "Mọi shot cần khung mở đầu đều đã có — bấm \"Dựng lại\" ở từng shot nếu muốn đổi.");
-        await EnsureBudgetAsync(todo.Count * _gemini.EstimatedImageCostUsd, ct);
-        v.Progress = $"Đang dựng {todo.Count} khung mở đầu (~{todo.Count * _gemini.EstimatedImageCostUsd:0.00} USD)…";
-        v.Status = "Generating";
-        v.ErrorMessage = null;
-        await _db.SaveChangesAsync(ct);
-        _jobs.Enqueue<StudioService>(s => s.RunKeyframesAsync(id, shotId, CancellationToken.None));
-        return await GetVideoAsync(id, ct);
-    }
-
-    [Queue("critical")]
-    [AutomaticRetry(Attempts = 0)]
-    [DisableConcurrentExecution(1800)]
-    public async Task RunKeyframesAsync(Guid id, Guid? shotId, CancellationToken ct)
-    {
-        var v = await _db.StudioVideos.Include(x => x.Shots).FirstOrDefaultAsync(x => x.Id == id, ct);
-        if (v == null || v.Status != "Generating") return;
-        var assets = (await LoadAssetsAsync(v.Shots.SelectMany(s => Ids(s.AssetIdsJson)).Distinct().ToList(), ct)).ToDictionary(a => a.Id);
-        var todo = v.Shots.OrderBy(s => s.Index).Where(s => NeedsKeyframe(s) && (shotId != null ? s.Id == shotId : s.KeyframeBlobId == null)).ToList();
-        var errors = new List<string>();
-        var n = 0;
-        foreach (var s in todo)
-        {
-            v.Progress = $"Đang dựng khung mở đầu {++n}/{todo.Count} (shot {s.Index})…";
-            await _db.SaveChangesAsync(ct);
-            try
-            {
-                await BuildKeyframeAsync(v, s, assets, ct);
-                if (s.ErrorMessage?.Contains("khung mở đầu") == true) s.ErrorMessage = null;
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                s.ErrorMessage = ex.Message;
-                errors.Add($"shot {s.Index}");
-            }
-            await _db.SaveChangesAsync(ct);
-        }
-        v.Status = v.FinalBlobId != null ? "Ready" : "Planned";
-        v.Progress = null;
-        v.ErrorMessage = errors.Count == 0 ? null : $"Chưa dựng được khung mở đầu cho {string.Join(", ", errors)} — xem lỗi ở từng shot.";
-        await _db.SaveChangesAsync(ct);
-    }
-
-    public async Task<Guid?> ShotKeyframeBlobIdAsync(Guid shotId, CancellationToken ct) =>
-        await _db.StudioShots.Where(s => s.Id == shotId).Select(s => s.KeyframeBlobId).FirstOrDefaultAsync(ct);
-
-    /// <summary>The text sent to the video model for one shot (the start frame, if any, goes with it).</summary>
-    public static string BuildShotPrompt(StudioVideo v, StudioShot shot, IReadOnlyDictionary<Guid, StudioAsset> assets, bool continued = false)
-    {
-        var used = Ids(shot.AssetIdsJson).Where(assets.ContainsKey).Select(id => assets[id]).ToList();
-        var sb = new StringBuilder();
-        sb.Append($"Live-action cinematic video, photorealistic, real people, {(v.AspectRatio == "16:9" ? "horizontal 16:9" : "vertical 9:16")} framing. ");
-        if (continued) sb.Append("Continue seamlessly from the starting image: same people, same faces, same clothes, same place and light. ");
-        else if (used.Count > 0) sb.Append("Start from the provided image and keep everyone's face, hair and clothes identical to it. ");
-        var cast = used.Where(a => a.Kind == "Character").Select(a => a.Name).ToList();
+        sb.Append($"Live-action cinematic film shot, photorealistic, {(v.AspectRatio == "16:9" ? "horizontal 16:9" : "vertical 9:16")} framing. ");
+        var location = bible.Location(shot.Location);
+        if (location != null) sb.Append("Setting: ").Append(location.Look.TrimEnd('.')).Append(". ");
+        else if (!string.IsNullOrWhiteSpace(shot.Location)) sb.Append("Setting: ").Append(shot.Location.TrimEnd('.')).Append(". ");
+        var cast = Names(shot.CastJson).Select(n => bible.Character(n)).Where(c => c != null && !c.Name.Equals(StudioVoices.NarratorName)).ToList();
         if (cast.Count > 0)
-            sb.Append($"The main people are exactly: {string.Join(", ", cast)} — each stays the same person and appears only once; never duplicate anyone. ");
-        var locations = used.Where(a => a.Kind == "Location").ToList();
-        var people = used.Where(a => a.Kind == "Character").ToList();
-        var props = used.Where(a => a.Kind == "Prop").ToList();
-        if (locations.Count > 0) sb.Append("Setting: ").Append(string.Join("; ", locations.Select(l => $"{l.Name} — {l.Description}"))).Append(". ");
-        if (people.Count > 0) sb.Append("Characters: ").Append(string.Join("; ", people.Select(p => $"{p.Name}: {p.Description}"))).Append(". ");
-        if (props.Count > 0) sb.Append("Props: ").Append(string.Join("; ", props.Select(p => $"{p.Name} — {p.Description}"))).Append(". ");
+        {
+            sb.Append($"Characters in frame ({cast.Count}, each appears exactly once): ");
+            sb.Append(string.Join("; ", cast.Select(c => $"{c!.Name} — {c.Look.TrimEnd('.')}"))).Append(". ");
+        }
         sb.Append("Action: ").Append(shot.Action.TrimEnd('.')).Append(". ");
         if (!string.IsNullOrWhiteSpace(shot.Camera)) sb.Append("Camera: ").Append(shot.Camera.TrimEnd('.')).Append(". ");
-        if (!string.IsNullOrWhiteSpace(shot.Dialogue))
-        {
-            var who = string.IsNullOrWhiteSpace(shot.Speaker) ? "The character" : shot.Speaker;
-            sb.Append($"Dialogue: {who} speaks Vietnamese naturally, with lip movements exactly matching the words, and says exactly: \"{shot.Dialogue}\". ")
-              .Append($"Only {who} speaks in this shot. ");
-        }
+        if (shot.Dialogue != null && !IsNarrator(shot.Speaker))
+            sb.Append($"{shot.Speaker} is talking with expressive face and hand gestures while the others react; keep the framing medium or wide, no extreme close-up of the mouth. ");
         else
-        {
-            sb.Append("No dialogue. ");
-        }
-        sb.Append("Sound: ").Append(string.IsNullOrWhiteSpace(shot.Sound) ? "natural ambient sound of the scene" : shot.Sound!.TrimEnd('.')).Append(". No background music. ");
+            sb.Append("Nobody is talking to the camera. ");
         if (!string.IsNullOrWhiteSpace(v.StyleNotes)) sb.Append("Style: ").Append(v.StyleNotes!.TrimEnd('.')).Append(". ");
-        sb.Append("Motion: continuous, natural movement for the whole clip — people keep acting (gestures, head turns, expressions, " +
-                  "breathing, small steps), the background stays alive (wind in leaves, smoke, light flicker, passers-by where it fits); " +
-                  "smooth cinematic camera; no frozen frames, no still-image look, no slow motion, no sudden cuts inside the clip. ");
-        sb.Append("Natural, believable acting, consistent faces and clothes, realistic hands. No subtitles, no captions, no on-screen text, no watermark.");
+        sb.Append("Continuous natural motion for the whole clip (people keep acting, background alive, smooth camera); no frozen frames, no slow motion. ");
+        sb.Append("Consistent faces and costumes, realistic hands. No text, no subtitles, no captions, no logos, no watermark.");
         return sb.ToString();
     }
 
@@ -1015,7 +990,7 @@ Trả về JSON:
 
     /// <summary>
     /// Gets back clips whose files were lost (app disk wiped by a redeploy / restart) by downloading the already-paid
-    /// xAI jobs again — free, nothing new is generated. Allowed while a compose run is stuck, since that run is dead.
+    /// jobs again — free, nothing new is generated. Allowed while a compose run is stuck, since that run is dead.
     /// </summary>
     public async Task<StudioVideoDto> StartRecoverAsync(Guid id, CancellationToken ct)
     {
@@ -1023,9 +998,9 @@ Trả về JSON:
         if (v.Status is "Planning" or "Generating" or "Publishing")
             throw new InvalidOperationException($"Video đang trong bước \"{v.Status}\" — chờ xong rồi thao tác tiếp.");
         if (!v.Shots.Any(s => !string.IsNullOrEmpty(s.InteractionId)))
-            throw new InvalidOperationException("Video chưa có clip nào từng được tạo trên xAI để lấy lại.");
+            throw new InvalidOperationException("Video chưa có clip nào từng được tạo để lấy lại.");
         v.Status = "Generating";
-        v.Progress = "Đang lấy lại các clip đã trả tiền từ xAI (miễn phí)…";
+        v.Progress = "Đang lấy lại các clip đã trả tiền (miễn phí)…";
         v.ErrorMessage = null;
         await _db.SaveChangesAsync(ct);
         _jobs.Enqueue<StudioService>(s => s.RunRecoverAsync(id, CancellationToken.None));
@@ -1048,12 +1023,12 @@ Trả về JSON:
         var gone = new List<int>();
         foreach (var s in lost)
         {
-            v.Progress = $"Đang lấy lại clip {++done}/{lost.Count} (shot {s.Index}) từ xAI — miễn phí…";
+            v.Progress = $"Đang lấy lại clip {++done}/{lost.Count} (shot {s.Index}) — miễn phí…";
             await _db.SaveChangesAsync(ct);
             (byte[] Bytes, string Mime)? file = null;
             if (!string.IsNullOrEmpty(s.InteractionId))
             {
-                try { file = await _video.TryRecoverAsync(s.InteractionId, ct); }
+                try { file = await _video.TryRecoverAsync(v.VideoModel, s.InteractionId, ct); }
                 catch (Exception ex) when (ex is not OperationCanceledException) { _logger.LogWarning(ex, "Recover shot {Index}", s.Index); }
             }
             if (s.ClipBlobId != null) await DeleteBlobAsync(s.ClipBlobId.Value, ct);
@@ -1070,7 +1045,7 @@ Trả về JSON:
                 s.ClipBlobId = null;
                 s.Status = "Pending";
                 s.InteractionId = null; // nothing left to fetch: the next "Tạo" makes a new (paid) clip
-                s.ErrorMessage = "xAI không còn giữ clip này (link hết hạn) — cần tạo lại shot (tốn tiền).";
+                s.ErrorMessage = "Nhà cung cấp không còn giữ clip này (link hết hạn) — cần tạo lại shot (tốn tiền).";
                 gone.Add(s.Index);
             }
             await _db.SaveChangesAsync(ct);
@@ -1091,7 +1066,7 @@ Trả về JSON:
         v.Status = "Failed";
         v.Progress = null;
         var cost = gone.Sum(i => ShotCost(v, shots.First(s => s.Index == i)));
-        v.ErrorMessage = $"Lấy lại được {recovered}/{lost.Count} clip miễn phí. Shot {string.Join(", ", gone)} đã hết hạn trên xAI — " +
+        v.ErrorMessage = $"Lấy lại được {recovered}/{lost.Count} clip miễn phí. Shot {string.Join(", ", gone)} đã hết hạn — " +
                          $"bấm \"Tạo các clip còn thiếu\" để tạo lại (~{cost:0.00} USD).";
         await _db.SaveChangesAsync(ct);
     }
@@ -1124,12 +1099,13 @@ Trả về JSON:
     private async Task ComposeInternalAsync(StudioVideo v, CancellationToken ct)
     {
         v.Status = "Composing";
-        v.Progress = "Đang ghép video và nhạc nền…";
+        v.Progress = "Đang ghép video, giọng đọc và nhạc nền…";
         await _db.SaveChangesAsync(ct);
         var dir = StudioMedia.TempDir();
         try
         {
             var clips = new List<string>();
+            var voices = new List<string?>();
             foreach (var s in v.Shots.OrderBy(s => s.Index))
             {
                 var blob = s.ClipBlobId == null ? null : await GetBlobAsync(s.ClipBlobId.Value, ct);
@@ -1137,6 +1113,13 @@ Trả về JSON:
                 var path = Path.Combine(dir, $"clip_{s.Index:D3}.mp4");
                 await File.WriteAllBytesAsync(path, blob.Data, ct);
                 clips.Add(path);
+                string? voicePath = null;
+                if (s.VoiceBlobId != null && await GetBlobAsync(s.VoiceBlobId.Value, ct) is { } vb)
+                {
+                    voicePath = Path.Combine(dir, $"voice_{s.Index:D3}.m4a");
+                    await File.WriteAllBytesAsync(voicePath, vb.Data, ct);
+                }
+                voices.Add(voicePath);
             }
 
             string? musicPath = null;
@@ -1160,7 +1143,7 @@ Trả về JSON:
 
             var output = Path.Combine(dir, "final.mp4");
             // delivered at 1080p whatever the clip resolution (Facebook keeps a sharper copy of 1080p uploads)
-            var duration = await _media.ComposeAsync(clips, musicPath, v.MusicVolume, v.AspectRatio, DeliveryResolution, output, ct, watermark, brand);
+            var duration = await _media.ComposeAsync(clips, musicPath, v.MusicVolume, v.AspectRatio, DeliveryResolution, output, ct, watermark, brand, voices);
             var bytes = await File.ReadAllBytesAsync(output, ct);
             if (v.FinalBlobId != null) await DeleteBlobAsync(v.FinalBlobId.Value, ct);
             var final = await StoreOnDiskAsync(bytes, "video/mp4", ct);
@@ -1254,7 +1237,7 @@ Trả về JSON:
         }
     }
 
-    /// <summary>Frees the database space of the clips once the final video exists (it can still be downloaded).</summary>
+    /// <summary>Frees the disk space of the clips once the final video exists (it can still be downloaded).</summary>
     public async Task<StudioVideoDto> PurgeClipsAsync(Guid id, CancellationToken ct)
     {
         var v = await _db.StudioVideos.Include(x => x.Shots).FirstOrDefaultAsync(x => x.Id == id, ct) ?? throw new KeyNotFoundException("Không tìm thấy video.");
@@ -1294,8 +1277,15 @@ Trả về JSON:
     {
         MonthlyBudgetUsd = await MonthlyBudgetAsync(ct),
         VideoConfigured = _video.IsConfigured,
-        VideoModel = _video.Model
+        VideoModel = _video.DefaultModel,
+        Models = ModelDtos(),
+        Voices = StudioVoices.Dtos().ToList(),
+        VoicePricePerSecondUsd = _voices.PricePerSecond
     };
+
+    private List<StudioModelDto> ModelDtos() => _video.Models()
+        .Select(m => new StudioModelDto { Id = m.Id, Label = m.Label, Note = m.Note, PricePerSecondUsd = m.PricePerSecond.ToDictionary(p => p.Key, p => p.Value) })
+        .ToList();
 
     private static DateTime MonthStartUtc() { var n = DateTime.UtcNow; return new DateTime(n.Year, n.Month, 1, 0, 0, 0, DateTimeKind.Utc); }
 
@@ -1331,7 +1321,7 @@ Trả về JSON:
             MonthRemainingUsd = budget <= 0 ? 0 : Math.Max(0, Math.Round(budget - month, 4)),
             AllTimeSpentUsd = Math.Round(await _db.StudioCostRecords.SumAsync(c => (decimal?)c.CostUsd, ct) ?? 0m, 4),
             MonthVideoSeconds = (int)Math.Round(await _db.StudioCostRecords.Where(c => c.CreatedAtUtc >= start && c.Kind == "Video").SumAsync(c => c.Seconds ?? 0, ct)),
-            PricePerSecondUsd = GrokVideoClient.Resolutions.ToDictionary(r => r, r => _video.PricePerSecond(r)),
+            Models = ModelDtos(),
             Videos = titles.OrderByDescending(t => t.CreatedAtUtc).Take(100)
                 .Select(t => new StudioCostVideoDto { Id = t.Id, Title = t.Title, CostUsd = Math.Round(t.ActualCostUsd, 4), CreatedAtUtc = t.CreatedAtUtc }).ToList(),
             Recent = recent.Select(c => new StudioCostRecordDto
@@ -1343,9 +1333,6 @@ Trả về JSON:
     }
 
     // ═══════════════════════════════ Helpers ═══════════════════════════════
-
-    private async Task<List<StudioAsset>> LoadAssetsAsync(IReadOnlyCollection<Guid> ids, CancellationToken ct) =>
-        ids.Count == 0 ? new List<StudioAsset>() : await _db.StudioAssets.AsNoTracking().Where(a => ids.Contains(a.Id)).ToListAsync(ct);
 
     /// <summary>Page name (fallback Branding:Name, then "Trạm Tin 24/7") and the Page's brand-kit logo, if any.</summary>
     private async Task<(string Name, byte[]? Logo)> BrandAsync(Guid? pageId, CancellationToken ct)
@@ -1402,19 +1389,12 @@ Trả về JSON:
         _files.Delete(id);
     }
 
-    public static List<Guid> Ids(string? json)
+    public static List<string> Names(string? json)
     {
-        if (string.IsNullOrWhiteSpace(json)) return new List<Guid>();
-        try { return JsonSerializer.Deserialize<List<Guid>>(json, Json) ?? new List<Guid>(); }
-        catch (JsonException) { return new List<Guid>(); }
+        if (string.IsNullOrWhiteSpace(json)) return new List<string>();
+        try { return JsonSerializer.Deserialize<List<string>>(json, Json) ?? new List<string>(); }
+        catch (JsonException) { return new List<string>(); }
     }
-
-    private static string NormalizeKind(string? kind) => kind switch
-    {
-        "Location" or "location" => "Location",
-        "Prop" or "prop" => "Prop",
-        _ => "Character"
-    };
 
     private static string Required(string? value, string label) =>
         string.IsNullOrWhiteSpace(value) ? throw new ArgumentException($"{label} không được để trống.") : value.Trim();
@@ -1428,11 +1408,6 @@ Trả về JSON:
         "audio/wav" or "audio/x-wav" or "audio/wave" => ".wav",
         "audio/ogg" => ".ogg",
         _ => ".bin"
-    };
-
-    private static StudioAssetDto ToDto(StudioAsset a) => new()
-    {
-        Id = a.Id, Name = a.Name, Kind = a.Kind, Description = a.Description, SizeBytes = a.SizeBytes, CreatedAtUtc = a.CreatedAtUtc
     };
 
     private static StudioMusicDto ToDto(StudioMusicTrack m) => new()

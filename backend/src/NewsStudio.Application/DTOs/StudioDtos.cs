@@ -1,15 +1,5 @@
 namespace NewsStudio.Application.DTOs;
 
-public class StudioAssetDto
-{
-    public Guid Id { get; set; }
-    public string Name { get; set; } = string.Empty;
-    public string Kind { get; set; } = "Character";
-    public string Description { get; set; } = string.Empty;
-    public long SizeBytes { get; set; }
-    public DateTime CreatedAtUtc { get; set; }
-}
-
 public class StudioMusicDto
 {
     public Guid Id { get; set; }
@@ -28,18 +18,34 @@ public class StudioShotDto
     public int DurationSeconds { get; set; }
     public string Action { get; set; } = string.Empty;
     public string Camera { get; set; } = string.Empty;
+    public string? Location { get; set; }
+    public List<string> Cast { get; set; } = new();
     public string? Speaker { get; set; }
     public string? Dialogue { get; set; }
     public string? Sound { get; set; }
-    public List<Guid> AssetIds { get; set; } = new();
-    public bool ContinueFromPrevious { get; set; }
-    public bool HasKeyframe { get; set; }
+    public bool HasVoice { get; set; }
+    public double? VoiceSeconds { get; set; }
     public string Status { get; set; } = "Pending";
     public bool HasClip { get; set; }
     public decimal CostUsd { get; set; }
     public decimal EstimatedCostUsd { get; set; }
     public int Attempts { get; set; }
     public string? ErrorMessage { get; set; }
+}
+
+/// <summary>A character of the video's bible: fixed English look for every shot prompt, and the TTS voice.</summary>
+public class StudioCharacterDto
+{
+    public string Name { get; set; } = string.Empty;
+    public string Gender { get; set; } = "male";
+    public string Look { get; set; } = string.Empty;
+    public string Voice { get; set; } = string.Empty;
+}
+
+public class StudioLocationDto
+{
+    public string Name { get; set; } = string.Empty;
+    public string Look { get; set; } = string.Empty;
 }
 
 public class StudioVideoSummaryDto
@@ -62,10 +68,12 @@ public class StudioVideoSummaryDto
 public class StudioVideoDto : StudioVideoSummaryDto
 {
     public string Script { get; set; } = string.Empty;
+    public string VideoModel { get; set; } = string.Empty;
     public string AspectRatio { get; set; } = "9:16";
     public string Resolution { get; set; } = "720p";
     public string? StyleNotes { get; set; }
-    public List<Guid> AssetIds { get; set; } = new();
+    public List<StudioCharacterDto> Characters { get; set; } = new();
+    public List<StudioLocationDto> Locations { get; set; } = new();
     public string MusicMode { get; set; } = "Auto";
     public Guid? MusicTrackId { get; set; }
     public string? MusicName { get; set; }
@@ -85,10 +93,12 @@ public class StudioVideoInputDto
     public Guid? FacebookAccountId { get; set; }
     public string? Script { get; set; }
     public int? TargetDurationSeconds { get; set; }
+    public string? VideoModel { get; set; }
     public string? AspectRatio { get; set; }
     public string? Resolution { get; set; }
     public string? StyleNotes { get; set; }
-    public List<Guid>? AssetIds { get; set; }
+    public List<StudioCharacterDto>? Characters { get; set; }
+    public List<StudioLocationDto>? Locations { get; set; }
     public string? MusicMode { get; set; }
     public Guid? MusicTrackId { get; set; }
     public double? MusicVolume { get; set; }
@@ -98,14 +108,14 @@ public class StudioVideoInputDto
 public class StudioShotInputDto
 {
     public Guid? Id { get; set; }
-    public int DurationSeconds { get; set; } = 8;
+    public int DurationSeconds { get; set; } = 6;
     public string Action { get; set; } = string.Empty;
     public string Camera { get; set; } = string.Empty;
+    public string? Location { get; set; }
+    public List<string> Cast { get; set; } = new();
     public string? Speaker { get; set; }
     public string? Dialogue { get; set; }
     public string? Sound { get; set; }
-    public List<Guid> AssetIds { get; set; } = new();
-    public bool ContinueFromPrevious { get; set; }
 }
 
 public class StudioCostSummaryDto
@@ -115,7 +125,7 @@ public class StudioCostSummaryDto
     public decimal MonthRemainingUsd { get; set; }
     public decimal AllTimeSpentUsd { get; set; }
     public int MonthVideoSeconds { get; set; }
-    public Dictionary<string, decimal> PricePerSecondUsd { get; set; } = new();
+    public List<StudioModelDto> Models { get; set; } = new();
     public List<StudioCostVideoDto> Videos { get; set; } = new();
     public List<StudioCostRecordDto> Recent { get; set; } = new();
 }
@@ -139,9 +149,28 @@ public class StudioCostRecordDto
     public string? VideoTitle { get; set; }
 }
 
+public class StudioModelDto
+{
+    public string Id { get; set; } = string.Empty;
+    public string Label { get; set; } = string.Empty;
+    public string Note { get; set; } = string.Empty;
+    public Dictionary<string, decimal> PricePerSecondUsd { get; set; } = new();
+}
+
+public class StudioVoiceDto
+{
+    public string Id { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public string Gender { get; set; } = "male";
+    public string Description { get; set; } = string.Empty;
+}
+
 public class StudioSettingsDto
 {
     public decimal MonthlyBudgetUsd { get; set; }
     public bool VideoConfigured { get; set; }
     public string VideoModel { get; set; } = string.Empty;
+    public List<StudioModelDto> Models { get; set; } = new();
+    public List<StudioVoiceDto> Voices { get; set; } = new();
+    public decimal VoicePricePerSecondUsd { get; set; }
 }

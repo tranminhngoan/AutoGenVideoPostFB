@@ -1,4 +1,4 @@
-/* AI video studio API client (Grok Imagine). Writes need the X-Studio-Key header (the server's xAI or Gemini key), asked once and kept
+/* AI video studio API client (Seedance text-to-video + TTS). Writes need the X-Studio-Key header (the server's Vercel AI Gateway or Gemini key), asked once and kept
    only in this browser's localStorage. Media URLs (images, music, clips, final video) need no key. */
 
 const BASE = '/api/studio';
@@ -56,17 +56,6 @@ async function call<T>(method: string, path: string, body?: unknown, isForm = fa
 
 // ───────── types ─────────
 
-export type AssetKind = 'Character' | 'Location' | 'Prop';
-
-export interface StudioAsset {
-  id: string;
-  name: string;
-  kind: AssetKind;
-  description: string;
-  sizeBytes: number;
-  createdAtUtc: string;
-}
-
 export interface StudioMusic {
   id: string;
   name: string;
@@ -85,12 +74,13 @@ export interface StudioShot {
   durationSeconds: number;
   action: string;
   camera: string;
+  location?: string | null;
+  cast: string[];
   speaker?: string | null;
   dialogue?: string | null;
   sound?: string | null;
-  assetIds: string[];
-  continueFromPrevious: boolean;
-  hasKeyframe: boolean;
+  hasVoice: boolean;
+  voiceSeconds?: number | null;
   status: 'Pending' | 'Generating' | 'Done' | 'Failed';
   hasClip: boolean;
   costUsd: number;
@@ -115,12 +105,26 @@ export interface StudioVideoSummary {
   publishedAtUtc?: string | null;
 }
 
+export interface StudioCharacter {
+  name: string;
+  gender: 'male' | 'female' | string;
+  look: string;
+  voice: string;
+}
+
+export interface StudioLocation {
+  name: string;
+  look: string;
+}
+
 export interface StudioVideo extends StudioVideoSummary {
   script: string;
+  videoModel: string;
   aspectRatio: '9:16' | '16:9';
   resolution: '480p' | '720p' | '1080p';
   styleNotes?: string | null;
-  assetIds: string[];
+  characters: StudioCharacter[];
+  locations: StudioLocation[];
   musicMode: 'Auto' | 'Manual' | 'None';
   musicTrackId?: string | null;
   musicName?: string | null;
@@ -138,10 +142,12 @@ export interface StudioVideoInput {
   facebookAccountId?: string | null;
   script?: string;
   targetDurationSeconds?: number;
+  videoModel?: string;
   aspectRatio?: string;
   resolution?: string;
   styleNotes?: string;
-  assetIds?: string[];
+  characters?: StudioCharacter[];
+  locations?: StudioLocation[];
   musicMode?: string;
   musicTrackId?: string | null;
   musicVolume?: number;
@@ -153,11 +159,11 @@ export interface StudioShotInput {
   durationSeconds: number;
   action: string;
   camera: string;
+  location?: string | null;
+  cast: string[];
   speaker?: string | null;
   dialogue?: string | null;
   sound?: string | null;
-  assetIds: string[];
-  continueFromPrevious?: boolean;
 }
 
 export interface StudioCosts {
@@ -166,15 +172,32 @@ export interface StudioCosts {
   monthRemainingUsd: number;
   allTimeSpentUsd: number;
   monthVideoSeconds: number;
-  pricePerSecondUsd: Record<string, number>;
+  models: StudioModel[];
   videos: { id: string; title: string; costUsd: number; createdAtUtc: string }[];
   recent: { createdAtUtc: string; kind: string; model: string; seconds?: number | null; costUsd: number; note?: string | null; videoTitle?: string | null }[];
+}
+
+export interface StudioModel {
+  id: string;
+  label: string;
+  note: string;
+  pricePerSecondUsd: Record<string, number>;
+}
+
+export interface StudioVoiceOption {
+  id: string;
+  name: string;
+  gender: 'male' | 'female' | string;
+  description: string;
 }
 
 export interface StudioSettings {
   monthlyBudgetUsd: number;
   videoConfigured: boolean;
   videoModel: string;
+  models: StudioModel[];
+  voices: StudioVoiceOption[];
+  voicePricePerSecondUsd: number;
 }
 
 export interface StudioPage {
@@ -192,19 +215,6 @@ export const studio = {
   settings: () => call<StudioSettings>('GET', '/settings'),
   setBudget: (monthlyBudgetUsd: number) => call<StudioSettings>('PUT', '/settings/budget', { monthlyBudgetUsd }),
   pages: () => call<StudioPage[]>('GET', '/pages'),
-
-  assets: () => call<StudioAsset[]>('GET', '/assets'),
-  addAsset: (file: File, name: string, kind: AssetKind, description: string) => {
-    const f = new FormData();
-    f.append('file', file);
-    f.append('name', name);
-    f.append('kind', kind);
-    f.append('description', description);
-    return call<StudioAsset>('POST', '/assets', f, true);
-  },
-  updateAsset: (id: string, patch: { name?: string; kind?: AssetKind; description?: string }) => call<StudioAsset>('PUT', `/assets/${id}`, patch),
-  deleteAsset: (id: string) => call<void>('DELETE', `/assets/${id}`),
-  assetImageUrl: (id: string) => `${BASE}/assets/${id}/image`,
 
   music: () => call<StudioMusic[]>('GET', '/music'),
   addMusic: (file: File, name: string, mood: string) => {
@@ -232,15 +242,16 @@ export const studio = {
   saveShots: (id: string, shots: StudioShotInput[]) => call<StudioVideo>('PUT', `/videos/${id}/shots`, shots),
   generate: (id: string) => call<StudioVideo>('POST', `/videos/${id}/generate`),
   generateShot: (id: string, shotId: string) => call<StudioVideo>('POST', `/videos/${id}/shots/${shotId}/generate`),
-  keyframes: (id: string) => call<StudioVideo>('POST', `/videos/${id}/keyframes`),
-  shotKeyframe: (id: string, shotId: string) => call<StudioVideo>('POST', `/videos/${id}/shots/${shotId}/keyframe`),
+  voices: (id: string) => call<StudioVideo>('POST', `/videos/${id}/voices`),
+  shotVoice: (id: string, shotId: string) => call<StudioVideo>('POST', `/videos/${id}/shots/${shotId}/voice`),
   compose: (id: string) => call<StudioVideo>('POST', `/videos/${id}/compose`),
   recoverClips: (id: string) => call<StudioVideo>('POST', `/videos/${id}/recover-clips`),
   publish: (id: string, caption: string) => call<StudioVideo>('POST', `/videos/${id}/publish`, { caption }),
   purgeClips: (id: string) => call<StudioVideo>('POST', `/videos/${id}/purge-clips`),
   finalUrl: (id: string, download = false) => `${BASE}/videos/${id}/final${download ? '?download=true' : ''}`,
   clipUrl: (shotId: string) => `${BASE}/shots/${shotId}/clip`,
-  keyframeUrl: (shotId: string) => `${BASE}/shots/${shotId}/keyframe`,
+  voiceUrl: (shotId: string) => `${BASE}/shots/${shotId}/voice`,
+  voicePreviewUrl: (voice: string) => `/api/system/voice-preview?voice=${encodeURIComponent(voice)}`,
 
   costs: () => call<StudioCosts>('GET', '/costs'),
 };

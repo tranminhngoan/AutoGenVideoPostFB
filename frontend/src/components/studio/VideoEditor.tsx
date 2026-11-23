@@ -1,14 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
-  ArrowDown, ArrowUp, Clapperboard, Download, Film, Plus, RefreshCw, Save, Send, Sparkles, Trash2, Wand2,
+  ArrowDown, ArrowUp, Clapperboard, Download, Film, Mic, Plus, RefreshCw, Save, Send, Sparkles, Square, Trash2, Users, Volume2, Wand2,
 } from 'lucide-react';
-import { Badge, Button, Card, Checkbox, Field, Input, Select, Skeleton, Textarea, cn } from '../ui';
+import { Badge, Button, Card, Field, Input, Select, Skeleton, Textarea, cn } from '../ui';
 import { useConfirm, useToast } from '../feedback';
 import {
-  BUSY, STATUS_LABEL, StudioAsset, StudioMusic, StudioPage, StudioShot, StudioShotInput, StudioVideo, StudioVideoInput, studio, usd,
+  BUSY, STATUS_LABEL, StudioCharacter, StudioLocation, StudioMusic, StudioPage, StudioSettings, StudioShot, StudioShotInput, StudioVideo,
+  StudioVideoInput, studio, usd,
 } from '../../services/studio';
 import { navigate } from '../../lib/router';
-import { AssetPicker, VideoCastPicker } from './AssetLibrary';
 import { CHINESE_DRAMAS } from '../../data/chineseDramaLibrary';
 import { convertScenesToStudioShots, formatProductionScript } from '../../lib/dramaScriptEngine';
 
@@ -72,19 +72,16 @@ export const secondsToSay = (line?: string | null) =>
   line?.trim() ? Math.ceil(line.trim().split(/\s+/).length / 3 + 1) : 0;
 
 export const fmtDuration = (s: number) => (s >= 60 ? `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}` : `${Math.round(s)}s`);
-const RESOLUTIONS: { id: string; label: string }[] = [
-  { id: '720p', label: '720p (khuyên dùng)' },
-  { id: '480p', label: '480p (xem thử, rẻ nhất)' },
-  { id: '1080p', label: '1080p (model tự upscale từ 720p, đắt gấp ~5)' },
-];
-/** xAI bills each input image; a clip starting from a picture (asset or previous clip's last frame) pays it once. */
-const IMAGE_FEE = 0.01;
-const clampSecs = (n: number) => Math.min(15, Math.max(1, n || 0));
-const usesFrame = (s: { assetIds: string[]; continueFromPrevious?: boolean }) => !!s.continueFromPrevious || s.assetIds.length > 0;
-/** Gemini opening frame with every character of the shot in place (measured ≈ $0.046 for a 9:16 frame). */
-const KEYFRAME_COST = 0.046;
-const needsKeyframe = (s: { assetIds: string[]; continueFromPrevious?: boolean }, index: number) =>
-  s.assetIds.length > 0 && !(s.continueFromPrevious && index > 0);
+
+const RESOLUTION_LABEL: Record<string, string> = {
+  '480p': '480p (xem thử, rẻ nhất)',
+  '720p': '720p (khuyên dùng)',
+  '1080p': '1080p (nét nhất, đắt nhất)',
+};
+/** Seedance 1.0 makes clips of 2–12 s. */
+const clampSecs = (n: number) => Math.min(12, Math.max(2, n || 0));
+const NARRATOR = 'Lời dẫn';
+const isNarrator = (name?: string | null) => !name?.trim() || ['lời dẫn', 'người dẫn chuyện', 'dẫn chuyện', 'narrator'].includes(name.trim().toLowerCase());
 
 function statusTone(s: string): 'success' | 'warning' | 'danger' | 'info' | 'neutral' {
   if (s === 'Published' || s === 'Ready' || s === 'Done') return 'success';
@@ -95,28 +92,59 @@ function statusTone(s: string): 'success' | 'warning' | 'danger' | 'info' | 'neu
 }
 
 const toInput = (s: StudioShot): StudioShotInput => ({
-  id: s.id, durationSeconds: s.durationSeconds, action: s.action, camera: s.camera, speaker: s.speaker ?? '', dialogue: s.dialogue ?? '',
-  sound: s.sound ?? '', assetIds: s.assetIds, continueFromPrevious: s.continueFromPrevious,
+  id: s.id, durationSeconds: s.durationSeconds, action: s.action, camera: s.camera, location: s.location ?? '', cast: s.cast ?? [],
+  speaker: s.speaker ?? '', dialogue: s.dialogue ?? '', sound: s.sound ?? '',
 });
 
-/** Create or work on one video: details → shot plan → clips → final video → Facebook. */
+/** Plays one short clip of audio (voice sample / a shot's line) without leaving the page. */
+function useAudio() {
+  const [playing, setPlaying] = useState<string | null>(null);
+  const [el] = useState(() => (typeof Audio !== 'undefined' ? new Audio() : null));
+  useEffect(() => {
+    if (!el) return;
+    const stop = () => setPlaying(null);
+    el.addEventListener('ended', stop);
+    el.addEventListener('error', stop);
+    return () => {
+      el.pause();
+      el.removeEventListener('ended', stop);
+      el.removeEventListener('error', stop);
+    };
+  }, [el]);
+  const toggle = (key: string, url: string) => {
+    if (!el) return;
+    if (playing === key) {
+      el.pause();
+      setPlaying(null);
+      return;
+    }
+    el.src = url;
+    el.play().then(() => setPlaying(key)).catch(() => setPlaying(null));
+  };
+  return { playing, toggle };
+}
+
+/** Create or work on one video: details → characters & voices → shot plan → clips → final video → Facebook. */
 export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuthError: (e: unknown) => boolean }) {
   const toast = useToast();
   const confirm = useConfirm();
+  const audio = useAudio();
   const isNew = !videoId;
 
   const [video, setVideo] = useState<StudioVideo | null>(null);
   const [form, setForm] = useState<StudioVideoInput>({
-    title: '', script: '', targetDurationSeconds: 30, aspectRatio: '9:16', resolution: '720p', styleNotes: '', assetIds: [],
+    title: '', script: '', targetDurationSeconds: 30, videoModel: '', aspectRatio: '9:16', resolution: '720p', styleNotes: '',
     musicMode: 'Auto', musicTrackId: null, musicVolume: 0.15, facebookAccountId: null,
   });
+  const [characters, setCharacters] = useState<StudioCharacter[]>([]);
+  const [locations, setLocations] = useState<StudioLocation[]>([]);
+  const [bibleDirty, setBibleDirty] = useState(false);
   const [shots, setShots] = useState<StudioShotInput[]>([]);
   const [shotsDirty, setShotsDirty] = useState(false);
   const [caption, setCaption] = useState('');
   const [pages, setPages] = useState<StudioPage[]>([]);
-  const [assets, setAssets] = useState<StudioAsset[]>([]);
   const [music, setMusic] = useState<StudioMusic[]>([]);
-  const [price, setPrice] = useState<Record<string, number>>({});
+  const [settings, setSettings] = useState<StudioSettings | null>(null);
   const [remaining, setRemaining] = useState<number | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [showDramaPicker, setShowDramaPicker] = useState(false);
@@ -125,27 +153,25 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
   const applyDramaEpisode = (dramaTitle: string, ep: any) => {
     const fullScript = formatProductionScript(ep);
     const convertedShots = convertScenesToStudioShots(ep.scenes);
-    setForm((prev) => ({
-      ...prev,
-      title: `${dramaTitle} - ${ep.title}`,
-      script: fullScript,
-      targetDurationSeconds: 120,
-    }));
+    setForm((prev) => ({ ...prev, title: `${dramaTitle} - ${ep.title}`, script: fullScript, targetDurationSeconds: 120 }));
     setShots(convertedShots);
     setShotsDirty(true);
     setShowDramaPicker(false);
-    toast.success(`Đã nạp ${ep.title} kèm 5 phân cảnh shot vào editor!`);
+    toast.success(`Đã nạp ${ep.title} kèm ${convertedShots.length} phân cảnh shot vào editor!`);
   };
 
   // ── loading ──
   const applyVideo = (v: StudioVideo, resetShots = true) => {
     setVideo(v);
     setForm({
-      title: v.title, script: v.script, targetDurationSeconds: v.targetDurationSeconds, aspectRatio: v.aspectRatio, resolution: v.resolution,
-      styleNotes: v.styleNotes ?? '', assetIds: v.assetIds, musicMode: v.musicMode, musicTrackId: v.musicTrackId ?? null,
+      title: v.title, script: v.script, targetDurationSeconds: v.targetDurationSeconds, videoModel: v.videoModel, aspectRatio: v.aspectRatio,
+      resolution: v.resolution, styleNotes: v.styleNotes ?? '', musicMode: v.musicMode, musicTrackId: v.musicTrackId ?? null,
       musicVolume: v.musicVolume, facebookAccountId: v.facebookAccountId ?? null,
     });
     setCaption(v.caption ?? '');
+    setCharacters(v.characters ?? []);
+    setLocations(v.locations ?? []);
+    setBibleDirty(false);
     if (resetShots) {
       setShots(v.shots.map(toInput));
       setShotsDirty(false);
@@ -156,7 +182,7 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
     if (!videoId) return;
     try {
       const v = await studio.video(videoId);
-      if (resetShots) applyVideo(v, true);
+      if (resetShots && !bibleDirty) applyVideo(v, true);
       else setVideo(v);
     } catch (e) {
       toast.error((e as Error).message);
@@ -166,11 +192,11 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
   useEffect(() => {
     (async () => {
       try {
-        const [p, a, m, c] = await Promise.all([studio.pages(), studio.assets(), studio.music(), studio.costs()]);
+        const [p, m, st, c] = await Promise.all([studio.pages(), studio.music(), studio.settings(), studio.costs()]);
         setPages(p.filter((x) => x.isActive));
-        setAssets(a);
         setMusic(m);
-        setPrice(c.pricePerSecondUsd);
+        setSettings(st);
+        setForm((f) => ({ ...f, videoModel: f.videoModel || st.videoModel }));
         setRemaining(c.monthlyBudgetUsd > 0 ? c.monthRemainingUsd : null);
       } catch (e) {
         toast.error((e as Error).message);
@@ -187,17 +213,12 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
       const prefillTitle = sessionStorage.getItem('studio_prefill_title');
       const prefillShots = sessionStorage.getItem('studio_prefill_shots');
       if (prefill) {
-        setForm((prev) => ({
-          ...prev,
-          script: prefill,
-          title: prefillTitle || prev.title,
-          targetDurationSeconds: 120,
-        }));
+        setForm((prev) => ({ ...prev, script: prefill, title: prefillTitle || prev.title, targetDurationSeconds: 120 }));
         if (prefillShots) {
           try {
             const parsed = JSON.parse(prefillShots);
             if (Array.isArray(parsed) && parsed.length > 0) {
-              setShots(parsed);
+              setShots(parsed.map((x: any) => ({ ...x, id: undefined, cast: Array.isArray(x.cast) ? x.cast : [] })));
               setShotsDirty(true);
             }
           } catch (e) {
@@ -227,7 +248,7 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
     if (video && lastStatus && BUSY.includes(lastStatus as any) && !BUSY.includes(video.status)) {
       applyVideo(video, true);
       if (lastStatus === 'Planning' && video.status === 'Planned' && !video.errorMessage)
-        toast.success(`Đã có kế hoạch ${video.shots.length} shot — kiểm tra và sửa nếu cần, rồi bấm Tạo video.`);
+        toast.success(`Đã có kế hoạch ${video.shots.length} shot và hồ sơ ${video.characters.length} nhân vật — kiểm tra, nghe thử giọng, rồi bấm Tạo video.`);
       if (lastStatus === 'Planning' && video.errorMessage) toast.error(video.errorMessage);
       if (video.status === 'Ready') toast.success('Video đã ghép xong — xem thử bên dưới.');
       if (video.status === 'Published') toast.success('Đã đăng lên Facebook!');
@@ -237,19 +258,28 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [video?.status]);
 
-  const perSecond = price[form.resolution ?? '720p'] ?? 0.03;
-  const shotCost = (x: { id?: string; durationSeconds: number; assetIds: string[]; continueFromPrevious?: boolean }, rate = perSecond) => {
-    const index = shots.findIndex((s) => s.id === x.id);
-    const hasKf = !!video?.shots.find((s) => s.id === x.id)?.hasKeyframe;
-    return clampSecs(x.durationSeconds) * rate + (usesFrame(x) ? IMAGE_FEE : 0) + (needsKeyframe(x, index < 0 ? 1 : index) && !hasKf ? KEYFRAME_COST : 0);
+  const models = settings?.models ?? [];
+  const voices = settings?.voices ?? [];
+  const voicePrice = settings?.voicePricePerSecondUsd ?? 0.0003;
+  const model = models.find((m) => m.id === form.videoModel) ?? models[0];
+  const rateOf = (modelId?: string, res?: string) => {
+    const m = models.find((x) => x.id === modelId) ?? model;
+    return m?.pricePerSecondUsd[res ?? '720p'] ?? 0.02;
+  };
+  const perSecond = rateOf(form.videoModel, form.resolution);
+  const shotCost = (x: { id?: string; durationSeconds: number; dialogue?: string | null }, rate = perSecond) => {
+    const hasVoice = !!video?.shots.find((s) => s.id === x.id)?.hasVoice;
+    return clampSecs(x.durationSeconds) * rate + (x.dialogue?.trim() && !hasVoice ? secondsToSay(x.dialogue) * voicePrice : 0);
   };
   const shotSeconds = shots.reduce((s, x) => s + clampSecs(x.durationSeconds), 0);
   const estimate = shots.reduce((s, x) => s + shotCost(x), 0);
   const pendingShots = (video?.shots ?? []).filter((s) => !s.hasClip || s.status !== 'Done');
   const pendingSeconds = pendingShots.reduce((s, x) => s + clampSecs(x.durationSeconds), 0);
   const pendingCost = pendingShots.reduce((s, x) => s + shotCost(x), 0);
-  const assetById = useMemo(() => new Map(assets.map((a) => [a.id, a])), [assets]);
+  const missingVoices = (video?.shots ?? []).filter((s) => s.dialogue?.trim() && !s.hasVoice).length;
   const scriptEstimate = useMemo(() => estimateScriptSeconds(form.script ?? ''), [form.script]);
+  const onScreen = characters.filter((c) => !isNarrator(c.name));
+  const voiceName = (id: string) => voices.find((v) => v.id === id)?.name ?? id.replace('gemini:', '');
 
   // ── actions ──
   const guarded = async (label: string, fn: () => Promise<void>) => {
@@ -263,14 +293,23 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
     }
   };
 
+  const detailsPayload = (): StudioVideoInput => ({
+    ...form, caption, targetDurationSeconds: Math.max(1, scriptEstimate.seconds),
+    ...(bibleDirty ? { characters, locations } : {}),
+  });
+
   const saveDetails = () =>
     guarded('save', async () => {
       if (isNew) {
         const v = await studio.createVideo({ ...form, targetDurationSeconds: Math.max(1, scriptEstimate.seconds) });
-        toast.success('Đã lưu video — bước tiếp theo: bấm "Lập kế hoạch bằng AI" ở mục 2 (chưa tốn tiền tạo clip).');
+        // shots loaded from the script library are kept with the new video
+        if (shots.length > 0) await studio.saveShots(v.id, shots);
+        toast.success(shots.length > 0
+          ? 'Đã lưu video kèm phân cảnh — bấm "Lập kế hoạch bằng AI" để AI dựng hồ sơ nhân vật & giọng (hoặc giữ phân cảnh có sẵn).'
+          : 'Đã lưu video — bước tiếp theo: bấm "Lập kế hoạch bằng AI" ở mục 2 (chưa tốn tiền tạo clip).');
         navigate(`/studio/videos/${v.id}`);
       } else {
-        applyVideo(await studio.updateVideo(videoId!, { ...form, caption, targetDurationSeconds: Math.max(1, scriptEstimate.seconds) }), !shotsDirty);
+        applyVideo(await studio.updateVideo(videoId!, detailsPayload()), !shotsDirty);
         toast.success('Đã lưu');
       }
     });
@@ -278,13 +317,13 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
   const plan = () =>
     guarded('plan', async () => {
       if (!(await confirm({
-        title: 'Lập kế hoạch shot bằng AI?',
-        description: 'Gemini đọc kịch bản, ảnh tham chiếu và kho nhạc để chia thành các shot (chi phí vài phần trăm cent). Kế hoạch hiện tại (nếu có) sẽ được thay.',
+        title: 'Lập kế hoạch bằng AI?',
+        description: 'Gemini đọc kịch bản để dựng hồ sơ nhân vật (ngoại hình cố định + giọng đọc), bối cảnh, và chia thành các shot. Chi phí vài phần trăm cent. Kế hoạch hiện tại (nếu có) sẽ được thay.',
         confirmLabel: 'Lập kế hoạch',
       }))) return;
-      await studio.updateVideo(videoId!, { ...form, caption, targetDurationSeconds: Math.max(1, scriptEstimate.seconds) });
+      await studio.updateVideo(videoId!, detailsPayload());
       applyVideo(await studio.plan(videoId!), true);
-      toast.success('Gemini đang chia shot — kịch bản dài có thể mất 1–3 phút, trang tự cập nhật.');
+      toast.success('Gemini đang dựng hồ sơ nhân vật và chia shot — kịch bản dài có thể mất 1–3 phút, trang tự cập nhật.');
     });
 
   const saveShots = () =>
@@ -293,16 +332,38 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
       toast.success('Đã lưu kế hoạch shot');
     });
 
+  const saveBible = () =>
+    guarded('bible', async () => {
+      applyVideo(await studio.updateVideo(videoId!, { characters, locations }), !shotsDirty);
+      toast.success('Đã lưu hồ sơ nhân vật — câu thoại của nhân vật đổi giọng sẽ được đọc lại.');
+    });
+
+  const readVoices = () =>
+    guarded('voices', async () => {
+      if (shotsDirty) applyVideo(await studio.saveShots(videoId!, shots), true);
+      if (bibleDirty) applyVideo(await studio.updateVideo(videoId!, { characters, locations }), true);
+      applyVideo(await studio.voices(videoId!), true);
+      toast.success('Đang đọc các câu thoại bằng giọng AI — nghe thử ở từng shot khi xong.');
+    });
+
+  const rereadShot = (s: StudioShotInput) =>
+    guarded('voice-' + s.id, async () => {
+      if (shotsDirty) applyVideo(await studio.saveShots(videoId!, shots), true);
+      applyVideo(await studio.shotVoice(videoId!, s.id!), true);
+    });
+
   const generate = () =>
     guarded('generate', async () => {
       if (shotsDirty) applyVideo(await studio.saveShots(videoId!, shots), true);
+      if (bibleDirty) applyVideo(await studio.updateVideo(videoId!, { characters, locations }), true);
       const fresh = await studio.video(videoId!);
       const todo = fresh.shots.filter((s) => !s.hasClip || s.status !== 'Done');
       const secs = todo.reduce((s, x) => s + clampSecs(x.durationSeconds), 0);
-      const cost = todo.reduce((s, x) => s + shotCost(x, price[fresh.resolution] ?? perSecond), 0);
+      const cost = todo.reduce((s, x) => s + shotCost(x, rateOf(fresh.videoModel, fresh.resolution)), 0);
+      const label = models.find((m) => m.id === fresh.videoModel)?.label ?? fresh.videoModel;
       if (!(await confirm({
-        title: `Tạo ${todo.length} clip bằng Grok Imagine?`,
-        description: `Khoảng ${secs} giây video ở ${fresh.resolution}, ước tính ${usd(cost)} (xAI tính theo giây). Các clip được tạo lần lượt — shot "nối tiếp" lấy khung cuối của clip trước. Clip đã có sẽ không tạo lại. Mỗi clip mất vài phút; trang tự cập nhật.`,
+        title: `Tạo ${todo.length} clip bằng ${label}?`,
+        description: `Khoảng ${secs} giây video ở ${fresh.resolution}, ước tính ${usd(cost)} (Vercel tính theo giây video, cộng vài xu giọng đọc). Câu thoại được đọc trước để clip dài vừa khớp. Clip đã có sẽ không tạo lại. Mỗi clip mất vài phút; trang tự cập nhật.`,
         confirmLabel: `Tạo (~${usd(cost)})`,
       }))) return;
       applyVideo(await studio.generate(videoId!), true);
@@ -311,37 +372,17 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
   const regenerateShot = (s: StudioShotInput) =>
     guarded('shot-' + s.id, async () => {
       if (shotsDirty) applyVideo(await studio.saveShots(videoId!, shots), true);
-      const cost = shotCost(s);
-      const next = shots[shots.findIndex((x) => x.id === s.id) + 1];
-      const warn = next?.continueFromPrevious ? ' Shot kế tiếp đang nối tiếp từ clip này — nên tạo lại cả shot đó để khớp hình.' : '';
-      if (!(await confirm({ title: 'Tạo lại clip này?', description: `Khoảng ${usd(cost)}. Clip cũ bị thay; sau đó video được ghép lại.${warn}`, confirmLabel: 'Tạo lại' }))) return;
+      if (!(await confirm({ title: 'Tạo lại clip này?', description: `Khoảng ${usd(shotCost(s))}. Clip cũ bị thay; sau đó video được ghép lại.`, confirmLabel: 'Tạo lại' }))) return;
       applyVideo(await studio.generateShot(videoId!, s.id!), true);
     });
 
   const compose = () => guarded('compose', async () => applyVideo(await studio.compose(videoId!), true));
 
-  const missingKeyframes = (video?.shots ?? []).filter((s, i) => needsKeyframe(s, i) && !s.hasKeyframe).length;
-  const buildKeyframes = () =>
-    guarded('keyframes', async () => {
-      if (shotsDirty) applyVideo(await studio.saveShots(videoId!, shots), true);
-      if (!(await confirm({
-        title: `Dựng ${missingKeyframes} khung mở đầu để xem trước?`,
-        description: `Gemini vẽ khung hình đầu của từng shot với đủ nhân vật (đúng mặt từ ảnh của anh) trong bối cảnh, góc rộng. Khoảng ${usd(missingKeyframes * KEYFRAME_COST)} tiền Gemini — chưa tốn tiền tạo clip. Xem từng khung, khung nào chưa ưng thì sửa shot rồi bấm "Dựng lại khung".`,
-        confirmLabel: `Dựng (~${usd(missingKeyframes * KEYFRAME_COST)})`,
-      }))) return;
-      applyVideo(await studio.keyframes(videoId!), true);
-    });
-  const rebuildKeyframe = (s: StudioShotInput) =>
-    guarded('kf-' + s.id, async () => {
-      if (shotsDirty) applyVideo(await studio.saveShots(videoId!, shots), true);
-      applyVideo(await studio.shotKeyframe(videoId!, s.id!), true);
-    });
-
   const recover = () =>
     guarded('recover', async () => {
       if (!(await confirm({
         title: 'Lấy lại các clip đã trả tiền?',
-        description: 'Tải lại từ xAI những clip đã tạo nhưng bị mất file (server khởi động lại). Miễn phí — không tạo clip mới. Lấy đủ thì tự ghép video; clip nào xAI không còn giữ sẽ được báo để anh quyết định tạo lại.',
+        description: 'Tải lại những clip đã tạo nhưng bị mất file (server khởi động lại). Miễn phí — không tạo clip mới. Lấy đủ thì tự ghép video; clip nào không còn giữ được sẽ được báo để anh quyết định tạo lại.',
         confirmLabel: 'Lấy lại (miễn phí)',
       }))) return;
       applyVideo(await studio.recoverClips(videoId!), true);
@@ -361,16 +402,26 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
 
   const purge = () =>
     guarded('purge', async () => {
-      if (!(await confirm({ title: 'Xoá các clip lẻ?', description: 'Giữ video hoàn chỉnh, xoá các clip từng shot để giải phóng database. Sau đó không tạo lại từng shot được nữa.', confirmLabel: 'Xoá clip' }))) return;
+      if (!(await confirm({ title: 'Xoá các clip lẻ?', description: 'Giữ video hoàn chỉnh, xoá các clip từng shot để giải phóng dung lượng. Sau đó không tạo lại từng shot được nữa.', confirmLabel: 'Xoá clip' }))) return;
       applyVideo(await studio.purgeClips(videoId!), true);
     });
 
   const remove = () =>
     guarded('delete', async () => {
-      if (!(await confirm({ title: 'Xoá video này?', description: 'Xoá kế hoạch, mọi clip và video hoàn chỉnh. Không khôi phục được (chi phí đã chi vẫn được ghi lại).', confirmLabel: 'Xoá', danger: true }))) return;
+      if (!(await confirm({ title: 'Xoá video này?', description: 'Xoá kế hoạch, giọng đọc, mọi clip và video hoàn chỉnh. Không khôi phục được (chi phí đã chi vẫn được ghi lại).', confirmLabel: 'Xoá', danger: true }))) return;
       await studio.deleteVideo(videoId!);
       navigate('/studio');
     });
+
+  // ── bible editing ──
+  const updateCharacter = (i: number, patch: Partial<StudioCharacter>) => {
+    setCharacters((list) => list.map((c, k) => (k === i ? { ...c, ...patch } : c)));
+    setBibleDirty(true);
+  };
+  const updateLocation = (i: number, patch: Partial<StudioLocation>) => {
+    setLocations((list) => list.map((l, k) => (k === i ? { ...l, ...patch } : l)));
+    setBibleDirty(true);
+  };
 
   // ── shot editing ──
   const updateShot = (i: number, patch: Partial<StudioShotInput>) => {
@@ -388,13 +439,15 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
     setShotsDirty(true);
   };
   const addShot = () => {
-    setShots((list) => [...list, { durationSeconds: 8, action: '', camera: 'medium shot, static', speaker: '', dialogue: '', sound: '', assetIds: [], continueFromPrevious: false }]);
+    setShots((list) => [...list, { durationSeconds: 6, action: '', camera: 'medium-wide shot', location: locations[0]?.name ?? '', cast: [], speaker: '', dialogue: '', sound: '' }]);
     setShotsDirty(true);
   };
   const removeShot = (i: number) => {
     setShots((list) => list.filter((_, k) => k !== i));
     setShotsDirty(true);
   };
+  const toggleCast = (i: number, name: string) =>
+    updateShot(i, { cast: shots[i].cast.includes(name) ? shots[i].cast.filter((n) => n !== name) : [...shots[i].cast, name] });
 
   if (!isNew && !video) return <Skeleton className="h-96 w-full" />;
   const locked = serverBusy || !!busy;
@@ -423,34 +476,9 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
           <div className="flex items-center gap-2 text-sm font-semibold text-fg">
             <Clapperboard className="h-4 w-4" /> 1. Thông tin video
           </div>
-          <Button
-            variant="secondary"
-            size="sm"
-            icon={<Sparkles className="h-3.5 w-3.5 text-brand" />}
-            onClick={() => setShowDramaPicker(true)}
-            className="border-brand/40 text-brand hover:bg-brand/10 text-xs font-medium"
-          >
+          <Button variant="secondary" size="sm" icon={<Sparkles className="h-3.5 w-3.5 text-brand" />} onClick={() => setShowDramaPicker(true)}
+            className="border-brand/40 text-brand hover:bg-brand/10 text-xs font-medium">
             🎭 Chọn Kịch Bản Phim Miền Tây
-          </Button>
-        </div>
-
-        {/* Quick drama helper banner */}
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5 rounded-lg border border-brand/30 bg-brand/[0.04] p-3 text-xs">
-          <div className="flex items-center gap-2">
-            <Sparkles className="h-4 w-4 text-brand shrink-0" />
-            <div>
-              <p className="font-semibold text-fg">Kịch bản phim ngắn Miền Tây & Việt Hóa</p>
-              <p className="text-fg-subtle">Nạp nhanh trọn bộ kịch bản 2 phút (Chàng rể miền Tây, Trùng sinh Bạc Liêu...) kèm 5 shot dựng sẵn</p>
-            </div>
-          </div>
-          <Button
-            variant="secondary"
-            size="sm"
-            icon={<Wand2 className="h-3.5 w-3.5 text-brand" />}
-            onClick={() => setShowDramaPicker(true)}
-            className="border-brand/40 text-brand hover:bg-brand/10 text-xs shrink-0"
-          >
-            Mở Kho Kịch Bản
           </Button>
         </div>
         <div className="grid gap-3 sm:grid-cols-2">
@@ -463,10 +491,10 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
             </Select>
           </Field>
           <Field label="Tên video">
-            <Input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="vd: Anh Hai mời Út Tèo nhậu" disabled={locked} />
+            <Input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="vd: Đại nhân cũng biết sợ vợ" disabled={locked} />
           </Field>
         </div>
-        <Field label="Kịch bản" hint="Dán nguyên kịch bản, mỗi câu thoại 1 dòng dạng “Tên: lời thoại”, hành động / bối cảnh ở dòng riêng. Video dài đúng theo kịch bản — AI không thêm, không cắt.">
+        <Field label="Kịch bản" hint="Mỗi câu thoại 1 dòng dạng “Tên: lời thoại”, hành động / bối cảnh ở dòng riêng. Video dài đúng theo kịch bản — AI không thêm, không cắt. Lời thoại được đọc bằng giọng AI.">
           <Textarea rows={10} value={form.script} onChange={(e) => setForm({ ...form, script: e.target.value })} disabled={locked} />
         </Field>
         {form.script?.trim() && (
@@ -479,28 +507,30 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
             . Con số chính xác có sau khi lập kế hoạch shot.
           </div>
         )}
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="grid gap-3 sm:grid-cols-3">
+          <Field label="Model tạo video" hint={model?.note}>
+            <Select value={form.videoModel ?? ''} onChange={(e) => setForm({ ...form, videoModel: e.target.value })} disabled={locked}>
+              {models.map((m) => (
+                <option key={m.id} value={m.id}>{m.label}</option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="Độ phân giải clip" hint={`${usd(perSecond, 4)}/giây · video cuối luôn xuất 1080p`}>
+            <Select value={form.resolution} onChange={(e) => setForm({ ...form, resolution: e.target.value })} disabled={locked}>
+              {(['480p', '720p', '1080p'] as const).map((r) => (
+                <option key={r} value={r}>{RESOLUTION_LABEL[r]} — {usd(rateOf(form.videoModel, r), 4)}/s</option>
+              ))}
+            </Select>
+          </Field>
           <Field label="Khung hình">
             <Select value={form.aspectRatio} onChange={(e) => setForm({ ...form, aspectRatio: e.target.value })} disabled={locked}>
               <option value="9:16">Dọc 9:16 (Reels)</option>
               <option value="16:9">Ngang 16:9</option>
             </Select>
           </Field>
-          <Field label="Độ phân giải clip" hint={`${usd(perSecond, 3)}/giây · video cuối luôn xuất 1080p`}>
-            <Select value={form.resolution} onChange={(e) => setForm({ ...form, resolution: e.target.value })} disabled={locked}>
-              {RESOLUTIONS.map((r) => (
-                <option key={r.id} value={r.id}>{r.label}</option>
-              ))}
-            </Select>
-          </Field>
         </div>
-        <Field label="Phong cách / ghi chú cho đạo diễn AI" optional hint="vd: giọng miền Tây, nắng chiều vàng, hài hước, máy quay cầm tay nhẹ">
+        <Field label="Phong cách / ghi chú cho đạo diễn AI" optional hint="vd: phim cổ trang hài, nắng chiều vàng, màu điện ảnh ấm, máy quay cầm tay nhẹ">
           <Input value={form.styleNotes} onChange={(e) => setForm({ ...form, styleNotes: e.target.value })} disabled={locked} />
-        </Field>
-        <Field label="Nhân vật & bối cảnh của video này"
-          hint="Chỉ những ảnh được chọn (có dấu ✓) mới được dùng. Nhân vật phụ, quần chúng, cảnh vật không chọn thì AI tự tạo cho hợp bối cảnh — không lấy ảnh nhân vật khác trong kho.">
-          <VideoCastPicker assets={assets} script={form.script ?? ''} value={form.assetIds ?? []} disabled={locked}
-            onChange={(ids) => setForm({ ...form, assetIds: ids })} />
         </Field>
         <div className="grid gap-3 sm:grid-cols-3">
           <Field label="Nhạc nền">
@@ -533,7 +563,7 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
           </Button>
           {isNew && (
             <span className="self-center text-xs text-fg-muted">
-              Chưa tốn tiền. Các bước: lưu → lập kế hoạch shot (vài xu) → <b>tạo video thật</b> ở mục 3 (tính tiền theo giây) → đăng Page.
+              Chưa tốn tiền. Các bước: lưu → lập kế hoạch (vài xu) → nghe thử giọng → <b>tạo video thật</b> (tính tiền theo giây) → đăng Page.
             </span>
           )}
           {!isNew && (
@@ -546,28 +576,100 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
 
       {!isNew && video && (
         <>
-          {/* 2. Shot plan */}
+          {/* 2. Characters, locations & voices */}
           <Card className="space-y-4 p-4">
             <div className="flex flex-wrap items-center gap-2">
               <div className="flex items-center gap-2 text-sm font-semibold text-fg">
-                <Wand2 className="h-4 w-4" /> 2. Kế hoạch shot
+                <Users className="h-4 w-4" /> 2. Hồ sơ nhân vật, bối cảnh & giọng đọc
+              </div>
+              <Button className="ml-auto" size="sm" variant="secondary" icon={<Sparkles className="h-4 w-4" />} loading={busy === 'plan'}
+                disabled={locked || !form.script?.trim() || video.shots.some((s) => s.hasClip)} onClick={plan}
+                title={video.shots.some((s) => s.hasClip) ? 'Đã có clip — tạo video mới nếu muốn lập kế hoạch lại' : ''}>
+                {video.shots.length ? 'Lập lại kế hoạch bằng AI' : 'Lập kế hoạch bằng AI'}
+              </Button>
+            </div>
+            <p className="text-xs text-fg-muted">
+              Model tạo video từ chữ (không dùng ảnh), nên ngoại hình mỗi nhân vật được mô tả cố định bằng tiếng Anh và chép vào mọi shot để nhân vật trông
+              giống nhau. Mô tả càng cụ thể (tuổi, khuôn mặt, râu tóc, trang phục + màu) thì càng đồng nhất. Mỗi nhân vật có một giọng đọc AI riêng.
+            </p>
+            {characters.length === 0 ? (
+              <p className="text-xs text-fg-subtle">Chưa có hồ sơ — bấm "Lập kế hoạch bằng AI" để Gemini dựng từ kịch bản.</p>
+            ) : (
+              <div className="space-y-2">
+                {characters.map((c, i) => (
+                  <div key={i} className="grid gap-2 rounded-lg border border-line p-2.5 sm:grid-cols-[150px_100px_1fr_220px]">
+                    <Field label="Nhân vật">
+                      <Input value={c.name} disabled={locked} onChange={(e) => updateCharacter(i, { name: e.target.value })} />
+                    </Field>
+                    <Field label="Giới tính">
+                      <Select value={c.gender} disabled={locked} onChange={(e) => updateCharacter(i, { gender: e.target.value })}>
+                        <option value="male">Nam</option>
+                        <option value="female">Nữ</option>
+                      </Select>
+                    </Field>
+                    <Field label={isNarrator(c.name) ? 'Lời dẫn (không xuất hiện trong hình)' : 'Ngoại hình (tiếng Anh, cố định mọi shot)'}>
+                      <Textarea rows={2} value={c.look} disabled={locked || isNarrator(c.name)} onChange={(e) => updateCharacter(i, { look: e.target.value })} />
+                    </Field>
+                    <Field label="Giọng đọc">
+                      <div className="flex gap-1">
+                        <Select value={c.voice} disabled={locked} onChange={(e) => updateCharacter(i, { voice: e.target.value })}>
+                          {voices.map((v) => (
+                            <option key={v.id} value={v.id}>{v.name} — {v.description}</option>
+                          ))}
+                        </Select>
+                        <Button size="sm" variant="ghost" icon={audio.playing === 'sample-' + i ? <Square className="h-3.5 w-3.5" /> : <Volume2 className="h-3.5 w-3.5" />}
+                          onClick={() => audio.toggle('sample-' + i, studio.voicePreviewUrl(c.voice))} aria-label="Nghe thử giọng" title="Nghe thử giọng" />
+                      </div>
+                    </Field>
+                  </div>
+                ))}
+              </div>
+            )}
+            {locations.length > 0 && (
+              <div className="space-y-2">
+                <div className="text-xs font-semibold text-fg">Bối cảnh</div>
+                {locations.map((l, i) => (
+                  <div key={i} className="grid gap-2 sm:grid-cols-[150px_1fr]">
+                    <Input value={l.name} disabled={locked} onChange={(e) => updateLocation(i, { name: e.target.value })} />
+                    <Textarea rows={2} value={l.look} disabled={locked} onChange={(e) => updateLocation(i, { look: e.target.value })} />
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="flex flex-wrap gap-2">
+              <Button size="sm" variant="secondary" icon={<Plus className="h-4 w-4" />} disabled={locked}
+                onClick={() => { setCharacters((l) => [...l, { name: '', gender: 'male', look: '', voice: voices[0]?.id ?? 'gemini:Charon' }]); setBibleDirty(true); }}>
+                Thêm nhân vật
+              </Button>
+              <Button size="sm" variant="secondary" icon={<Plus className="h-4 w-4" />} disabled={locked}
+                onClick={() => { setLocations((l) => [...l, { name: '', look: '' }]); setBibleDirty(true); }}>
+                Thêm bối cảnh
+              </Button>
+              <Button size="sm" variant="primary" icon={<Save className="h-4 w-4" />} loading={busy === 'bible'} disabled={locked || !bibleDirty} onClick={saveBible}>
+                Lưu hồ sơ
+              </Button>
+              {bibleDirty && <span className="self-center text-xs text-warning">Có thay đổi chưa lưu</span>}
+            </div>
+          </Card>
+
+          {/* 3. Shot plan */}
+          <Card className="space-y-4 p-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex items-center gap-2 text-sm font-semibold text-fg">
+                <Wand2 className="h-4 w-4" /> 3. Kế hoạch shot
               </div>
               <span className="text-xs text-fg-muted">
                 {shots.length} shot · dài {fmtDuration(shotSeconds)}{shotSeconds > REELS_MAX_SECONDS ? ' (quá 90s → video thường, không phải Reels)' : ''} · ước tính {usd(estimate)}
               </span>
-              <Button className="ml-auto" size="sm" variant="secondary" icon={<Sparkles className="h-4 w-4" />} loading={busy === 'plan'}
-                disabled={locked || !form.script?.trim() || video.shots.some((s) => s.hasClip)} onClick={plan}
-                title={video.shots.some((s) => s.hasClip) ? 'Đã có clip — tạo video mới nếu muốn lập kế hoạch lại' : ''}>
-                {shots.length ? 'Lập lại kế hoạch bằng AI' : 'Lập kế hoạch bằng AI'}
-              </Button>
             </div>
             {video.planNotes && <p className="rounded-lg bg-subtle p-2.5 text-xs text-fg-muted">🎬 {video.planNotes}</p>}
             {shots.length === 0 ? (
-              <p className="text-xs text-fg-muted">Chưa có shot. Bấm "Lập kế hoạch bằng AI" để Gemini chia kịch bản (hoặc thêm tay).</p>
+              <p className="text-xs text-fg-muted">Chưa có shot. Bấm "Lập kế hoạch bằng AI" ở mục 2 để Gemini chia kịch bản (hoặc thêm tay).</p>
             ) : (
               <ol className="space-y-3">
                 {shots.map((s, i) => {
                   const st = shotState(s.id);
+                  const needs = secondsToSay(s.dialogue);
                   return (
                     <li key={s.id ?? `new-${i}`} className="rounded-lg border border-line p-3">
                       <div className="mb-2 flex flex-wrap items-center gap-2 text-xs">
@@ -589,68 +691,79 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
                       <div className="grid gap-3 lg:grid-cols-[1fr_200px]">
                         <div className="space-y-2">
                           <div className="grid gap-2 sm:grid-cols-[90px_1fr_2fr]">
-                            <Field label="Giây (1–15)">
-                              <Input type="number" min={1} max={15} value={s.durationSeconds} disabled={locked}
-                                onChange={(e) => updateShot(i, { durationSeconds: Number(e.target.value) || 8 })} />
+                            <Field label="Giây (2–12)">
+                              <Input type="number" min={2} max={12} value={s.durationSeconds} disabled={locked}
+                                onChange={(e) => updateShot(i, { durationSeconds: Number(e.target.value) || 6 })} />
                             </Field>
                             <Field label="Người nói">
-                              <Input value={s.speaker ?? ''} disabled={locked} onChange={(e) => updateShot(i, { speaker: e.target.value })} placeholder="(không thoại)" />
+                              <Input list="studio-speakers" value={s.speaker ?? ''} disabled={locked} onChange={(e) => updateShot(i, { speaker: e.target.value })} placeholder="(không thoại)" />
                             </Field>
-                            <Field label="Lời thoại (tiếng Việt, nguyên văn)">
+                            <Field label="Lời thoại (tiếng Việt, đọc bằng giọng AI)">
                               <Input value={s.dialogue ?? ''} disabled={locked} onChange={(e) => updateShot(i, { dialogue: e.target.value })} />
                             </Field>
                           </div>
-                          {secondsToSay(s.dialogue) > clampSecs(s.durationSeconds) && (
+                          {needs > clampSecs(s.durationSeconds) && !st?.hasVoice && (
                             <p className="text-[11px] text-warning">
-                              Câu thoại cần khoảng {Math.min(15, secondsToSay(s.dialogue))}s để nói tự nhiên — shot đang {clampSecs(s.durationSeconds)}s nên có thể bị nói vội hoặc cắt.
-                              {secondsToSay(s.dialogue) > 15 && ' Câu quá dài cho 1 clip (tối đa 15s): nên tách sang shot sau.'}
+                              Câu thoại cần khoảng {Math.min(12, needs)}s — shot sẽ tự dài ra cho vừa giọng đọc.
+                              {needs > 12 && ' Câu quá dài cho 1 clip (tối đa 12s): nên tách thành 2 shot.'}
                             </p>
+                          )}
+                          {st?.hasVoice && s.id && (
+                            <div className="flex flex-wrap items-center gap-2 text-[11px] text-fg-muted">
+                              <Button size="sm" variant="ghost" icon={audio.playing === 'line-' + s.id ? <Square className="h-3.5 w-3.5" /> : <Volume2 className="h-3.5 w-3.5" />}
+                                onClick={() => audio.toggle('line-' + s.id, studio.voiceUrl(s.id!) + `?v=${st.voiceSeconds}`)}>
+                                Nghe giọng đọc ({st.voiceSeconds?.toFixed(1)}s)
+                              </Button>
+                              <span>giọng {voiceName(characters.find((c) => c.name.trim().toLowerCase() === (s.speaker ?? '').trim().toLowerCase())?.voice ?? 'gemini:Charon')}</span>
+                              <Button size="sm" variant="ghost" icon={<Mic className="h-3.5 w-3.5" />} loading={busy === 'voice-' + s.id} disabled={locked} onClick={() => rereadShot(s)}>
+                                Đọc lại
+                              </Button>
+                            </div>
                           )}
                           <Field label="Hành động (tiếng Anh để model hiểu tốt nhất)">
                             <Textarea rows={2} value={s.action} disabled={locked} onChange={(e) => updateShot(i, { action: e.target.value })} />
                           </Field>
-                          <div className="grid gap-2 sm:grid-cols-2">
+                          <div className="grid gap-2 sm:grid-cols-3">
+                            <Field label="Bối cảnh">
+                              <Select value={s.location ?? ''} disabled={locked} onChange={(e) => updateShot(i, { location: e.target.value })}>
+                                <option value="">—</option>
+                                {locations.map((l) => (
+                                  <option key={l.name} value={l.name}>{l.name}</option>
+                                ))}
+                                {s.location && !locations.some((l) => l.name === s.location) && <option value={s.location}>{s.location}</option>}
+                              </Select>
+                            </Field>
                             <Field label="Góc máy">
                               <Input value={s.camera} disabled={locked} onChange={(e) => updateShot(i, { camera: e.target.value })} />
                             </Field>
-                            <Field label="Âm thanh môi trường">
+                            <Field label="Âm thanh (ghi chú)">
                               <Input value={s.sound ?? ''} disabled={locked} onChange={(e) => updateShot(i, { sound: e.target.value })} />
                             </Field>
                           </div>
-                          {i > 0 && (
-                            <Checkbox checked={!!s.continueFromPrevious} disabled={locked} onChange={(c) => updateShot(i, { continueFromPrevious: c })}
-                              label="Nối tiếp từ khung cuối của shot trước"
-                              description="Cùng cảnh, cùng người: clip bắt đầu đúng chỗ clip trước dừng nên mặt nhân vật liền mạch. Bỏ chọn khi đổi góc máy / đổi cảnh." />
+                          {onScreen.length > 0 && (
+                            <Field label="Nhân vật có mặt trong khung hình">
+                              <div className="flex flex-wrap gap-1.5">
+                                {onScreen.map((c) => {
+                                  const on = s.cast.includes(c.name);
+                                  return (
+                                    <button key={c.name} type="button" disabled={locked} onClick={() => toggleCast(i, c.name)}
+                                      className={cn('rounded-full border px-2.5 py-0.5 text-[11px] transition-colors', on ? 'border-accent bg-accent text-white' : 'border-line text-fg-muted hover:bg-muted')}>
+                                      {on ? '✓ ' : ''}{c.name}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </Field>
                           )}
-                          <Field label={s.continueFromPrevious && i > 0
-                            ? 'Nhân vật trong shot (đang nối tiếp: khung đầu lấy từ cuối clip trước)'
-                            : 'Nhân vật & bối cảnh CÓ MẶT trong shot — chọn đủ mọi người nhìn thấy (tối đa 5); AI dựng khung mở đầu có đúng những người này'}>
-                            <AssetPicker compact assets={assets.filter((a) => (form.assetIds ?? []).includes(a.id) || s.assetIds.includes(a.id))}
-                              value={s.assetIds} onChange={(ids) => updateShot(i, { assetIds: ids.slice(0, 5) })} />
-                          </Field>
-                          {s.assetIds.some((id) => !assetById.has(id)) && <p className="text-[11px] text-warning">Một ảnh của shot đã bị xoá khỏi kho.</p>}
                         </div>
                         <div>
                           {st?.hasClip && s.id ? (
                             <video src={studio.clipUrl(s.id) + `?v=${st.attempts}`} controls preload="metadata"
-                              poster={st.hasKeyframe ? studio.keyframeUrl(s.id) + `?v=${st.attempts}` : undefined}
                               className={cn('w-full rounded-lg bg-black', video.aspectRatio === '16:9' ? 'aspect-video' : 'aspect-[9/16]')} />
-                          ) : st?.hasKeyframe && s.id ? (
-                            <div className="relative">
-                              <img src={studio.keyframeUrl(s.id) + `?t=${encodeURIComponent(video.progress ?? '')}${st.costUsd}`} alt="Khung mở đầu"
-                                className={cn('w-full rounded-lg bg-muted object-cover', video.aspectRatio === '16:9' ? 'aspect-video' : 'aspect-[9/16]')} />
-                              <span className="absolute left-1 top-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] text-white">Khung mở đầu — xem trước</span>
-                            </div>
                           ) : (
                             <div className={cn('flex w-full items-center justify-center rounded-lg bg-muted text-xs text-fg-subtle', video.aspectRatio === '16:9' ? 'aspect-video' : 'aspect-[9/16]')}>
                               {st?.status === 'Generating' ? 'Đang tạo…' : 'Chưa có clip'}
                             </div>
-                          )}
-                          {s.id && st && needsKeyframe(s, i) && !st.hasClip && (
-                            <Button size="sm" variant="ghost" className="mt-1 w-full" icon={<Wand2 className="h-3.5 w-3.5" />} loading={busy === 'kf-' + s.id}
-                              disabled={locked} onClick={() => rebuildKeyframe(s)}>
-                              {st.hasKeyframe ? 'Dựng lại khung (~$0.05)' : 'Dựng khung xem trước (~$0.05)'}
-                            </Button>
                           )}
                         </div>
                       </div>
@@ -659,6 +772,12 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
                 })}
               </ol>
             )}
+            <datalist id="studio-speakers">
+              {characters.map((c) => (
+                <option key={c.name} value={c.name} />
+              ))}
+              <option value={NARRATOR} />
+            </datalist>
             <div className="flex flex-wrap gap-2">
               <Button size="sm" variant="secondary" icon={<Plus className="h-4 w-4" />} disabled={locked} onClick={addShot}>
                 Thêm shot
@@ -670,10 +789,10 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
             </div>
           </Card>
 
-          {/* 3. Generate + final */}
+          {/* 4. Generate + final */}
           <Card className="space-y-4 p-4">
             <div className="flex items-center gap-2 text-sm font-semibold text-fg">
-              <Film className="h-4 w-4" /> 3. Tạo video
+              <Film className="h-4 w-4" /> 4. Tạo video
             </div>
             {video.shots.length === 0 ? (
               <p className="rounded-lg border border-warning/40 bg-warning/[0.06] px-3 py-2 text-xs text-fg">
@@ -681,30 +800,30 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
               </p>
             ) : (
               <p className="text-xs text-fg-muted">
-                Mỗi shot được tạo bằng <b>Grok Imagine 1.5 Lite</b> ở <b>{video.resolution}</b> — tính tiền theo {video.resolution} ({usd(price[video.resolution] ?? perSecond, 3)}/giây)
-                — mỗi shot là một <b>đoạn video chuyển động như phim</b> (nhân vật diễn, nói thoại khớp miệng, có tiếng động), không phải ảnh tĩnh; sau đó các đoạn được ghép liền với nhạc nền và phóng lên 1080p trên server (miễn phí). Còn {pendingSeconds}s chưa tạo, ước tính{' '}
-                <b>{usd(pendingCost)}</b>
+                Mỗi shot là một <b>đoạn video chuyển động như phim</b> do <b>{models.find((m) => m.id === video.videoModel)?.label ?? video.videoModel}</b> tạo từ mô tả,
+                ở <b>{video.resolution}</b> ({usd(rateOf(video.videoModel, video.resolution), 4)}/giây). Video không có tiếng: lời thoại được đọc bằng giọng AI rồi
+                lồng vào, thêm nhạc nền, ghép liền và xuất 1080p. Còn {pendingSeconds}s chưa tạo, ước tính <b>{usd(pendingCost)}</b>
                 {remaining != null && <> · ngân sách tháng còn <b>{usd(remaining)}</b></>}.
               </p>
             )}
             <div className="flex flex-wrap gap-2">
+              {missingVoices > 0 && (
+                <Button variant="secondary" icon={<Mic className="h-4 w-4" />} loading={busy === 'voices'} disabled={locked} onClick={readVoices}
+                  title="Đọc trước các câu thoại để nghe thử giọng — gần như miễn phí, chưa tốn tiền video">
+                  Nghe thử giọng {missingVoices} câu thoại (~{usd(missingVoices * 4 * voicePrice, 3)})
+                </Button>
+              )}
               <Button variant="primary" icon={<Sparkles className="h-4 w-4" />} loading={busy === 'generate'} disabled={locked || shots.length === 0} onClick={generate}>
                 {video.shots.some((s) => s.hasClip) ? 'Tạo các clip còn thiếu' : 'Tạo video'}
               </Button>
-              {missingKeyframes > 0 && (
-                <Button variant="secondary" icon={<Wand2 className="h-4 w-4" />} loading={busy === 'keyframes'} disabled={locked} onClick={buildKeyframes}
-                  title="Xem trước khung hình đầu của các shot (đúng mặt, đủ người, góc rộng) trước khi trả tiền tạo clip">
-                  Dựng {missingKeyframes} khung mở đầu để xem trước (~{usd(missingKeyframes * KEYFRAME_COST)})
-                </Button>
-              )}
               <Button variant="secondary" icon={<RefreshCw className="h-4 w-4" />} loading={busy === 'compose'}
                 disabled={locked || video.shots.length === 0 || video.shots.some((s) => !s.hasClip)} onClick={compose}>
-                Ghép lại (đổi nhạc / thứ tự)
+                Ghép lại (đổi nhạc / thứ tự / giọng)
               </Button>
-              {(video.status === 'Composing' || video.status === 'Failed' || video.shots.some((s) => !s.hasClip) || video.shots.some((s) => s.errorMessage?.includes('mất'))) && (
+              {(video.status === 'Composing' || video.status === 'Failed' || video.shots.some((s) => s.errorMessage?.includes('mất'))) && (
                 <Button variant="secondary" icon={<RefreshCw className="h-4 w-4" />} loading={busy === 'recover'}
                   disabled={!!busy || (serverBusy && video.status !== 'Composing')} onClick={recover}
-                  title="Tải lại từ xAI các clip đã trả tiền nhưng bị mất file — không tốn tiền">
+                  title="Tải lại các clip đã trả tiền nhưng bị mất file — không tốn tiền">
                   Lấy lại clip đã trả tiền (miễn phí)
                 </Button>
               )}
@@ -723,10 +842,10 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
             )}
           </Card>
 
-          {/* 4. Publish */}
+          {/* 5. Publish */}
           <Card className="space-y-3 p-4">
             <div className="flex items-center gap-2 text-sm font-semibold text-fg">
-              <Send className="h-4 w-4" /> 4. Đăng lên Facebook
+              <Send className="h-4 w-4" /> 5. Đăng lên Facebook
             </div>
             <Field label="Chú thích" hint='Tự kèm dòng "🤖 Video được tạo bằng AI." khi đăng. Nhớ bật nhãn AI nếu Facebook hỏi.'>
               <Textarea rows={3} value={caption} onChange={(e) => setCaption(e.target.value)} disabled={locked} />

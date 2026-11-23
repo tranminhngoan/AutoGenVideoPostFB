@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ArrowLeft, Plus, RotateCw } from 'lucide-react';
 import { Badge, Button, Card, EmptyState, PageHeader, Skeleton, Tabs } from '../components/ui';
-import { AssetLibrary } from '../components/studio/AssetLibrary';
 import { MusicLibrary } from '../components/studio/MusicLibrary';
 import { CostPanel } from '../components/studio/CostPanel';
 import { StudioUnlock } from '../components/studio/StudioUnlock';
@@ -9,15 +8,15 @@ import { VideoEditor, fmtDuration } from '../components/studio/VideoEditor';
 import { BUSY, STATUS_LABEL, StudioError, StudioSettings, StudioVideoSummary, getStudioKey, studio, usd } from '../services/studio';
 import { navigate } from '../lib/router';
 
-type Tab = 'videos' | 'assets' | 'music' | 'costs';
+type Tab = 'videos' | 'music' | 'costs';
 
 /**
- * AI video studio: make real-people videos with Grok Imagine from a script + start images + the music store, track
+ * AI video studio: make live-action videos with Seedance (text-to-video) from a script, AI voices and the music store, track
  * the cost, and post them to a Facebook Page. Routes: /studio[/assets|/music|/costs], /studio/new, /studio/videos/:id.
  */
 export function StudioPage({ segments }: { segments: string[] }) {
   const [first, second] = segments;
-  const tab: Tab = first === 'assets' || first === 'music' || first === 'costs' ? first : 'videos';
+  const tab: Tab = first === 'music' || first === 'costs' ? first : 'videos';
   const editingId = first === 'videos' && second ? second : undefined;
   const creating = first === 'new';
 
@@ -51,7 +50,7 @@ export function StudioPage({ segments }: { segments: string[] }) {
           Studio Video AI <Badge tone="info" className="text-[11px] font-normal">{settings?.videoModel ?? 'grok-imagine'}</Badge>
         </span>
       }
-      description="Dựng video người thật bằng Grok Imagine: kịch bản + ảnh nhân vật/bối cảnh + kho nhạc → video 1080p → đăng Page. Chi phí theo giây video."
+      description="Dựng video bằng Seedance (text-to-video): kịch bản → hồ sơ nhân vật → video + giọng đọc AI + kho nhạc → 1080p → đăng Page. Chi phí theo giây video."
       back={
         editingId || creating ? (
           <Button variant="ghost" size="sm" icon={<ArrowLeft className="h-4 w-4" />} onClick={() => navigate('/studio')}>
@@ -75,13 +74,13 @@ export function StudioPage({ segments }: { segments: string[] }) {
 
       {settings && !settings.videoConfigured && (
         <Card className="border-danger/30 bg-danger/[0.05] p-3 text-xs text-danger">
-          Server chưa có khoá xAI (biến XAI_API_KEY) nên chưa tạo được video — tạo khoá ở console.x.ai (tài khoản đã nạp tiền) rồi thêm biến này
+          Server chưa có khoá Vercel AI Gateway (biến AI_GATEWAY_API_KEY) nên chưa tạo được video — tạo khoá ở vercel.com → AI Gateway (nạp tối thiểu $10 credit) rồi thêm biến này
           trên Railway.
         </Card>
       )}
       {needsKey && <StudioUnlock onUnlocked={() => setNeedsKey(false)} />}
       {!needsKey && !getStudioKey() && settings?.videoConfigured && (
-        <p className="text-xs text-fg-subtle">Mẹo: lần đầu thao tác, app sẽ hỏi khoá xAI để mở khoá trên trình duyệt này.</p>
+        <p className="text-xs text-fg-subtle">Mẹo: lần đầu thao tác, app sẽ hỏi khoá Vercel AI Gateway (hoặc Gemini) để mở khoá trên trình duyệt này.</p>
       )}
 
       {creating ? (
@@ -93,7 +92,6 @@ export function StudioPage({ segments }: { segments: string[] }) {
           <Tabs<Tab>
             items={[
               { id: 'videos', label: 'Video' },
-              { id: 'assets', label: 'Nhân vật & bối cảnh' },
               { id: 'music', label: 'Kho nhạc' },
               { id: 'costs', label: 'Chi phí' },
             ]}
@@ -101,7 +99,6 @@ export function StudioPage({ segments }: { segments: string[] }) {
             onChange={(t) => navigate(t === 'videos' ? '/studio' : `/studio/${t}`)}
           />
           {tab === 'videos' && <VideoList />}
-          {tab === 'assets' && <AssetLibrary onAuthError={onAuthError} />}
           {tab === 'music' && <MusicLibrary onAuthError={onAuthError} />}
           {tab === 'costs' && <CostPanel onAuthError={onAuthError} />}
         </>

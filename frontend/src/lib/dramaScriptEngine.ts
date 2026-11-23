@@ -15,20 +15,20 @@ export interface RewriteOptions {
 }
 
 export interface StudioShotExport {
-  id: string;
   durationSeconds: number;
   action: string;
   camera: string;
   speaker: string;
   dialogue: string;
   sound: string;
-  assetIds: string[];
-  continueFromPrevious: boolean;
+  cast: string[];
+  location?: string;
 }
 
 /**
- * Chuyển đổi các phân cảnh của tập phim thành danh sách Shot chuẩn của Studio Video AI.
- * Giúp người dùng chuyển thẳng sang Studio dựng phim mà có sẵn từng shot (thời lượng, góc máy, lời thoại, âm thanh)!
+ * Chuyển đổi các phân cảnh của tập phim thành danh sách Shot chuẩn của Studio Video AI (text-to-video + giọng đọc AI).
+ * Không gán id: server tạo id khi lưu kế hoạch. Thời lượng đủ để đọc câu thoại (~3 chữ/giây + 1s), trong giới hạn 2–12s
+ * của Seedance. Góc máy viết bằng tiếng Anh, ưu tiên khung rộng vì giọng được lồng sau (không cận miệng).
  */
 export function convertScenesToStudioShots(scenes: DramaScene[]): StudioShotExport[] {
   return scenes.map((s, idx) => {
@@ -39,17 +39,15 @@ export function convertScenesToStudioShots(scenes: DramaScene[]): StudioShotExpo
       speaker = match[1].trim();
       dialogue = match[2].trim();
     }
-
+    const words = dialogue.trim().split(/\s+/).filter(Boolean).length;
     return {
-      id: `shot_${idx + 1}_${Math.random().toString(36).slice(2, 7)}`,
-      durationSeconds: Math.min(15, Math.max(3, Math.round(120 / scenes.length))),
+      durationSeconds: words > 0 ? Math.min(12, Math.max(2, Math.ceil(words / 3 + 1))) : 5,
       action: s.visual,
-      camera: idx === 0 ? 'Cận cảnh (Close-up) góc nghiêng' : idx === scenes.length - 1 ? 'Toàn cảnh (Wide shot) flycam' : 'Trung cảnh (Medium shot)',
+      camera: idx === 0 ? 'wide establishing shot' : idx === scenes.length - 1 ? 'wide shot, slow drone pull-back' : 'medium-wide shot',
       speaker,
       dialogue,
       sound: s.sound,
-      assetIds: [],
-      continueFromPrevious: idx > 0,
+      cast: speaker === 'Lời dẫn' ? [] : [speaker],
     };
   });
 }

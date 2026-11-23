@@ -159,6 +159,23 @@ public class StudioMedia
 
     public const int MaxMusicSeconds = 300;
 
+    /// <summary>A TTS line (WAV) as compact mono AAC (≈12 KB a second) — small enough to keep in the database.</summary>
+    public async Task<byte[]> EncodeVoiceAsync(string wavPath, CancellationToken ct)
+    {
+        var dir = TempDir();
+        try
+        {
+            var output = Path.Combine(dir, "voice.m4a");
+            var (code, _, err) = await RunAsync(_ffmpeg, $"-hide_banner -y -i \"{wavPath}\" -vn -c:a aac -b:a 96k -ac 1 -ar 48000 -movflags +faststart \"{output}\"", ct);
+            if (code != 0 || !File.Exists(output)) throw new InvalidOperationException($"Không mã hoá được giọng đọc: {Tail(err)}");
+            return await File.ReadAllBytesAsync(output, ct);
+        }
+        finally
+        {
+            TryDelete(dir);
+        }
+    }
+
     /// <summary>Re-encodes an uploaded track to AAC 128 kb/s stereo (≈1 MB a minute), at most 5 minutes.</summary>
     public async Task<byte[]> CompactMusicAsync(byte[] data, string extension, CancellationToken ct)
     {
@@ -214,8 +231,11 @@ public class StudioMedia
     /// the Page watermark is burned in (moving, see <see cref="WatermarkFilter"/>); <paramref name="brand"/> also goes
     /// into the file's metadata. Returns the duration in seconds.
     /// </summary>
+    /// <param name="voices">Per clip, the spoken line (TTS) to use as that clip's sound, or null to keep the clip's own
+    /// audio (silence when it has none). The voice starts a quarter second in and is padded / cut to the clip.</param>
     public async Task<double> ComposeAsync(IReadOnlyList<string> clips, string? music, double musicVolume,
-        string aspectRatio, string resolution, string output, CancellationToken ct, string? watermarkPng = null, string? brand = null)
+        string aspectRatio, string resolution, string output, CancellationToken ct, string? watermarkPng = null, string? brand = null,
+        IReadOnlyList<string?>? voices = null)
     {
         var meta = MetadataArgs(brand);
         if (clips.Count == 0) throw new InvalidOperationException("Chưa có clip nào để ghép.");
@@ -229,21 +249,26 @@ public class StudioMedia
             for (var i = 0; i < clips.Count; i++)
             {
                 var part = Path.Combine(dir, $"part_{i:D3}.mp4");
-                var hasAudio = await HasAudioAsync(clips[i], ct);
+                var voice = voices != null && i < voices.Count ? voices[i] : null;
+                var hasAudio = voice == null && await HasAudioAsync(clips[i], ct);
                 var inputs = $"-i \"{clips[i]}\"";
                 var audioInput = 0;
-                if (!hasAudio) { inputs += " -f lavfi -i anullsrc=r=48000:cl=stereo"; audioInput = 1; }
+                var nextInput = 1;
+                if (voice != null) { inputs += $" -i \"{voice}\""; audioInput = nextInput++; }
+                else if (!hasAudio) { inputs += " -f lavfi -i anullsrc=r=48000:cl=stereo"; audioInput = nextInput++; }
                 var graph = $"[0:v]scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={fps}[base];";
                 if (watermarkPng != null)
                 {
                     inputs += $" -i \"{watermarkPng}\"";
-                    graph += WatermarkFilter(aspectRatio, hasAudio ? 1 : 2, "base", offset) + ";";
+                    graph += WatermarkFilter(aspectRatio, nextInput, "base", offset) + ";";
                 }
                 else
                 {
                     graph += "[base]format=yuv420p[v];";
                 }
-                graph += $"[{audioInput}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo[a]";
+                graph += voice != null
+                    ? $"[{audioInput}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,adelay=250|250,apad[a]"
+                    : $"[{audioInput}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo[a]";
                 var (code, _, err) = await RunAsync(_ffmpeg,
                     $"-hide_banner -y {inputs} -filter_complex \"{graph}\" -map \"[v]\" -map \"[a]\" -shortest " +
                     $"-c:v libx264 -preset fast -crf 19 -maxrate 10M -bufsize 20M -c:a aac -b:a 192k -ar 48000 -ac 2 \"{part}\"", ct);

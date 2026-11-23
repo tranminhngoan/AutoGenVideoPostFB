@@ -162,29 +162,29 @@ public class ApiIntegrationTests : IClassFixture<WebApplicationFactory<Program>>
         var id = JsonDocument.Parse(await created.Content.ReadAsStringAsync()).RootElement.GetProperty("id").GetString();
 
         var saved = await _client.SendAsync(StudioRequest("PUT", $"/api/studio/videos/{id}/shots",
-            "[{\"durationSeconds\":8,\"action\":\"He waves\",\"camera\":\"medium shot\",\"speaker\":\"Anh Hai\",\"dialogue\":\"Ê Út Tèo!\",\"assetIds\":[],\"continueFromPrevious\":true}," +
-            "{\"durationSeconds\":40,\"action\":\"Fish grilling\",\"camera\":\"close-up\",\"assetIds\":[],\"continueFromPrevious\":true}]", StudioKey));
+            "[{\"durationSeconds\":8,\"action\":\"He waves\",\"camera\":\"medium shot\",\"speaker\":\"Anh Hai\",\"dialogue\":\"Ê Út Tèo!\",\"cast\":[\"Anh Hai\",\"Anh Hai\"],\"location\":\"Sân\"}," +
+            "{\"durationSeconds\":40,\"action\":\"Fish grilling\",\"camera\":\"close-up\",\"cast\":[]}]", StudioKey));
         saved.StatusCode.Should().Be(HttpStatusCode.OK);
         var video = JsonDocument.Parse(await saved.Content.ReadAsStringAsync()).RootElement;
         var shots = video.GetProperty("shots").EnumerateArray().ToList();
         shots.Should().HaveCount(2);
-        shots[1].GetProperty("durationSeconds").GetInt32().Should().Be(15); // clamped to the model's max
-        shots[0].GetProperty("continueFromPrevious").GetBoolean().Should().BeFalse(); // the first shot has nothing to continue
-        shots[1].GetProperty("continueFromPrevious").GetBoolean().Should().BeTrue();
+        shots[1].GetProperty("durationSeconds").GetInt32().Should().Be(12); // clamped to Seedance's max
+        shots[0].GetProperty("cast").EnumerateArray().Select(c => c.GetString()).Should().Equal("Anh Hai"); // duplicates dropped
+        shots[0].GetProperty("location").GetString().Should().Be("Sân");
         video.GetProperty("status").GetString().Should().Be("Planned");
-        video.GetProperty("targetDurationSeconds").GetInt32().Should().Be(23); // length = the shots, not the number typed
+        video.GetProperty("targetDurationSeconds").GetInt32().Should().Be(20); // length = the shots, not the number typed
 
         // saving the details again (with a script estimate) must not overwrite the shots' real length
         (await _client.SendAsync(StudioRequest("PUT", $"/api/studio/videos/{id}", "{\"targetDurationSeconds\":180}", StudioKey)))
             .StatusCode.Should().Be(HttpStatusCode.OK);
         var reread = JsonDocument.Parse(await _client.GetStringAsync($"/api/studio/videos/{id}")).RootElement;
-        reread.GetProperty("targetDurationSeconds").GetInt32().Should().Be(23);
+        reread.GetProperty("targetDurationSeconds").GetInt32().Should().Be(20);
 
         // edit the first shot (by id), drop the second, add a new one
         var firstId = shots[0].GetProperty("id").GetString();
         var edited = await _client.SendAsync(StudioRequest("PUT", $"/api/studio/videos/{id}/shots",
-            $"[{{\"id\":\"{firstId}\",\"durationSeconds\":6,\"action\":\"He waves and laughs\",\"camera\":\"medium shot\",\"assetIds\":[]}}," +
-            "{\"durationSeconds\":5,\"action\":\"Glasses clink\",\"camera\":\"close-up\",\"assetIds\":[]}]", StudioKey));
+            $"[{{\"id\":\"{firstId}\",\"durationSeconds\":6,\"action\":\"He waves and laughs\",\"camera\":\"medium shot\",\"cast\":[]}}," +
+            "{\"durationSeconds\":5,\"action\":\"Glasses clink\",\"camera\":\"close-up\",\"cast\":[]}]", StudioKey));
         edited.StatusCode.Should().Be(HttpStatusCode.OK);
         var after = JsonDocument.Parse(await edited.Content.ReadAsStringAsync()).RootElement.GetProperty("shots").EnumerateArray().ToList();
         after.Should().HaveCount(2);

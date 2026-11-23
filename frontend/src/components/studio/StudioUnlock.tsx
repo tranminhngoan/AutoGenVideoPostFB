@@ -35,12 +35,12 @@ export function StudioUnlock({ onUnlocked }: { onUnlocked: () => void }) {
         <KeyRound className="h-4 w-4" /> Mở khoá Studio Video AI
       </div>
       <p className="text-xs text-fg-muted">
-        Dán <b>khoá xAI</b> đang đặt trên Railway (biến <code>XAI_API_KEY</code>, xem ở console.x.ai → API Keys) — hoặc khoá Gemini đang đặt ở đó.
+        Dán <b>khoá Vercel AI Gateway</b> đang đặt trên Railway (biến <code>AI_GATEWAY_API_KEY</code>, xem ở vercel.com → AI Gateway → API Keys) — hoặc khoá Gemini đang đặt ở đó.
         Khoá chỉ lưu trên trình duyệt này, để người lạ không dùng app tốn tiền của anh.
       </p>
       {error && <p className="text-xs text-danger">{error}</p>}
       <div className="flex flex-col gap-2 sm:flex-row">
-        <Input type="password" autoComplete="off" placeholder="xai-..." value={key} onChange={(e) => setKey(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && unlock()} />
+        <Input type="password" autoComplete="off" placeholder="Khoá API…" value={key} onChange={(e) => setKey(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && unlock()} />
         <Button variant="primary" className="shrink-0" loading={checking} disabled={!key.trim()} onClick={unlock}>
           Mở khoá
         </Button>

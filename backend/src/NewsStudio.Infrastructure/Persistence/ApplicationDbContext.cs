@@ -621,7 +621,7 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
             entity.Property(e => e.Status).HasMaxLength(30);
             entity.Property(e => e.Camera).HasMaxLength(500);
             entity.Property(e => e.Speaker).HasMaxLength(200);
-            entity.Property(e => e.InteractionId).HasMaxLength(300);
+            entity.Property(e => e.Location).HasMaxLength(200);
             entity.Property(e => e.CostUsd).HasPrecision(18, 6);
             entity.HasIndex(e => new { e.StudioVideoId, e.Index });
         });

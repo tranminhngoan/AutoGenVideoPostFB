@@ -1776,6 +1776,10 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                         .HasMaxLength(500)
                         .HasColumnType("character varying(500)");
 
+                    b.Property<string>("CastJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
                     b.Property<Guid?>("ClipBlobId")
                         .HasColumnType("uuid");
 
@@ -1802,11 +1806,14 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                         .HasColumnType("integer");
 
                     b.Property<string>("InteractionId")
-                        .HasMaxLength(300)
-                        .HasColumnType("character varying(300)");
+                        .HasColumnType("text");
 
                     b.Property<Guid?>("KeyframeBlobId")
                         .HasColumnType("uuid");
+
+                    b.Property<string>("Location")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
 
                     b.Property<string>("Sound")
                         .HasColumnType("text");
@@ -1825,6 +1832,12 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
 
                     b.Property<DateTime?>("UpdatedAtUtc")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("VoiceBlobId")
+                        .HasColumnType("uuid");
+
+                    b.Property<double?>("VoiceSeconds")
+                        .HasColumnType("double precision");
 
                     b.HasKey("Id");
 
@@ -1849,6 +1862,10 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(10)");
 
                     b.Property<string>("AssetIdsJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("BibleJson")
                         .IsRequired()
                         .HasColumnType("text");
 
@@ -1907,6 +1924,9 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<int>("Seed")
+                        .HasColumnType("integer");
+
                     b.Property<string>("Status")
                         .IsRequired()
                         .HasMaxLength(30)
@@ -1925,6 +1945,10 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
 
                     b.Property<DateTime?>("UpdatedAtUtc")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("VideoModel")
+                        .IsRequired()
+                        .HasColumnType("text");
 
                     b.HasKey("Id");
 

@@ -61,12 +61,17 @@ export function CostPanel({ onAuthError }: { onAuthError: (e: unknown) => boolea
           <div className="mt-1 text-xl font-semibold text-fg">{usd(costs.allTimeSpentUsd)}</div>
         </Card>
         <Card className="p-3">
-          <div className="text-xs text-fg-muted">Giá Grok Imagine Lite / giây</div>
-          <div className="mt-1 space-y-0.5 text-[12px] text-fg">
-            {Object.entries(costs.pricePerSecondUsd).map(([r, p]) => (
-              <div key={r} className="flex justify-between">
-                <span>{r}</span>
-                <span>{usd(p, 3)}</span>
+          <div className="text-xs text-fg-muted">Giá video / giây (ước tính)</div>
+          <div className="mt-1 space-y-1 text-[12px] text-fg">
+            {costs.models.map((m) => (
+              <div key={m.id}>
+                <div className="font-medium">{m.label}</div>
+                {Object.entries(m.pricePerSecondUsd).map(([r, p]) => (
+                  <div key={r} className="flex justify-between text-fg-muted">
+                    <span>{r}</span>
+                    <span>{usd(p, 4)}</span>
+                  </div>
+                ))}
               </div>
             ))}
           </div>
@@ -79,7 +84,7 @@ export function CostPanel({ onAuthError }: { onAuthError: (e: unknown) => boolea
         <div className="text-sm font-semibold text-fg">Trần ngân sách tháng cho Studio</div>
         <p className="text-xs text-fg-muted">
           Trước mỗi bước tốn tiền (lập kế hoạch, tạo clip), hệ thống kiểm tra trần này; vượt trần thì dừng và báo, không tự trừ tiếp. Đặt 0 nếu không
-          muốn giới hạn. Tiền tạo clip trừ vào số dư tài khoản xAI (console.x.ai); lập kế hoạch dùng Gemini. Ước tính có cộng phí ~$0.01 mỗi ảnh mở đầu.
+          muốn giới hạn. Tiền tạo clip trừ vào credit Vercel AI Gateway (Seedance); lập kế hoạch và giọng đọc dùng Gemini (vài xu mỗi video).
         </p>
         <div className="flex max-w-sm items-end gap-2">
           <Field label="USD / tháng" className="flex-1">

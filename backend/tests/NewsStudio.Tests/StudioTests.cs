@@ -1,344 +1,303 @@
 using System.Text.Json;
-using Microsoft.Extensions.Configuration;
+using System.Text.Json.Nodes;
 using FluentAssertions;
+using Microsoft.Extensions.Configuration;
+using NewsStudio.Application.DTOs;
 using NewsStudio.Domain.Entities;
 using NewsStudio.Infrastructure.Studio;
 using Xunit;
 
 namespace NewsStudio.Tests;
 
-/// <summary>AI video studio: Grok Imagine request/response handling, shot planning, prompts and FFmpeg work.</summary>
+/// <summary>AI video studio: Seedance (Vercel AI Gateway) calls, the character bible, planning, prompts, voices and FFmpeg work.</summary>
 public class StudioTests
 {
-    [Fact]
-    public void Grok_request_sends_start_frame_as_data_uri_and_clamps_duration()
-    {
-        var body = GrokVideoClient.BuildRequest("grok-imagine-video-1.5-lite", "A man calls out",
-            new StartFrame(new byte[] { 1, 2, 3 }, "image/jpeg"), "9:16", "720p", 30);
-        using var doc = JsonDocument.Parse(JsonSerializer.Serialize(body));
-        var r = doc.RootElement;
-
-        r.GetProperty("model").GetString().Should().Be("grok-imagine-video-1.5-lite");
-        r.GetProperty("prompt").GetString().Should().Be("A man calls out");
-        r.GetProperty("duration").GetInt32().Should().Be(15); // model max
-        r.GetProperty("aspect_ratio").GetString().Should().Be("9:16");
-        r.GetProperty("resolution").GetString().Should().Be("720p");
-        r.GetProperty("generate_audio").GetBoolean().Should().BeTrue();
-        r.GetProperty("image").GetProperty("url").GetString().Should().Be("data:image/jpeg;base64,AQID");
-    }
+    // ───────────── Seedance through the Vercel AI Gateway ─────────────
 
     [Fact]
-    public void Grok_request_without_frame_is_text_to_video()
+    public void Start_body_is_text_to_video_without_watermark()
     {
-        var body = GrokVideoClient.BuildRequest("m", "x", null, "16:9", "4k", 0);
-        body.Should().NotContainKey("image");
-        body["resolution"].Should().Be("720p"); // unknown resolution → default
-        body["duration"].Should().Be(1);
-        body["aspect_ratio"].Should().Be("16:9");
+        var body = SeedanceVideoClient.BuildStartBody("A judge slams the table", "9:16", "720x1280", 30, 1234);
+        body["prompt"]!.GetValue<string>().Should().Be("A judge slams the table");
+        body["n"]!.GetValue<int>().Should().Be(1);
+        body["aspectRatio"]!.GetValue<string>().Should().Be("9:16");
+        body["duration"]!.GetValue<int>().Should().Be(12); // Seedance max
+        body["resolution"]!.GetValue<string>().Should().Be("720x1280");
+        body["seed"]!.GetValue<int>().Should().Be(1234);
+        body["providerOptions"]!["bytedance"]!["watermark"]!.GetValue<bool>().Should().BeFalse();
+        body.ContainsKey("image").Should().BeFalse();
+        SeedanceVideoClient.BuildStartBody("x", "16:9", null, 1, null).ContainsKey("resolution").Should().BeFalse();
     }
+
+    [Theory]
+    [InlineData("9:16", "720p", "720x1280")]
+    [InlineData("16:9", "1080p", "1920x1080")]
+    [InlineData("9:16", "480p", "480x864")]
+    public void Seedance_frame_sizes(string aspect, string res, string expected) =>
+        SeedanceVideoClient.FrameSize(aspect, res).Should().Be(expected);
 
     [Theory]
     [InlineData("""{"status":"pending"}""", "pending", null, null, null)]
-    [InlineData("""{"status":"done","video":{"url":"https://vidgen.x.ai/a/video.mp4","duration":8,"respect_moderation":true},"model":"grok-imagine-video-1.5-lite"}""", "done", "https://vidgen.x.ai/a/video.mp4", true, null)]
-    [InlineData("""{"status":"done","video":{"url":"https://vidgen.x.ai/b.mp4","respect_moderation":false}}""", "done", "https://vidgen.x.ai/b.mp4", false, null)]
-    [InlineData("""{"status":"failed","error":{"code":"invalid_argument","message":"Prompt cannot be empty."}}""", "failed", null, null, "invalid_argument")]
-    [InlineData("""{"video":{"url":"https://vidgen.x.ai/c.mp4"}}""", "done", "https://vidgen.x.ai/c.mp4", null, null)]
-    public void Grok_status_is_read(string json, string status, string? url, bool? respect, string? code)
+    [InlineData("""{"status":"completed","videos":[{"type":"url","url":"https://blob.test/v.mp4","mediaType":"video/mp4"}]}""", "completed", "https://blob.test/v.mp4", null, null)]
+    [InlineData("""{"status":"completed","videos":[{"type":"base64","data":"AAAA","mediaType":"video/mp4"}]}""", "completed", null, "AAAA", null)]
+    [InlineData("""{"status":"error","error":"The request failed because the output video may contain sensitive information"}""", "error", null, null, "The request failed because the output video may contain sensitive information")]
+    public void Status_is_read(string json, string status, string? url, string? data, string? error)
     {
-        var s = GrokVideoClient.ParseStatus(json);
+        var s = SeedanceVideoClient.ParseStatus(json);
         s.Status.Should().Be(status);
         s.VideoUrl.Should().Be(url);
-        s.RespectModeration.Should().Be(respect);
-        s.ErrorCode.Should().Be(code);
+        s.VideoBase64.Should().Be(data);
+        s.Error.Should().Be(error);
     }
 
     [Fact]
-    public void Cost_is_seconds_times_price_plus_the_image_fee()
+    public void Prices_follow_model_and_resolution()
     {
-        var client = Client(new FakeXai());
-        client.EstimateCost(10, "720p", false).Should().Be(0.30m);
-        client.EstimateCost(10, "720p", true).Should().Be(0.31m);
-        client.EstimateCost(10, "480p", false).Should().Be(0.20m);
-        client.EstimateCost(10, "1080p", false).Should().Be(1.40m);
+        var client = Client(new FakeGateway());
+        client.EstimateCost(SeedanceVideoClient.FastModel, "480p", 10).Should().Be(0.097m);
+        client.EstimateCost(SeedanceVideoClient.ProModel, "480p", 10).Should().Be(0.20m);
+        client.PricePerSecond(SeedanceVideoClient.FastModel, "1080p").Should().BeGreaterThan(client.PricePerSecond(SeedanceVideoClient.FastModel, "720p"));
+        client.Models().Select(m => m.Id).Should().Equal(SeedanceVideoClient.FastModel, SeedanceVideoClient.ProModel);
+        SeedanceVideoClient.NormalizeModel("grok-imagine-video-1.5-lite").Should().Be(SeedanceVideoClient.FastModel);
     }
 
     [Fact]
-    public async Task Grok_job_is_started_polled_and_downloaded()
+    public async Task Job_is_started_polled_and_downloaded()
     {
-        var xai = new FakeXai();
-        xai.Polls.Enqueue("""{"status":"pending"}""");
-        xai.Polls.Enqueue("""{"status":"done","video":{"url":"https://vidgen.x.ai/r1/video.mp4","duration":8,"respect_moderation":true}}""");
-        var client = Client(xai);
+        var gw = new FakeGateway();
+        gw.Polls.Enqueue("""{"status":"pending"}""");
+        gw.Polls.Enqueue("""{"status":"completed","videos":[{"type":"url","url":"https://blob.test/op1.mp4","mediaType":"video/mp4"}]}""");
+        string? stored = null;
 
-        var clip = await client.GenerateAsync("prompt", new StartFrame(new byte[] { 9 }, "image/jpeg"), "9:16", "720p", 8, CancellationToken.None);
+        var clip = await Client(gw).GenerateAsync(SeedanceVideoClient.FastModel, "prompt", "9:16", "720p", 6, 42, CancellationToken.None,
+            onStarted: op => { stored = op; return Task.CompletedTask; });
 
-        clip.Video.Should().Equal(FakeXai.VideoBytes);
-        clip.RequestId.Should().Be("r1");
-        clip.CostUsd.Should().Be(0.25m); // 8 × 0.03 + 0.01 image
-        xai.StartBody.Should().Contain("\"model\":\"grok-imagine-video-1.5-lite\"").And.Contain("data:image/jpeg;base64,CQ==");
-        xai.AuthHeaders.Should().OnlyContain(h => h == "Bearer test-xai-key");
+        clip.Video.Should().Equal(FakeGateway.VideoBytes);
+        clip.CostUsd.Should().Be(Math.Round(6 * 0.0216m, 4));
+        stored.Should().Be("""{"id":"op1"}"""); // kept on the shot the moment the job is paid for
+        gw.Starts.Should().Be(1);
+        gw.Headers["authorization"].Should().Be("Bearer test-gateway-key");
+        gw.Headers["ai-model-id"].Should().Be(SeedanceVideoClient.FastModel);
+        gw.Headers["ai-video-model-specification-version"].Should().Be("4");
+        gw.Headers["ai-gateway-protocol-version"].Should().Be("0.0.1");
+        gw.StartBody!["seed"]!.GetValue<int>().Should().Be(42);
     }
 
     [Fact]
-    public async Task Grok_resumes_a_paid_job_instead_of_paying_again()
+    public async Task A_refused_resolution_format_is_retried_without_paying()
     {
-        var xai = new FakeXai();
-        xai.Old["old1"] = """{"status":"done","video":{"url":"https://vidgen.x.ai/old1/video.mp4","respect_moderation":true}}""";
-        string? started = null;
-        var clip = await Client(xai).GenerateAsync("p", null, "9:16", "720p", 8, CancellationToken.None, "old1", id => { started = id; return Task.CompletedTask; });
+        var gw = new FakeGateway { RefuseFrameSizeResolution = true };
+        gw.Polls.Enqueue("""{"status":"completed","videos":[{"type":"base64","data":"__VIDEO__"}]}""");
+        var clip = await Client(gw).GenerateAsync(SeedanceVideoClient.ProModel, "p", "9:16", "1080p", 5, null, CancellationToken.None);
+        clip.Video.Should().Equal(FakeGateway.VideoBytes);
+        gw.StartResolutions.Should().Equal("1080x1920", "1080p"); // WxH refused (not billed) → "1080p" accepted
+    }
 
-        xai.Starts.Should().Be(0);          // nothing new submitted
-        started.Should().BeNull();
-        clip.RequestId.Should().Be("old1");
-        clip.CostUsd.Should().Be(0m);       // already paid in the earlier run
-        clip.Video.Should().Equal(FakeXai.VideoBytes);
+    [Fact]
+    public async Task A_paid_job_is_resumed_instead_of_paying_again()
+    {
+        var gw = new FakeGateway();
+        gw.Old["old1"] = """{"status":"completed","videos":[{"type":"url","url":"https://blob.test/old1.mp4"}]}""";
+        var clip = await Client(gw).GenerateAsync(SeedanceVideoClient.FastModel, "p", "9:16", "720p", 6, 1, CancellationToken.None, resumeOperation: """{"id":"old1"}""");
+        gw.Starts.Should().Be(0);
+        clip.CostUsd.Should().Be(0m);
+        clip.Video.Should().Equal(FakeGateway.VideoBytes);
+    }
+
+    [Fact]
+    public async Task Recover_never_starts_a_new_job()
+    {
+        var gw = new FakeGateway();
+        gw.Old["paid"] = """{"status":"completed","videos":[{"type":"url","url":"https://blob.test/paid.mp4"}]}""";
+        gw.Old["failed"] = """{"status":"error","error":"boom"}""";
+        var client = Client(gw);
+        (await client.TryRecoverAsync(SeedanceVideoClient.FastModel, """{"id":"paid"}""", CancellationToken.None))!.Value.Bytes.Should().Equal(FakeGateway.VideoBytes);
+        (await client.TryRecoverAsync(SeedanceVideoClient.FastModel, """{"id":"failed"}""", CancellationToken.None)).Should().BeNull();
+        (await client.TryRecoverAsync(SeedanceVideoClient.FastModel, """{"id":"unknown"}""", CancellationToken.None)).Should().BeNull();
+        gw.Starts.Should().Be(0);
     }
 
     [Theory]
-    [InlineData(null)]                                                                          // xAI no longer knows it (404)
-    [InlineData("""{"status":"failed","error":{"code":"invalid_argument","message":"x"}}""")]  // it had failed
-    [InlineData("""{"status":"done","video":{"url":"https://vidgen.x.ai/f.mp4","respect_moderation":false}}""")] // filtered
-    public async Task Grok_starts_afresh_when_the_old_job_is_not_reusable(string? oldAnswer)
+    [InlineData(401, "authentication_error", "Invalid API key")]
+    [InlineData(402, "invalid_request_error", "Payment required")]
+    [InlineData(400, "invalid_request_error", "Insufficient credits: video generation requires at least $10")]
+    public async Task An_unpaid_account_stops_the_run(int status, string type, string message)
     {
-        var xai = new FakeXai();
-        if (oldAnswer != null) xai.Old["old1"] = oldAnswer;
-        xai.Polls.Enqueue("""{"status":"done","video":{"url":"https://vidgen.x.ai/r1/video.mp4","respect_moderation":true}}""");
-        string? started = null;
-        var clip = await Client(xai).GenerateAsync("p", null, "9:16", "720p", 8, CancellationToken.None, "old1", id => { started = id; return Task.CompletedTask; });
-
-        xai.Starts.Should().Be(1);
-        started.Should().Be("r1");          // the new id is handed over as soon as the job exists
-        clip.RequestId.Should().Be("r1");
-        clip.CostUsd.Should().Be(0.24m);
-    }
-
-    [Theory]
-    [InlineData(402, "Payment required")]
-    [InlineData(403, "forbidden")]
-    [InlineData(429, "You have run out of credits")] // a spent balance must stop the run, not be retried as "busy"
-    public async Task Grok_unpaid_account_stops_the_run(int status, string message)
-    {
-        var xai = new FakeXai { StartStatus = (System.Net.HttpStatusCode)status, StartError = message };
-        var act = () => Client(xai).GenerateAsync("p", null, "9:16", "720p", 5, CancellationToken.None);
-        (await act.Should().ThrowAsync<VideoAccountException>()).Which.Message.Should().Contain("Tạo các clip còn thiếu");
+        var gw = new FakeGateway { StartStatus = status, StartErrorType = type, StartError = message };
+        var act = () => Client(gw).GenerateAsync(SeedanceVideoClient.FastModel, "p", "9:16", "720p", 5, null, CancellationToken.None);
+        (await act.Should().ThrowAsync<VideoAccountException>()).Which.Message.Should().Contain("AI_GATEWAY_API_KEY");
     }
 
     [Fact]
-    public async Task Grok_recover_downloads_a_paid_clip_again_without_a_new_job()
+    public async Task Busy_gateway_is_transient()
     {
-        var xai = new FakeXai();
-        xai.Old["paid1"] = """{"status":"done","video":{"url":"https://vidgen.x.ai/paid1/video.mp4","respect_moderation":true}}""";
-        xai.Old["gone1"] = """{"status":"expired"}""";
-
-        var got = await Client(xai).TryRecoverAsync("paid1", CancellationToken.None);
-        var expired = await Client(xai).TryRecoverAsync("gone1", CancellationToken.None);
-        var unknown = await Client(xai).TryRecoverAsync("never", CancellationToken.None);
-
-        got!.Value.Bytes.Should().Equal(FakeXai.VideoBytes);
-        expired.Should().BeNull();
-        unknown.Should().BeNull();
-        xai.Starts.Should().Be(0); // recovering never pays for a new clip
-    }
-
-    [Fact]
-    public async Task Grok_busy_is_transient()
-    {
-        var xai = new FakeXai { StartStatus = (System.Net.HttpStatusCode)429 };
-        var act = () => Client(xai).GenerateAsync("p", null, "9:16", "720p", 5, CancellationToken.None);
+        var gw = new FakeGateway { StartStatus = 429, StartErrorType = "rate_limit_exceeded", StartError = "slow down" };
+        var act = () => Client(gw).GenerateAsync(SeedanceVideoClient.FastModel, "p", "9:16", "720p", 5, null, CancellationToken.None);
         await act.Should().ThrowAsync<VideoTransientException>();
     }
 
     [Fact]
-    public async Task Grok_moderation_failure_is_a_rejection_not_a_retry()
+    public async Task Moderated_clip_is_a_rejection()
     {
-        var xai = new FakeXai();
-        xai.Polls.Enqueue("""{"status":"failed","error":{"code":"invalid_argument","message":"content blocked by moderation"}}""");
-        var act = () => Client(xai).GenerateAsync("p", null, "9:16", "720p", 5, CancellationToken.None);
-        (await act.Should().ThrowAsync<VideoRejectedException>()).Which.Message.Should().Contain("moderation");
+        var gw = new FakeGateway();
+        gw.Polls.Enqueue("""{"status":"error","error":"The output video may contain sensitive information"}""");
+        var act = () => Client(gw).GenerateAsync(SeedanceVideoClient.FastModel, "p", "9:16", "720p", 5, null, CancellationToken.None);
+        await act.Should().ThrowAsync<VideoRejectedException>();
     }
 
-    [Fact]
-    public async Task Grok_filtered_clip_is_rejected_and_still_billed()
+    private static SeedanceVideoClient Client(FakeGateway gw)
     {
-        var xai = new FakeXai();
-        xai.Polls.Enqueue("""{"status":"done","video":{"url":"https://vidgen.x.ai/r1/video.mp4","respect_moderation":false}}""");
-        var act = () => Client(xai).GenerateAsync("p", null, "9:16", "720p", 5, CancellationToken.None);
-        (await act.Should().ThrowAsync<VideoRejectedException>()).Which.BilledUsd.Should().Be(0.15m);
-    }
-
-    private static GrokVideoClient Client(FakeXai xai)
-    {
-        var config = new Microsoft.Extensions.Configuration.ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?> { ["Ai:Xai:ApiKey"] = "test-xai-key" }).Build();
-        return new GrokVideoClient(new HttpClient(xai), config, Microsoft.Extensions.Logging.Abstractions.NullLogger<GrokVideoClient>.Instance)
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?> { ["Ai:Gateway:ApiKey"] = "test-gateway-key", ["Ai:Gateway:BaseUrl"] = "https://gw.test/v4/ai" }).Build();
+        return new SeedanceVideoClient(new HttpClient(gw), config, Microsoft.Extensions.Logging.Abstractions.NullLogger<SeedanceVideoClient>.Instance)
         {
             PollInterval = TimeSpan.FromMilliseconds(1)
         };
     }
 
-    /// <summary>Stands in for api.x.ai: start → request_id, polls answered from a queue, video download.</summary>
-    private sealed class FakeXai : HttpMessageHandler
+    /// <summary>Stands in for the Vercel AI Gateway: start → operation {"id":"op1"}, status answers from a queue, file download.</summary>
+    private sealed class FakeGateway : HttpMessageHandler
     {
         public static readonly byte[] VideoBytes = Enumerable.Range(0, 4096).Select(i => (byte)i).ToArray();
         public Queue<string> Polls { get; } = new();
-        /// <summary>Jobs from an earlier run (resume): id → poll answer; unknown ids answer 404.</summary>
         public Dictionary<string, string> Old { get; } = new();
         public int Starts { get; private set; }
-        public System.Net.HttpStatusCode StartStatus { get; set; } = System.Net.HttpStatusCode.OK;
+        public int StartStatus { get; set; } = 200;
+        public string StartErrorType { get; set; } = "internal_server_error";
         public string StartError { get; set; } = "busy";
-        public string StartBody { get; private set; } = "";
-        public List<string> AuthHeaders { get; } = new();
+        public bool RefuseFrameSizeResolution { get; set; }
+        public List<string?> StartResolutions { get; } = new();
+        public JsonObject? StartBody { get; private set; }
+        public Dictionary<string, string> Headers { get; } = new(StringComparer.OrdinalIgnoreCase);
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             var url = request.RequestUri!.ToString();
-            if (url.StartsWith("https://vidgen.x.ai/"))
-                return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
-                {
-                    Content = new ByteArrayContent(VideoBytes) { Headers = { ContentType = new("video/mp4") } }
-                };
-            AuthHeaders.Add(request.Headers.Authorization?.ToString() ?? "");
-            if (request.Method == HttpMethod.Post && url == "https://api.x.ai/v1/videos/generations")
+            if (url.StartsWith("https://blob.test/"))
+                return new HttpResponseMessage(System.Net.HttpStatusCode.OK) { Content = new ByteArrayContent(VideoBytes) { Headers = { ContentType = new("video/mp4") } } };
+            foreach (var h in request.Headers) Headers[h.Key] = string.Join(",", h.Value);
+            var body = JsonNode.Parse(await request.Content!.ReadAsStringAsync(ct))!.AsObject();
+            if (url == "https://gw.test/v4/ai/video-model/start")
             {
+                var res = body["resolution"]?.GetValue<string>();
+                StartResolutions.Add(res);
+                if (StartStatus != 200) return Error(StartStatus, StartErrorType, StartError);
+                if (RefuseFrameSizeResolution && res != null && res.Contains('x'))
+                    return Error(400, "invalid_request_error", "Unsupported resolution for this model");
                 Starts++;
-                StartBody = await request.Content!.ReadAsStringAsync(ct);
-                if (StartStatus != System.Net.HttpStatusCode.OK)
-                    return new HttpResponseMessage(StartStatus) { Content = new StringContent(JsonSerializer.Serialize(new { error = StartError })) };
-                return Json("""{"request_id":"r1"}""");
+                StartBody = body;
+                return Json("""{"operation":{"id":"op1"}}""");
             }
-            if (request.Method == HttpMethod.Get && url == "https://api.x.ai/v1/videos/r1")
-                return Json(Polls.Count > 0 ? Polls.Dequeue() : """{"status":"pending"}""");
-            if (request.Method == HttpMethod.Get && url.StartsWith("https://api.x.ai/v1/videos/") && Old.TryGetValue(url[27..], out var old))
-                return Json(old);
+            if (url == "https://gw.test/v4/ai/video-model/status")
+            {
+                var id = body["operation"]!["id"]!.GetValue<string>();
+                if (id == "op1") return Json(Polls.Count > 0 ? Polls.Dequeue().Replace("__VIDEO__", Convert.ToBase64String(VideoBytes)) : """{"status":"pending"}""");
+                return Old.TryGetValue(id, out var old) ? Json(old) : Error(404, "not_found", "unknown operation");
+            }
             return new HttpResponseMessage(System.Net.HttpStatusCode.NotFound);
         }
 
         private static HttpResponseMessage Json(string body) =>
             new(System.Net.HttpStatusCode.OK) { Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json") };
+
+        private static HttpResponseMessage Error(int status, string type, string message) =>
+            new((System.Net.HttpStatusCode)status) { Content = new StringContent(JsonSerializer.Serialize(new { error = new { message, type } })) };
     }
 
-    [Fact]
-    public void Plan_reads_continue_flag_but_never_on_the_first_shot()
-    {
-        var plan = StudioService.ParsePlan("""
-            {"shots":[{"duration":6,"action":"a","continueFromPrevious":true},
-                      {"duration":6,"action":"b","continueFromPrevious":true},
-                      {"duration":6,"action":"c","continueFromPrevious":false},
-                      {"duration":6,"action":"d"}]}
-            """, new HashSet<Guid>(), new HashSet<Guid>());
-        plan.Shots.Select(s => s.ContinueFromPrevious).Should().Equal(false, true, false, false);
-    }
+    // ───────────── Bible, planning, prompts ─────────────
 
     [Fact]
-    public void Keyframe_prompt_puts_every_character_once_in_a_wide_frame()
+    public void Plan_builds_the_bible_and_keeps_cast_names_from_it()
     {
-        var bao = new StudioAsset { Id = Guid.NewGuid(), Kind = "Character", Name = "Bao Công", Description = "judge, dark face, crescent mark" };
-        var cong = new StudioAsset { Id = Guid.NewGuid(), Kind = "Character", Name = "Công Tôn Sách", Description = "advisor, goatee" };
-        var hall = new StudioAsset { Id = Guid.NewGuid(), Kind = "Location", Name = "Công đường", Description = "Song dynasty court hall" };
-        var shot = new StudioShot { Action = "Cong Ton Sach rushes in holding a red letter while Bao Cong sits at the bench", Camera = "wide shot" };
-        var prompt = StudioService.BuildKeyframePrompt(new StudioVideo { AspectRatio = "9:16" }, shot, new[] { bao, cong, hall });
-
-        prompt.Should().Contain("Reference image 1 is the character \"Bao Công\"").And.Contain("Reference image 3 is the location \"Công đường\"");
-        prompt.Should().Contain("Exactly 2 main people").And.Contain("never duplicate anyone");
-        prompt.Should().Contain("Framing: wide shot").And.Contain("not a tight face crop");
-        prompt.Should().Contain("no text, captions, subtitles, logos or watermarks");
-    }
-
-    [Fact]
-    public void Shot_prompt_names_the_cast_once()
-    {
-        var a = new StudioAsset { Id = Guid.NewGuid(), Kind = "Character", Name = "Triển Chiêu", Description = "guard" };
-        var b = new StudioAsset { Id = Guid.NewGuid(), Kind = "Character", Name = "Công Tôn Sách", Description = "advisor" };
-        var shot = new StudioShot { Action = "Both kneel", AssetIdsJson = JsonSerializer.Serialize(new[] { a.Id, b.Id }) };
-        var prompt = StudioService.BuildShotPrompt(new StudioVideo(), shot, new Dictionary<Guid, StudioAsset> { [a.Id] = a, [b.Id] = b });
-        prompt.Should().Contain("The main people are exactly: Triển Chiêu, Công Tôn Sách").And.Contain("never duplicate anyone");
-    }
-
-    [Fact]
-    public void Continued_shot_prompt_asks_for_a_seamless_take()
-    {
-        var prompt = StudioService.BuildShotPrompt(new StudioVideo(), new StudioShot { Action = "He laughs" }, new Dictionary<Guid, StudioAsset>(), continued: true);
-        prompt.Should().Contain("Continue seamlessly from the starting image");
-    }
-
-    [Fact]
-    public void Plan_keeps_only_known_ids_and_valid_durations()
-    {
-        var hai = Guid.NewGuid();
-        var village = Guid.NewGuid();
         var song = Guid.NewGuid();
-        var json = $$"""
-            Đây là kế hoạch: {"caption":"Cá lóc nướng!","notes":"vui","musicTrackId":"{{song}}",
-             "shots":[{"duration":9.4,"assetIds":["{{hai}}","{{village}}","{{Guid.NewGuid()}}"],"action":"Anh Hai fans the charcoal","camera":"medium shot","speaker":"Anh Hai","dialogue":"Ê Út Tèo!","sound":"crackling charcoal"},
-                      {"duration":40,"assetIds":[],"action":"Wide shot of the lane","camera":"static","speaker":"null","dialogue":null,"sound":""},
-                      {"duration":1,"assetIds":[],"action":"","camera":"","dialogue":null}]}
-            """;
-        var plan = StudioService.ParsePlan(json, new HashSet<Guid> { hai, village }, new HashSet<Guid> { song });
+        var plan = StudioService.ParsePlan($$"""
+            Kế hoạch: {"caption":"Đại nhân sợ vợ","notes":"hài","musicTrackId":"{{song}}",
+             "characters":[{"name":"Bao Công","gender":"male","look":"stout judge, dark face, crescent mark","voice":"gemini:Orus"},
+                           {"name":"Phu nhân","gender":"female","look":"elegant lady in brocade","voice":"gemini:Orus"},
+                           {"name":"Lời dẫn","gender":"male","look":"","voice":"gemini:Unknown"}],
+             "locations":[{"name":"Công đường","look":"Song dynasty court hall"}],
+             "shots":[{"duration":3,"location":"công đường","cast":["bao công","Ai Đó","Lời dẫn"],"action":"He slams the table","camera":"wide shot",
+                       "speaker":"Bao Công","dialogue":"Bãi đường! Thả phạm nhân! Ta có vụ án gia đình cần xử gấp!","sound":"gavel"},
+                      {"duration":40,"location":"Hậu viện","cast":[],"action":"Courtyard at dusk","camera":"static","speaker":"null","dialogue":null},
+                      {"duration":1,"action":"","dialogue":null}]}
+            """, new HashSet<Guid> { song });
 
-        plan.Caption.Should().Be("Cá lóc nướng!");
         plan.MusicTrackId.Should().Be(song);
-        plan.Shots.Should().HaveCount(2); // the empty third shot is dropped
-        plan.Shots[0].Duration.Should().Be(9);
-        plan.Shots[0].AssetIds.Should().Equal(hai, village); // unknown id removed
-        plan.Shots[0].Dialogue.Should().Be("Ê Út Tèo!");
-        plan.Shots[1].Duration.Should().Be(15); // clamped to the model's max
-        plan.Shots[1].Speaker.Should().BeNull(); // "null" string treated as none
-    }
-
-    [Fact]
-    public void Plan_prompt_follows_the_script_without_a_target_length()
-    {
-        var (_, user) = StudioService.BuildPlanPrompt(new StudioVideo { Script = "Anh Hai: Ê Út Tèo!", TargetDurationSeconds = 180 },
-            new List<StudioAsset>(), new List<StudioMusicTrack>());
-        user.Should().Contain("Độ dài video do KỊCH BẢN quyết định").And.Contain("KHÔNG thêm shot độn");
-        user.Should().NotContain("180").And.NotContain("±10%"); // the typed number never reaches the planner
-    }
-
-    [Fact]
-    public void Plan_gives_every_line_enough_time_to_be_said()
-    {
-        var plan = StudioService.ParsePlan("""
-            {"shots":[{"duration":5,"action":"a","speaker":"Công Tôn Sách","dialogue":"Còn nghiêm trọng hơn ạ! Phu nhân bảo nếu đại nhân không về ngay thì tối nay ngủ ngoài cửa!"},
-                      {"duration":3,"action":"b","speaker":"Bao Công","dialogue":"Án mạng à?"},
-                      {"duration":6,"action":"c"}]}
-            """, new HashSet<Guid>(), new HashSet<Guid>());
-        plan.Shots[0].Duration.Should().Be(8); // 20 words / 3 + 1 → 8 s instead of a rushed 5 s
-        plan.Shots[1].Duration.Should().Be(3); // short line keeps the planner's time
-        plan.Shots[2].Duration.Should().Be(6); // no dialogue: untouched
-        StudioService.SecondsToSay(string.Join(' ', Enumerable.Repeat("chữ", 60))).Should().Be(21); // >15 → clamped by the clip limit
+        plan.Bible.Characters.Select(c => c.Name).Should().Equal("Bao Công", "Phu nhân", "Lời dẫn");
+        plan.Bible.Characters[0].Voice.Should().Be("gemini:Orus");
+        plan.Bible.Characters[1].Voice.Should().NotBe("gemini:Orus").And.StartWith("gemini:"); // same voice twice → re-picked
+        StudioVoices.All.Single(v => v.Id == plan.Bible.Characters[1].Voice).Gender.Should().Be("female");
+        StudioVoices.IsKnown(plan.Bible.Characters[2].Voice).Should().BeTrue();          // unknown voice → a real one
+        plan.Shots.Should().HaveCount(2);                                                // empty shot dropped
+        plan.Shots[0].Cast.Should().Equal("Bao Công");                                   // canonical name; stranger + narrator dropped
+        plan.Shots[0].Location.Should().Be("Công đường");
+        plan.Shots[0].Duration.Should().Be(6);                                           // 14 words → 6 s, not 3
+        plan.Shots[1].Duration.Should().Be(12);                                          // Seedance max
+        plan.Shots[1].Speaker.Should().BeNull();
     }
 
     [Fact]
     public void Plan_with_unknown_music_falls_back_to_none()
     {
-        var plan = StudioService.ParsePlan("""{"musicTrackId":"not-a-guid","shots":[{"duration":8,"action":"x"}]}""", new HashSet<Guid>(), new HashSet<Guid>());
+        var plan = StudioService.ParsePlan("""{"musicTrackId":"not-a-guid","shots":[{"duration":8,"action":"x"}]}""", new HashSet<Guid>());
         plan.MusicTrackId.Should().BeNull();
     }
 
     [Fact]
-    public void Shot_prompt_names_characters_location_and_exact_vietnamese_line()
+    public void Plan_prompt_is_text_to_video_with_the_voice_list()
     {
-        var hai = new StudioAsset { Id = Guid.NewGuid(), Kind = "Character", Name = "Anh Hai", Description = "45-year-old man, thin moustache, blue shirt" };
-        var porch = new StudioAsset { Id = Guid.NewGuid(), Kind = "Location", Name = "Hàng ba nhà quê", Description = "rustic Mekong Delta porch" };
-        var video = new StudioVideo { AspectRatio = "9:16", StyleNotes = "giọng miền Tây, nắng chiều" };
-        var shot = new StudioShot
-        {
-            Action = "He fans the charcoal and waves", Camera = "medium shot, static", Speaker = "Anh Hai", Dialogue = "Ê Út Tèo! Tấp vô đây!",
-            Sound = "crackling charcoal", AssetIdsJson = JsonSerializer.Serialize(new[] { hai.Id, porch.Id })
-        };
-        var prompt = StudioService.BuildShotPrompt(video, shot, new Dictionary<Guid, StudioAsset> { [hai.Id] = hai, [porch.Id] = porch });
-
-        prompt.Should().Contain("vertical 9:16").And.Contain("Hàng ba nhà quê").And.Contain("Anh Hai: 45-year-old man");
-        prompt.Should().Contain("says exactly: \"Ê Út Tèo! Tấp vô đây!\"").And.Contain("Only Anh Hai speaks");
-        prompt.Should().Contain("No background music").And.Contain("No subtitles");
-        prompt.Should().Contain("giọng miền Tây");
+        var (system, user) = StudioService.BuildPlanPrompt(new StudioVideo { Script = "Bao Công: Án mạng à?", TargetDurationSeconds = 180 }, new List<StudioMusicTrack>());
+        system.Should().Contain("TEXT-TO-VIDEO").And.Contain("KHÔNG có tiếng");
+        user.Should().Contain("gemini:Charon").And.Contain("\"characters\"").And.Contain("\"locations\"").And.Contain("\"cast\"");
+        user.Should().Contain("KHÔNG thêm shot độn").And.Contain("số nguyên 2–12").And.NotContain("180");
     }
 
     [Fact]
-    public void Shot_without_dialogue_says_so()
+    public void Shot_prompt_copies_the_bible_looks_and_dubs_the_speaker()
     {
-        var prompt = StudioService.BuildShotPrompt(new StudioVideo(), new StudioShot { Action = "Smoke rises from the fish" }, new Dictionary<Guid, StudioAsset>());
-        prompt.Should().Contain("No dialogue");
+        var bible = StudioService.NormalizeBible(
+            new[]
+            {
+                new StudioCharacterDto { Name = "Bao Công", Gender = "male", Look = "stout judge, dark face, crescent mark, purple robe" },
+                new StudioCharacterDto { Name = "Công Tôn Sách", Gender = "male", Look = "thin advisor, goatee, black hat" },
+            },
+            new[] { new StudioLocationDto { Name = "Công đường", Look = "Song dynasty court hall, red pillars, morning light" } });
+        var shot = new StudioShot
+        {
+            Location = "Công đường", CastJson = JsonSerializer.Serialize(new[] { "Bao Công", "Công Tôn Sách" }), Action = "The advisor rushes in",
+            Camera = "wide shot", Speaker = "Công Tôn Sách", Dialogue = "Bẩm đại nhân! Phu nhân gửi thư khẩn!"
+        };
+        var prompt = StudioService.BuildShotPrompt(new StudioVideo { AspectRatio = "9:16", StyleNotes = "comedy" }, bible, shot);
+
+        prompt.Should().Contain("vertical 9:16").And.Contain("Setting: Song dynasty court hall, red pillars, morning light");
+        prompt.Should().Contain("Characters in frame (2, each appears exactly once)").And.Contain("Bao Công — stout judge, dark face, crescent mark, purple robe");
+        prompt.Should().Contain("Công Tôn Sách is talking").And.Contain("no extreme close-up of the mouth");
+        prompt.Should().NotContain("Bẩm đại nhân"); // silent video: the line is dubbed, never put in the picture
+        prompt.Should().Contain("No text, no subtitles");
+
+        var narrated = StudioService.BuildShotPrompt(new StudioVideo(), bible, new StudioShot { Action = "Night falls", Speaker = "Lời dẫn", Dialogue = "Đêm đó…" });
+        narrated.Should().Contain("Nobody is talking");
+    }
+
+    [Fact]
+    public void Voices_follow_the_speaker()
+    {
+        var bible = StudioService.NormalizeBible(new[]
+        {
+            new StudioCharacterDto { Name = "Phu nhân", Gender = "female", Voice = "gemini:Gacrux" },
+            new StudioCharacterDto { Name = "Lời dẫn", Gender = "male", Voice = "gemini:Sadaltager" },
+        }, null);
+        StudioService.VoiceFor(bible, "phu nhân").Should().Be("gemini:Gacrux");
+        StudioService.VoiceFor(bible, null).Should().Be("gemini:Sadaltager");      // narrator
+        StudioService.VoiceFor(bible, "Người lạ").Should().Be(StudioVoices.DefaultNarratorVoice);
+        StudioVoices.Pick("female", new[] { "gemini:Kore" }).Should().NotBe("gemini:Kore");
+    }
+
+    [Fact]
+    public void Plan_gives_every_line_enough_time_to_be_said()
+    {
+        StudioService.SecondsToSay("Còn nghiêm trọng hơn ạ! Phu nhân bảo nếu đại nhân không về ngay thì tối nay ngủ ngoài cửa!").Should().Be(8);
+        StudioService.SecondsToSay(null).Should().Be(0);
     }
 
     [Theory]
@@ -347,6 +306,46 @@ public class StudioTests
     [InlineData(null, "🤖 Video được tạo bằng AI.")]
     public void Caption_always_discloses_ai(string? caption, string expected) =>
         StudioService.CaptionWithDisclosure(caption).Should().Be(expected);
+
+    [Fact]
+    public async Task Compose_dubs_each_silent_clip_with_its_line()
+    {
+        var ffmpeg = StudioMedia.LocateFfmpeg();
+        if (ffmpeg == null) return;
+        var dir = StudioMedia.TempDir();
+        try
+        {
+            async Task<string> Run(string args)
+            {
+                using var p = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(ffmpeg, "-hide_banner -y " + args)
+                    { UseShellExecute = false, RedirectStandardError = true, StandardErrorEncoding = System.Text.Encoding.UTF8 })!;
+                var err = await p.StandardError.ReadToEndAsync();
+                await p.WaitForExitAsync();
+                p.ExitCode.Should().Be(0, err);
+                return err;
+            }
+            var a = Path.Combine(dir, "a.mp4"); // Seedance-like: video only, no audio stream
+            var b = Path.Combine(dir, "b.mp4");
+            var line = Path.Combine(dir, "line.m4a");
+            await Run($"-loglevel error -f lavfi -i testsrc=size=720x1280:rate=24 -t 3 -c:v libx264 -pix_fmt yuv420p \"{a}\"");
+            await Run($"-loglevel error -f lavfi -i testsrc=size=720x1280:rate=24 -t 2 -c:v libx264 -pix_fmt yuv420p \"{b}\"");
+            await Run($"-loglevel error -f lavfi -i sine=f=440 -t 1.5 -c:a aac \"{line}\"");
+
+            var media = new StudioMedia(new ConfigurationBuilder().Build());
+            var output = Path.Combine(dir, "final.mp4");
+            var seconds = await media.ComposeAsync(new[] { a, b }, null, 0.15, "9:16", "720p", output, CancellationToken.None, voices: new string?[] { line, null });
+
+            seconds.Should().BeApproximately(5.0, 0.3); // clip lengths rule, the voice never stretches them
+            var loud = await Run($"-ss 0.5 -t 1 -i \"{output}\" -af volumedetect -f null -");
+            var quiet = await Run($"-ss 3.5 -t 1 -i \"{output}\" -af volumedetect -f null -");
+            double Mean(string log) => double.Parse(System.Text.RegularExpressions.Regex.Match(log, @"mean_volume: (-?[\d.]+) dB").Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture);
+            Mean(loud).Should().BeGreaterThan(Mean(quiet) + 20); // first clip carries the line, second is silent
+        }
+        finally
+        {
+            StudioMedia.TryDelete(dir);
+        }
+    }
 
     [Fact]
     public async Task Compose_joins_clips_even_without_audio_and_mixes_music()
