@@ -26,6 +26,11 @@ public class StudioService
     public const string DeliveryResolution = "1080p";
     /// <summary>A spoken line needs this much video after it (seconds) so the cut doesn't clip the last word.</summary>
     private const double VoiceTail = 0.6;
+    /// <summary>
+    /// The least room a line needs in its clip: it starts 0.25 s in (see the compose step) and keeps a short breath at
+    /// the end. A line up to MaxSeconds − this still fits one clip; below it the full <see cref="VoiceTail"/> is given.
+    /// </summary>
+    public const double MinVoiceRoom = 0.4;
     private const int MaxAttemptsPerRun = 2;
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
@@ -968,14 +973,14 @@ Trả về JSON: { ""sounds"": [""...""], ""caption"": ""..."", ""musicTrackId""
         if (s.Dialogue == null) return;
         var voice = VoiceFor(bible, s.Speaker);
         var (audio, seconds, fromCache) = await _voices.SpeakAsync(v.Id, s.Dialogue, voice, SpeedFor(bible, s.Speaker), ct);
-        if (seconds + VoiceTail > SeedanceVideoClient.MaxSeconds)
+        if (!FitsOneClip(seconds))
             throw new InvalidOperationException($"Câu thoại đọc mất {seconds:0.0}s — dài hơn 1 clip ({SeedanceVideoClient.MaxSeconds}s). Tách câu này thành 2 shot.");
         if (s.VoiceBlobId != null) await DeleteBlobAsync(s.VoiceBlobId.Value, ct);
         var blob = new StudioBlob { MimeType = "audio/mp4", Data = audio, SizeBytes = audio.Length };
         _db.StudioBlobs.Add(blob);
         s.VoiceBlobId = blob.Id;
         s.VoiceSeconds = seconds;
-        s.DurationSeconds = SeedanceVideoClient.ClampSeconds(Math.Max(s.DurationSeconds, (int)Math.Ceiling(seconds + VoiceTail)));
+        s.DurationSeconds = ClipSecondsFor(s.DurationSeconds, seconds);
         if (s.ErrorMessage?.StartsWith("Giọng đọc") == true) s.ErrorMessage = null;
         var cost = fromCache ? 0m : Math.Round((decimal)seconds * _voices.PricePerSecond, 5);
         s.CostUsd += cost;
@@ -1070,6 +1075,13 @@ Trả về JSON: { ""sounds"": [""...""], ""caption"": ""..."", ""musicTrackId""
         v.Progress = null;
         await _db.SaveChangesAsync(ct);
     }
+
+    /// <summary>Whether a line read in <paramref name="voiceSeconds"/> fits one clip (with a little tolerance for rounding).</summary>
+    public static bool FitsOneClip(double voiceSeconds) => voiceSeconds + MinVoiceRoom <= SeedanceVideoClient.MaxSeconds + 1e-6;
+
+    /// <summary>Clip length for a line: at least the planned length, long enough for the line plus a breath, at most 12 s.</summary>
+    public static int ClipSecondsFor(int planned, double voiceSeconds) =>
+        SeedanceVideoClient.ClampSeconds(Math.Max(planned, (int)Math.Ceiling(voiceSeconds + VoiceTail - 1e-6)));
 
     // ═══════════════════════════════ Generation ═══════════════════════════════
 

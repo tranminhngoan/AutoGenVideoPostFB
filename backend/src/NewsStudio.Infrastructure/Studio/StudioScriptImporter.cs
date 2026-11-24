@@ -12,8 +12,11 @@ namespace NewsStudio.Infrastructure.Studio;
 /// </summary>
 public static class StudioScriptImporter
 {
-    /// <summary>Longest narration piece for one clip: ~28 words ≈ 10.3 s read, leaving room in a 12 s clip.</summary>
-    public const int MaxWordsPerShot = 28;
+    /// <summary>
+    /// Longest narration piece for one clip: ~24 words. Emotional narration is read slowly (a 28-word line took 11.4 s at
+    /// -8 %), so this leaves room in a 12 s clip.
+    /// </summary>
+    public const int MaxWordsPerShot = 24;
     private const int MaxShotsPerScene = 6;
 
     /// <summary>Extra framings for the 2nd, 3rd… shot of a scene, so one long scene doesn't repeat the same picture.</summary>

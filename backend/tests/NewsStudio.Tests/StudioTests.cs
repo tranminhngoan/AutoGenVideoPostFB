@@ -400,6 +400,17 @@ public class StudioTests
     }
 
     [Theory]
+    [InlineData(11.4, true, 12)]   // the real case: 11.4 s at -8 % — starts at 0.25 s, still fits a 12 s clip
+    [InlineData(11.6, true, 12)]
+    [InlineData(11.7, false, 12)]
+    [InlineData(4.2, true, 5)]     // short line: planned 3 s grows to fit line + breath
+    public void A_line_fits_one_clip_up_to_the_last_breath(double voice, bool fits, int clip)
+    {
+        StudioService.FitsOneClip(voice).Should().Be(fits);
+        StudioService.ClipSecondsFor(3, voice).Should().Be(clip);
+    }
+
+    [Theory]
     [InlineData("-8%", "-8%")]
     [InlineData("5", "+5%")]
     [InlineData("-50%", "-20%")]
