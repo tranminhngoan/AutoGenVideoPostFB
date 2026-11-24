@@ -666,6 +666,9 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
               <Field label="Giọng lời bình (chọn theo cảm xúc kịch bản, đổi được)">
                 <div className="flex gap-1">
                   <Select value={narratorVoice} onChange={(e) => setNarratorVoice(e.target.value)} disabled={locked}>
+                    {voices.length > 0 && !voices.some((v) => v.id === narratorVoice) && (
+                      <option value={narratorVoice} disabled>⚠ Giọng đã xoá — chọn lại giọng khác</option>
+                    )}
                     {voices.map((v) => (
                       <option key={v.id} value={v.id}>{v.name} — {v.description}</option>
                     ))}
@@ -844,6 +847,9 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
                     <Field label="Giọng đọc">
                       <div className="flex gap-1">
                         <Select value={c.voice} disabled={locked} onChange={(e) => updateCharacter(i, { voice: e.target.value })}>
+                          {voices.length > 0 && !voices.some((v) => v.id === c.voice) && (
+                            <option value={c.voice} disabled>⚠ Giọng đã xoá — chọn lại giọng khác</option>
+                          )}
                           {voices.map((v) => (
                             <option key={v.id} value={v.id}>{v.name} — {v.description}</option>
                           ))}

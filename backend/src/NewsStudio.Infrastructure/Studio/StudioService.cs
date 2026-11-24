@@ -125,6 +125,19 @@ public class StudioService
         : IsNarrator(speaker) && bible.Character(StudioVoices.NarratorName)?.Speed is { Length: > 0 } n ? n
         : "+0%";
 
+    /// <summary>
+    /// A designed voice that no longer exists (deleted, made again) is replaced by the channel's default narrator voice,
+    /// or a prebuilt voice of the same gender — never a "voice not found" error in the middle of a video.
+    /// </summary>
+    private async Task<string> UsableVoiceAsync(string voice, string? gender, CancellationToken ct)
+    {
+        if (!StudioVoices.IsDesigned(voice)) return voice;
+        var designed = await ReadDesignedVoicesAsync(ct);
+        if (designed.Any(d => d.Id == voice)) return voice;
+        var preferred = await ReadSettingAsync(DefaultNarratorKey, ct);
+        return designed.Any(d => d.Id == preferred) ? preferred! : StudioVoices.FallbackFor(gender);
+    }
+
     /// <summary>Gender of a line's speaker (the narrator's for narration).</summary>
     public static string? GenderOf(Bible bible, string? speaker) =>
         (bible.Character(speaker) ?? (IsNarrator(speaker) ? bible.Character(StudioVoices.NarratorName) : null))?.Gender;
@@ -1440,7 +1453,7 @@ Trả về JSON:
     private async Task MakeVoiceAsync(StudioVideo v, Bible bible, StudioShot s, CancellationToken ct)
     {
         if (s.Dialogue == null) return;
-        var voice = VoiceFor(bible, s.Speaker);
+        var voice = await UsableVoiceAsync(VoiceFor(bible, s.Speaker), GenderOf(bible, s.Speaker), ct);
         var (audio, seconds, fromCache, _) = await _voices.SpeakAsync(v.Id, s.Dialogue, voice, SpeedFor(bible, s.Speaker), ct,
             fallbackVoice: StudioVoices.FallbackFor(GenderOf(bible, s.Speaker)));
         if (!FitsOneClip(seconds))
@@ -1627,7 +1640,7 @@ Trả về JSON:
         var owner = TakeOwner(take);
         var span = take.Skip(take.IndexOf(owner)).ToList();
         var text = string.Join(" ", span.Where(s => s.Dialogue != null).Select(s => s.Dialogue!.Trim()));
-        var voice = VoiceFor(bible, owner.Speaker);
+        var voice = await UsableVoiceAsync(VoiceFor(bible, owner.Speaker), GenderOf(bible, owner.Speaker), ct);
         var style = !string.IsNullOrWhiteSpace(owner.VoiceStyle) ? owner.VoiceStyle : take.Select(s => s.VoiceStyle).FirstOrDefault(x => !string.IsNullOrWhiteSpace(x));
         var (audio, seconds, fromCache, delivery) = await _voices.SpeakAsync(v.Id, text, voice, SpeedFor(bible, owner.Speaker), ct, style,
             StudioVoices.FallbackFor(GenderOf(bible, owner.Speaker)));
@@ -2504,6 +2517,16 @@ Trả về JSON:
         if (voice.SampleBlobId != null) await DeleteBlobAsync(voice.SampleBlobId.Value, ct);
         await WriteSettingAsync(DesignedVoicesKey, JsonSerializer.Serialize(voices, Json), ct);
         if (await ReadSettingAsync(DefaultNarratorKey, ct) == id) await WriteSettingAsync(DefaultNarratorKey, null, ct);
+        // videos that used it switch to the default narrator voice (or a prebuilt one of the same gender)
+        var preferred = await ReadSettingAsync(DefaultNarratorKey, ct);
+        var replacement = voices.Any(v => v.Id == preferred) ? preferred : null;
+        foreach (var video in await _db.StudioVideos.Where(x => x.BibleJson.Contains(id)).ToListAsync(ct))
+        {
+            var bible = ReadBible(video.BibleJson);
+            foreach (var c in bible.Characters.Where(c => c.Voice == id)) c.Voice = replacement ?? StudioVoices.FallbackFor(c.Gender);
+            video.BibleJson = WriteBible(bible);
+        }
+        await _db.SaveChangesAsync(ct);
         return await GetSettingsAsync(ct);
     }
 
