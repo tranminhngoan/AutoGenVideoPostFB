@@ -47,7 +47,34 @@ export interface ProcessingJobDto {
 }
 
 
+export interface WorkerSide {
+  online: boolean;
+  working: boolean;
+  version?: string | null;
+  machine?: string | null;
+  heartbeatUtc?: string | null;
+  runningJobs: string[];
+}
+
+/** Who runs the background jobs right now: the owner's PC or Railway. */
+export interface WorkerStatus {
+  worker: 'pc' | 'cloud' | 'both' | 'none';
+  webVersion: string;
+  pc: WorkerSide;
+  cloud: WorkerSide;
+  nowUtc: string;
+}
+
 export const api = {
+  async getWorkerStatus(): Promise<WorkerStatus | null> {
+    try {
+      const res = await fetch(`${API_BASE}/system/worker`);
+      return res.ok ? await res.json() : null;
+    } catch {
+      return null;
+    }
+  },
+
   async getHealth(): Promise<boolean> {
     try {
       const res = await fetch('/health');

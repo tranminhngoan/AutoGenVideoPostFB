@@ -70,4 +70,17 @@ public class WorkerSwitchTests : IClassFixture<WebApplicationFactory<Program>>
         WorkerSwitchService.PcShouldWork(new WorkerSwitchService.Beat { HeartbeatUtc = null, Version = "abc" }, "abc", now).Should().BeFalse(); // PC stopped cleanly
         WorkerSwitchService.PcShouldWork(null, "abc", now).Should().BeFalse();             // no PC at all
     }
+
+    [Fact]
+    public void WhoWorks_ShowsWhichMachineRunsTheJobs()
+    {
+        var now = DateTime.UtcNow;
+        WorkerSwitchService.Beat B(int secondsAgo, bool working) => new() { HeartbeatUtc = now.AddSeconds(-secondsAgo), Working = working, Version = "abc" };
+        WorkerSwitchService.WhoWorks(B(10, true), B(10, false), now).Should().Be("pc");
+        WorkerSwitchService.WhoWorks(B(10, false), B(10, true), now).Should().Be("cloud");
+        WorkerSwitchService.WhoWorks(null, B(10, true), now).Should().Be("cloud");
+        WorkerSwitchService.WhoWorks(B(300, true), B(10, true), now).Should().Be("cloud");  // PC switched off without saying so
+        WorkerSwitchService.WhoWorks(B(10, true), B(10, true), now).Should().Be("both");    // cloud finishing a job before handing over
+        WorkerSwitchService.WhoWorks(B(300, true), B(300, true), now).Should().Be("none");
+    }
 }

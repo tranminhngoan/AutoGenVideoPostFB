@@ -20,6 +20,7 @@ import {
 import { cn, Dot } from './ui';
 import { href } from '../lib/router';
 import { useTheme, ThemePref } from '../lib/theme';
+import { WorkerBadge } from './WorkerBadge';
 
 interface NavItem {
   id: string;
@@ -154,6 +155,9 @@ function SidebarContent({
       </nav>
 
       <div className="border-t border-line px-4 py-3">
+        <div className="mb-2">
+          <WorkerBadge />
+        </div>
         <div className="flex items-center justify-between gap-2">
           <div className="flex min-w-0 items-center gap-2 text-xs text-fg-muted">
             <Dot tone={apiHealthy === null ? 'neutral' : apiHealthy ? 'success' : 'danger'} />
@@ -197,6 +201,7 @@ export function Layout({
         <div className="flex h-12 items-center justify-between px-3 sm:px-4">
           <Logo />
           <div className="flex items-center gap-2">
+            <WorkerBadge compact />
             <span className="flex items-center gap-1.5 text-xs text-fg-muted">
               <Dot tone={apiHealthy === null ? 'neutral' : apiHealthy ? 'success' : 'danger'} />
               <span className="hidden sm:inline">

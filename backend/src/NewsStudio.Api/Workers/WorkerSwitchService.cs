@@ -59,6 +59,26 @@ public class WorkerSwitchService : BackgroundService
     public static bool PcShouldWork(Beat? pc, string cloudVersion, DateTime nowUtc) =>
         pc?.HeartbeatUtc != null && nowUtc - pc.HeartbeatUtc.Value < PcFresh && pc.Version == cloudVersion;
 
+    /// <summary>Who runs the background jobs now, for the web badge: "pc", "cloud", "both" (handing over) or "none".</summary>
+    public static string WhoWorks(Beat? pc, Beat? cloud, DateTime nowUtc)
+    {
+        bool On(Beat? b) => b is { Working: true, HeartbeatUtc: { } t } && nowUtc - t < PcFresh;
+        return (On(pc), On(cloud)) switch
+        {
+            (true, true) => "both",
+            (true, false) => "pc",
+            (false, true) => "cloud",
+            _ => "none",
+        };
+    }
+
+    public static async Task<Beat?> ReadBeatAsync(IApplicationDbContext db, string key, CancellationToken ct)
+    {
+        var raw = await db.SystemSettings.AsNoTracking().Where(s => s.SettingKey == key).Select(s => s.SettingValue).FirstOrDefaultAsync(ct);
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+        try { return JsonSerializer.Deserialize<Beat>(raw); } catch (JsonException) { return null; }
+    }
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         _logger.LogInformation("Worker switch: role {Role}, version {Version}", IsPc ? "pc" : "cloud", Version());
@@ -176,10 +196,7 @@ public class WorkerSwitchService : BackgroundService
     private async Task<Beat?> ReadAsync(string key, CancellationToken ct)
     {
         using var scope = _services.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<IApplicationDbContext>();
-        var raw = await db.SystemSettings.AsNoTracking().Where(s => s.SettingKey == key).Select(s => s.SettingValue).FirstOrDefaultAsync(ct);
-        if (string.IsNullOrWhiteSpace(raw)) return null;
-        try { return JsonSerializer.Deserialize<Beat>(raw); } catch (JsonException) { return null; }
+        return await ReadBeatAsync(scope.ServiceProvider.GetRequiredService<IApplicationDbContext>(), key, ct);
     }
 
     private async Task WriteAsync(string key, Beat beat, CancellationToken ct)
