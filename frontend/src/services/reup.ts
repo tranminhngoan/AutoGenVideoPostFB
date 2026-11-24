@@ -1,10 +1,13 @@
 /* Reup Video API client — free processing on the owner's PC. Writes need the same X-Studio-Key as the AI video studio
-   (kept only in this browser). Files are sent in 4 MB pieces: the Vercel proxy in front of the API drops big / long
-   requests (HTTP 502), small pieces always get through and a failed piece is simply sent again. */
+   (kept only in this browser). Files go straight to the Railway API in 4 MB pieces (a failed piece is sent again). */
 import { getStudioKey, StudioError } from './studio';
 
 const BASE = '/api/reup';
 const CHUNK = 4 * 1024 * 1024;
+/** Uploads skip the Vercel proxy (it drops request bodies of a few MB with a connection error) and go straight to
+    the Railway API — the same address vercel.json forwards /api to. Locally they stay on the Vite proxy. */
+const RAILWAY_API = 'https://postnewsauto.up.railway.app/api/reup';
+const UPLOAD_BASE = /^(localhost|127\.0\.0\.1)$/.test(window.location.hostname) ? BASE : RAILWAY_API;
 
 function headers(extra?: Record<string, string>) {
   const h: Record<string, string> = { ...(extra ?? {}) };
@@ -43,13 +46,13 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** Sends a file piece by piece (progress 0–1); returns the upload id the form then refers to. */
 async function sendFile(file: File, onProgress?: (p: number) => void): Promise<string> {
-  const { uploadId } = await call<{ uploadId: string }>('POST', '/uploads');
+  const { uploadId } = await read<{ uploadId: string }>(await fetch(`${UPLOAD_BASE}/uploads`, { method: 'POST', headers: headers() }));
   onProgress?.(0);
   for (let offset = 0; offset < file.size; offset += CHUNK) {
     const piece = file.slice(offset, offset + CHUNK);
     for (let attempt = 1; ; attempt++) {
       try {
-        const res = await fetch(`${BASE}/uploads/${uploadId}?offset=${offset}`, {
+        const res = await fetch(`${UPLOAD_BASE}/uploads/${uploadId}?offset=${offset}`, {
           method: 'PUT',
           headers: headers({ 'Content-Type': 'application/octet-stream' }),
           body: piece,
@@ -74,7 +77,8 @@ async function upload<T>(path: string, file: File, fields: Record<string, string
   form.append('fileName', file.name);
   form.append('contentType', file.type || '');
   Object.entries(fields).forEach(([k, v]) => v != null && v !== '' && form.append(k, String(v)));
-  return read<T>(await fetch(`${BASE}${path}`, { method: 'POST', headers: headers(), body: form }));
+  // the pieces sit on the server that received them: the form goes to the same address
+  return read<T>(await fetch(`${UPLOAD_BASE}${path}`, { method: 'POST', headers: headers(), body: form }));
 }
 
 // ───────── types ─────────
