@@ -1,5 +1,5 @@
 ﻿# Máy tính làm "máy làm việc" cho tool: lấy bản code mới nhất, build và chạy thẳng trên Windows (.NET 8, không cần Docker),
-# rồi cứ 5 phút kiểm tra bản mới. Máy chạy đúng bản như Railway thì nhận việc nặng; tắt máy (hoặc chạy stop-pc-worker)
+# rồi cứ 1 phút kiểm tra bản mới. Máy chạy đúng bản như Railway thì nhận việc nặng; tắt máy (hoặc chạy stop-pc-worker)
 # thì khoảng 1 phút sau Railway tự làm.
 $ErrorActionPreference = 'Stop'
 $repo = (Resolve-Path "$PSScriptRoot\..\..").Path
@@ -91,7 +91,7 @@ try { Read-EnvPc | Out-Null } catch { Say $_.Exception.Message Red; exit 1 }
 git -C $work pull --ff-only --quiet
 Start-Worker
 while ($true) {
-    Start-Sleep -Seconds 300
+    Start-Sleep -Seconds 60
     try {
         git -C $work fetch --quiet origin main
         $local = (git -C $work rev-parse HEAD).Trim()

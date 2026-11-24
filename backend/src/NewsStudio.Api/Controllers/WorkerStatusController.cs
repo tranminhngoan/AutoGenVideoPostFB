@@ -20,7 +20,9 @@ public class WorkerStatusController : ControllerBase
         _services = services;
     }
 
-    public sealed record Side(bool Online, bool Working, string? Version, string? Machine, DateTime? HeartbeatUtc, List<string> RunningJobs);
+    /// <param name="Online">sends a working heartbeat now</param>
+    /// <param name="Seen">the program is running (even if it stays out of the work, e.g. while updating)</param>
+    public sealed record Side(bool Online, bool Seen, bool Working, string? Version, string? Machine, DateTime? HeartbeatUtc, DateTime? SeenUtc, List<string> RunningJobs);
 
     public sealed record WorkerStatus(string Worker, string WebVersion, Side Pc, Side Cloud, DateTime NowUtc);
 
@@ -45,11 +47,13 @@ public class WorkerStatusController : ControllerBase
         }
 
         Side Make(WorkerSwitchService.Beat? b, string tag) => new(
-            b?.HeartbeatUtc is { } t && now - t < TimeSpan.FromSeconds(75),
+            WorkerSwitchService.Fresh(b?.HeartbeatUtc, now),
+            WorkerSwitchService.Fresh(b?.SeenUtc ?? b?.HeartbeatUtc, now),
             b?.Working == true,
             b?.Version,
             b?.Machine,
             b?.HeartbeatUtc,
+            b?.SeenUtc ?? b?.HeartbeatUtc,
             running.Where(r => r.Server.Contains(tag, StringComparison.OrdinalIgnoreCase)).Select(r => r.Job).ToList());
 
         return new WorkerStatus(

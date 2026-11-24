@@ -1,4 +1,4 @@
-# Chạy song song máy tính + Railway
+﻿# Chạy song song máy tính + Railway
 
 Máy tính bật thì **máy tính làm việc nặng** (ghép video, tạo clip, tự đăng…), Railway chỉ giữ trang web.
 Tắt máy thì khoảng 1 phút sau **Railway tự làm tiếp**. Bật máy lên lại thì máy tính tự nhận việc về.
@@ -38,7 +38,7 @@ Chỉ riêng bước này đã có lợi: **cập nhật code / server khởi đ
 
 ## 4. Chạy
 
-- Bấm đúp **`scripts\pc\start-pc-worker.bat`**. Lần đầu build mất vài phút. Để cửa sổ mở: nó tự cập nhật khi có bản code mới
+- Bấm đúp **`scripts\pc\start-pc-worker.bat`**. Lần đầu build mất vài phút. Để cửa sổ mở: nó tự cập nhật (kiểm tra mỗi phút) khi có bản code mới
   và tự chạy lại nếu chương trình dừng. Nhật ký: `%USERPROFILE%\TramTinPcWorker-data\worker.log`.
 - Muốn tự chạy khi mở máy: nhấn `Win + R` → gõ `shell:startup` → kéo **lối tắt** của `start-pc-worker.bat` vào thư mục đó.
 - Muốn dừng ngay (Railway nhận việc liền): bấm đúp **`scripts\pc\stop-pc-worker.bat`**.

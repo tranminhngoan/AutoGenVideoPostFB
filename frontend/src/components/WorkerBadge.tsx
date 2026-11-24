@@ -59,8 +59,14 @@ export function WorkerBadge({ compact = false }: { compact?: boolean }) {
     both: { icon: ArrowLeftRight, label: 'Đang chuyển', tone: 'text-warning bg-warning/10 border-warning/30' },
     none: { icon: AlertTriangle, label: 'Không ai làm', tone: 'text-danger bg-danger/10 border-danger/30' },
   }[st.worker];
+  const pcBehind = !!st.pc.version && st.pc.version !== st.webVersion;
+  // the PC is on but still on the old code after an update: Railway covers for a few minutes
+  const updating = st.worker === 'cloud' && st.pc.seen && pcBehind;
+  if (updating) {
+    view.label = 'Railway (máy tính đang cập nhật)';
+    view.tone = 'text-warning bg-warning/10 border-warning/30';
+  }
   const Icon = view.icon;
-  const pcBehind = st.pc.version && st.pc.version !== st.webVersion;
 
   return (
     <div className="relative">
@@ -90,9 +96,15 @@ export function WorkerBadge({ compact = false }: { compact?: boolean }) {
               <Laptop className="mt-0.5 h-3.5 w-3.5 shrink-0" />
               <div>
                 <b className="text-fg">Máy tính:</b>{' '}
-                {st.pc.online ? (st.pc.working ? `đang nhận việc — ${jobs(st.pc.runningJobs)}` : 'bật nhưng chưa nhận việc') : 'tắt / chưa chạy'}
+                {st.pc.online && st.pc.working
+                  ? `đang nhận việc — ${jobs(st.pc.runningJobs)}`
+                  : st.pc.seen
+                    ? pcBehind
+                      ? 'đang bật, đang tự cập nhật bản mới (vài phút) — Railway làm thay trong lúc chờ'
+                      : 'đang bật, chưa nhận việc'
+                    : 'tắt / chưa chạy'}
                 <div className="text-fg-subtle">
-                  tín hiệu {ago(st.pc.heartbeatUtc, st.nowUtc)} · bản {short(st.pc.version)}
+                  tín hiệu {ago(st.pc.seenUtc ?? st.pc.heartbeatUtc, st.nowUtc)} · bản {short(st.pc.version)}
                   {pcBehind ? ' (khác Railway — đang cập nhật)' : ''}
                 </div>
               </div>

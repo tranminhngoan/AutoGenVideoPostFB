@@ -45,7 +45,11 @@ public class WorkerSwitchService : BackgroundService
         public string? Version { get; set; }
         public string? Machine { get; set; }
         public bool Working { get; set; }
+        /// <summary>Last time the process was alive, even while it stays out of the work (e.g. older version).</summary>
+        public DateTime? SeenUtc { get; set; }
     }
+
+    public static bool Fresh(DateTime? t, DateTime nowUtc) => t is { } v && nowUtc - v < PcFresh;
 
     private bool IsPc => string.Equals(_configuration["Worker:Role"], "pc", StringComparison.OrdinalIgnoreCase);
 
@@ -120,11 +124,11 @@ public class WorkerSwitchService : BackgroundService
         if (!sameVersion)
         {
             StopServer($"máy tính chạy bản {Short(Version())}, cloud chạy bản {Short(cloud!.Version)} — cập nhật máy tính (chạy lại start-pc-worker)");
-            await WriteAsync(PcKey, new Beat { HeartbeatUtc = null, Version = Version(), Machine = Environment.MachineName }, ct);
+            await WriteAsync(PcKey, new Beat { HeartbeatUtc = null, Version = Version(), Machine = Environment.MachineName, SeenUtc = now }, ct);
             return;
         }
         StartServer("máy tính nhận việc");
-        await WriteAsync(PcKey, new Beat { HeartbeatUtc = now, Version = Version(), Machine = Environment.MachineName, Working = true }, ct);
+        await WriteAsync(PcKey, new Beat { HeartbeatUtc = now, Version = Version(), Machine = Environment.MachineName, Working = true, SeenUtc = now }, ct);
     }
 
     public override async Task StopAsync(CancellationToken cancellationToken)

@@ -49,10 +49,13 @@ export interface ProcessingJobDto {
 
 export interface WorkerSide {
   online: boolean;
+  /** the program runs, even while it stays out of the work (e.g. updating to the new version) */
+  seen: boolean;
   working: boolean;
   version?: string | null;
   machine?: string | null;
   heartbeatUtc?: string | null;
+  seenUtc?: string | null;
   runningJobs: string[];
 }
 
