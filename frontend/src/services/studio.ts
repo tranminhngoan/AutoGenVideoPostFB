@@ -131,6 +131,24 @@ export interface StudioSceneImport {
 }
 
 /** A finished library script, imported shot for shot (no AI planning), with the video options chosen before creating. */
+export interface StudioMusicBrief {
+  id: string;
+  name: string;
+  mood: string;
+}
+
+export interface StudioMusicAi {
+  configured: boolean;
+  model: string;
+  pricePerSongUsd: number;
+  briefs: StudioMusicBrief[];
+  running: boolean;
+  total: number;
+  done: number;
+  added: string[];
+  errors: string[];
+}
+
 export interface StudioScriptImport {
   title: string;
   code?: string;
@@ -272,6 +290,8 @@ export const studio = {
   pages: () => call<StudioPage[]>('GET', '/pages'),
 
   music: () => call<StudioMusic[]>('GET', '/music'),
+  musicAi: () => call<StudioMusicAi>('GET', '/music/ai'),
+  composeMusic: (input: { briefIds: string[]; wish?: string }) => call<StudioMusicAi>('POST', '/music/ai', input),
   addMusic: (file: File, name: string, mood: string) => {
     const f = new FormData();
     f.append('file', file);

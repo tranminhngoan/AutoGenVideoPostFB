@@ -110,6 +110,13 @@ public class StudioController : ControllerBase
         return await Run(async () => await _studio.AddMusicAsync(form.Name ?? "", form.Mood, bytes, file.ContentType, Path.GetExtension(file.FileName), ct));
     }
 
+    [HttpGet("music/ai")]
+    public Task<IActionResult> MusicAi(CancellationToken ct) => Run(async () => await _studio.GetMusicAiAsync(ct));
+
+    [HttpPost("music/ai")]
+    public async Task<IActionResult> ComposeMusic([FromBody] StudioMusicGenerateDto req, CancellationToken ct) =>
+        Denied() ?? await Run(async () => await _studio.StartMusicAiAsync(req, ct));
+
     public class MusicUpdate { public string? Name { get; set; } public string? Mood { get; set; } }
 
     [HttpPut("music/{id:guid}")]

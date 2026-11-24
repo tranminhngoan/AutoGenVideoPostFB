@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { ExternalLink, Music2, Pencil, Trash2, Upload } from 'lucide-react';
+import { ExternalLink, Music2, Pencil, Sparkles, Trash2, Upload } from 'lucide-react';
 import { Button, Card, EmptyState, Field, Input, Skeleton } from '../ui';
 import { useConfirm, useToast } from '../feedback';
-import { StudioMusic, studio } from '../../services/studio';
+import { StudioMusic, StudioMusicAi, studio } from '../../services/studio';
 import { MUSIC_PRESETS, presetForFile } from '../../lib/musicPresets';
 
 const MOOD_SUGGESTIONS = ['vui tươi', 'hài hước', 'quê hương', 'nhẹ nhàng', 'buồn', 'cảm động', 'hồi hộp', 'kịch tính', 'lãng mạn', 'hùng tráng'];
@@ -22,6 +22,10 @@ export function MusicLibrary({ onAuthError }: { onAuthError: (e: unknown) => boo
   const [editName, setEditName] = useState('');
   const [editMood, setEditMood] = useState('');
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const [ai, setAi] = useState<StudioMusicAi | null>(null);
+  const [chosen, setChosen] = useState<string[] | null>(null);
+  const [wish, setWish] = useState('');
+  const [composing, setComposing] = useState(false);
 
   const load = async () => {
     try {
@@ -32,8 +36,47 @@ export function MusicLibrary({ onAuthError }: { onAuthError: (e: unknown) => boo
   };
   useEffect(() => {
     load();
+    studio.musicAi().then(setAi).catch(() => undefined);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // while the AI composes, follow its progress and show each new track as it lands
+  useEffect(() => {
+    if (!ai?.running) return;
+    const timer = window.setInterval(async () => {
+      try {
+        const next = await studio.musicAi();
+        if (next.done !== ai.done || !next.running) await load();
+        setAi(next);
+        if (!next.running) {
+          if (next.added.length) toast.success(`AI đã sáng tác xong ${next.added.length} bài và thêm vào kho nhạc.`);
+          if (next.errors.length) toast.error(`Chưa sáng tác được ${next.errors.length} bài — ${next.errors.join(' | ')}`);
+        }
+      } catch {
+        /* try again on the next tick */
+      }
+    }, 8000);
+    return () => window.clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ai?.running, ai?.done]);
+
+  // by default: every ready-made brief not yet in the store
+  const selected = chosen ?? (ai?.briefs ?? []).filter((b) => !(tracks ?? []).some((t) => t.name.startsWith(b.name))).map((b) => b.id);
+  const toggleBrief = (id: string) => setChosen(selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id]);
+  const songCount = selected.length + (wish.trim() ? 1 : 0);
+  const compose = async () => {
+    setComposing(true);
+    try {
+      setAi(await studio.composeMusic({ briefIds: selected, wish: wish.trim() || undefined }));
+      setChosen([]);
+      setWish('');
+      toast.success('AI đang sáng tác — mỗi bài khoảng 1–2 phút, bài xong sẽ tự hiện trong kho nhạc bên dưới.');
+    } catch (e) {
+      if (!onAuthError(e)) toast.error((e as Error).message);
+    } finally {
+      setComposing(false);
+    }
+  };
 
   const pick = (list: FileList | null) => {
     // the picker shows every file (an audio-only filter makes many phones open their music app, which doesn't list
@@ -104,6 +147,48 @@ export function MusicLibrary({ onAuthError }: { onAuthError: (e: unknown) => boo
 
   return (
     <div className="space-y-5">
+      {ai && (
+        <Card className="space-y-3 border-accent/30 p-4">
+          <div className="flex items-center gap-2 text-sm font-semibold text-fg">
+            <Sparkles className="h-4 w-4" /> Sáng tác nhạc bằng AI — không cần tải gì, không lo bản quyền
+          </div>
+          <p className="text-xs text-fg-muted">
+            Google Lyria sáng tác bài nhạc không lời <b>mới, của riêng bạn</b> (dài khoảng 2 phút), rồi tự thêm vào kho để AI chọn khi dựng video.
+            Khoảng {`$${ai.pricePerSongUsd.toFixed(2)}`} một bài, tính vào ngân sách Studio.
+          </p>
+          {ai.running ? (
+            <p className="rounded-lg bg-subtle p-2.5 text-xs text-fg">
+              🎼 Đang sáng tác {ai.done}/{ai.total} bài… (mỗi bài khoảng 1–2 phút, trang tự cập nhật — có thể rời trang, AI vẫn làm tiếp)
+            </p>
+          ) : (
+            <>
+              <ul className="grid gap-1.5 sm:grid-cols-2">
+                {ai.briefs.map((b) => (
+                  <li key={b.id}>
+                    <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-line px-2.5 py-1.5 text-xs hover:bg-muted">
+                      <input type="checkbox" className="mt-0.5" checked={selected.includes(b.id)} onChange={() => toggleBrief(b.id)} />
+                      <span className="min-w-0">
+                        <span className="block font-semibold text-fg">{b.name}</span>
+                        <span className="block text-fg-muted">{b.mood}</span>
+                      </span>
+                    </label>
+                  </li>
+                ))}
+              </ul>
+              <Field label="Hoặc thêm 1 bài theo ý bạn (tuỳ chọn)">
+                <Input value={wish} onChange={(e) => setWish(e.target.value)} placeholder="vd: nhạc buồn sáo trúc, chậm, nhớ bà ngoại ngày Tết" />
+              </Field>
+              <Button variant="primary" size="sm" icon={<Sparkles className="h-4 w-4" />} loading={composing}
+                disabled={!ai.configured || songCount === 0 || songCount > 8} onClick={compose}>
+                Sáng tác {songCount} bài (~{`$${(songCount * ai.pricePerSongUsd).toFixed(2)}`})
+              </Button>
+              {!ai.configured && <p className="text-xs text-warning">Chưa có khoá Gemini trên server nên chưa sáng tác được.</p>}
+              {ai.errors.length > 0 && <p className="text-xs text-danger">Lần trước chưa sáng tác được: {ai.errors.join(' | ')}</p>}
+            </>
+          )}
+        </Card>
+      )}
+
       <Card className="space-y-3 p-4">
         <div className="flex items-center gap-2 text-sm font-semibold text-fg">
           <Music2 className="h-4 w-4" /> Thêm nhạc vào kho

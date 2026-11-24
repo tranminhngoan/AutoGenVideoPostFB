@@ -479,6 +479,32 @@ public class StudioTests
     }
 
     [Fact]
+    public void Ai_music_asks_lyria_for_an_instrumental_and_reads_the_mp3_back()
+    {
+        LyriaMusicClient.Briefs.Should().HaveCountLessThanOrEqualTo(8).And.OnlyHaveUniqueItems(b => b.Id);
+        LyriaMusicClient.Briefs.Should().OnlyContain(b => b.Prompt.Contains("no vocals") && b.Mood.Length > 0);
+        LyriaMusicClient.CustomPrompt("nhạc buồn sáo trúc").Should().Contain("\"nhạc buồn sáo trúc\"").And.Contain("no vocals");
+
+        var body = LyriaMusicClient.BuildRequest("lyria-3.5", "sad bamboo flute");
+        body["model"]!.GetValue<string>().Should().Be("lyria-3.5");
+        body["input"]!.GetValue<string>().Should().Be("sad bamboo flute");
+        body["response_format"]!["type"]!.GetValue<string>().Should().Be("audio");
+
+        var mp3 = new byte[] { 0x49, 0x44, 0x33, 4, 0 }.Concat(Enumerable.Repeat((byte)7, 400)).ToArray(); // "ID3…"
+        var answer = JsonSerializer.Serialize(new
+        {
+            steps = new object[]
+            {
+                new { type = "model_output", content = new object[] { new { type = "text", text = "Intro: flute" }, new { type = "audio", mime_type = "audio/mpeg", data = Convert.ToBase64String(mp3) } } }
+            }
+        });
+        var parsed = LyriaMusicClient.ParseAudio(answer);
+        parsed!.Value.Audio.Should().Equal(mp3);
+        parsed.Value.Extension.Should().Be(".mp3");
+        LyriaMusicClient.ParseAudio("""{"steps":[{"type":"model_output","content":[{"type":"text","text":"no audio"}]}]}""").Should().BeNull();
+    }
+
+    [Fact]
     public void Shortened_narration_must_fit_the_budget_and_keep_the_story()
     {
         StudioService.WordBudget(90, 5).Should().Be(212);                 // (90 - 5) s × 2.5 words

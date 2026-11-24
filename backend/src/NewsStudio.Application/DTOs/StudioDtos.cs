@@ -191,6 +191,38 @@ public class StudioSettingsDto
     public decimal SfxPricePerSecondUsd { get; set; }
 }
 
+/// <summary>A ready-made brief for AI-composed background music.</summary>
+public class StudioMusicBriefDto
+{
+    public string Id { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public string Mood { get; set; } = string.Empty;
+}
+
+/// <summary>AI music composing: what can be made, its price, and the progress of the current batch.</summary>
+public class StudioMusicAiDto
+{
+    public bool Configured { get; set; }
+    public string Model { get; set; } = string.Empty;
+    public decimal PricePerSongUsd { get; set; }
+    public List<StudioMusicBriefDto> Briefs { get; set; } = new();
+    public bool Running { get; set; }
+    public int Total { get; set; }
+    public int Done { get; set; }
+    public List<string> Added { get; set; } = new();
+    public List<string> Errors { get; set; } = new();
+}
+
+public class StudioMusicGenerateDto
+{
+    /// <summary>Ready-made briefs to compose (ids from <see cref="StudioMusicAiDto.Briefs"/>).</summary>
+    public List<string> BriefIds { get; set; } = new();
+    /// <summary>Optional own wish in Vietnamese ("nhạc buồn sáo trúc, chậm…").</summary>
+    public string? Wish { get; set; }
+    public string? Name { get; set; }
+    public string? Mood { get; set; }
+}
+
 /// <summary>A finished script from the script library, imported shot for shot (no AI planning).</summary>
 public class StudioScriptImportDto
 {

@@ -41,14 +41,17 @@ public class StudioService
     private readonly StudioFileStore _files;
     private readonly StudioVoices _voices;
     private readonly SoundEffectsClient _sfx;
+    private readonly LyriaMusicClient _lyria;
     private readonly IFacebookPublishingService _facebook;
     private readonly IBackgroundJobClient _jobs;
     private readonly IConfiguration _configuration;
     private readonly ILogger<StudioService> _logger;
 
     public StudioService(IApplicationDbContext db, SeedanceVideoClient video, FilmGeminiClient gemini, StudioMedia media, StudioFileStore files,
-        StudioVoices voices, SoundEffectsClient sfx, IFacebookPublishingService facebook, IBackgroundJobClient jobs, IConfiguration configuration, ILogger<StudioService> logger)
+        StudioVoices voices, SoundEffectsClient sfx, LyriaMusicClient lyria, IFacebookPublishingService facebook, IBackgroundJobClient jobs,
+        IConfiguration configuration, ILogger<StudioService> logger)
     {
+        _lyria = lyria;
         _db = db;
         _video = video;
         _gemini = gemini;
@@ -150,6 +153,119 @@ public class StudioService
         _db.StudioMusicTracks.Add(track);
         await _db.SaveChangesAsync(ct);
         return ToDto(track);
+    }
+
+    // ── AI-composed music (Google Lyria) ──
+
+    public const string MusicJobKey = "Studio.MusicJob";
+
+    private sealed class MusicJobState
+    {
+        public bool Running { get; set; }
+        public int Total { get; set; }
+        public int Done { get; set; }
+        public DateTime StartedUtc { get; set; }
+        public List<string> Added { get; set; } = new();
+        public List<string> Errors { get; set; } = new();
+    }
+
+    private async Task<MusicJobState> ReadMusicJobAsync(CancellationToken ct)
+    {
+        var raw = await _db.SystemSettings.AsNoTracking().Where(s => s.SettingKey == MusicJobKey).Select(s => s.SettingValue).FirstOrDefaultAsync(ct);
+        try { return string.IsNullOrWhiteSpace(raw) ? new MusicJobState() : JsonSerializer.Deserialize<MusicJobState>(raw, Json) ?? new MusicJobState(); }
+        catch (JsonException) { return new MusicJobState(); }
+    }
+
+    private async Task SaveMusicJobAsync(MusicJobState state, CancellationToken ct)
+    {
+        var value = JsonSerializer.Serialize(state, Json);
+        var row = await _db.SystemSettings.FirstOrDefaultAsync(s => s.SettingKey == MusicJobKey, ct);
+        if (row == null) _db.SystemSettings.Add(new SystemSetting { SettingKey = MusicJobKey, SettingValue = value, Group = "Studio" });
+        else row.SettingValue = value;
+        await _db.SaveChangesAsync(ct);
+    }
+
+    public async Task<StudioMusicAiDto> GetMusicAiAsync(CancellationToken ct)
+    {
+        var state = await ReadMusicJobAsync(ct);
+        // a batch cut off by a restart never finishes: don't show it as running forever
+        var running = state.Running && DateTime.UtcNow - state.StartedUtc < TimeSpan.FromMinutes(30);
+        return new StudioMusicAiDto
+        {
+            Configured = _lyria.IsConfigured, Model = _lyria.Model, PricePerSongUsd = _lyria.PricePerSong,
+            Briefs = LyriaMusicClient.Briefs.Select(b => new StudioMusicBriefDto { Id = b.Id, Name = b.Name, Mood = b.Mood }).ToList(),
+            Running = running, Total = state.Total, Done = state.Done, Added = state.Added, Errors = state.Errors
+        };
+    }
+
+    /// <summary>Queues original tracks composed by Lyria (ready-made briefs and / or the user's own wish) into the music store.</summary>
+    public async Task<StudioMusicAiDto> StartMusicAiAsync(StudioMusicGenerateDto input, CancellationToken ct)
+    {
+        if (!_lyria.IsConfigured) throw new InvalidOperationException("Chưa có khoá Gemini trên server — chưa sáng tác nhạc được.");
+        var current = await GetMusicAiAsync(ct);
+        if (current.Running) throw new InvalidOperationException($"AI đang sáng tác ({current.Done}/{current.Total} bài) — chờ xong rồi tạo tiếp.");
+        var ids = input.BriefIds.Where(id => LyriaMusicClient.Briefs.Any(b => b.Id == id)).Distinct().ToList();
+        var wish = string.IsNullOrWhiteSpace(input.Wish) ? null : input.Wish.Trim();
+        if (wish is { Length: > 500 }) wish = wish[..500];
+        var count = ids.Count + (wish != null ? 1 : 0);
+        if (count == 0) throw new ArgumentException("Chọn ít nhất 1 bài gợi ý hoặc ghi mong muốn của bạn.");
+        if (count > 8) throw new ArgumentException("Mỗi lần sáng tác tối đa 8 bài.");
+        await EnsureBudgetAsync(count * _lyria.PricePerSong, ct);
+        await SaveMusicJobAsync(new MusicJobState { Running = true, Total = count, StartedUtc = DateTime.UtcNow }, ct);
+        var name = string.IsNullOrWhiteSpace(input.Name) ? null : input.Name.Trim();
+        var mood = string.IsNullOrWhiteSpace(input.Mood) ? null : input.Mood.Trim();
+        _jobs.Enqueue<StudioService>(s => s.RunMusicAiAsync(ids, wish, name, mood, CancellationToken.None));
+        return await GetMusicAiAsync(ct);
+    }
+
+    [Queue("default")]
+    [AutomaticRetry(Attempts = 0)]
+    [DisableConcurrentExecution(3600)]
+    public async Task RunMusicAiAsync(List<string> briefIds, string? wish, string? name, string? mood, CancellationToken ct)
+    {
+        var items = briefIds.Select(id => LyriaMusicClient.Briefs.FirstOrDefault(b => b.Id == id)).Where(b => b != null).Select(b => b!).ToList();
+        if (wish != null)
+            items.Add(new MusicBrief("wish", name ?? "Nhạc AI: " + (wish.Length > 40 ? wish[..40] + "…" : wish), mood ?? wish, LyriaMusicClient.CustomPrompt(wish)));
+        var state = await ReadMusicJobAsync(ct);
+        state.Running = true;
+        state.Total = items.Count;
+        state.Done = 0;
+        state.Added.Clear();
+        state.Errors.Clear();
+        await SaveMusicJobAsync(state, ct);
+        try
+        {
+            foreach (var brief in items)
+            {
+                try
+                {
+                    var (audio, extension, model) = await _lyria.GenerateAsync(brief.Prompt, ct);
+                    var trackName = brief.Name;
+                    var names = await _db.StudioMusicTracks.AsNoTracking().Select(m => m.Name).ToListAsync(ct);
+                    for (var n = 2; names.Contains(trackName); n++) trackName = $"{brief.Name} ({n})";
+                    var mime = extension switch { ".wav" => "audio/wav", ".m4a" => "audio/mp4", ".ogg" => "audio/ogg", _ => "audio/mpeg" };
+                    await AddMusicAsync(trackName, brief.Mood, audio, mime, extension, ct);
+                    _db.StudioCostRecords.Add(new StudioCostRecord
+                    {
+                        Kind = "Music", Model = model, CostUsd = _lyria.PricePerSong, Note = $"sáng tác nhạc nền \"{trackName}\""
+                    });
+                    await _db.SaveChangesAsync(ct);
+                    state.Added.Add(trackName);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.LogWarning(ex, "AI music {Brief} failed", brief.Id);
+                    state.Errors.Add($"{brief.Name}: {ex.Message}");
+                }
+                state.Done++;
+                await SaveMusicJobAsync(state, CancellationToken.None);
+            }
+        }
+        finally
+        {
+            state.Running = false;
+            await SaveMusicJobAsync(state, CancellationToken.None);
+        }
     }
 
     public async Task<StudioMusicDto> UpdateMusicAsync(Guid id, string? name, string? mood, CancellationToken ct)
