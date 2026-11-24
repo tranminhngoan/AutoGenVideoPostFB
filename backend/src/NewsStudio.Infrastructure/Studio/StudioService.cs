@@ -994,17 +994,24 @@ Trả về JSON:
             await EnsureBudgetAsync(v.EstimatedCostUsd, ct);
         }
         var target = input.TargetSeconds is > 0 ? Math.Clamp(input.TargetSeconds.Value, 30, 600) : (int?)null;
+        string? outro = null;
+        if (input.Outro != false)
+        {
+            var pageName = v.FacebookAccountId == null ? null
+                : await _db.FacebookAccounts.AsNoTracking().Where(a => a.Id == v.FacebookAccountId).Select(a => a.PageName).FirstOrDefaultAsync(ct);
+            outro = OutroLine(pageName);
+        }
         v.Status = "Planning";
         v.Progress = (target != null ? $"Đang rút gọn lời bình còn ~{target}s, " : "Đang ")
                      + "dựng hồ sơ nhân vật, bối cảnh và mô tả chi tiết từng shot" + (input.AutoGenerate ? ", rồi tạo video…" : "…");
         await _db.SaveChangesAsync(ct);
-        _jobs.Enqueue<StudioService>(x => x.RunPrepareImportAsync(v.Id, input.AutoGenerate, target, CancellationToken.None));
+        _jobs.Enqueue<StudioService>(x => x.RunPrepareImportAsync(v.Id, input.AutoGenerate, target, outro, CancellationToken.None));
         return await GetVideoAsync(v.Id, ct);
     }
 
     [Queue("critical")]
     [AutomaticRetry(Attempts = 0)]
-    public async Task RunPrepareImportAsync(Guid id, bool autoGenerate, int? targetSeconds, CancellationToken ct)
+    public async Task RunPrepareImportAsync(Guid id, bool autoGenerate, int? targetSeconds, string? outro, CancellationToken ct)
     {
         var v = await _db.StudioVideos.Include(x => x.Shots).FirstOrDefaultAsync(x => x.Id == id, ct);
         if (v == null || v.Status != "Planning") return;
@@ -1022,6 +1029,11 @@ Trả về JSON:
                 _logger.LogWarning(ex, "Studio condense failed for {Id}", id);
                 condenseError = "Chưa rút gọn được lời bình (" + ex.Message + ") — video giữ độ dài của kịch bản. ";
             }
+        }
+        if (!string.IsNullOrWhiteSpace(outro))
+        {
+            AppendOutro(v, outro);
+            await _db.SaveChangesAsync(ct);
         }
         try
         {
@@ -1064,6 +1076,22 @@ Trả về JSON:
         await _db.SaveChangesAsync(CancellationToken.None);
     }
 
+    // ── closing line ──
+
+    /// <summary>The narrator's last words: a natural invitation to follow the page (not engagement bait).</summary>
+    public static string OutroLine(string? pageName) =>
+        $"Ai cũng từng có một tuổi thơ như vậy, theo dõi {(string.IsNullOrWhiteSpace(pageName) ? "kênh" : pageName.Trim())} để nghe thêm chuyện xưa nha.";
+
+    /// <summary>Adds the closing line to the end of the last scene's narration (read in the same take).</summary>
+    public static void AppendOutro(StudioVideo v, string outro)
+    {
+        var last = v.Shots.Where(s => s.Dialogue != null).OrderBy(s => s.Index).LastOrDefault();
+        if (last == null || last.Dialogue!.Contains(outro, StringComparison.Ordinal)) return;
+        var text = last.Dialogue.TrimEnd();
+        if (text.Length > 0 && !".!?…".Contains(text[^1])) text += ".";
+        last.Dialogue = $"{text} {outro}";
+    }
+
     // ── shortening a library script ──
 
     /// <summary>Slow, emotional Vietnamese narration: about 2.5 words (syllables) a second, pauses included.</summary>
@@ -1090,7 +1118,7 @@ Trả về JSON:
         v.Progress = $"Đang rút gọn lời bình còn ~{target}s rồi dựng lại hồ sơ và mô tả shot…";
         v.ErrorMessage = null;
         await _db.SaveChangesAsync(ct);
-        _jobs.Enqueue<StudioService>(x => x.RunPrepareImportAsync(id, false, target, CancellationToken.None));
+        _jobs.Enqueue<StudioService>(x => x.RunPrepareImportAsync(id, false, target, null, CancellationToken.None));
         return await GetVideoAsync(id, ct);
     }
 
@@ -2242,6 +2270,7 @@ Trả về JSON:
             await _db.SaveChangesAsync(ct);
             // the same Reel on the linked Instagram (Facebook is already live: a failure is only noted)
             await PostToInstagramAsync(v, path, ct);
+            _jobs.Schedule<IEngagementService>(s => s.RunAsync(CancellationToken.None), TimeSpan.FromMinutes(2)); // the first comment
             // posted: the clips have done their job — free the disk (the final video stays until the next redeploy)
             var posted = await _db.StudioVideos.Include(x => x.Shots).FirstAsync(x => x.Id == id, ct);
             foreach (var s in posted.Shots.Where(s => s.ClipBlobId != null))
@@ -2380,6 +2409,11 @@ Trả về JSON:
             s.InteractionId = null;
         }
         await _db.SaveChangesAsync(ct);
+        // find the post on the page now (numbers, first comment) instead of within the hour; Facebook may need a few
+        // minutes to list it, so once more a little later
+        _jobs.Enqueue<IPageStatsService>(s => s.SyncAsync(true, CancellationToken.None));
+        _jobs.Schedule<IPageStatsService>(s => s.SyncAsync(true, CancellationToken.None), TimeSpan.FromMinutes(10));
+        _jobs.Schedule<IEngagementService>(s => s.RunAsync(CancellationToken.None), TimeSpan.FromMinutes(12));
         return await GetVideoAsync(id, ct);
     }
 

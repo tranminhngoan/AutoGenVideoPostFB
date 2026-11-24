@@ -24,6 +24,7 @@ public interface IApplicationDbContext
     DbSet<DailyDigestRun> DailyDigestRuns { get; }
     DbSet<InstagramMetric> InstagramMetrics { get; }
     DbSet<PageFollowerSnapshot> PageFollowerSnapshots { get; }
+    DbSet<PostComment> PostComments { get; }
     DbSet<AiUsage> AiUsages { get; }
 
     // AI Film Factory Entities

@@ -101,6 +101,45 @@ export const api = {
   },
 
   // ── Lượt xem theo Page ──
+  async getComments(status: string): Promise<PostCommentDto[]> {
+    const res = await fetch(`${API_BASE}/engagement/comments?status=${encodeURIComponent(status)}`);
+    if (!res.ok) throw new Error(await apiError(res, 'Không tải được bình luận'));
+    return await res.json();
+  },
+
+  async replyComment(id: string, message: string): Promise<PostCommentDto> {
+    const res = await fetch(`${API_BASE}/engagement/comments/${id}/reply`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message }),
+    });
+    if (!res.ok) throw new Error(await apiError(res, 'Không gửi được câu trả lời'));
+    return await res.json();
+  },
+
+  async dismissComment(id: string): Promise<void> {
+    await fetch(`${API_BASE}/engagement/comments/${id}/dismiss`, { method: 'POST' });
+  },
+
+  async refreshEngagement(): Promise<void> {
+    await fetch(`${API_BASE}/engagement/refresh`, { method: 'POST' });
+  },
+
+  async getEngagementSettings(): Promise<{ firstComment: boolean }> {
+    const res = await fetch(`${API_BASE}/engagement/settings`);
+    if (!res.ok) throw new Error(await apiError(res, 'Không tải được cài đặt'));
+    return await res.json();
+  },
+
+  async saveEngagementSettings(settings: { firstComment: boolean }): Promise<void> {
+    const res = await fetch(`${API_BASE}/engagement/settings`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(settings),
+    });
+    if (!res.ok) throw new Error(await apiError(res, 'Không lưu được cài đặt'));
+  },
+
   async getPageStats(days = 14): Promise<PageStatsOverviewDto> {
     const res = await fetch(`${API_BASE}/facebook/page-stats?days=${days}`);
     if (!res.ok) throw new Error(await apiError(res, 'Không tải được thống kê lượt xem'));
@@ -1257,6 +1296,22 @@ export interface PageViewStatsDto {
   instagramFollowers?: number | null;
   instagramFollowersChange7Days?: number | null;
   recentPosts: PagePostStatsDto[];
+}
+
+/** A viewer's comment with the reply drafted by AI. */
+export interface PostCommentDto {
+  id: string;
+  network: 'facebook' | 'instagram' | string;
+  pageName?: string | null;
+  postTitle: string;
+  postUrl?: string | null;
+  author?: string | null;
+  message: string;
+  commentedAtUtc: string;
+  status: string;
+  suggestedReply?: string | null;
+  sentReply?: string | null;
+  replyError?: string | null;
 }
 
 /** One post's numbers: a news Reel (Tool), a Video AI video (Studio) or a post made by hand (Discovered). */

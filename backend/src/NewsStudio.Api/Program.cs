@@ -292,6 +292,10 @@ try
                 "facebook-stats-sync",
                 s => s.SyncAsync(false, CancellationToken.None),
                 "7,37 * * * *");
+            recurring.AddOrUpdate<NewsStudio.Application.Interfaces.IEngagementService>(
+                "engagement-tick",
+                s => s.RunAsync(CancellationToken.None),
+                "17,47 * * * *");
             recurring.RemoveIfExists("film-gpu-tick"); // GPU film pipeline removed (the AI video studio replaces it)
             recurring.AddOrUpdate<NewsStudio.Application.Interfaces.IDailyDigestService>(
                 "daily-digest",

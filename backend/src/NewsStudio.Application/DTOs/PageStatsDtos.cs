@@ -102,6 +102,35 @@ public class PagePostStatsDto
     public long? InstagramComments { get; set; }
 }
 
+/// <summary>A viewer's comment with the reply drafted by AI (engagement inbox).</summary>
+public class PostCommentDto
+{
+    public Guid Id { get; set; }
+    public string Network { get; set; } = "facebook";
+    public string? PageName { get; set; }
+    public string PostTitle { get; set; } = string.Empty;
+    public string? PostUrl { get; set; }
+    public string? Author { get; set; }
+    public string Message { get; set; } = string.Empty;
+    public DateTime CommentedAtUtc { get; set; }
+    public string Status { get; set; } = "New";
+    public string? SuggestedReply { get; set; }
+    public string? SentReply { get; set; }
+    public string? ReplyError { get; set; }
+}
+
+/// <summary>A comment read from Facebook / Instagram.</summary>
+public class RemoteCommentDto
+{
+    public string Network { get; set; } = "facebook";
+    public string Id { get; set; } = string.Empty;
+    public string? Author { get; set; }
+    public string? Message { get; set; }
+    public DateTime CreatedUtc { get; set; }
+    /// <summary>Written by the page itself (its own first comment or replies).</summary>
+    public bool FromPage { get; set; }
+}
+
 /// <summary>A post found on a page / its Instagram account (also ones made by hand).</summary>
 public class DiscoveredPostDto
 {

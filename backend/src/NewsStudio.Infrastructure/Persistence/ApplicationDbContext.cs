@@ -37,6 +37,7 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
     public DbSet<DailyDigestRun> DailyDigestRuns => Set<DailyDigestRun>();
     public DbSet<InstagramMetric> InstagramMetrics => Set<InstagramMetric>();
     public DbSet<PageFollowerSnapshot> PageFollowerSnapshots => Set<PageFollowerSnapshot>();
+    public DbSet<PostComment> PostComments => Set<PostComment>();
     public DbSet<AiUsage> AiUsages => Set<AiUsage>();
 
     // AI Film Factory DbSets
@@ -360,6 +361,19 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
             entity.HasIndex(e => e.InstagramMediaId);
             entity.Property(e => e.Title).HasMaxLength(300);
             entity.Property(e => e.Source).HasMaxLength(20);
+        });
+
+        modelBuilder.Entity<PostComment>(entity =>
+        {
+            entity.ToTable("PostComments");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Network).HasMaxLength(20);
+            entity.Property(e => e.ExternalId).HasMaxLength(100);
+            entity.Property(e => e.Author).HasMaxLength(200);
+            entity.Property(e => e.Status).HasMaxLength(20);
+            entity.HasOne(e => e.FacebookPost).WithMany().HasForeignKey(e => e.FacebookPostId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasIndex(e => e.ExternalId).IsUnique();
+            entity.HasIndex(e => new { e.Status, e.CommentedAtUtc });
         });
 
         modelBuilder.Entity<PageFollowerSnapshot>(entity =>

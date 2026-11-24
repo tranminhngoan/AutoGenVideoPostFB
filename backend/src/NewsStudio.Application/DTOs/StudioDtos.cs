@@ -280,6 +280,8 @@ public class StudioScriptImportDto
     public bool AutoGenerate { get; set; }
     /// <summary>Shorten the narration to about this many seconds of video (null = the script's own length).</summary>
     public int? TargetSeconds { get; set; }
+    /// <summary>End the narration with a short, natural invitation to follow the page (default on).</summary>
+    public bool? Outro { get; set; }
 }
 
 public class StudioSceneImportDto

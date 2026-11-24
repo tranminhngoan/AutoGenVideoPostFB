@@ -641,9 +641,18 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)");
 
+                    b.Property<string>("FirstCommentText")
+                        .HasColumnType("text");
+
                     b.Property<string>("InstagramError")
                         .HasMaxLength(1000)
                         .HasColumnType("character varying(1000)");
+
+                    b.Property<string>("InstagramFirstCommentError")
+                        .HasColumnType("text");
+
+                    b.Property<string>("InstagramFirstCommentId")
+                        .HasColumnType("text");
 
                     b.Property<string>("InstagramMediaId")
                         .HasMaxLength(100)
@@ -1564,6 +1573,74 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                         .IsUnique();
 
                     b.ToTable("PageFollowerSnapshots", (string)null);
+                });
+
+            modelBuilder.Entity("NewsStudio.Domain.Entities.PostComment", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Author")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<DateTime>("CommentedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ExternalId")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<Guid>("FacebookPostId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Message")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Network")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<DateTime?>("RepliedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ReplyError")
+                        .HasColumnType("text");
+
+                    b.Property<string>("ReplyId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("SentReply")
+                        .HasColumnType("text");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<string>("SuggestedReply")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ExternalId")
+                        .IsUnique();
+
+                    b.HasIndex("FacebookPostId");
+
+                    b.HasIndex("Status", "CommentedAtUtc");
+
+                    b.ToTable("PostComments", (string)null);
                 });
 
             modelBuilder.Entity("NewsStudio.Domain.Entities.ProcessingJob", b =>
@@ -2790,6 +2867,17 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                 {
                     b.HasOne("NewsStudio.Domain.Entities.FacebookPost", "FacebookPost")
                         .WithMany("InstagramMetrics")
+                        .HasForeignKey("FacebookPostId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("FacebookPost");
+                });
+
+            modelBuilder.Entity("NewsStudio.Domain.Entities.PostComment", b =>
+                {
+                    b.HasOne("NewsStudio.Domain.Entities.FacebookPost", "FacebookPost")
+                        .WithMany()
                         .HasForeignKey("FacebookPostId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();

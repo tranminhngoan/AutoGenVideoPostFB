@@ -38,6 +38,7 @@ import {
   getNostalgiaScriptById,
 } from '../data/nostalgiaScriptLibrary';
 import { queueStudioImport } from '../lib/studioImport';
+import { ScriptSuggestions } from '../components/ScriptSuggestions';
 import {
   extractNostalgiaVoiceover,
   formatNostalgiaProductionScript,
@@ -215,6 +216,8 @@ export function DramaScriptsPage() {
           </div>
         }
       />
+
+      <ScriptSuggestions />
 
       {/* Gentle & Calming Banner */}
       <div className="rounded-xl border border-line bg-subtle p-3.5 sm:p-4 text-xs sm:text-sm text-fg-muted flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">

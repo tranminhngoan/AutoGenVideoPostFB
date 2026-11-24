@@ -12,6 +12,7 @@ import { SettingsPage } from './pages/SettingsPage';
 import { AutoPostPage } from './pages/AutoPostPage';
 import { StudioPage } from './pages/StudioPage';
 import { DramaScriptsPage } from './pages/DramaScriptsPage';
+import { CommentsPage } from './pages/CommentsPage';
 import { SystemConfig, VideoProject } from './types';
 import { api } from './services/api';
 import { useRoute } from './lib/router';
@@ -27,6 +28,7 @@ const TITLES: Record<string, string> = {
   settings: 'Cài đặt',
   studio: 'Studio Video AI',
   'drama-scripts': 'Lên kịch bản',
+  comments: 'Bình luận',
 };
 
 export function App() {
@@ -112,6 +114,9 @@ export function App() {
         break;
       case 'drama-scripts':
         page = <DramaScriptsPage />;
+        break;
+      case 'comments':
+        page = <CommentsPage />;
         break;
       default:
         page = <DashboardPage projects={projects} onCreated={refreshProjects} apiHealthy={apiHealthy} />;

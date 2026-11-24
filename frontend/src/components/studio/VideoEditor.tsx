@@ -155,6 +155,7 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
   const [narratorSpeed, setNarratorSpeed] = useState('+0%');
   /** Seconds to shorten a library script to (0 = keep its length). */
   const [importLength, setImportLength] = useState(0);
+  const [importOutro, setImportOutro] = useState(true);
   const loadImport = (s: StudioScriptImport) => {
     const n = narratorFor(s.mood);
     setImporting(s);
@@ -370,6 +371,7 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
         sfxVolume: form.sfxVolume,
         autoGenerate,
         targetSeconds: importLength || null,
+        outro: importOutro,
       });
       toast.success(autoGenerate
         ? 'Đã nhận kịch bản — đang chuẩn bị rồi tạo video, trang tự cập nhật.'
@@ -673,6 +675,12 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
                 ))}
               </Select>
             </Field>
+            <label className="flex items-start gap-2 text-xs text-fg">
+              <input type="checkbox" className="mt-0.5" checked={importOutro} onChange={(e) => setImportOutro(e.target.checked)} disabled={locked} />
+              <span>
+                Câu kết mời theo dõi: lời bình tự kết bằng <i>"Ai cũng từng có một tuổi thơ như vậy, theo dõi {pages.find((p) => p.id === form.facebookAccountId)?.pageName ?? 'kênh'} để nghe thêm chuyện xưa nha."</i>
+              </span>
+            </label>
             <div className="grid gap-2 sm:grid-cols-[1fr_180px]">
               <Field label="Giọng lời bình (chọn theo cảm xúc kịch bản, đổi được)">
                 <div className="flex gap-1">

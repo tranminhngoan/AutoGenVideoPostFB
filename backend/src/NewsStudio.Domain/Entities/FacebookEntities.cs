@@ -50,6 +50,11 @@ public class FacebookPost : BaseEntity
     public string? FirstCommentId { get; set; }
     public string? FirstCommentError { get; set; }
 
+    /// <summary>The question the page posted as first comment (Video AI / hand-made posts), and its Instagram copy.</summary>
+    public string? FirstCommentText { get; set; }
+    public string? InstagramFirstCommentId { get; set; }
+    public string? InstagramFirstCommentError { get; set; }
+
     /// <summary>The same Reel posted on the page's linked Instagram account.</summary>
     public string? InstagramMediaId { get; set; }
     public string? InstagramPermalink { get; set; }
@@ -58,6 +63,25 @@ public class FacebookPost : BaseEntity
 
     // Navigation
     public ICollection<VideoMetric> Metrics { get; set; } = new List<VideoMetric>();
+}
+
+/// <summary>A viewer's comment on one of the page's posts (Facebook or Instagram), with the reply drafted by AI.</summary>
+public class PostComment : BaseEntity
+{
+    public Guid FacebookPostId { get; set; }
+    public FacebookPost? FacebookPost { get; set; }
+    public string Network { get; set; } = "facebook"; // facebook | instagram
+    public string ExternalId { get; set; } = string.Empty;
+    public string? Author { get; set; }
+    public string Message { get; set; } = string.Empty;
+    public DateTime CommentedAtUtc { get; set; }
+    /// <summary>New (waiting), Sent (answered), Dismissed (owner skipped it), Skipped (spam — AI found nothing to answer).</summary>
+    public string Status { get; set; } = "New";
+    public string? SuggestedReply { get; set; }
+    public string? SentReply { get; set; }
+    public string? ReplyId { get; set; }
+    public string? ReplyError { get; set; }
+    public DateTime? RepliedAtUtc { get; set; }
 }
 
 /// <summary>Followers of a page and of its linked Instagram account, one snapshot per (Vietnam) day.</summary>

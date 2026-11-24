@@ -1130,6 +1130,97 @@ public class FacebookPublishingService : IFacebookPublishingService
         return found;
     }
 
+    private async Task<(FacebookPost Post, FacebookAccount Account, string Token)> PostWithTokenAsync(Guid recordId, CancellationToken ct)
+    {
+        var post = await _context.FacebookPosts.Include(p => p.FacebookAccount).FirstOrDefaultAsync(p => p.Id == recordId, ct)
+                   ?? throw new KeyNotFoundException("Không tìm thấy bài đăng.");
+        if (post.FacebookAccount == null || !post.FacebookAccount.IsActive || string.IsNullOrWhiteSpace(post.FacebookAccount.EncryptedAccessToken))
+            throw new InvalidOperationException("Page của bài này đã ngắt kết nối.");
+        return (post, post.FacebookAccount, _tokenProtection.DecryptToken(post.FacebookAccount.EncryptedAccessToken));
+    }
+
+    private static InvalidOperationException CommentError(string network, string? error)
+    {
+        var permission = error != null && (error.Contains("permission", StringComparison.OrdinalIgnoreCase) || error.Contains("(#200)") || error.Contains("(#10)"));
+        return new InvalidOperationException(!permission ? $"Không gửi được bình luận. {error}"
+            : network == "instagram"
+                ? $"Token của Page chưa có quyền bình luận Instagram (instagram_manage_comments). Làm lại Kết nối nhanh, nhớ tick quyền này. {error}"
+                : $"Token của Page chưa có quyền bình luận (pages_manage_engagement). Làm lại Kết nối nhanh, nhớ tick quyền này. {error}");
+    }
+
+    public async Task<string> CommentOnPostAsync(Guid facebookPostRecordId, string network, string message, CancellationToken cancellationToken = default)
+    {
+        var (post, _, token) = await PostWithTokenAsync(facebookPostRecordId, cancellationToken);
+        if (network == "instagram")
+        {
+            if (string.IsNullOrWhiteSpace(post.InstagramMediaId)) throw new InvalidOperationException("Bài chưa có trên Instagram.");
+            using var res = await _httpClient.PostAsync($"https://graph.facebook.com/{_graphApiVersion}/{post.InstagramMediaId}/comments",
+                new FormUrlEncodedContent(new Dictionary<string, string> { ["message"] = message, ["access_token"] = token }), cancellationToken);
+            if (!res.IsSuccessStatusCode) throw CommentError("instagram", await ReadGraphErrorAsync(res, cancellationToken));
+            var body = await res.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: cancellationToken);
+            return body.TryGetProperty("id", out var id) ? id.GetString() ?? "ok" : "ok";
+        }
+        if (string.IsNullOrWhiteSpace(post.FacebookVideoId)) throw new InvalidOperationException("Bài chưa có trên Facebook.");
+        return await PostCommentAsync(token, post.FacebookVideoId, post.FacebookPostId ?? "", message, cancellationToken);
+    }
+
+    public async Task<List<RemoteCommentDto>> ListPostCommentsAsync(Guid facebookPostRecordId, CancellationToken cancellationToken = default)
+    {
+        var (post, account, token) = await PostWithTokenAsync(facebookPostRecordId, cancellationToken);
+        var list = new List<RemoteCommentDto>();
+        var t = Uri.EscapeDataString(token);
+        static DateTime Time(JsonElement e, string name) =>
+            e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String && DateTimeOffset.TryParse(v.GetString(), out var d) ? d.UtcDateTime : DateTime.UtcNow;
+        if (!string.IsNullOrWhiteSpace(post.FacebookVideoId))
+        {
+            var (ok, body, error) = await GetGraphAsync(
+                $"https://graph.facebook.com/{_graphApiVersion}/{post.FacebookVideoId}/comments?fields=id,message,from%7Bid,name%7D,created_time&order=reverse_chronological&limit=50&access_token={t}", cancellationToken);
+            if (!ok) _logger.LogInformation("Facebook comments of {Video}: {Error}", post.FacebookVideoId, error);
+            else if (body.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Array)
+                foreach (var c in data.EnumerateArray())
+                {
+                    var fromId = c.TryGetProperty("from", out var f) && f.TryGetProperty("id", out var fid) ? fid.GetString() : null;
+                    list.Add(new RemoteCommentDto
+                    {
+                        Network = "facebook", Id = c.GetProperty("id").GetString() ?? "",
+                        Author = c.TryGetProperty("from", out var from) && from.TryGetProperty("name", out var n) ? n.GetString() : null,
+                        Message = c.TryGetProperty("message", out var m) ? m.GetString() : null,
+                        CreatedUtc = Time(c, "created_time"), FromPage = fromId == account.PageId
+                    });
+                }
+        }
+        if (!string.IsNullOrWhiteSpace(post.InstagramMediaId))
+        {
+            var (ok, body, error) = await GetGraphAsync(
+                $"https://graph.facebook.com/{_graphApiVersion}/{post.InstagramMediaId}/comments?fields=id,text,username,timestamp&limit=50&access_token={t}", cancellationToken);
+            if (!ok) _logger.LogInformation("Instagram comments of {Media}: {Error}", post.InstagramMediaId, error);
+            else if (body.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Array)
+                foreach (var c in data.EnumerateArray())
+                {
+                    var user = c.TryGetProperty("username", out var u) ? u.GetString() : null;
+                    list.Add(new RemoteCommentDto
+                    {
+                        Network = "instagram", Id = c.GetProperty("id").GetString() ?? "", Author = user,
+                        Message = c.TryGetProperty("text", out var m) ? m.GetString() : null, CreatedUtc = Time(c, "timestamp"),
+                        FromPage = user != null && string.Equals(user, account.InstagramUsername, StringComparison.OrdinalIgnoreCase)
+                    });
+                }
+        }
+        return list.Where(c => c.Id.Length > 0).ToList();
+    }
+
+    public async Task<string> ReplyToCommentAsync(Guid facebookPostRecordId, string network, string commentId, string message, CancellationToken cancellationToken = default)
+    {
+        var (_, _, token) = await PostWithTokenAsync(facebookPostRecordId, cancellationToken);
+        var url = network == "instagram"
+            ? $"https://graph.facebook.com/{_graphApiVersion}/{commentId}/replies"
+            : $"https://graph.facebook.com/{_graphApiVersion}/{commentId}/comments";
+        using var res = await _httpClient.PostAsync(url, new FormUrlEncodedContent(new Dictionary<string, string> { ["message"] = message, ["access_token"] = token }), cancellationToken);
+        if (!res.IsSuccessStatusCode) throw CommentError(network, await ReadGraphErrorAsync(res, cancellationToken));
+        var body = await res.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: cancellationToken);
+        return body.TryGetProperty("id", out var id) ? id.GetString() ?? "ok" : "ok";
+    }
+
     public async Task<(long? Facebook, long? Instagram)> ReadFollowersAsync(Guid facebookAccountId, CancellationToken cancellationToken = default)
     {
         var account = await _context.FacebookAccounts.AsNoTracking().FirstOrDefaultAsync(a => a.Id == facebookAccountId, cancellationToken);

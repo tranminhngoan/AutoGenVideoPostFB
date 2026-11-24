@@ -15,6 +15,7 @@ import {
   Sun,
   Moon,
   Monitor,
+  MessageCircle,
 } from 'lucide-react';
 import { cn, Dot } from './ui';
 import { href } from '../lib/router';
@@ -91,6 +92,7 @@ function SidebarContent({
   const studio: NavItem[] = [
     { id: 'drama-scripts', path: '/drama-scripts', label: 'Lên kịch bản', icon: Sparkles },
     { id: 'studio', path: '/studio', label: 'Studio Video AI', icon: Clapperboard },
+    { id: 'comments', path: '/comments', label: 'Bình luận', icon: MessageCircle },
   ];
   const secondary: NavItem[] = [{ id: 'settings', path: '/settings', label: 'Cài đặt', icon: Settings }];
 

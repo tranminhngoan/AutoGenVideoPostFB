@@ -66,6 +66,15 @@ public interface IFacebookPublishingService
     /// </summary>
     Task<List<DiscoveredPostDto>> ListRecentPagePostsAsync(Guid facebookAccountId, DateTime sinceUtc, CancellationToken cancellationToken = default);
 
+    /// <summary>Posts a comment from the page under a post (network "facebook" or "instagram"); returns the comment id.</summary>
+    Task<string> CommentOnPostAsync(Guid facebookPostRecordId, string network, string message, CancellationToken cancellationToken = default);
+
+    /// <summary>Recent comments of a post on Facebook and Instagram (newest first).</summary>
+    Task<List<RemoteCommentDto>> ListPostCommentsAsync(Guid facebookPostRecordId, CancellationToken cancellationToken = default);
+
+    /// <summary>Replies to a viewer's comment as the page; returns the reply id.</summary>
+    Task<string> ReplyToCommentAsync(Guid facebookPostRecordId, string network, string commentId, string message, CancellationToken cancellationToken = default);
+
     /// <summary>Followers of the page and of its linked Instagram account (null when they can't be read).</summary>
     Task<(long? Facebook, long? Instagram)> ReadFollowersAsync(Guid facebookAccountId, CancellationToken cancellationToken = default);
 

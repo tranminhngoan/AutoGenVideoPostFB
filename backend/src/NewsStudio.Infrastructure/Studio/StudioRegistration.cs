@@ -14,6 +14,7 @@ public static class StudioRegistration
         services.AddSingleton<StudioFileStore>();
         services.AddHostedService<StudioStorageMigrator>();
         services.AddScoped<StudioService>();
+        services.AddScoped<NewsStudio.Application.Interfaces.IEngagementService, EngagementService>();
         return services;
     }
 }

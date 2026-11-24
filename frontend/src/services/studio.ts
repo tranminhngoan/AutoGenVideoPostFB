@@ -177,6 +177,8 @@ export interface StudioScriptImport {
   autoGenerate?: boolean;
   /** Shorten the narration to about this many seconds (null = the script's own length). */
   targetSeconds?: number | null;
+  /** End the narration with an invitation to follow the page. */
+  outro?: boolean;
 }
 
 export interface StudioLocation {

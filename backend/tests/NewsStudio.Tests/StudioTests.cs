@@ -559,6 +559,22 @@ public class StudioTests
     }
 
     [Fact]
+    public void Outro_closes_the_last_scene_once()
+    {
+        var v = new StudioVideo();
+        v.Shots.Add(new StudioShot { Index = 1, Scene = 1, Dialogue = "Câu đầu." });
+        v.Shots.Add(new StudioShot { Index = 2, Scene = 2, Dialogue = "Câu cuối không chấm" });
+        v.Shots.Add(new StudioShot { Index = 3, Scene = 2, Dialogue = null });
+        var outro = StudioService.OutroLine("Trạm ký ức");
+        outro.Should().Contain("theo dõi Trạm ký ức").And.NotContain("comment").And.NotContain("like");
+        StudioService.AppendOutro(v, outro);
+        StudioService.AppendOutro(v, outro); // never twice
+        v.Shots.ElementAt(1).Dialogue.Should().Be("Câu cuối không chấm. " + outro);
+        v.Shots.ElementAt(0).Dialogue.Should().Be("Câu đầu.");
+        StudioService.OutroLine(null).Should().Contain("theo dõi kênh");
+    }
+
+    [Fact]
     public void Scene_take_times_each_clip_to_its_words()
     {
         // 3 spoken shots of 10, 20, 10 words read in 13 s: the words' share of the take sets each clip

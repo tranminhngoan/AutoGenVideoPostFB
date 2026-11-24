@@ -64,13 +64,28 @@ public class PageStatsService : IPageStatsService
                 var igIds = found.Where(f => f.Network == "instagram").Select(f => f.Id).ToList();
                 var knownFb = await _context.FacebookPosts.Where(p => p.FacebookVideoId != null && fbIds.Contains(p.FacebookVideoId)).Select(p => p.FacebookVideoId!).ToListAsync(ct);
                 var knownIg = await _context.FacebookPosts.Where(p => p.InstagramMediaId != null && igIds.Contains(p.InstagramMediaId)).Select(p => p.InstagramMediaId!).ToListAsync(ct);
+                // Video AI videos of this page: a post made by hand from one of them (its draft, or its caption) is linked back
+                var studio = await _context.StudioVideos.AsNoTracking()
+                    .Where(v => v.FacebookAccountId == account.Id && v.CreatedAtUtc >= now.AddDays(-30))
+                    .Select(v => new { v.Id, v.Title, v.Caption, v.FacebookDraftId }).ToListAsync(ct);
+                Guid? StudioOf(DiscoveredPostDto f)
+                {
+                    var byDraft = studio.FirstOrDefault(v => v.FacebookDraftId != null && v.FacebookDraftId == f.Id);
+                    if (byDraft != null) return byDraft.Id;
+                    var text = (f.Text ?? "").Trim();
+                    if (text.Length < 20) return null;
+                    return studio.FirstOrDefault(v => !string.IsNullOrWhiteSpace(v.Caption) && v.Caption!.Trim().Length >= 20
+                                                      && text.StartsWith(v.Caption.Trim()[..Math.Min(40, v.Caption.Trim().Length)], StringComparison.Ordinal))?.Id;
+                }
                 foreach (var f in found)
                 {
                     if (f.Network == "facebook" ? knownFb.Contains(f.Id) : knownIg.Contains(f.Id)) continue;
-                    var title = string.IsNullOrWhiteSpace(f.Text) ? (f.Network == "facebook" ? "Video trên Facebook" : "Reel trên Instagram") : f.Text.Trim();
+                    var studioId = StudioOf(f);
+                    var studioTitle = studioId == null ? null : studio.First(v => v.Id == studioId).Title;
+                    var title = studioTitle ?? (string.IsNullOrWhiteSpace(f.Text) ? (f.Network == "facebook" ? "Video trên Facebook" : "Reel trên Instagram") : f.Text.Trim());
                     _context.FacebookPosts.Add(new FacebookPost
                     {
-                        FacebookAccountId = account.Id, Source = "Discovered", Title = title.Length > 300 ? title[..300] : title,
+                        FacebookAccountId = account.Id, Source = "Discovered", StudioVideoId = studioId, Title = title.Length > 300 ? title[..300] : title,
                         Status = "Published", UploadStatus = "Published", PublishedAtUtc = f.CreatedUtc,
                         FacebookVideoId = f.Network == "facebook" ? f.Id : null,
                         FacebookPostId = f.Network == "facebook" ? $"{account.PageId}_{f.Id}" : null,
