@@ -152,6 +152,12 @@ public class StudioController : ControllerBase
     public async Task<IActionResult> Plan(Guid id, CancellationToken ct) =>
         Denied() ?? await Run(async () => await _studio.StartPlanAsync(id, ct));
 
+    public sealed record CondenseRequest(int TargetSeconds);
+
+    [HttpPost("videos/{id:guid}/condense")]
+    public async Task<IActionResult> Condense(Guid id, [FromBody] CondenseRequest body, CancellationToken ct) =>
+        Denied() ?? await Run(async () => await _studio.StartCondenseAsync(id, body.TargetSeconds, ct));
+
     [HttpPut("videos/{id:guid}/shots")]
     public async Task<IActionResult> Shots(Guid id, [FromBody] List<StudioShotInputDto> shots, CancellationToken ct) =>
         Denied() ?? await Run(async () => await _studio.ReplaceShotsAsync(id, shots, ct));

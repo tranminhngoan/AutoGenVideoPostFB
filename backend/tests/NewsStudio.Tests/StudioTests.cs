@@ -479,6 +479,31 @@ public class StudioTests
     }
 
     [Fact]
+    public void Shortened_narration_must_fit_the_budget_and_keep_the_story()
+    {
+        StudioService.WordBudget(90, 5).Should().Be(212);                 // (90 - 5) s × 2.5 words
+        var scenes = new[] { 1, 2, 3, 4, 5 };
+        string Words(int n) => string.Join(" ", Enumerable.Repeat("chữ", n));
+        string Answer(params (int Scene, int Words)[] x) =>
+            JsonSerializer.Serialize(new { scenes = x.Select(s => new { scene = s.Scene, narration = Words(s.Words) }) });
+
+        var ok = StudioService.ParseCondense(Answer((1, 50), (2, 40), (3, 0), (4, 60), (5, 50)), scenes, 213);
+        ok[3].Should().BeEmpty();                                          // a minor scene may be dropped
+        ok[1].Split(' ').Should().HaveCount(50);
+
+        var tooLong = () => StudioService.ParseCondense(Answer((1, 100), (2, 100), (3, 100)), scenes, 213);
+        tooLong.Should().Throw<InvalidOperationException>().WithMessage("*vẫn dài*");
+        var tooShort = () => StudioService.ParseCondense(Answer((1, 20), (2, 20)), scenes, 213);
+        tooShort.Should().Throw<InvalidOperationException>();
+        var oneScene = () => StudioService.ParseCondense(Answer((1, 200)), scenes, 213);
+        oneScene.Should().Throw<InvalidOperationException>();
+
+        var (_, user) = StudioService.BuildCondensePrompt(new StudioVideo { Title = "Nồi cơm của mẹ" },
+            new[] { (1, (string?)"Khói bếp", "Có những đứa trẻ lớn lên…"), (2, (string?)"Bát cơm", "Mẹ khẽ cười…") }, 213, 90);
+        user.Should().Contain("TỐI ĐA 213 chữ").And.Contain("khoảng 90 giây").And.Contain("CẢNH 2 — Bát cơm").And.Contain("\"scenes\"");
+    }
+
+    [Fact]
     public void Scene_take_times_each_clip_to_its_words()
     {
         // 3 spoken shots of 10, 20, 10 words read in 13 s: the words' share of the take sets each clip

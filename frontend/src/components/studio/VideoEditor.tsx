@@ -11,7 +11,7 @@ import {
 } from '../../services/studio';
 import { navigate } from '../../lib/router';
 import { ALL_NOSTALGIA_SCRIPTS, NOSTALGIA_CATEGORIES, NostalgiaScript } from '../../data/nostalgiaScriptLibrary';
-import { SPEEDS, estimateImport, narratorFor, takeStudioImport, toStudioImport } from '../../lib/studioImport';
+import { IMPORT_LENGTHS, SPEEDS, estimateImport, narratorFor, takeStudioImport, toStudioImport } from '../../lib/studioImport';
 
 /** Facebook only takes Reels up to 90 s; longer videos go up as ordinary Page videos. */
 const REELS_MAX_SECONDS = 90;
@@ -153,9 +153,12 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
   const [importing, setImporting] = useState<StudioScriptImport | null>(null);
   const [narratorVoice, setNarratorVoice] = useState('gemini:Charon');
   const [narratorSpeed, setNarratorSpeed] = useState('+0%');
+  /** Seconds to shorten a library script to (0 = keep its length). */
+  const [importLength, setImportLength] = useState(0);
   const loadImport = (s: StudioScriptImport) => {
     const n = narratorFor(s.mood);
     setImporting(s);
+    setImportLength(estimateImport(s).seconds > 105 ? 90 : 0); // long scripts default to a ~1:30 video
     setNarratorVoice(n.voice);
     setNarratorSpeed(n.speed);
     setForm((prev) => ({ ...prev, title: s.code ? `${s.title} (${s.code})` : s.title, script: s.script ?? '' }));
@@ -319,7 +322,8 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
     ...(bibleDirty ? { characters, locations } : {}),
   });
 
-  const importEstimate = useMemo(() => (importing ? estimateImport(importing) : null), [importing]);
+  const importEstimate = useMemo(() => (importing ? estimateImport(importing, importLength || null) : null), [importing, importLength]);
+  const fullImportSeconds = useMemo(() => (importing ? estimateImport(importing).seconds : 0), [importing]);
   const importCost = importEstimate
     ? importEstimate.seconds * perSecond + importEstimate.seconds * voicePrice * 0.8 + (form.sfxEnabled ? importEstimate.seconds * sfxPrice : 0)
     : 0;
@@ -331,7 +335,7 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
         const label = models.find((m) => m.id === form.videoModel)?.label ?? form.videoModel;
         if (!(await confirm({
           title: `Tạo video "${importing.title}" ngay?`,
-          description: `Dựng đúng theo kịch bản: ${importing.scenes.length} phân cảnh → khoảng ${importEstimate?.shots} clip, ~${fmtDuration(importEstimate?.seconds ?? 0)} bằng ${label} ${form.resolution}. Ước tính ~${usd(importCost)} (video + giọng đọc${form.sfxEnabled ? ' + hiệu ứng âm thanh' : ''}). Lời bình đọc bằng giọng ${voiceName(narratorVoice)}${form.musicMode !== 'None' ? ', có nhạc nền' : ''}. Mỗi clip mất vài phút; trang tự cập nhật.`,
+          description: `Dựng theo kịch bản${importLength ? ` (lời bình rút gọn còn ~${fmtDuration(importLength)})` : ''}: ${importing.scenes.length} phân cảnh → khoảng ${importEstimate?.shots} clip, ~${fmtDuration(importEstimate?.seconds ?? 0)} bằng ${label} ${form.resolution}. Ước tính ~${usd(importCost)} (video + giọng đọc${form.sfxEnabled ? ' + hiệu ứng âm thanh' : ''}). Lời bình đọc bằng giọng ${voiceName(narratorVoice)}${form.musicMode !== 'None' ? ', có nhạc nền' : ''}. Mỗi clip mất vài phút; trang tự cập nhật.`,
           confirmLabel: `Tạo video (~${usd(importCost)})`,
         }))) return;
       }
@@ -351,6 +355,7 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
         sfxEnabled: form.sfxEnabled,
         sfxVolume: form.sfxVolume,
         autoGenerate,
+        targetSeconds: importLength || null,
       });
       toast.success(autoGenerate
         ? 'Đã nhận kịch bản — đang chuẩn bị rồi tạo video, trang tự cập nhật.'
@@ -404,6 +409,19 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
       if (bibleDirty) applyVideo(await studio.updateVideo(videoId!, { characters, locations }), true);
       applyVideo(await studio.voices(videoId!), true);
       toast.success('Đang đọc các câu thoại bằng giọng AI — nghe thử ở từng shot khi xong.');
+    });
+
+  /** A library-script video with no clip paid for yet can still be shortened. */
+  const canCondense = !!video && video.shots.length > 0 && video.shots.every((s) => s.scene && !s.hasClip) && shotSeconds > 70;
+  const condense = (target: number) =>
+    guarded('condense-' + target, async () => {
+      if (!(await confirm({
+        title: `Rút gọn video còn ~${fmtDuration(target)}?`,
+        description: 'AI cắt bớt lời bình rồi dựng lại các shot, hồ sơ nhân vật và mô tả cảnh (mất 1–2 phút, vài cent). Các chỉnh sửa tay ở shot hiện tại sẽ bị thay.',
+        confirmLabel: 'Rút gọn',
+      }))) return;
+      applyVideo(await studio.condense(videoId!, target), true);
+      toast.success('Đang rút gọn — trang tự cập nhật khi xong.');
     });
 
   const rereadShot = (s: StudioShotInput) =>
@@ -597,6 +615,14 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
               Mỗi phân cảnh dùng đúng prompt tiếng Anh của kịch bản, chia thành các clip ≤ 12s với góc máy khác nhau; lời bình (kèm hook và lời kết)
               đọc bằng giọng AI theo cảm xúc; mô tả âm thanh của kịch bản được dịch sang tiếng Anh để AI tạo đúng tiếng động đó; nhạc nền AI chọn hợp tâm trạng.
             </p>
+            <Field label={`Độ dài video (kịch bản gốc khoảng ${fmtDuration(fullImportSeconds)})`}
+              hint="Rút gọn: AI cắt bớt câu trùng lặp, giữ câu mở đầu, câu kết và những chi tiết cảm động nhất — rẻ hơn và hợp Reels hơn.">
+              <Select value={importLength} onChange={(e) => setImportLength(Number(e.target.value))} disabled={locked}>
+                {IMPORT_LENGTHS.filter((l) => l.id === 0 || l.id < fullImportSeconds).map((l) => (
+                  <option key={l.id} value={l.id}>{l.label}</option>
+                ))}
+              </Select>
+            </Field>
             <div className="grid gap-2 sm:grid-cols-[1fr_180px]">
               <Field label="Giọng lời bình (chọn theo cảm xúc kịch bản, đổi được)">
                 <div className="flex gap-1">
@@ -825,6 +851,16 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
               </span>
             </div>
             {video.planNotes && <p className="rounded-lg bg-subtle p-2.5 text-xs text-fg-muted">🎬 {video.planNotes}</p>}
+            {canCondense && (
+              <div className="flex flex-wrap items-center gap-2 text-xs text-fg-muted">
+                <span>Video dài quá? AI rút gọn lời bình (giữ mở đầu, kết và chi tiết cảm động), dựng lại shot:</span>
+                {[90, 60].filter((t) => shotSeconds > t + 10).map((t) => (
+                  <Button key={t} size="sm" variant="secondary" loading={busy === 'condense-' + t} disabled={locked} onClick={() => condense(t)}>
+                    Rút gọn còn ~{fmtDuration(t)}
+                  </Button>
+                ))}
+              </div>
+            )}
             {shots.length === 0 ? (
               <p className="text-xs text-fg-muted">Chưa có shot. Bấm "Lập kế hoạch bằng AI" ở mục 2 để Gemini chia kịch bản (hoặc thêm tay).</p>
             ) : (

@@ -221,6 +221,8 @@ public class StudioScriptImportDto
     public double? SfxVolume { get; set; }
     /// <summary>Start generating the clips as soon as the script is ready (after the budget check).</summary>
     public bool AutoGenerate { get; set; }
+    /// <summary>Shorten the narration to about this many seconds of video (null = the script's own length).</summary>
+    public int? TargetSeconds { get; set; }
 }
 
 public class StudioSceneImportDto

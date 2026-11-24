@@ -155,6 +155,8 @@ export interface StudioScriptImport {
   sfxEnabled?: boolean;
   sfxVolume?: number;
   autoGenerate?: boolean;
+  /** Shorten the narration to about this many seconds (null = the script's own length). */
+  targetSeconds?: number | null;
 }
 
 export interface StudioLocation {
@@ -298,6 +300,7 @@ export const studio = {
       musicTrackId: input.musicTrackId || undefined,
     }),
   plan: (id: string) => call<StudioVideo>('POST', `/videos/${id}/plan`),
+  condense: (id: string, targetSeconds: number) => call<StudioVideo>('POST', `/videos/${id}/condense`, { targetSeconds }),
   saveShots: (id: string, shots: StudioShotInput[]) => call<StudioVideo>('PUT', `/videos/${id}/shots`, shots),
   generate: (id: string) => call<StudioVideo>('POST', `/videos/${id}/generate`),
   generateShot: (id: string, shotId: string) => call<StudioVideo>('POST', `/videos/${id}/shots/${shotId}/generate`),

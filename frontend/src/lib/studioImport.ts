@@ -67,7 +67,22 @@ const words = (t?: string | null) => (t ?? '').trim().split(/\s+/).filter(Boolea
  * Rough size of the video the server will build (it splits each scene into ≤ 12 s clips and reads ~3 words a second):
  * number of clips and seconds, for the cost shown before creating.
  */
-export function estimateImport(s: StudioScriptImport): { shots: number; seconds: number } {
+export function estimateImport(s: StudioScriptImport, targetSeconds?: number | null): { shots: number; seconds: number } {
+  const full = estimateFull(s);
+  if (!targetSeconds || full.seconds <= targetSeconds) return full;
+  // shortened by Gemini to about the target: fewer, similar clips
+  return { shots: Math.max(s.scenes.length, Math.round((full.shots * targetSeconds) / full.seconds)), seconds: targetSeconds };
+}
+
+/** Choices of length for a library script (Gemini shortens the narration, keeping the hook, the ending and the story). */
+export const IMPORT_LENGTHS = [
+  { id: 0, label: 'Giữ nguyên độ dài kịch bản' },
+  { id: 90, label: 'Rút gọn còn ~1 phút 30' },
+  { id: 75, label: 'Rút gọn còn ~1 phút 15' },
+  { id: 60, label: 'Rút gọn còn ~1 phút' },
+];
+
+function estimateFull(s: StudioScriptImport): { shots: number; seconds: number } {
   let shots = 0;
   let seconds = 0;
   s.scenes.forEach((scene, i) => {

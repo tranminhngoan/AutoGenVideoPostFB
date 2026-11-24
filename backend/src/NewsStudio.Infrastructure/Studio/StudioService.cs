@@ -838,22 +838,36 @@ Trả về JSON:
                 throw new InvalidOperationException("Chưa có khoá Vercel AI Gateway (biến AI_GATEWAY_API_KEY trên Railway) — video đã được tạo, nhưng chưa tạo clip được.");
             await EnsureBudgetAsync(v.EstimatedCostUsd, ct);
         }
+        var target = input.TargetSeconds is > 0 ? Math.Clamp(input.TargetSeconds.Value, 30, 600) : (int?)null;
         v.Status = "Planning";
-        v.Progress = input.AutoGenerate
-            ? "Đang dựng hồ sơ nhân vật, bối cảnh và mô tả chi tiết từng shot, rồi tạo video…"
-            : "Đang dựng hồ sơ nhân vật, bối cảnh và mô tả chi tiết từng shot…";
+        v.Progress = (target != null ? $"Đang rút gọn lời bình còn ~{target}s, " : "Đang ")
+                     + "dựng hồ sơ nhân vật, bối cảnh và mô tả chi tiết từng shot" + (input.AutoGenerate ? ", rồi tạo video…" : "…");
         await _db.SaveChangesAsync(ct);
-        _jobs.Enqueue<StudioService>(x => x.RunPrepareImportAsync(v.Id, input.AutoGenerate, CancellationToken.None));
+        _jobs.Enqueue<StudioService>(x => x.RunPrepareImportAsync(v.Id, input.AutoGenerate, target, CancellationToken.None));
         return await GetVideoAsync(v.Id, ct);
     }
 
     [Queue("critical")]
     [AutomaticRetry(Attempts = 0)]
-    public async Task RunPrepareImportAsync(Guid id, bool autoGenerate, CancellationToken ct)
+    public async Task RunPrepareImportAsync(Guid id, bool autoGenerate, int? targetSeconds, CancellationToken ct)
     {
         var v = await _db.StudioVideos.Include(x => x.Shots).FirstOrDefaultAsync(x => x.Id == id, ct);
         if (v == null || v.Status != "Planning") return;
         var music = await _db.StudioMusicTracks.AsNoTracking().OrderBy(m => m.UseCount).ToListAsync(ct);
+        string? condenseError = null;
+        if (targetSeconds is { } target)
+        {
+            try
+            {
+                await CondenseAsync(v, target, ct);
+                v = await _db.StudioVideos.Include(x => x.Shots).FirstAsync(x => x.Id == id, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogWarning(ex, "Studio condense failed for {Id}", id);
+                condenseError = "Chưa rút gọn được lời bình (" + ex.Message + ") — video giữ độ dài của kịch bản. ";
+            }
+        }
         try
         {
             var (system, user) = BuildDirectionPrompt(v, music);
@@ -861,6 +875,7 @@ Trả về JSON:
                 "Gemini đang dựng hồ sơ nhân vật, bối cảnh và mô tả chi tiết từng shot", ct);
             var direction = ParseDirection(result.Text, v.Shots.Count, music.Select(m => m.Id).ToHashSet());
             ApplyDirection(v, direction);
+            v.TargetDurationSeconds = Math.Max(1, v.Shots.Sum(s => s.DurationSeconds));
             if (!string.IsNullOrWhiteSpace(direction.Caption)) v.Caption = direction.Caption;
             if (v.MusicMode == "Auto" && v.MusicTrackId == null) v.MusicTrackId = direction.MusicTrackId ?? music.FirstOrDefault()?.Id;
             _db.StudioCostRecords.Add(new StudioCostRecord
@@ -869,14 +884,14 @@ Trả về JSON:
                 Note = "dựng hồ sơ & mô tả shot từ kịch bản thư viện" + (result.FreeKey ? " (khoá miễn phí)" : "")
             });
             v.ActualCostUsd += result.CostUsd;
-            v.ErrorMessage = null;
+            v.ErrorMessage = condenseError;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             // the script itself is complete: carry on with its own prompts and the hook as caption
             _logger.LogWarning(ex, "Studio import direction failed for {Id}", id);
             if (v.MusicMode == "Auto" && v.MusicTrackId == null) v.MusicTrackId = music.FirstOrDefault()?.Id;
-            v.ErrorMessage = "Chưa dựng được hồ sơ nhân vật / mô tả chi tiết (" + ex.Message + ") — video vẫn dựng theo prompt gốc của kịch bản; " +
+            v.ErrorMessage = condenseError + "Chưa dựng được hồ sơ nhân vật / mô tả chi tiết (" + ex.Message + ") — video vẫn dựng theo prompt gốc của kịch bản; " +
                              "nên bấm tạo lại video từ trang kịch bản để nhân vật đồng nhất hơn.";
         }
         v.EstimatedCostUsd = EstimateVideoCost(v);
@@ -892,6 +907,144 @@ Trả về JSON:
         v.Status = "Planned";
         v.Progress = null;
         await _db.SaveChangesAsync(CancellationToken.None);
+    }
+
+    // ── shortening a library script ──
+
+    /// <summary>Slow, emotional Vietnamese narration: about 2.5 words (syllables) a second, pauses included.</summary>
+    public const double NarrationWordsPerSecond = 2.5;
+
+    /// <summary>Words of narration that fit <paramref name="targetSeconds"/> of video (a breath per scene left aside).</summary>
+    public static int WordBudget(int targetSeconds, int scenes) =>
+        (int)Math.Round(Math.Max(20, targetSeconds - scenes * 1.0) * NarrationWordsPerSecond);
+
+    /// <summary>
+    /// Shortens an imported (not yet generated) video to about <paramref name="targetSeconds"/>: re-cut the narration
+    /// and the direction again. Only before any clip is made — clips already paid for are never thrown away.
+    /// </summary>
+    public async Task<StudioVideoDto> StartCondenseAsync(Guid id, int targetSeconds, CancellationToken ct)
+    {
+        var v = await _db.StudioVideos.Include(x => x.Shots).FirstOrDefaultAsync(x => x.Id == id, ct) ?? throw new KeyNotFoundException("Không tìm thấy video.");
+        EnsureNotBusy(v);
+        if (v.Shots.Count == 0 || v.Shots.Any(s => s.Scene == null))
+            throw new InvalidOperationException("Chỉ rút gọn được video dựng từ trang kịch bản (các shot theo phân cảnh).");
+        if (v.Shots.Any(s => s.ClipBlobId != null || !string.IsNullOrEmpty(s.InteractionId)))
+            throw new InvalidOperationException("Video đã có clip (đã trả tiền) nên không rút gọn được — hãy dựng video mới từ trang kịch bản và chọn độ dài ở đó.");
+        var target = Math.Clamp(targetSeconds, 30, 600);
+        v.Status = "Planning";
+        v.Progress = $"Đang rút gọn lời bình còn ~{target}s rồi dựng lại hồ sơ và mô tả shot…";
+        v.ErrorMessage = null;
+        await _db.SaveChangesAsync(ct);
+        _jobs.Enqueue<StudioService>(x => x.RunPrepareImportAsync(id, false, target, CancellationToken.None));
+        return await GetVideoAsync(id, ct);
+    }
+
+    /// <summary>
+    /// Gemini cuts the narration of each scene down to the word budget (keeping the hook, the ending and the most
+    /// moving concrete images, the script's own wording, possibly dropping a minor scene), then the shots are built
+    /// again from the shorter narration exactly as on import.
+    /// </summary>
+    private async Task CondenseAsync(StudioVideo v, int targetSeconds, CancellationToken ct)
+    {
+        var scenes = v.Shots.Where(s => s.Scene != null).OrderBy(s => s.Index).GroupBy(s => s.Scene!.Value).Select(g => g.ToList()).ToList();
+        if (scenes.Count == 0 || v.Shots.Any(s => s.Scene == null)) return;
+        string Narration(List<StudioShot> g) => string.Join(" ", g.Where(s => s.Dialogue != null).Select(s => s.Dialogue!.Trim()));
+        var budget = WordBudget(targetSeconds, scenes.Count);
+        if (scenes.Sum(g => WordCount(Narration(g))) <= budget) return; // already short enough
+
+        var (system, user) = BuildCondensePrompt(v, scenes.Select(g => (g[0].Scene!.Value, g[0].Location, Narration(g))).ToList(), budget, targetSeconds);
+        var numbers = scenes.Select(g => g[0].Scene!.Value).ToList();
+        var (result, model) = await AskWithFallbackAsync(v, system, user, text => ParseCondense(text, numbers, budget),
+            $"Gemini đang rút gọn lời bình còn ~{targetSeconds}s", ct);
+        var shortened = ParseCondense(result.Text, numbers, budget);
+
+        var kept = scenes.Where(g => shortened.TryGetValue(g[0].Scene!.Value, out var t) && t.Length > 0).ToList();
+        var dto = new StudioScriptImportDto
+        {
+            Scenes = kept.Select(g => new StudioSceneImportDto
+            {
+                Title = g[0].Location, PromptEn = g[0].Action, Camera = g[0].Camera, Sound = g[0].Sound,
+                Voiceover = shortened[g[0].Scene!.Value],
+                DurationSeconds = (int)Math.Ceiling(WordCount(shortened[g[0].Scene!.Value]) / NarrationWordsPerSecond)
+            }).ToList()
+        };
+        var built = StudioScriptImporter.BuildShots(dto);
+        if (built.Count == 0) throw new InvalidOperationException("Lời bình rút gọn không dựng được shot nào.");
+
+        foreach (var old in v.Shots)
+        {
+            if (old.VoiceBlobId != null) await DeleteBlobAsync(old.VoiceBlobId.Value, ct);
+            if (old.SfxBlobId != null) await DeleteBlobAsync(old.SfxBlobId.Value, ct);
+        }
+        _db.StudioShots.RemoveRange(v.Shots);
+        v.Shots.Clear();
+        var index = 1;
+        foreach (var s in built)
+        {
+            var source = kept[s.Scene];
+            _db.StudioShots.Add(new StudioShot // through the DbSet: see RunPlanAsync
+            {
+                StudioVideoId = v.Id, Index = index++, DurationSeconds = s.Duration, Action = s.Action, Camera = s.Camera,
+                Speaker = s.Dialogue == null ? null : StudioVoices.NarratorName, Dialogue = s.Dialogue, Sound = s.Sound,
+                Location = source[0].Location, Scene = source[0].Scene,
+                VoiceStyle = source.Select(x => x.VoiceStyle).FirstOrDefault(x => !string.IsNullOrWhiteSpace(x))
+            });
+        }
+        v.TargetDurationSeconds = Math.Max(1, built.Sum(s => s.Duration));
+        v.PlanNotes = $"Dựng theo kịch bản thư viện, rút gọn còn ~{targetSeconds}s: {kept.Count} phân cảnh → {built.Count} shot." +
+                      (v.PlanNotes is { } notes && notes.Contains("Tâm trạng") ? " " + notes[notes.IndexOf("Tâm trạng", StringComparison.Ordinal)..] : "");
+        _db.StudioCostRecords.Add(new StudioCostRecord
+        {
+            StudioVideoId = v.Id, Kind = "Plan", Model = model, Tokens = result.Tokens, CostUsd = result.CostUsd,
+            Note = $"rút gọn lời bình còn ~{targetSeconds}s" + (result.FreeKey ? " (khoá miễn phí)" : "")
+        });
+        v.ActualCostUsd += result.CostUsd;
+        await _db.SaveChangesAsync(ct);
+    }
+
+    public static (string System, string User) BuildCondensePrompt(StudioVideo v, IReadOnlyList<(int Scene, string? Title, string Narration)> scenes,
+        int budget, int targetSeconds)
+    {
+        var system = "Bạn là biên tập viên lời bình cho video ngắn hoài niệm trên Facebook. Chỉ trả về JSON hợp lệ.";
+        var sb = new StringBuilder();
+        sb.AppendLine($"VIDEO: {v.Title}");
+        if (!string.IsNullOrWhiteSpace(v.PlanNotes)) sb.AppendLine($"Ghi chú: {v.PlanNotes}");
+        sb.AppendLine($"Lời bình hiện có {scenes.Sum(x => WordCount(x.Narration))} chữ — cần rút còn TỐI ĐA {budget} chữ để video dài khoảng {targetSeconds} giây.\n");
+        foreach (var (scene, title, narration) in scenes)
+            sb.AppendLine($"CẢNH {scene} — {title} ({WordCount(narration)} chữ):\n{narration}\n");
+        sb.AppendLine($@"CÁCH RÚT GỌN:
+- Tổng lời bình các cảnh ≤ {budget} chữ (đếm từng tiếng).
+- Giữ câu mở đầu (hook) ở đầu cảnh đầu tiên và câu kết ở cuối cảnh cuối — được rút ngắn nhẹ nếu quá dài.
+- CẮT câu / ý trùng lặp, liệt kê dài, câu chuyển ý; GIỮ những hình ảnh cụ thể và cảm động nhất, mạch truyện và cảm xúc cao trào.
+- Giữ lời văn gốc của kịch bản, chỉ sửa tối thiểu cho câu liền mạch; KHÔNG thêm ý mới.
+- Được bỏ hẳn cảnh kém quan trọng nhất (narration là """") nếu cần, nhưng giữ ít nhất 3 cảnh.
+
+Trả về JSON: {{ ""scenes"": [ {{ ""scene"": 1, ""narration"": ""..."" }} ] }}");
+        return (system, sb.ToString());
+    }
+
+    /// <summary>The shortened narration per scene ("" = scene dropped); it must fit the budget and keep the story.</summary>
+    public static Dictionary<int, string> ParseCondense(string json, IReadOnlyList<int> scenes, int budget)
+    {
+        var text = json.Trim();
+        var start = text.IndexOf('{');
+        var end = text.LastIndexOf('}');
+        if (start < 0 || end <= start) throw new InvalidOperationException("Gemini không trả về JSON.");
+        using var doc = JsonDocument.Parse(text[start..(end + 1)]);
+        var result = scenes.ToDictionary(s => s, _ => "");
+        if (doc.RootElement.TryGetProperty("scenes", out var arr) && arr.ValueKind == JsonValueKind.Array)
+            foreach (var x in arr.EnumerateArray())
+            {
+                var number = x.TryGetProperty("scene", out var n) && n.TryGetInt32(out var i) ? i : -1;
+                if (result.ContainsKey(number) && x.TryGetProperty("narration", out var t) && t.ValueKind == JsonValueKind.String)
+                    result[number] = System.Text.RegularExpressions.Regex.Replace(t.GetString() ?? "", @"\s+", " ").Trim();
+            }
+        var words = result.Values.Sum(WordCount);
+        var kept = result.Values.Count(t => t.Length > 0);
+        if (kept < Math.Min(2, scenes.Count)) throw new InvalidOperationException($"Gemini chỉ giữ {kept} cảnh.");
+        if (words > budget * 1.2) throw new InvalidOperationException($"Lời bình rút gọn vẫn dài {words} chữ (cần ≤ {budget}).");
+        if (words < budget * 0.35) throw new InvalidOperationException($"Lời bình rút gọn quá ngắn ({words} chữ).");
+        return result;
     }
 
     /// <summary>
