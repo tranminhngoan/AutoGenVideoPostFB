@@ -326,6 +326,15 @@ public class StudioService
         return path == null ? null : (path, meta.MimeType);
     }
 
+    /// <summary>A direct bucket link for a file kept outside the database (null: serve it from this server as before).</summary>
+    public async Task<string?> BucketUrlAsync(Guid blobId, string? downloadName, CancellationToken ct)
+    {
+        var meta = await _db.StudioBlobs.AsNoTracking().Where(b => b.Id == blobId)
+            .Select(b => new { b.MimeType, InDb = b.Data.Length > 0 }).FirstOrDefaultAsync(ct);
+        if (meta == null || meta.InDb) return null;
+        return await _files.PresignedUrlAsync(blobId, meta.MimeType, downloadName, ct);
+    }
+
     /// <summary>Clips and final videos go to the app disk, never into the database (see <see cref="StudioFileStore"/>).</summary>
     private async Task<StudioBlob> StoreOnDiskAsync(byte[] data, string mimeType, CancellationToken ct)
     {

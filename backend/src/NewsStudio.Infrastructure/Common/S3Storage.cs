@@ -154,6 +154,51 @@ public class S3Storage
         return $"AWS4-HMAC-SHA256 Credential={_accessKey}/{scope}, SignedHeaders={signedHeaders}, Signature={signature}";
     }
 
+    /// <summary>
+    /// A time-limited link (AWS Signature V4 query string) the browser can GET the object with directly: videos then
+    /// stream from the bucket (R2 charges nothing for data out) instead of through the app server (Railway bills egress).
+    /// Range requests work, so &lt;video&gt; seeking does too. Optional overrides of the response Content-Type (objects may
+    /// be stored as application/octet-stream) and Content-Disposition (download with a file name).
+    /// </summary>
+    public string PresignGet(string key, TimeSpan expires, string? contentType, string? downloadName, DateTime utcNow)
+    {
+        var path = "/" + Escape(_bucket) + "/" + string.Join("/", key.Split('/').Select(Escape));
+        var uri = new Uri(_endpoint, path.TrimStart('/'));
+        var host = uri.IsDefaultPort ? uri.Host : $"{uri.Host}:{uri.Port}";
+        var extra = new Dictionary<string, string>();
+        if (!string.IsNullOrWhiteSpace(contentType)) extra["response-content-type"] = contentType;
+        if (!string.IsNullOrWhiteSpace(downloadName))
+        {
+            var ascii = new string(downloadName.Select(c => c is >= ' ' and < (char)127 and not '"' and not '\\' ? c : '_').ToArray());
+            extra["response-content-disposition"] = $"attachment; filename=\"{ascii}\"; filename*=UTF-8''{Escape(downloadName)}";
+        }
+        var query = PresignQuery(host, uri.AbsolutePath, extra, _accessKey, _secretKey, _region, (int)expires.TotalSeconds, utcNow);
+        return $"{uri.Scheme}://{host}{uri.AbsolutePath}?{query}";
+    }
+
+    /// <summary>The signed query string of a presigned GET (public for the AWS documentation test vector).</summary>
+    public static string PresignQuery(string host, string canonicalPath, IReadOnlyDictionary<string, string> extra, string accessKey,
+        string secretKey, string region, int expiresSeconds, DateTime utcNow)
+    {
+        var amzDate = utcNow.ToString("yyyyMMdd'T'HHmmss'Z'", CultureInfo.InvariantCulture);
+        var date = utcNow.ToString("yyyyMMdd", CultureInfo.InvariantCulture);
+        var scope = $"{date}/{region}/s3/aws4_request";
+        var q = new SortedDictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["X-Amz-Algorithm"] = "AWS4-HMAC-SHA256",
+            ["X-Amz-Credential"] = $"{accessKey}/{scope}",
+            ["X-Amz-Date"] = amzDate,
+            ["X-Amz-Expires"] = expiresSeconds.ToString(CultureInfo.InvariantCulture),
+            ["X-Amz-SignedHeaders"] = "host"
+        };
+        foreach (var (k, v) in extra) q[k] = v;
+        var canonicalQuery = string.Join("&", q.Select(kv => $"{Escape(kv.Key)}={Escape(kv.Value)}"));
+        var canonicalRequest = $"GET\n{canonicalPath}\n{canonicalQuery}\nhost:{host}\n\nhost\nUNSIGNED-PAYLOAD";
+        var stringToSign = $"AWS4-HMAC-SHA256\n{amzDate}\n{scope}\n{Hex(SHA256.HashData(Encoding.UTF8.GetBytes(canonicalRequest)))}";
+        var key = Hmac(Hmac(Hmac(Hmac(Encoding.UTF8.GetBytes("AWS4" + secretKey), date), region), "s3"), "aws4_request");
+        return $"{canonicalQuery}&X-Amz-Signature={Hex(Hmac(key, stringToSign))}";
+    }
+
     /// <summary>A store with fixed credentials (tests).</summary>
     public static S3Storage ForTest(string accessKey, string secretKey, string region) =>
         new(new HttpClient(), new Uri("https://example.com/"), "bucket", accessKey, secretKey, region);

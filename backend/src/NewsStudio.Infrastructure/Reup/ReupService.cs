@@ -70,6 +70,14 @@ public class ReupService
         if (row != null) _db.StudioBlobs.Remove(row);
     }
 
+    /// <summary>A direct bucket link (the browser streams from R2, not through Railway), or null to serve it from here.</summary>
+    public async Task<string?> BucketUrlAsync(Guid? blobId, string? downloadName, CancellationToken ct)
+    {
+        if (blobId is not { } id) return null;
+        var mime = await _db.StudioBlobs.AsNoTracking().Where(b => b.Id == id).Select(b => b.MimeType).FirstOrDefaultAsync(ct);
+        return mime == null ? null : await _files.PresignedUrlAsync(id, mime, downloadName, ct);
+    }
+
     /// <summary>A stored file on this machine's disk (fetched from the bucket when needed) for streaming to the page.</summary>
     public async Task<(string Path, string MimeType)?> FileAsync(Guid? blobId, CancellationToken ct)
     {

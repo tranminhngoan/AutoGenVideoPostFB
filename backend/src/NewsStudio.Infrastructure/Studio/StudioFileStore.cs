@@ -35,6 +35,31 @@ public class StudioFileStore
 
     public string PathFor(Guid blobId) => Path.Combine(_root, blobId.ToString("N") + ".bin");
 
+    /// <summary>Files already seen in the bucket (a file never changes under its id), so a page view costs no extra HEAD.</summary>
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, bool> InBucket = new();
+
+    /// <summary>
+    /// A 1-hour link that streams the file straight from the bucket to the browser (no app-server egress), or null when
+    /// there is no bucket or the file isn't in it (then the caller serves it from this disk as before).
+    /// </summary>
+    public async Task<string?> PresignedUrlAsync(Guid blobId, string mimeType, string? downloadName, CancellationToken ct)
+    {
+        if (_s3 == null) return null;
+        if (!InBucket.ContainsKey(blobId))
+        {
+            try
+            {
+                if (!await _s3.ExistsAsync(Key(blobId), ct)) return null;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                return null; // bucket unreachable: serve from here if possible
+            }
+            InBucket[blobId] = true;
+        }
+        return _s3.PresignGet(Key(blobId), TimeSpan.FromHours(1), mimeType, downloadName, DateTime.UtcNow);
+    }
+
     /// <summary>Whether the file exists here or in the shared bucket.</summary>
     public async Task<bool> ExistsAsync(Guid blobId, CancellationToken ct)
     {
@@ -122,6 +147,7 @@ public class StudioFileStore
 
     public void Delete(Guid blobId)
     {
+        InBucket.TryRemove(blobId, out _);
         try { File.Delete(PathFor(blobId)); } catch { /* best effort */ }
         if (_s3 != null)
         {

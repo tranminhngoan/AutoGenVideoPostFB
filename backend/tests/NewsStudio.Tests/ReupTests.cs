@@ -4,6 +4,7 @@ using FluentAssertions;
 using Hangfire;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using NewsStudio.Application.Common.Interfaces;
 using NewsStudio.Application.DTOs;
@@ -194,6 +195,50 @@ public class ReupTests
     [InlineData("Pexels", "https://cdn.pixabay.com/a.jpg", false)]
     public void Stock_downloads_only_come_from_the_provider(string provider, string url, bool ok) =>
         ReupStockClient.IsProviderHost(provider, url).Should().Be(ok);
+
+    // ───────────── direct bucket links ─────────────
+
+    [Fact]
+    public void Presigned_link_matches_the_aws_documentation_example()
+    {
+        // "Authenticating Requests: Using Query Parameters (AWS Signature Version 4)" example
+        var q = NewsStudio.Infrastructure.Common.S3Storage.PresignQuery("examplebucket.s3.amazonaws.com", "/test.txt", new Dictionary<string, string>(),
+            "AKIAIOSFODNN7EXAMPLE", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", "us-east-1", 86400, new DateTime(2013, 5, 24, 0, 0, 0, DateTimeKind.Utc));
+        q.Should().EndWith("X-Amz-Signature=aeeed9bbccd4d02ee5c0109b86d86835f995330da4c265957d157751f604d404");
+        q.Should().StartWith("X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAIOSFODNN7EXAMPLE%2F20130524%2Fus-east-1%2Fs3%2Faws4_request");
+    }
+
+    /// <summary>Against the real bucket when its keys are in the environment (Storage__S3__*); skipped otherwise.</summary>
+    [Fact]
+    public async Task Presigned_link_streams_from_the_real_bucket_with_ranges_and_download_name()
+    {
+        var config = new ConfigurationBuilder().AddEnvironmentVariables().Build();
+        var s3 = NewsStudio.Infrastructure.Common.S3Storage.FromConfiguration(config);
+        if (s3 == null) return;
+        var key = $"tests/presign-{Guid.NewGuid():N}.bin";
+        var data = Enumerable.Range(0, 4096).Select(i => (byte)(i % 251)).ToArray();
+        await s3.PutAsync(key, data, "application/octet-stream", CancellationToken.None);
+        try
+        {
+            using var http = new HttpClient();
+            var url = s3.PresignGet(key, TimeSpan.FromMinutes(5), "video/mp4", "Video thử.mp4", DateTime.UtcNow);
+            var whole = await http.GetAsync(url);
+            whole.StatusCode.Should().Be(HttpStatusCode.OK, await whole.Content.ReadAsStringAsync());
+            (await whole.Content.ReadAsByteArrayAsync()).Should().Equal(data);
+            whole.Content.Headers.ContentType!.MediaType.Should().Be("video/mp4");
+            whole.Content.Headers.ContentDisposition!.DispositionType.Should().Be("attachment");
+
+            var ranged = new HttpRequestMessage(HttpMethod.Get, s3.PresignGet(key, TimeSpan.FromMinutes(5), "video/mp4", null, DateTime.UtcNow));
+            ranged.Headers.Range = new System.Net.Http.Headers.RangeHeaderValue(100, 199);
+            var part = await http.SendAsync(ranged);
+            part.StatusCode.Should().Be(HttpStatusCode.PartialContent); // <video> seeking
+            (await part.Content.ReadAsByteArrayAsync()).Should().Equal(data.Skip(100).Take(100));
+        }
+        finally
+        {
+            await s3.DeleteAsync(key, CancellationToken.None);
+        }
+    }
 
     [Theory]
     [InlineData("127.0.0.1", true)]

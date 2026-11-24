@@ -262,6 +262,12 @@ public class StudioController : ControllerBase
     private async Task<IActionResult> BlobResult(Guid? blobId, string? downloadName, CancellationToken ct)
     {
         if (blobId == null) return NotFound();
+        // the browser streams the file straight from the bucket (R2: no egress fee), not through this server
+        if (await _studio.BucketUrlAsync(blobId.Value, downloadName, ct) is { } direct)
+        {
+            Response.Headers.CacheControl = "private, max-age=1800"; // the link itself is valid for 1 hour
+            return Redirect(direct);
+        }
         Response.Headers.CacheControl = "private, max-age=3600";
         if (await _studio.DiskFileAsync(blobId.Value, ct) is { } disk) // streamed from disk, never loaded whole
             return downloadName == null

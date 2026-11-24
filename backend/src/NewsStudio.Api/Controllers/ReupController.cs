@@ -148,6 +148,12 @@ public class ReupController : ControllerBase
 
     private async Task<IActionResult> FileResult(Guid? blobId, string? downloadName, CancellationToken ct)
     {
+        // the browser streams the file straight from the bucket (R2: no egress fee), not through Railway
+        if (await _reup.BucketUrlAsync(blobId, downloadName, ct) is { } direct)
+        {
+            Response.Headers.CacheControl = "private, max-age=1800"; // the link itself is valid for 1 hour
+            return Redirect(direct);
+        }
         if (await _reup.FileAsync(blobId, ct) is not { } f) return NotFound();
         Response.Headers.CacheControl = "private, max-age=3600";
         return downloadName == null
