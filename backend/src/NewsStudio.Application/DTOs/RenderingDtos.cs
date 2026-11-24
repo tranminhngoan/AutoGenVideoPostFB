@@ -38,6 +38,10 @@ public class TtsSynthesisResult
     public string Sha256Hash { get; set; } = string.Empty;
     /// <summary>True when the audio was reused from the local cache (no paid API call).</summary>
     public bool FromCache { get; set; }
+    /// <summary>Gemini TTS: the take was performed with the requested acting direction (expressive model).</summary>
+    public bool Styled { get; set; }
+    /// <summary>Why a requested direction could not be used (the take was read plainly instead).</summary>
+    public string? StyleError { get; set; }
 }
 
 public class VideoRenderRequest

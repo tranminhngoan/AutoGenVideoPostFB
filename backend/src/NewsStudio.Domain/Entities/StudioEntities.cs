@@ -63,7 +63,7 @@ public class StudioVideo : BaseEntity
 
     public string MusicMode { get; set; } = "Auto"; // Auto, Manual, None
     public Guid? MusicTrackId { get; set; }
-    public double MusicVolume { get; set; } = 0.15;
+    public double MusicVolume { get; set; } = 0.3;
 
     // Draft, Planning, Planned, Generating, Composing, Ready, Publishing, Published, Failed
     public string Status { get; set; } = "Draft";

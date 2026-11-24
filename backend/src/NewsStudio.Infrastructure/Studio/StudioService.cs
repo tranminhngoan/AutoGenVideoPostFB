@@ -103,6 +103,7 @@ public class StudioService
             b.Characters.Add(new StudioCharacterDto
             {
                 Name = c.Name.Trim(), Gender = gender, Look = (c.Look ?? "").Trim(), Voice = voice,
+                Outfit = string.IsNullOrWhiteSpace(c.Outfit) ? null : c.Outfit.Trim(),
                 Speed = string.IsNullOrWhiteSpace(c.Speed) ? null : StudioVoices.NormalizeSpeed(c.Speed)
             });
         }
@@ -913,7 +914,7 @@ Trả về JSON:
             FacebookAccountId = input.FacebookAccountId is { } page && page != Guid.Empty ? page : null,
             MusicMode = input.MusicMode is "Manual" or "None" ? input.MusicMode : "Auto",
             MusicTrackId = input.MusicTrackId is { } mt && mt != Guid.Empty ? mt : null,
-            MusicVolume = Math.Clamp(input.MusicVolume ?? 0.15, 0, 1),
+            MusicVolume = Math.Clamp(input.MusicVolume ?? 0.3, 0, 1),
             SfxEnabled = input.SfxEnabled ?? true,
             SfxVolume = Math.Clamp(input.SfxVolume ?? 0.7, 0, 1.5),
             Caption = input.Hook?.Trim(),
@@ -1210,39 +1211,55 @@ VIỆC CẦN LÀM (mọi mô tả hình viết bằng TIẾNG ANH):
    dáng người, khuôn mặt (hình dáng mặt, mắt, lông mày, mũi, môi), làn da (rám nắng, nếp nhăn…), tóc (dài ngắn, kiểu, màu, cách búi),
    dấu hiệu riêng (nốt ruồi, sẹo…). Người lao động bình thường, chân thực — không phải người mẫu. Cùng một người ở 2 độ tuổi khác hẳn
    (lúc bé / lúc lớn) thì là 2 mục riêng (vd ""Tí (8 tuổi)"", ""Tí (35 tuổi)"") nhưng giữ cùng nét mặt đặc trưng để nhận ra.
+   ""outfit"": 20–35 từ, trang phục MẶC SUỐT video (màu, chất vải, độ cũ), NÓI RÕ đồ đội đầu (""always wearing a faded olive pith
+   helmet"" hoặc ""bare-headed"") và giày dép — app chép y nguyên vào mọi shot để mũ nón không lúc có lúc không.
+1b. ""props"": đồ vật quan trọng xuất hiện ở ≥ 2 shot (xe đạp, thùng kem, nồi cơm…): ""name"" ngắn tiếng Việt, ""look"" 20–40 từ
+   tiếng Anh CỐ ĐỊNH (chất liệu, màu, kích thước, bên trong chứa gì) — vd thùng kem: ""a white styrofoam box tied on the bicycle rear
+   rack, lid on top; inside, rows of colourful ice pops on wooden sticks"".
 2. ""locations"": mỗi nơi chốn 1 mục, ""name"" ngắn tiếng Việt, ""look"" 40–70 từ CỐ ĐỊNH: loại nơi, kiến trúc & vật liệu, bố cục,
    đồ vật chính kèm màu sắc, cây cối, xung quanh, đúng thời đại và vùng miền. Cảnh quay lại nơi cũ thì dùng lại đúng ""name"" đó.
 3. ""scenes"": mỗi CẢNH ở trên 1 mục:
    - ""scene"": số cảnh; ""location"": tên một mục trong locations;
    - ""time"": giờ trong ngày, thời tiết, chất ánh sáng — giống nhau cho mọi shot của cảnh, nối tiếp hợp lý với cảnh trước;
-   - ""wardrobe"": object { tên nhân vật: trang phục } cho người có mặt trong cảnh (màu sắc, chất vải, cũ / vá, đúng thời đại).
-     Cùng ngày thì GIỮ NGUYÊN trang phục qua các cảnh; chỉ đổi khi câu chuyện sang ngày khác / nơi khác / tuổi khác;
+   - ""wardrobe"": CHỈ khi trang phục KHÁC ""outfit"" (câu chuyện sang ngày khác / nơi khác / tuổi khác): object { tên: trang phục mới,
+     nói rõ đồ đội đầu }; còn lại để {} — app tự dùng ""outfit"" y nguyên;
    - ""voiceStyle"": 1–2 câu tiếng Anh chỉ đạo người đọc lời bình cảnh này (cảm xúc, nhịp, độ nhấn) đúng tâm trạng cảnh, giọng Việt
      tự nhiên như đang kể chuyện với người thân, không đọc kiểu phát thanh viên;
-   - ""sound"": hiệu ứng âm thanh tiếng Anh từ ""âm thanh gốc"" (tiếng động, không khí; KHÔNG lời nói, KHÔNG nhạc);
+   - ""sound"": âm nền chung của cảnh bằng tiếng Anh (không khí: ve sầu, gió, mưa…; KHÔNG lời nói, KHÔNG nhạc);
    - ""shots"": MỖI shot của cảnh 1 mục { ""shot"": số shot, ""cast"": [tên trong characters NHÌN THẤY trong hình],
      ""action"": 35–60 từ — đúng khoảnh khắc người xem thấy khi nghe lời bình của shot đó: minh hoạ đúng điều lời bình nói (hoặc
      phản ứng cảm xúc của nhân vật), gọi nhân vật bằng đúng ""name"", vị trí trong khung hình, MỘT hành động liền mạch, chậm, tự
-     nhiên đủ cho 4–12 giây, nét mặt, người phụ / quần chúng phía sau tả ngắn; ""camera"": cỡ cảnh + chuyển động máy chậm, mượt }.
+     nhiên đủ cho 4–12 giây, nét mặt, người phụ / quần chúng phía sau tả ngắn; ""props"": [tên đồ vật trong props thấy trong hình];
+     ""camera"": cỡ cảnh + chuyển động máy chậm, mượt; ""sound"": tiếng động CỦA RIÊNG shot này bằng tiếng Anh, cụ thể nguồn phát,
+     chất liệu, nhịp (vd ""a small brass hand bell rung by hand, bright 'ting ting ting' in short bursts, from a slowly passing bicycle"")
+     — tiếng đặc trưng chỉ đặt ở shot nó xảy ra, kèm âm nền của cảnh; KHÔNG lời nói, KHÔNG nhạc }.
 4. Bám đúng nội dung, thời đại, vùng miền của kịch bản; không thêm chi tiết hiện đại; không chữ / biển hiệu trong hình. Tránh thứ
    AI video làm kém: đám đông cận mặt, thao tác tay phức tạp cận cảnh, chuyển động nhanh. Shot đầu mỗi cảnh: toàn cảnh (wide) cho
    thấy rõ nơi chốn; các shot sau xen trung cảnh / toàn trung; cận cảnh tối đa 1/4 số shot.
-5. ""caption"": chú thích Facebook tiếng Việt 1–3 câu gợi cảm xúc + 3–5 hashtag. ""musicTrackId"": id bài nhạc hợp nhất hoặc null.
+5. Viết như người quay phim tài liệu tả cảnh THẬT: chữ cụ thể, vật lý, dễ quay. KHÔNG dùng từ bay bổng / kỳ ảo (magical, dreamy,
+   glowing, shimmering, timeless, ethereal, golden dust…) — chúng làm hình giống tranh vẽ. Ánh sáng tả như thật (nắng trưa gắt,
+   bóng râm dưới tán cây, trời âm u).
+6. Chi tiết trong lời bình khó hiện bằng hình hoặc dễ gây hiểu lầm (vd ""thùng xốp bọc chăn bông"") thì chọn khoảnh khắc người xem
+   hiểu ngay: nắp thùng mở, hơi lạnh bốc lên, hàng que kem đủ màu bên trong — đừng bắt AI diễn thao tác lạ (lôi chăn ra…).
+7. Âm thanh đúng thời đại và vùng miền Việt Nam (vd xe kem ngày xưa: chuông đồng lắc tay leng keng hoặc còi bóp ""tin tin"";
+   trưa hè: ve sầu; bếp: củi nổ lách tách) — theo đúng ""âm thanh gốc"" của kịch bản.
+8. ""caption"": chú thích Facebook tiếng Việt 1–3 câu gợi cảm xúc + 3–5 hashtag. ""musicTrackId"": id bài nhạc hợp nhất hoặc null.
 
 Trả về JSON:
 { ""caption"": ""..."", ""musicTrackId"": ""id hoặc null"",
-  ""characters"": [ { ""name"": ""..."", ""gender"": ""female"", ""look"": ""..."" } ],
+  ""characters"": [ { ""name"": ""..."", ""gender"": ""female"", ""look"": ""..."", ""outfit"": ""..."" } ],
+  ""props"": [ { ""name"": ""..."", ""look"": ""..."" } ],
   ""locations"": [ { ""name"": ""..."", ""look"": ""..."" } ],
-  ""scenes"": [ { ""scene"": 1, ""location"": ""..."", ""time"": ""..."", ""wardrobe"": { ""Mẹ"": ""..."" }, ""voiceStyle"": ""..."", ""sound"": ""..."",
-                 ""shots"": [ { ""shot"": 1, ""cast"": [""Mẹ""], ""action"": ""..."", ""camera"": ""..."" } ] } ] }");
+  ""scenes"": [ { ""scene"": 1, ""location"": ""..."", ""time"": ""..."", ""wardrobe"": {}, ""voiceStyle"": ""..."", ""sound"": ""..."",
+                 ""shots"": [ { ""shot"": 1, ""cast"": [""Mẹ""], ""props"": [""...""], ""action"": ""..."", ""camera"": ""..."", ""sound"": ""..."" } ] } ] }");
         return (system, sb.ToString());
     }
 
-    public sealed record DirectedShot(int Index, List<string> Cast, string? Action, string? Camera);
+    public sealed record DirectedShot(int Index, List<string> Cast, string? Action, string? Camera, List<string>? Props = null, string? Sound = null);
     public sealed record DirectedScene(int Scene, string? Location, string? Time, Dictionary<string, string> Wardrobe, string? VoiceStyle, string? Sound,
         List<DirectedShot> Shots);
     public sealed record Direction(string? Caption, Guid? MusicTrackId, List<StudioCharacterDto> Characters, List<StudioLocationDto> Locations,
-        List<DirectedScene> Scenes);
+        List<DirectedScene> Scenes, List<StudioLocationDto>? Props = null);
 
     /// <summary>Reads the director's JSON; it must describe most of the shots to be worth using.</summary>
     public static Direction ParseDirection(string json, int shotCount, ISet<Guid> knownMusic)
@@ -1261,11 +1278,15 @@ Trả về JSON:
         if (root.TryGetProperty("characters", out var ca) && ca.ValueKind == JsonValueKind.Array)
             foreach (var c in ca.EnumerateArray())
                 if (S(c, "name") is { } name && !IsNarrator(name))
-                    characters.Add(new StudioCharacterDto { Name = name, Gender = S(c, "gender") ?? "male", Look = S(c, "look") ?? "" });
+                    characters.Add(new StudioCharacterDto { Name = name, Gender = S(c, "gender") ?? "male", Look = S(c, "look") ?? "", Outfit = S(c, "outfit") });
         var locations = new List<StudioLocationDto>();
         if (root.TryGetProperty("locations", out var la) && la.ValueKind == JsonValueKind.Array)
             foreach (var l in la.EnumerateArray())
                 if (S(l, "name") is { } name) locations.Add(new StudioLocationDto { Name = name, Look = S(l, "look") ?? "" });
+        var props = new List<StudioLocationDto>();
+        if (root.TryGetProperty("props", out var pa) && pa.ValueKind == JsonValueKind.Array)
+            foreach (var x in pa.EnumerateArray())
+                if (S(x, "name") is { } name && S(x, "look") is { } look) props.Add(new StudioLocationDto { Name = name, Look = look });
 
         var scenes = new List<DirectedScene>();
         if (root.TryGetProperty("scenes", out var sa) && sa.ValueKind == JsonValueKind.Array)
@@ -1282,11 +1303,15 @@ Trả về JSON:
                     foreach (var x in sh.EnumerateArray())
                     {
                         if (I(x, "shot") is not { } index) continue;
-                        var cast = new List<string>();
-                        if (x.TryGetProperty("cast", out var cs) && cs.ValueKind == JsonValueKind.Array)
-                            foreach (var n in cs.EnumerateArray())
-                                if (n.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(n.GetString())) cast.Add(n.GetString()!.Trim());
-                        shots.Add(new DirectedShot(index, cast, S(x, "action"), S(x, "camera")));
+                        List<string> Names(string field)
+                        {
+                            var list = new List<string>();
+                            if (x.TryGetProperty(field, out var arr) && arr.ValueKind == JsonValueKind.Array)
+                                foreach (var n in arr.EnumerateArray())
+                                    if (n.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(n.GetString())) list.Add(n.GetString()!.Trim());
+                            return list;
+                        }
+                        shots.Add(new DirectedShot(index, Names("cast"), S(x, "action"), S(x, "camera"), Names("props"), S(x, "sound")));
                     }
                 scenes.Add(new DirectedScene(number, S(sc, "location"), S(sc, "time"), wardrobe, S(sc, "voiceStyle"), S(sc, "sound"), shots));
             }
@@ -1294,7 +1319,7 @@ Trả về JSON:
         if (scenes.Count == 0 || described < Math.Ceiling(shotCount * 0.7))
             throw new InvalidOperationException($"Gemini chỉ mô tả {described}/{shotCount} shot.");
         Guid? musicId = Guid.TryParse(S(root, "musicTrackId"), out var mid) && knownMusic.Contains(mid) ? mid : null;
-        return new Direction(S(root, "caption"), musicId, characters, locations, scenes);
+        return new Direction(S(root, "caption"), musicId, characters, locations, scenes, props);
     }
 
     /// <summary>
@@ -1322,10 +1347,17 @@ Trả về JSON:
                     .Where(w => !string.IsNullOrWhiteSpace(w.Value)).Select(w => $"{w.Key} wears {w.Value.TrimEnd('.')}").ToList();
                 var sb = new StringBuilder(action).Append('.');
                 if (wardrobe.Count > 0) sb.Append(" Wardrobe: ").Append(string.Join("; ", wardrobe)).Append('.');
+                // key objects described the same way in every shot they appear in
+                var objects = (directed?.Props ?? new List<string>())
+                    .Select(n => d.Props?.FirstOrDefault(p => SameName(p.Name, n))).Where(p => p != null).Distinct().ToList();
+                if (objects.Count > 0) sb.Append(" Key objects: ").Append(string.Join("; ", objects.Select(p => $"{p!.Name} — {p.Look.TrimEnd('.')}"))).Append('.');
                 if (!string.IsNullOrWhiteSpace(scene.Time)) sb.Append(" Time and light: ").Append(scene.Time!.TrimEnd('.')).Append('.');
                 shot.Action = sb.ToString();
                 if (directed?.Camera is { Length: > 0 } camera) shot.Camera = camera.Length > 500 ? camera[..500] : camera;
-                if (scene.Sound is { Length: > 0 } sound) shot.Sound = sound.Length > 500 ? sound[..500] : sound;
+                var shotSound = directed?.Sound is { Length: > 0 } own
+                    ? (scene.Sound is { Length: > 0 } bed && !own.Contains(bed, StringComparison.OrdinalIgnoreCase) ? $"{own.TrimEnd('.')}; background: {bed}" : own)
+                    : scene.Sound;
+                if (shotSound is { Length: > 0 } sound) shot.Sound = sound.Length > 500 ? sound[..500] : sound;
                 if (scene.VoiceStyle is { Length: > 0 } style) shot.VoiceStyle = style.Length > 600 ? style[..600] : style;
             }
         }
@@ -1395,7 +1427,7 @@ Trả về JSON:
     {
         if (s.Dialogue == null) return;
         var voice = VoiceFor(bible, s.Speaker);
-        var (audio, seconds, fromCache) = await _voices.SpeakAsync(v.Id, s.Dialogue, voice, SpeedFor(bible, s.Speaker), ct);
+        var (audio, seconds, fromCache, _) = await _voices.SpeakAsync(v.Id, s.Dialogue, voice, SpeedFor(bible, s.Speaker), ct);
         if (!FitsOneClip(seconds))
             throw new InvalidOperationException($"Câu thoại đọc mất {seconds:0.0}s — dài hơn 1 clip ({SeedanceVideoClient.MaxSeconds}s). Tách câu này thành 2 shot.");
         if (s.VoiceBlobId != null) await DeleteBlobAsync(s.VoiceBlobId.Value, ct);
@@ -1581,7 +1613,7 @@ Trả về JSON:
         var text = string.Join(" ", span.Where(s => s.Dialogue != null).Select(s => s.Dialogue!.Trim()));
         var voice = VoiceFor(bible, owner.Speaker);
         var style = !string.IsNullOrWhiteSpace(owner.VoiceStyle) ? owner.VoiceStyle : take.Select(s => s.VoiceStyle).FirstOrDefault(x => !string.IsNullOrWhiteSpace(x));
-        var (audio, seconds, fromCache) = await _voices.SpeakAsync(v.Id, text, voice, SpeedFor(bible, owner.Speaker), ct, style);
+        var (audio, seconds, fromCache, delivery) = await _voices.SpeakAsync(v.Id, text, voice, SpeedFor(bible, owner.Speaker), ct, style);
         var durations = FitSceneTake(span.Select(s => (WordCount(s.Dialogue), s.DurationSeconds, s.ClipBlobId != null && s.Status == "Done")).ToList(), seconds);
 
         foreach (var s in take.Where(s => s.VoiceBlobId != null))
@@ -1602,7 +1634,8 @@ Trả về JSON:
         _db.StudioCostRecords.Add(new StudioCostRecord
         {
             StudioVideoId = v.Id, StudioShotId = owner.Id, Kind = "Voice", Model = voice, Seconds = seconds, CostUsd = cost,
-            Note = $"lời bình cảnh {owner.Scene} (shot {span[0].Index}–{span[^1].Index}, liền một mạch)" + (fromCache ? " (dùng lại, miễn phí)" : "")
+            Note = $"lời bình cảnh {owner.Scene} (shot {span[0].Index}–{span[^1].Index}, liền một mạch" + (delivery != null ? ", " + delivery : "") + ")"
+                   + (fromCache ? " (dùng lại, miễn phí)" : "")
         });
         await _db.SaveChangesAsync(ct);
     }
@@ -1824,7 +1857,8 @@ Trả về JSON:
     {
         var sb = new StringBuilder();
         sb.Append($"Live-action cinematic film shot, photorealistic, {(v.AspectRatio == "16:9" ? "horizontal 16:9" : "vertical 9:16")} framing. ");
-        sb.Append("Documentary realism: real ordinary people with natural skin texture and true-to-life proportions, lived-in places, authentic period details. ");
+        sb.Append("Real camera footage of real places and ordinary people: natural skin texture, true-to-life proportions and materials, natural daylight colours, " +
+                  "authentic period details; not an illustration, painting, cartoon, anime or CGI render. ");
         var location = bible.Location(shot.Location);
         if (location != null) sb.Append("Setting: ").Append(location.Look.TrimEnd('.')).Append(". ");
         else if (!string.IsNullOrWhiteSpace(shot.Location)) sb.Append("Setting: ").Append(shot.Location.TrimEnd('.')).Append(". ");
@@ -1832,7 +1866,12 @@ Trả về JSON:
         if (cast.Count > 0)
         {
             sb.Append($"Characters in frame ({cast.Count}, each appears exactly once): ");
-            sb.Append(string.Join("; ", cast.Select(c => $"{c!.Name} — {c.Look.TrimEnd('.')}"))).Append(". ");
+            // the fixed outfit, unless this shot's action dresses the character differently (a scene on another day)
+            sb.Append(string.Join("; ", cast.Select(c => $"{c!.Name} — {c.Look.TrimEnd('.')}"
+                + (!string.IsNullOrWhiteSpace(c.Outfit) && !shot.Action.Contains($"{c.Name} wears", StringComparison.OrdinalIgnoreCase)
+                    ? ", " + (System.Text.RegularExpressions.Regex.IsMatch(c.Outfit!, @"^\s*(always\s+)?wear", System.Text.RegularExpressions.RegexOptions.IgnoreCase) ? "" : "wearing ")
+                      + c.Outfit!.Trim().TrimEnd('.')
+                    : "")))).Append(". ");
         }
         sb.Append("Action: ").Append(shot.Action.TrimEnd('.')).Append(". ");
         if (!string.IsNullOrWhiteSpace(shot.Camera)) sb.Append("Camera: ").Append(shot.Camera.TrimEnd('.')).Append(". ");

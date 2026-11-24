@@ -322,11 +322,13 @@ public class StudioMedia
                 inputsAll += $" -stream_loop -1 -i \"{music}\"";
                 var fadeOut = Math.Max(0, duration - 2).ToString("F3", CultureInfo.InvariantCulture);
                 var vol = Math.Clamp(musicVolume, 0, 1).ToString("F3", CultureInfo.InvariantCulture);
-                filter.Append($"[{mi}:a]{fmt},volume={vol},atrim=0:{d},afade=t=in:d=1.5,afade=t=out:st={fadeOut}:d=2[m];");
+                // every track brought to the voices' loudness first, so the volume means the same for any song
+                filter.Append($"[{mi}:a]loudnorm=I=-16:TP=-2:LRA=11,{fmt},volume={vol},atrim=0:{d},afade=t=in:d=1.5,afade=t=out:st={fadeOut}:d=2[m];");
                 if (spoken.Count > 0)
                 {
                     filter.Append("[speech]asplit=2[sp][key];");
-                    filter.Append("[m][key]sidechaincompress=threshold=0.03:ratio=6:attack=20:release=500[ducked];");
+                    // a gentle dip (about 6 dB) under speech: the music stays present instead of vanishing
+                    filter.Append("[m][key]sidechaincompress=threshold=0.1:ratio=2.5:attack=30:release=600[ducked];");
                     filter.Append("[0:a][sp][ducked]amix=inputs=3:duration=first:dropout_transition=0:normalize=0[a]");
                 }
                 else

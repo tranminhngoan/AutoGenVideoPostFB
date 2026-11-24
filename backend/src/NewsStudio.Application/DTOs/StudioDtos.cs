@@ -45,6 +45,11 @@ public class StudioCharacterDto
     public string Name { get; set; } = string.Empty;
     public string Gender { get; set; } = "male";
     public string Look { get; set; } = string.Empty;
+    /// <summary>
+    /// What the character wears in every shot (English, headwear and footwear stated explicitly), unless a scene
+    /// changes it; copied word for word into each prompt so a hat doesn't come and go.
+    /// </summary>
+    public string? Outfit { get; set; }
     public string Voice { get; set; } = string.Empty;
     /// <summary>Reading speed for TTS, e.g. "-6%" (slower, for emotional narration) … "+8%".</summary>
     public string? Speed { get; set; }

@@ -116,6 +116,8 @@ export interface StudioCharacter {
   name: string;
   gender: 'male' | 'female' | string;
   look: string;
+  /** Worn in every shot (English, headwear stated). */
+  outfit?: string | null;
   voice: string;
   speed?: string | null;
 }

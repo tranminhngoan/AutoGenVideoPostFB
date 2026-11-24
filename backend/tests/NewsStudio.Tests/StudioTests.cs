@@ -303,7 +303,7 @@ public class StudioTests
             var music = Path.Combine(dir, "music.m4a");   // music stand-in: 1 kHz
             await Run($"-loglevel error -f lavfi -i testsrc=size=720x1280:rate=24 -t 4 -c:v libx264 -pix_fmt yuv420p \"{a}\"");
             await Run($"-loglevel error -f lavfi -i testsrc=size=720x1280:rate=24 -t 4 -c:v libx264 -pix_fmt yuv420p \"{b}\"");
-            await Run($"-loglevel error -f lavfi -i sine=f=300:sample_rate=48000 -t 4 -c:a aac \"{voice}\"");
+            await Run($"-loglevel error -f lavfi -i sine=f=300:sample_rate=48000 -t 4 -af volume=6 -c:a aac \"{voice}\""); // as loud as real narration
             await Run($"-loglevel error -f lavfi -i sine=f=3000:sample_rate=48000 -t 4 -c:a aac \"{fx}\"");
             await Run($"-loglevel error -f lavfi -i sine=f=1000:sample_rate=48000 -t 10 -c:a aac \"{music}\"");
 
@@ -527,6 +527,35 @@ public class StudioTests
         var (_, user) = StudioService.BuildCondensePrompt(new StudioVideo { Title = "Nồi cơm của mẹ" },
             new[] { (1, (string?)"Khói bếp", "Có những đứa trẻ lớn lên…"), (2, (string?)"Bát cơm", "Mẹ khẽ cười…") }, 213, 90);
         user.Should().Contain("TỐI ĐA 213 chữ").And.Contain("khoảng 90 giây").And.Contain("CẢNH 2 — Bát cơm").And.Contain("\"scenes\"");
+    }
+
+    [Fact]
+    public void Outfits_and_key_objects_are_written_the_same_in_every_shot()
+    {
+        var json = """
+            {"characters":[{"name":"Bác Bán Kem","gender":"male","look":"62-year-old thin Vietnamese man","outfit":"always wearing a faded olive pith helmet, grey-blue shirt, black plastic sandals"}],
+             "props":[{"name":"Thùng kem","look":"a white styrofoam box on the bicycle rear rack; inside, rows of colourful ice pops on wooden sticks"}],
+             "locations":[{"name":"Đường làng","look":"dirt lane"}],
+             "scenes":[{"scene":1,"location":"Đường làng","time":"noon","wardrobe":{},"sound":"cicadas",
+                        "shots":[{"shot":1,"cast":["Bác Bán Kem"],"props":["Thùng kem"],"action":"He pedals slowly","camera":"wide","sound":"a small brass hand bell rung by hand, ting ting"},
+                                 {"shot":2,"cast":["Bác Bán Kem"],"props":[],"action":"He wipes his forehead","camera":"medium"}]}]}
+            """;
+        var d = StudioService.ParseDirection(json, 2, new HashSet<Guid>());
+        var video = new StudioVideo();
+        var one = new StudioShot { Index = 1, Scene = 1, Action = "x" };
+        var two = new StudioShot { Index = 2, Scene = 1, Action = "x" };
+        video.Shots.Add(one);
+        video.Shots.Add(two);
+        StudioService.ApplyDirection(video, d);
+        var bible = StudioService.ReadBible(video.BibleJson);
+
+        one.Action.Should().Contain("Key objects: Thùng kem — a white styrofoam box").And.NotContain("Wardrobe:");
+        one.Sound.Should().Be("a small brass hand bell rung by hand, ting ting; background: cicadas");  // the bell only where it rings
+        two.Sound.Should().Be("cicadas");
+        foreach (var shot in new[] { one, two })
+            StudioService.BuildShotPrompt(new StudioVideo(), bible, shot).Should()
+                .Contain("Bác Bán Kem — 62-year-old thin Vietnamese man, always wearing a faded olive pith helmet")       // hat in every shot
+                .And.Contain("not an illustration, painting, cartoon");
     }
 
     [Fact]

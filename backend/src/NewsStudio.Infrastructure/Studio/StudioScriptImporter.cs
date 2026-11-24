@@ -65,7 +65,7 @@ public static class StudioScriptImporter
     {
         var era = s.Era?.Trim() switch { "8x" => "late 1980s", "9x" => "1990s", _ => "1980s–1990s" };
         var region = string.IsNullOrWhiteSpace(s.Region) || s.Region == "Chung" ? "rural Vietnam" : $"rural {s.Region} Vietnam";
-        return $"{era} {region}, nostalgic 35mm film footage, warm natural light, authentic period details";
+        return $"{era} {region}, realistic 35mm film footage, natural daylight colours, authentic period details";
     }
 
     /// <summary>

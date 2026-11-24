@@ -104,6 +104,8 @@ public class GeminiTtsService : ITtsService
 
         byte[]? pcm = null;
         var fromCache = false;
+        var styled = false;
+        string? styleError = null;
         // An acting direction goes to the expressive TTS model, apart from the words (never read aloud). If that model
         // or its API is not available, the plain narration below is used instead: a video never fails over style.
         var style = request.Style?.Trim();
@@ -115,12 +117,14 @@ public class GeminiTtsService : ITtsService
             {
                 pcm = await File.ReadAllBytesAsync(styledCache, cancellationToken);
                 fromCache = true;
+                styled = true;
             }
             else
             {
                 try
                 {
                     pcm = await RequestExpressiveSpeechAsync(expressive, voiceName, text, style, cancellationToken);
+                    styled = true;
                     try { await File.WriteAllBytesAsync(styledCache, pcm, cancellationToken); }
                     catch (IOException ex) { _logger.LogWarning("Could not cache TTS audio: {Message}", ex.Message); }
                 }
@@ -128,6 +132,7 @@ public class GeminiTtsService : ITtsService
                 {
                     _logger.LogWarning("Expressive Gemini TTS ({Model}) unavailable, reading without direction: {Message}", expressive, ex.Message);
                     pcm = null;
+                    styleError = ex.Message.Length > 160 ? ex.Message[..160] : ex.Message;
                 }
             }
         }
@@ -188,7 +193,9 @@ public class GeminiTtsService : ITtsService
             Format = "audio/wav",
             FileSizeBytes = info.Length,
             Sha256Hash = await EdgeTtsService.ComputeFileSha256Async(audioFilePath, cancellationToken),
-            FromCache = fromCache
+            FromCache = fromCache,
+            Styled = styled,
+            StyleError = styleError
         };
     }
 

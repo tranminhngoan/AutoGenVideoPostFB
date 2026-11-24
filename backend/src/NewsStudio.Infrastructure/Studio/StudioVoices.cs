@@ -90,8 +90,8 @@ public class StudioVoices
     /// <paramref name="style"/> (English acting direction) makes it performed rather than read; a take far longer
     /// than its words could ever need (the direction spoken aloud) is read again without it.
     /// </summary>
-    public async Task<(byte[] Audio, double Seconds, bool FromCache)> SpeakAsync(Guid videoId, string line, string voice, string? speed, CancellationToken ct,
-        string? style = null)
+    public async Task<(byte[] Audio, double Seconds, bool FromCache, string? Delivery)> SpeakAsync(Guid videoId, string line, string voice, string? speed,
+        CancellationToken ct, string? style = null)
     {
         var request = new TtsSynthesisRequest
         {
@@ -103,16 +103,19 @@ public class StudioVoices
             Style = string.IsNullOrWhiteSpace(style) ? null : style.Trim()
         };
         var result = await _tts.SynthesizeSpeechWithSubtitlesAsync(request, ct);
+        string? delivery = request.Style == null ? null
+            : result.Styled ? "diễn cảm" : "giọng thường — model diễn cảm lỗi: " + result.StyleError;
         if (request.Style != null && result.AudioDurationSeconds > MaxPlausibleSeconds(line))
         {
             try { File.Delete(result.AudioFilePath); } catch { /* best effort */ }
             request.Style = null;
             result = await _tts.SynthesizeSpeechWithSubtitlesAsync(request, ct);
+            delivery = "giọng thường — bản diễn cảm dài bất thường";
         }
         try
         {
             var aac = await _media.EncodeVoiceAsync(result.AudioFilePath, ct);
-            return (aac, Math.Round(result.AudioDurationSeconds, 2), result.FromCache);
+            return (aac, Math.Round(result.AudioDurationSeconds, 2), result.FromCache, delivery);
         }
         finally
         {

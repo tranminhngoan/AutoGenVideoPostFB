@@ -135,7 +135,7 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
   const [video, setVideo] = useState<StudioVideo | null>(null);
   const [form, setForm] = useState<StudioVideoInput>({
     title: '', script: '', targetDurationSeconds: 30, videoModel: '', aspectRatio: '9:16', resolution: '720p', styleNotes: '',
-    sfxEnabled: true, sfxVolume: 0.7, musicMode: 'Auto', musicTrackId: null, musicVolume: 0.15, facebookAccountId: null,
+    sfxEnabled: true, sfxVolume: 0.7, musicMode: 'Auto', musicTrackId: null, musicVolume: 0.3, facebookAccountId: null,
   });
   const [characters, setCharacters] = useState<StudioCharacter[]>([]);
   const [locations, setLocations] = useState<StudioLocation[]>([]);
@@ -667,7 +667,9 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
               ))}
             </Select>
           </Field>
-          <Field label="Độ phân giải clip" hint={`${usd(perSecond, 4)}/giây · video cuối luôn xuất 1080p`}>
+          <Field label="Độ phân giải clip" hint={form.resolution === '480p' || (form.videoModel ?? '').includes('fast')
+            ? `⚠ ${usd(perSecond, 4)}/giây — rẻ nhưng hình dễ bệt như tranh vẽ. Muốn chân thực: Seedance Pro + 720p (${usd(rateOf('bytedance/seedance-v1.0-pro', '720p'), 4)}/giây).`
+            : `${usd(perSecond, 4)}/giây · video cuối luôn xuất 1080p`}>
             <Select value={form.resolution} onChange={(e) => setForm({ ...form, resolution: e.target.value })} disabled={locked}>
               {(['480p', '720p', '1080p'] as const).map((r) => (
                 <option key={r} value={r}>{RESOLUTION_LABEL[r]} — {usd(rateOf(form.videoModel, r), 4)}/s</option>
@@ -717,8 +719,8 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
             </Field>
           )}
           {form.musicMode !== 'None' && (
-            <Field label={`Âm lượng nhạc: ${Math.round((form.musicVolume ?? 0.15) * 100)}%`} hint="Nhạc tự nhỏ lại khi có người nói.">
-              <input type="range" min={0} max={0.6} step={0.01} value={form.musicVolume ?? 0.15}
+            <Field label={`Âm lượng nhạc: ${Math.round((form.musicVolume ?? 0.3) * 100)}%`} hint="Mọi bài được chỉnh về cùng độ to; nhạc nhỏ đi một chút khi có lời bình. Nên để 25–40%.">
+              <input type="range" min={0} max={0.8} step={0.01} value={form.musicVolume ?? 0.3}
                 onChange={(e) => setForm({ ...form, musicVolume: Number(e.target.value) })} className="w-full" disabled={locked} />
             </Field>
           )}
@@ -790,6 +792,10 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
                     </Field>
                     <Field label={isNarrator(c.name) ? 'Lời dẫn (không xuất hiện trong hình)' : 'Ngoại hình (tiếng Anh, cố định mọi shot)'}>
                       <Textarea rows={2} value={c.look} disabled={locked || isNarrator(c.name)} onChange={(e) => updateCharacter(i, { look: e.target.value })} />
+                      {!isNarrator(c.name) && (
+                        <Textarea rows={2} className="mt-1" value={c.outfit ?? ''} disabled={locked} placeholder="Trang phục mặc suốt video (tiếng Anh, nói rõ mũ nón) — vd: always wearing a faded olive pith helmet, grey-blue shirt…"
+                          onChange={(e) => updateCharacter(i, { outfit: e.target.value })} />
+                      )}
                     </Field>
                     <Field label="Giọng đọc">
                       <div className="flex gap-1">
