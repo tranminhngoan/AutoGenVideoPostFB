@@ -40,6 +40,8 @@ function Read-EnvPc {
         if ($line -eq '' -or $line.StartsWith('#') -or $line -notmatch '^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$') { continue }
         $name = $Matches[1]; $value = $Matches[2].Trim()
         if (($value.StartsWith('"') -and $value.EndsWith('"') -and $value.Length -ge 2) -or ($value.StartsWith("'") -and $value.EndsWith("'") -and $value.Length -ge 2)) { $value = $value.Substring(1, $value.Length - 2) }
+        # a copy from Railway's Raw Editor sometimes loses the closing quote: a lone quote is never part of a key
+        elseif ($value.StartsWith('"') -or $value.EndsWith('"')) { $value = $value.Trim('"') }
         if ($value -eq '' -or $value.Contains('${{') -or $name -eq 'PORT' -or $name.StartsWith('RAILWAY_')) { continue }
         $vars[$name] = $value
     }
