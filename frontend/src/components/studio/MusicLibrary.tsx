@@ -36,7 +36,11 @@ export function MusicLibrary({ onAuthError }: { onAuthError: (e: unknown) => boo
   }, []);
 
   const pick = (list: FileList | null) => {
-    const picked = Array.from(list ?? []);
+    // the picker shows every file (an audio-only filter makes many phones open their music app, which doesn't list
+    // fresh downloads): anything that isn't audio is left out here, and the server checks each file anyway
+    const all = Array.from(list ?? []);
+    const picked = all.filter((f) => f.type.startsWith('audio/') || f.type === 'video/mp4' || /\.(mp3|m4a|mp4|aac|wav|ogg|oga|flac)$/i.test(f.name));
+    if (picked.length < all.length) toast.error(`Bỏ qua ${all.length - picked.length} file không phải nhạc.`);
     setFiles(picked);
     if (picked.length === 1) {
       // a suggested Pixabay track is recognised by its number: Vietnamese name and mood filled in
@@ -110,7 +114,7 @@ export function MusicLibrary({ onAuthError }: { onAuthError: (e: unknown) => boo
         </p>
         <div className="grid gap-3 sm:grid-cols-3">
           <Field label="File nhạc (MP3, MP4, M4A, WAV, OGG — tối đa 25 MB; chọn được nhiều file một lần)">
-            <Input ref={inputRef} type="file" accept="audio/*,video/mp4,.mp3,.m4a,.mp4,.aac,.wav,.ogg" multiple onChange={(e) => pick(e.target.files)} />
+            <Input ref={inputRef} type="file" multiple onChange={(e) => pick(e.target.files)} />
           </Field>
           <Field label={files.length > 1 ? `Tên bài (${files.length} file: bài gợi ý tự đặt tên, còn lại lấy tên file)` : 'Tên bài'}>
             <Input value={files.length > 1 ? '' : name} onChange={(e) => setName(e.target.value)} disabled={files.length > 1} />
