@@ -16,6 +16,8 @@ public class TtsSynthesisRequest
     /// Sent apart from the text (speech_metadata), never read aloud.
     /// </summary>
     public string? Style { get; set; }
+    /// <summary>A prebuilt voice ("gemini:Charon") read with when a designed voice can't be used (plain fallback).</summary>
+    public string? FallbackVoice { get; set; }
 }
 
 public class SubtitleCueDto

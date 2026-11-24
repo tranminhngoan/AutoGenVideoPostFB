@@ -426,7 +426,7 @@ public class StudioTests
             var lines = scene.Select(x => x.Dialogue != null).ToList();
             lines.SkipWhile(x => x).Should().NotContain(true, "the scene is read in one take: no silent shot between its words");
         }
-        StudioScriptImporter.NarratorStyleFor("Nghẹn ngào rớt nước mắt").Should().Contain("tears").And.Contain("never like a newsreader");
+        StudioScriptImporter.NarratorStyleFor("Nghẹn ngào rớt nước mắt").Should().Contain("not tearful").And.Contain("never like a newsreader"); // moved, never crying
     }
 
     [Fact]
@@ -481,7 +481,7 @@ public class StudioTests
     [Fact]
     public void Ai_music_asks_lyria_for_an_instrumental_and_reads_the_mp3_back()
     {
-        LyriaMusicClient.Briefs.Should().HaveCountLessThanOrEqualTo(8).And.OnlyHaveUniqueItems(b => b.Id);
+        LyriaMusicClient.Briefs.Should().HaveCountLessThanOrEqualTo(12).And.OnlyHaveUniqueItems(b => b.Id);
         LyriaMusicClient.Briefs.Should().OnlyContain(b => b.Prompt.Contains("no vocals") && b.Mood.Length > 0);
         LyriaMusicClient.CustomPrompt("nhạc buồn sáo trúc").Should().Contain("\"nhạc buồn sáo trúc\"").And.Contain("no vocals");
 

@@ -264,6 +264,8 @@ export interface StudioVoiceOption {
   name: string;
   gender: 'male' | 'female' | string;
   description: string;
+  /** Designed for this channel (e.g. a Southern accent). */
+  designed?: boolean;
 }
 
 export interface StudioSettings {
@@ -275,6 +277,8 @@ export interface StudioSettings {
   voicePricePerSecondUsd: number;
   sfxConfigured: boolean;
   sfxPricePerSecondUsd: number;
+  /** The designed voice library scripts start with. */
+  defaultNarratorVoice?: string | null;
 }
 
 export interface StudioPage {
@@ -290,6 +294,10 @@ const empty = (id?: string | null) => (id ? id : '00000000-0000-0000-0000-000000
 export const studio = {
   checkAccess: () => call<{ ok: boolean }>('GET', '/access'),
   settings: () => call<StudioSettings>('GET', '/settings'),
+  designVoice: (input: { name: string; gender: string; description: string; makeDefault: boolean }) =>
+    call<StudioSettings>('POST', '/voices/design', input),
+  deleteDesignedVoice: (voice: string) => call<StudioSettings>('DELETE', `/voices/design/${encodeURIComponent(voice.replace('gemini:', ''))}`),
+  setDefaultNarrator: (voice: string | null) => call<StudioSettings>('PUT', '/voices/default', { voice }),
   setBudget: (monthlyBudgetUsd: number) => call<StudioSettings>('PUT', '/settings/budget', { monthlyBudgetUsd }),
   pages: () => call<StudioPage[]>('GET', '/pages'),
 
@@ -341,7 +349,10 @@ export const studio = {
   clipUrl: (shotId: string) => `${BASE}/shots/${shotId}/clip`,
   voiceUrl: (shotId: string) => `${BASE}/shots/${shotId}/voice`,
   effectsUrl: (shotId: string) => `${BASE}/shots/${shotId}/effects`,
-  voicePreviewUrl: (voice: string) => `/api/system/voice-preview?voice=${encodeURIComponent(voice)}`,
+  voicePreviewUrl: (voice: string) =>
+    voice.startsWith('gemini:voice_')
+      ? `${BASE}/voices/design/${encodeURIComponent(voice.replace('gemini:', ''))}/sample`
+      : `/api/system/voice-preview?voice=${encodeURIComponent(voice)}`,
 
   costs: () => call<StudioCosts>('GET', '/costs'),
 };

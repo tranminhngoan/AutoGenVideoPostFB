@@ -48,6 +48,15 @@ public class LyriaMusicClient
         new MusicBrief("que-piano-nghen-ngao", "Piano mưa – nghẹn ngào xót xa", "nghẹn ngào, xót xa, buồn, mưa, piano",
             "Slow, emotional solo piano with soft strings, about 60 BPM, minor key. Simple, tender melody with space between notes, like rain on a tin " +
             "roof and a mother's quiet sacrifice. Cinematic but intimate, building gently and ending softly. Instrumental only, no vocals, no drums."),
+        new MusicBrief("mien-tay-don-ca", "Đờn ca tài tử – miền Tây sông nước", "miền Tây, sông nước, mộc mạc, chân chất, hoài niệm, đờn ca tài tử",
+            "Gentle instrumental in the style of Southern Vietnamese don ca tai tu (Mekong Delta chamber folk), about 70 BPM. A slide-fretted " +
+            "acoustic guitar (guitar phim lom) and the dan kim moon lute trade warm, sliding phrases over a soft dan tranh zither and a light, " +
+            "unhurried rhythm, evoking canals, coconut trees, sampans and a peaceful afternoon in the Mekong Delta. Rustic, friendly, nostalgic, " +
+            "not sad. Instrumental only, no vocals, no drums."),
+        new MusicBrief("mien-tay-guitar", "Guitar phím lõm – chiều quê miền Tây", "miền Tây, ấm áp, thong thả, quê nhà, guitar phím lõm",
+            "Relaxed, warm Southern Vietnamese countryside instrumental, about 76 BPM. A slide-fretted acoustic guitar (guitar phim lom) plays a " +
+            "simple, swaying melody over soft fingerpicked guitar and a bamboo flute answering now and then, like a late afternoon on a Mekong " +
+            "Delta river bank with family. Cheerful-gentle and homely, not melancholic. Instrumental only, no vocals, light or no percussion."),
         new MusicBrief("que-thuong-que", "Đàn bầu sáo – thương quê", "xót xa, thương quê, mộc mạc, quê hương, đàn bầu",
             "Bittersweet Vietnamese folk instrumental, about 72 BPM. Monochord (dan bau) and bamboo flute in a gentle call-and-response over acoustic " +
             "guitar and soft strings, evoking a poor but loving rural homeland, thatched houses, bamboo hedges and cooking smoke at dusk. Sincere, " +

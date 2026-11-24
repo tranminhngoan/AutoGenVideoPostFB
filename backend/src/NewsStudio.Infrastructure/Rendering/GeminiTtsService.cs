@@ -109,6 +109,9 @@ public class GeminiTtsService : ITtsService
         // An acting direction goes to the expressive TTS model, apart from the words (never read aloud). If that model
         // or its API is not available, the plain narration below is used instead: a video never fails over style.
         var style = request.Style?.Trim();
+        // a designed voice ("voice_…") lives on the expressive model only: always go there, with a light direction
+        var designed = voiceName.StartsWith("voice_", StringComparison.Ordinal);
+        if (designed && string.IsNullOrEmpty(style)) style = "natural, warm and conversational";
         if (!string.IsNullOrEmpty(style) && ExpressiveModel is { } expressive)
         {
             var styledCache = Path.Combine(cacheDir, Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
@@ -137,6 +140,8 @@ public class GeminiTtsService : ITtsService
             }
         }
 
+        if (pcm == null && designed)
+            voiceName = IsGeminiVoice(request.FallbackVoice) ? request.FallbackVoice![VoicePrefix.Length..] : "Charon"; // plain fallback
         var cached = pcm != null ? null : models.Select(CachePath).FirstOrDefault(File.Exists);
         if (pcm != null)
         {
@@ -312,6 +317,93 @@ public class GeminiTtsService : ITtsService
             default:
                 return null;
         }
+    }
+
+    /// <summary>
+    /// Designs a new persistent voice from a description (Voices endpoint): age, timbre and regional accent are fixed
+    /// in the voice itself. Returns its id ("voice_…") and the sample Google reads with it (WAV or raw PCM), if any.
+    /// </summary>
+    public async Task<(string VoiceId, byte[]? Sample)> DesignVoiceAsync(string displayName, string gender, string description, CancellationToken ct)
+    {
+        var model = ExpressiveModel ?? "gemini-3.8-flash-tts";
+        var body = new JsonObject
+        {
+            ["store"] = true,
+            ["voice"] = new JsonObject
+            {
+                ["model"] = model,
+                ["type"] = "prompted",
+                ["display_name"] = displayName.Length > 60 ? displayName[..60] : displayName,
+                ["gender"] = gender == "female" ? "female" : "male",
+                ["language_code"] = "vi-VN",
+                ["prompted"] = new JsonObject { ["input"] = description }
+            }
+        }.ToJsonString();
+        string? last = null;
+        foreach (var key in GeminiKeys.InOrder(_configuration, model))
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Post, "https://generativelanguage.googleapis.com/v1beta/voices")
+            {
+                Content = new StringContent(body, Encoding.UTF8, "application/json")
+            };
+            req.Headers.Add("x-goog-api-key", key.Value);
+            using var res = await _httpClient.SendAsync(req, ct);
+            var json = await res.Content.ReadAsStringAsync(ct);
+            if (res.IsSuccessStatusCode)
+            {
+                using var doc = JsonDocument.Parse(json);
+                var id = FindVoiceId(doc.RootElement);
+                if (id == null) { last = "Google không trả về mã giọng."; continue; }
+                byte[]? sample = null;
+                var data = FindSampleData(doc.RootElement);
+                if (data != null) { try { sample = Convert.FromBase64String(data); } catch (FormatException) { } }
+                _logger.LogInformation("Designed voice {VoiceId} ({Name})", id, displayName);
+                return (id, sample);
+            }
+            last = $"HTTP {(int)res.StatusCode}: {ExtractError(json)}";
+        }
+        throw new InvalidOperationException("Không tạo được giọng: " + (last ?? "chưa có khoá Gemini"));
+    }
+
+    private static string? FindVoiceId(JsonElement e)
+    {
+        switch (e.ValueKind)
+        {
+            case JsonValueKind.String:
+                return e.GetString() is { } s && s.StartsWith("voice_", StringComparison.Ordinal) ? s : null;
+            case JsonValueKind.Object:
+                if (e.TryGetProperty("id", out var id) && id.ValueKind == JsonValueKind.String && id.GetString() is { } v && v.StartsWith("voice_", StringComparison.Ordinal))
+                    return v;
+                foreach (var p in e.EnumerateObject())
+                    if (!p.NameEquals("sample_audio") && FindVoiceId(p.Value) is { } inner) return inner;
+                return null;
+            case JsonValueKind.Array:
+                foreach (var x in e.EnumerateArray())
+                    if (FindVoiceId(x) is { } inner) return inner;
+                return null;
+            default:
+                return null;
+        }
+    }
+
+    private static string? FindSampleData(JsonElement e)
+    {
+        if (e.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var p in e.EnumerateObject())
+            {
+                if ((p.NameEquals("sample_audio") || p.NameEquals("sampleAudio")) && p.Value.ValueKind == JsonValueKind.Object
+                    && p.Value.TryGetProperty("data", out var d) && d.ValueKind == JsonValueKind.String)
+                    return d.GetString();
+                if (FindSampleData(p.Value) is { } inner) return inner;
+            }
+        }
+        else if (e.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var x in e.EnumerateArray())
+                if (FindSampleData(x) is { } inner) return inner;
+        }
+        return null;
     }
 
     /// <summary>One styled take through the Interactions API, free keys first then the paid key.</summary>

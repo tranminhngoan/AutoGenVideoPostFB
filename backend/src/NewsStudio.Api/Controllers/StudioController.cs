@@ -79,9 +79,40 @@ public class StudioController : ControllerBase
     public async Task<IActionResult> SetBudget([FromBody] BudgetRequest req, CancellationToken ct) =>
         Denied() ?? await Run(async () => await _studio.SetMonthlyBudgetAsync(req.MonthlyBudgetUsd, ct));
 
+    private static DateTime _pageNamesRefreshedUtc = DateTime.MinValue;
+
     [HttpGet("pages")]
-    public async Task<IActionResult> Pages(CancellationToken ct) =>
-        Ok((await _facebook.GetConnectedPagesAsync(ct)).Select(p => new { p.Id, p.PageName, p.IsActive }));
+    public async Task<IActionResult> Pages(CancellationToken ct)
+    {
+        // a renamed page shows (and brands videos with) its new name: names are read again from Facebook every 30 minutes
+        if (DateTime.UtcNow - _pageNamesRefreshedUtc > TimeSpan.FromMinutes(30))
+        {
+            _pageNamesRefreshedUtc = DateTime.UtcNow;
+            foreach (var p in (await _facebook.GetConnectedPagesAsync(ct)).Where(p => p.IsActive))
+                await _facebook.RefreshPageNameAsync(p.Id, ct);
+        }
+        return Ok((await _facebook.GetConnectedPagesAsync(ct)).Select(p => new { p.Id, p.PageName, p.IsActive }));
+    }
+
+    // ───────────── designed voices ─────────────
+
+    [HttpPost("voices/design")]
+    public async Task<IActionResult> DesignVoice([FromBody] StudioVoiceDesignDto req, CancellationToken ct) =>
+        Denied() ?? await Run(async () => await _studio.DesignVoiceAsync(req, ct));
+
+    [HttpDelete("voices/design/{voiceId}")]
+    public async Task<IActionResult> DeleteDesignedVoice(string voiceId, CancellationToken ct) =>
+        Denied() ?? await Run(async () => await _studio.DeleteDesignedVoiceAsync(voiceId, ct));
+
+    public sealed record DefaultVoiceRequest(string? Voice);
+
+    [HttpPut("voices/default")]
+    public async Task<IActionResult> SetDefaultVoice([FromBody] DefaultVoiceRequest req, CancellationToken ct) =>
+        Denied() ?? await Run(async () => await _studio.SetDefaultNarratorAsync(req.Voice, ct));
+
+    [HttpGet("voices/design/{voiceId}/sample")]
+    public async Task<IActionResult> DesignedVoiceSample(string voiceId, CancellationToken ct) =>
+        await BlobResult(await _studio.DesignedVoiceSampleBlobIdAsync(voiceId, ct), null, ct);
 
     // ───────────── assets ─────────────
 

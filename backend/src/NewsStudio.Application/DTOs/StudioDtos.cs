@@ -184,6 +184,17 @@ public class StudioVoiceDto
     public string Name { get; set; } = string.Empty;
     public string Gender { get; set; } = "male";
     public string Description { get; set; } = string.Empty;
+    /// <summary>A voice designed for this account from a description (e.g. a Southern Vietnamese accent).</summary>
+    public bool Designed { get; set; }
+}
+
+/// <summary>A new voice designed from a description (Gemini voice design).</summary>
+public class StudioVoiceDesignDto
+{
+    public string Name { get; set; } = string.Empty;
+    public string Gender { get; set; } = "male";
+    public string Description { get; set; } = string.Empty;
+    public bool MakeDefault { get; set; }
 }
 
 public class StudioSettingsDto
@@ -196,6 +207,8 @@ public class StudioSettingsDto
     public decimal VoicePricePerSecondUsd { get; set; }
     public bool SfxConfigured { get; set; }
     public decimal SfxPricePerSecondUsd { get; set; }
+    /// <summary>The narrator voice library scripts start with (a designed voice), or null for the mood's choice.</summary>
+    public string? DefaultNarratorVoice { get; set; }
 }
 
 /// <summary>A ready-made brief for AI-composed background music.</summary>

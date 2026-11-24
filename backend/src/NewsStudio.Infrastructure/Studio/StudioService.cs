@@ -125,6 +125,10 @@ public class StudioService
         : IsNarrator(speaker) && bible.Character(StudioVoices.NarratorName)?.Speed is { Length: > 0 } n ? n
         : "+0%";
 
+    /// <summary>Gender of a line's speaker (the narrator's for narration).</summary>
+    public static string? GenderOf(Bible bible, string? speaker) =>
+        (bible.Character(speaker) ?? (IsNarrator(speaker) ? bible.Character(StudioVoices.NarratorName) : null))?.Gender;
+
     /// <summary>The TTS voice of a line's speaker (narrator / unknown speaker → the narrator's or default voice).</summary>
     public static string VoiceFor(Bible bible, string? speaker) =>
         bible.Character(speaker)?.Voice is { Length: > 0 } v ? v
@@ -904,6 +908,12 @@ Trả về JSON:
         if (planned.Count == 0) throw new ArgumentException("Kịch bản không có phân cảnh nào dựng được (thiếu mô tả hình ảnh).");
 
         var narrator = StudioScriptImporter.NarratorFor(input.Mood);
+        var designedVoices = await ReadDesignedVoicesAsync(ct);
+        var chosenVoice = StudioVoices.IsKnown(input.NarratorVoice) ? input.NarratorVoice!
+            : await ReadSettingAsync(DefaultNarratorKey, ct) is { Length: > 0 } preferred && designedVoices.Any(d => d.Id == preferred) ? preferred
+            : narrator.Voice;
+        var chosenGender = designedVoices.FirstOrDefault(d => d.Id == chosenVoice)?.Gender
+                           ?? StudioVoices.All.FirstOrDefault(x => x.Id == chosenVoice)?.Gender ?? narrator.Gender;
         var v = new StudioVideo
         {
             Title = string.IsNullOrWhiteSpace(input.Title) ? "Video " + DateTime.UtcNow.AddHours(7).ToString("dd/MM HH:mm", CultureInfo.InvariantCulture)
@@ -926,8 +936,8 @@ Trả về JSON:
             {
                 new StudioCharacterDto
                 {
-                    Name = StudioVoices.NarratorName, Gender = narrator.Gender,
-                    Voice = StudioVoices.IsKnown(input.NarratorVoice) ? input.NarratorVoice! : narrator.Voice,
+                    Name = StudioVoices.NarratorName, Gender = chosenGender,
+                    Voice = chosenVoice,
                     Speed = string.IsNullOrWhiteSpace(input.NarratorSpeed) ? narrator.Speed : input.NarratorSpeed,
                     Look = "Off-screen narrator — not visible in the picture."
                 }
@@ -1226,7 +1236,7 @@ VIỆC CẦN LÀM (mọi mô tả hình viết bằng TIẾNG ANH):
    - ""wardrobe"": CHỈ khi trang phục KHÁC ""outfit"" (câu chuyện sang ngày khác / nơi khác / tuổi khác): object { tên: trang phục mới,
      nói rõ đồ đội đầu }; còn lại để {} — app tự dùng ""outfit"" y nguyên;
    - ""voiceStyle"": 1–2 câu tiếng Anh chỉ đạo người đọc lời bình cảnh này (cảm xúc, nhịp, độ nhấn) đúng tâm trạng cảnh, giọng Việt
-     tự nhiên như đang kể chuyện với người thân, không đọc kiểu phát thanh viên;
+     mộc mạc, chân chất như kể chuyện với hàng xóm, giọng vững — KHÔNG bi lụy, KHÔNG nghẹn khóc, không đọc kiểu phát thanh viên;
    - ""sound"": âm nền chung của cảnh bằng tiếng Anh (không khí: ve sầu, gió, mưa…; KHÔNG lời nói, KHÔNG nhạc);
    - ""shots"": MỖI shot của cảnh 1 mục { ""shot"": số shot, ""cast"": [tên trong characters NHÌN THẤY trong hình],
      ""action"": 35–60 từ — đúng khoảnh khắc người xem thấy khi nghe lời bình của shot đó: minh hoạ đúng điều lời bình nói (hoặc
@@ -1429,7 +1439,8 @@ Trả về JSON:
     {
         if (s.Dialogue == null) return;
         var voice = VoiceFor(bible, s.Speaker);
-        var (audio, seconds, fromCache, _) = await _voices.SpeakAsync(v.Id, s.Dialogue, voice, SpeedFor(bible, s.Speaker), ct);
+        var (audio, seconds, fromCache, _) = await _voices.SpeakAsync(v.Id, s.Dialogue, voice, SpeedFor(bible, s.Speaker), ct,
+            fallbackVoice: StudioVoices.FallbackFor(GenderOf(bible, s.Speaker)));
         if (!FitsOneClip(seconds))
             throw new InvalidOperationException($"Câu thoại đọc mất {seconds:0.0}s — dài hơn 1 clip ({SeedanceVideoClient.MaxSeconds}s). Tách câu này thành 2 shot.");
         if (s.VoiceBlobId != null) await DeleteBlobAsync(s.VoiceBlobId.Value, ct);
@@ -1615,7 +1626,8 @@ Trả về JSON:
         var text = string.Join(" ", span.Where(s => s.Dialogue != null).Select(s => s.Dialogue!.Trim()));
         var voice = VoiceFor(bible, owner.Speaker);
         var style = !string.IsNullOrWhiteSpace(owner.VoiceStyle) ? owner.VoiceStyle : take.Select(s => s.VoiceStyle).FirstOrDefault(x => !string.IsNullOrWhiteSpace(x));
-        var (audio, seconds, fromCache, delivery) = await _voices.SpeakAsync(v.Id, text, voice, SpeedFor(bible, owner.Speaker), ct, style);
+        var (audio, seconds, fromCache, delivery) = await _voices.SpeakAsync(v.Id, text, voice, SpeedFor(bible, owner.Speaker), ct, style,
+            StudioVoices.FallbackFor(GenderOf(bible, owner.Speaker)));
 
         // read slower than planned and longer than the scene's clips can ever be: add a shot (the same moment, another
         // framing) instead of stopping the whole video
@@ -2300,17 +2312,110 @@ Trả về JSON:
         return await GetSettingsAsync(ct);
     }
 
-    public async Task<StudioSettingsDto> GetSettingsAsync(CancellationToken ct) => new()
+    public async Task<StudioSettingsDto> GetSettingsAsync(CancellationToken ct)
     {
-        MonthlyBudgetUsd = await MonthlyBudgetAsync(ct),
-        VideoConfigured = _video.IsConfigured,
-        VideoModel = _video.DefaultModel,
-        Models = ModelDtos(),
-        Voices = StudioVoices.Dtos().ToList(),
-        VoicePricePerSecondUsd = _voices.PricePerSecond,
-        SfxConfigured = _sfx.IsConfigured,
-        SfxPricePerSecondUsd = _sfx.PricePerSecond
-    };
+        var designed = await ReadDesignedVoicesAsync(ct);
+        var defaultNarrator = await ReadSettingAsync(DefaultNarratorKey, ct);
+        return new StudioSettingsDto
+        {
+            MonthlyBudgetUsd = await MonthlyBudgetAsync(ct),
+            VideoConfigured = _video.IsConfigured,
+            VideoModel = _video.DefaultModel,
+            Models = ModelDtos(),
+            // designed voices first: they are the ones made for this channel
+            Voices = designed.Select(d => new StudioVoiceDto
+                {
+                    Id = d.Id, Name = d.Name, Gender = d.Gender, Designed = true,
+                    Description = "Giọng thiết kế — " + (d.Description.Length > 90 ? d.Description[..90] + "…" : d.Description)
+                })
+                .Concat(StudioVoices.Dtos()).ToList(),
+            VoicePricePerSecondUsd = _voices.PricePerSecond,
+            SfxConfigured = _sfx.IsConfigured,
+            SfxPricePerSecondUsd = _sfx.PricePerSecond,
+            DefaultNarratorVoice = designed.Any(d => d.Id == defaultNarrator) ? defaultNarrator : null
+        };
+    }
+
+    // ── designed voices (Gemini voice design) ──
+
+    public const string DesignedVoicesKey = "Studio.DesignedVoices";
+    public const string DefaultNarratorKey = "Studio.DefaultNarrator";
+
+    public sealed class DesignedVoice
+    {
+        public string Id { get; set; } = string.Empty;
+        public string Name { get; set; } = string.Empty;
+        public string Gender { get; set; } = "male";
+        public string Description { get; set; } = string.Empty;
+        public Guid? SampleBlobId { get; set; }
+    }
+
+    private async Task<string?> ReadSettingAsync(string key, CancellationToken ct) =>
+        await _db.SystemSettings.AsNoTracking().Where(s => s.SettingKey == key).Select(s => s.SettingValue).FirstOrDefaultAsync(ct);
+
+    private async Task WriteSettingAsync(string key, string? value, CancellationToken ct)
+    {
+        var row = await _db.SystemSettings.FirstOrDefaultAsync(s => s.SettingKey == key, ct);
+        if (row == null) _db.SystemSettings.Add(new SystemSetting { SettingKey = key, SettingValue = value ?? "", Group = "Studio" });
+        else row.SettingValue = value ?? "";
+        await _db.SaveChangesAsync(ct);
+    }
+
+    public async Task<List<DesignedVoice>> ReadDesignedVoicesAsync(CancellationToken ct)
+    {
+        var raw = await ReadSettingAsync(DesignedVoicesKey, ct);
+        try { return string.IsNullOrWhiteSpace(raw) ? new() : JsonSerializer.Deserialize<List<DesignedVoice>>(raw, Json) ?? new(); }
+        catch (JsonException) { return new(); }
+    }
+
+    /// <summary>Designs a voice from a description (e.g. a Southern Vietnamese storyteller) and adds it to every voice list.</summary>
+    public async Task<StudioSettingsDto> DesignVoiceAsync(StudioVoiceDesignDto input, CancellationToken ct)
+    {
+        var name = Required(input.Name, "Tên giọng");
+        var description = Required(input.Description, "Mô tả giọng");
+        if (description.Length > 1500) description = description[..1500];
+        var gender = input.Gender == "female" ? "female" : "male";
+        var voices = await ReadDesignedVoicesAsync(ct);
+        if (voices.Count >= 20) throw new InvalidOperationException("Đã có 20 giọng thiết kế — xoá bớt giọng không dùng rồi tạo tiếp.");
+        var (id, sample) = await _voices.DesignAsync(name, gender, description, ct);
+        Guid? sampleId = null;
+        if (sample != null)
+        {
+            var blob = new StudioBlob { MimeType = "audio/mp4", Data = sample, SizeBytes = sample.Length };
+            _db.StudioBlobs.Add(blob);
+            sampleId = blob.Id;
+        }
+        voices.Insert(0, new DesignedVoice { Id = id, Name = name.Length > 60 ? name[..60] : name, Gender = gender, Description = description, SampleBlobId = sampleId });
+        await WriteSettingAsync(DesignedVoicesKey, JsonSerializer.Serialize(voices, Json), ct);
+        if (input.MakeDefault) await WriteSettingAsync(DefaultNarratorKey, id, ct);
+        return await GetSettingsAsync(ct);
+    }
+
+    public async Task<StudioSettingsDto> DeleteDesignedVoiceAsync(string voiceId, CancellationToken ct)
+    {
+        var id = voiceId.StartsWith("gemini:") ? voiceId : "gemini:" + voiceId;
+        var voices = await ReadDesignedVoicesAsync(ct);
+        var voice = voices.FirstOrDefault(v => v.Id == id) ?? throw new KeyNotFoundException("Không tìm thấy giọng.");
+        voices.Remove(voice);
+        if (voice.SampleBlobId != null) await DeleteBlobAsync(voice.SampleBlobId.Value, ct);
+        await WriteSettingAsync(DesignedVoicesKey, JsonSerializer.Serialize(voices, Json), ct);
+        if (await ReadSettingAsync(DefaultNarratorKey, ct) == id) await WriteSettingAsync(DefaultNarratorKey, null, ct);
+        return await GetSettingsAsync(ct);
+    }
+
+    public async Task<StudioSettingsDto> SetDefaultNarratorAsync(string? voiceId, CancellationToken ct)
+    {
+        var id = string.IsNullOrWhiteSpace(voiceId) ? null : voiceId.StartsWith("gemini:") ? voiceId : "gemini:" + voiceId;
+        if (id != null && !(await ReadDesignedVoicesAsync(ct)).Any(v => v.Id == id)) throw new KeyNotFoundException("Không tìm thấy giọng.");
+        await WriteSettingAsync(DefaultNarratorKey, id, ct);
+        return await GetSettingsAsync(ct);
+    }
+
+    public async Task<Guid?> DesignedVoiceSampleBlobIdAsync(string voiceId, CancellationToken ct)
+    {
+        var id = voiceId.StartsWith("gemini:") ? voiceId : "gemini:" + voiceId;
+        return (await ReadDesignedVoicesAsync(ct)).FirstOrDefault(v => v.Id == id)?.SampleBlobId;
+    }
 
     private List<StudioModelDto> ModelDtos() => _video.Models()
         .Select(m => new StudioModelDto { Id = m.Id, Label = m.Label, Note = m.Note, PricePerSecondUsd = m.PricePerSecond.ToDictionary(p => p.Key, p => p.Value) })

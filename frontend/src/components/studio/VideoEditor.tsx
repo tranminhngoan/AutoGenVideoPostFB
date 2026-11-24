@@ -161,8 +161,15 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
     setImportLength(estimateImport(s).seconds > 70 ? 60 : 0); // default: a ~1 minute video (under 2 USD at Pro Fast 720p)
     // recommended for realism within the budget: Seedance Pro Fast at 720p
     setForm((f) => ({ ...f, videoModel: 'bytedance/seedance-v1.0-pro-fast', resolution: '720p' }));
-    setNarratorVoice(n.voice);
-    setNarratorSpeed(n.speed);
+    setNarratorVoice(settings?.defaultNarratorVoice || n.voice);
+    setNarratorSpeed(settings?.defaultNarratorVoice ? '+0%' : n.speed);
+    // the page used last time (the anti-reupload watermark carries its name)
+    try {
+      const last = localStorage.getItem('studio_last_page');
+      if (last) setForm((f) => ({ ...f, facebookAccountId: f.facebookAccountId || last }));
+    } catch {
+      /* storage blocked: choose the page by hand */
+    }
     setForm((prev) => ({ ...prev, title: s.code ? `${s.title} (${s.code})` : s.title, script: s.script ?? '' }));
   };
   const [pickerQuery, setPickerQuery] = useState('');
@@ -228,6 +235,11 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
         setMusic(m);
         setSettings(st);
         setForm((f) => ({ ...f, videoModel: f.videoModel || 'bytedance/seedance-v1.0-pro-fast' }));
+        // a script opened before the settings arrived still gets the channel's narrator
+        if (st.defaultNarratorVoice) {
+          setNarratorVoice((cur) => (cur === 'gemini:Charon' || cur === 'gemini:Sulafat' ? st.defaultNarratorVoice! : cur));
+          setNarratorSpeed((cur) => (cur.startsWith('-') ? '+0%' : cur));
+        }
         setRemaining(c.monthlyBudgetUsd > 0 ? c.monthRemainingUsd : null);
       } catch (e) {
         toast.error((e as Error).message);
@@ -580,12 +592,19 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
         </div>
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label="Page sẽ đăng" hint="Tên Page (và logo trong brand kit) được gắn chìm lên video, tự đổi vị trí mỗi 7 giây để chống reup. Đổi Page sau khi ghép thì video tự ghép lại.">
-            <Select value={form.facebookAccountId ?? ''} onChange={(e) => setForm({ ...form, facebookAccountId: e.target.value || null })} disabled={locked}>
+            <Select value={form.facebookAccountId ?? ''} disabled={locked}
+              onChange={(e) => {
+                setForm({ ...form, facebookAccountId: e.target.value || null });
+                try { if (e.target.value) localStorage.setItem('studio_last_page', e.target.value); } catch { /* ignore */ }
+              }}>
               <option value="">— Chọn Page —</option>
               {pages.map((p) => (
                 <option key={p.id} value={p.id}>{p.pageName}</option>
               ))}
             </Select>
+            {!form.facebookAccountId && (
+              <p className="mt-1 text-[11px] text-warning">⚠ Chưa chọn Page: logo chống reup sẽ ghi tên mặc định, không phải tên kênh của bạn.</p>
+            )}
           </Field>
           <Field label="Tên video">
             <Input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="vd: Đại nhân cũng biết sợ vợ" disabled={locked} />

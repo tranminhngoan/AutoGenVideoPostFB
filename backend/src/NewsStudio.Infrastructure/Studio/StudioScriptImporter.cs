@@ -39,13 +39,14 @@ public static class StudioScriptImporter
     {
         var m = (mood ?? "").ToLowerInvariant();
         var core =
-            m.Contains("nghẹn") || m.Contains("nước mắt") ? "a gentle Vietnamese storyteller remembering a poor childhood, slow and tender, voice soft and catching with tears at the saddest words"
+            m.Contains("nghẹn") || m.Contains("nước mắt") ? "a gentle Vietnamese storyteller remembering a poor childhood, slow and tender, moved but composed — never crying or whimpering"
             : m.Contains("da diết") || m.Contains("day dứt") || m.Contains("nhớ cha mẹ") ? "a warm Vietnamese storyteller remembering late parents, heartfelt, slow and reflective, longing in the voice"
             : m.Contains("xót xa") || m.Contains("thương quê") ? "a Vietnamese storyteller telling a bittersweet memory of the home village, low, sincere and compassionate, unhurried"
             : m.Contains("hóm hỉnh") || m.Contains("ngây ngô") || m.Contains("vui") ? "a playful Vietnamese storyteller recalling childhood mischief, light and smiling, lively but natural rhythm"
             : m.Contains("ấm áp") || m.Contains("hoài niệm") ? "a warm, gentle Vietnamese storyteller telling a cozy nostalgic memory, a soft smile in the voice, calm and intimate"
             : "a warm, sincere Vietnamese storyteller sharing a nostalgic memory, intimate and unhurried";
-        return core + "; natural native Vietnamese, like talking to a close friend, real breaths and pauses between sentences, never like a newsreader or a robot";
+        return core + "; natural native Vietnamese, rustic and sincere, like chatting with neighbours on the porch, steady voice, real breaths and pauses " +
+               "between sentences; not melodramatic, not tearful, never like a newsreader or a robot";
     }
 
     /// <summary>Narrator voice and reading speed that suit the script's mood (the user can change both).</summary>

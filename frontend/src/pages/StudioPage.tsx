@@ -3,13 +3,14 @@ import { ArrowLeft, Plus, RotateCw, Trash2 } from 'lucide-react';
 import { Badge, Button, Card, EmptyState, PageHeader, Skeleton, Tabs } from '../components/ui';
 import { MusicLibrary } from '../components/studio/MusicLibrary';
 import { CostPanel } from '../components/studio/CostPanel';
+import { VoiceDesigner } from '../components/studio/VoiceDesigner';
 import { StudioUnlock } from '../components/studio/StudioUnlock';
 import { VideoEditor, fmtDuration } from '../components/studio/VideoEditor';
 import { BUSY, STATUS_LABEL, StudioError, StudioSettings, StudioVideoSummary, getStudioKey, studio, usd } from '../services/studio';
 import { navigate } from '../lib/router';
 import { useConfirm, useToast } from '../components/feedback';
 
-type Tab = 'videos' | 'music' | 'costs';
+type Tab = 'videos' | 'music' | 'voices' | 'costs';
 
 /**
  * AI video studio: make live-action videos with Seedance (text-to-video) from a script, AI voices and the music store, track
@@ -17,7 +18,7 @@ type Tab = 'videos' | 'music' | 'costs';
  */
 export function StudioPage({ segments }: { segments: string[] }) {
   const [first, second] = segments;
-  const tab: Tab = first === 'music' || first === 'costs' ? first : 'videos';
+  const tab: Tab = first === 'music' || first === 'costs' || first === 'voices' ? first : 'videos';
   const editingId = first === 'videos' && second ? second : undefined;
   const creating = first === 'new';
 
@@ -94,6 +95,7 @@ export function StudioPage({ segments }: { segments: string[] }) {
             items={[
               { id: 'videos', label: 'Video' },
               { id: 'music', label: 'Kho nhạc' },
+              { id: 'voices', label: 'Giọng đọc' },
               { id: 'costs', label: 'Chi phí' },
             ]}
             value={tab}
@@ -101,6 +103,7 @@ export function StudioPage({ segments }: { segments: string[] }) {
           />
           {tab === 'videos' && <VideoList onAuthError={onAuthError} />}
           {tab === 'music' && <MusicLibrary onAuthError={onAuthError} />}
+          {tab === 'voices' && <VoiceDesigner onAuthError={onAuthError} />}
           {tab === 'costs' && <CostPanel onAuthError={onAuthError} />}
         </>
       )}

@@ -44,7 +44,13 @@ public class StudioVoices
 
     public const string DefaultNarratorVoice = "gemini:Charon";
 
-    public static bool IsKnown(string? voice) => All.Any(v => v.Id == voice);
+    public static bool IsKnown(string? voice) => All.Any(v => v.Id == voice) || IsDesigned(voice);
+
+    /// <summary>A voice designed for this account ("gemini:voice_…").</summary>
+    public static bool IsDesigned(string? voice) => voice?.StartsWith("gemini:voice_", StringComparison.Ordinal) == true;
+
+    /// <summary>The prebuilt voice a line falls back to when its designed voice can't be used.</summary>
+    public static string FallbackFor(string? gender) => gender == "female" ? "gemini:Sulafat" : "gemini:Charon";
 
     /// <summary>"-6%", "+4%"… within -20 % … +30 %; anything else reads at normal speed.</summary>
     public static string NormalizeSpeed(string? speed)
@@ -77,6 +83,42 @@ public class StudioVoices
         _configuration = configuration;
     }
 
+    /// <summary>
+    /// Designs a voice from a description (Gemini voice design) and returns its id ("gemini:voice_…") with Google's
+    /// sample as compact AAC for listening.
+    /// </summary>
+    public async Task<(string Id, byte[]? SampleAac)> DesignAsync(string name, string gender, string description, CancellationToken ct)
+    {
+        var (voiceId, sample) = await _tts.DesignVoiceAsync(name, gender, description, ct);
+        byte[]? aac = null;
+        if (sample is { Length: > 1000 })
+        {
+            var dir = Path.Combine(Path.GetTempPath(), "voice_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dir);
+            try
+            {
+                var wav = Path.Combine(dir, "sample.wav");
+                var isWav = sample.Length > 12 && System.Text.Encoding.ASCII.GetString(sample, 0, 4) == "RIFF";
+                await File.WriteAllBytesAsync(wav, isWav ? sample : PcmToWav(sample, 24000), ct);
+                aac = await _media.EncodeVoiceAsync(wav, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException) { aac = null; }
+            finally { try { Directory.Delete(dir, true); } catch { /* best effort */ } }
+        }
+        return ("gemini:" + voiceId, aac);
+    }
+
+    private static byte[] PcmToWav(byte[] pcm, int rate)
+    {
+        using var ms = new MemoryStream();
+        using var w = new BinaryWriter(ms);
+        w.Write("RIFF"u8.ToArray()); w.Write(36 + pcm.Length); w.Write("WAVE"u8.ToArray());
+        w.Write("fmt "u8.ToArray()); w.Write(16); w.Write((short)1); w.Write((short)1); w.Write(rate); w.Write(rate * 2); w.Write((short)2); w.Write((short)16);
+        w.Write("data"u8.ToArray()); w.Write(pcm.Length); w.Write(pcm);
+        w.Flush();
+        return ms.ToArray();
+    }
+
     /// <summary>Longest a take of these words can plausibly last (very slow, with pauses): ~1.8 words a second + 4 s.</summary>
     public static double MaxPlausibleSeconds(string line) =>
         line.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Length / 1.8 + 4;
@@ -91,7 +133,7 @@ public class StudioVoices
     /// than its words could ever need (the direction spoken aloud) is read again without it.
     /// </summary>
     public async Task<(byte[] Audio, double Seconds, bool FromCache, string? Delivery)> SpeakAsync(Guid videoId, string line, string voice, string? speed,
-        CancellationToken ct, string? style = null)
+        CancellationToken ct, string? style = null, string? fallbackVoice = null)
     {
         var request = new TtsSynthesisRequest
         {
@@ -100,7 +142,8 @@ public class StudioVoices
             Voice = IsKnown(voice) ? voice : DefaultNarratorVoice,
             Speed = NormalizeSpeed(speed),
             Provider = TtsProviderType.GoogleTts,
-            Style = string.IsNullOrWhiteSpace(style) ? null : style.Trim()
+            Style = string.IsNullOrWhiteSpace(style) ? null : style.Trim(),
+            FallbackVoice = fallbackVoice
         };
         var result = await _tts.SynthesizeSpeechWithSubtitlesAsync(request, ct);
         string? delivery = request.Style == null ? null
