@@ -1752,7 +1752,9 @@ Trả về JSON:
         var noVoice = new HashSet<Guid>();
         foreach (var take in SceneTakes(v.Shots))
         {
-            if (TakeOwner(take).VoiceBlobId != null || !take.Any(todo.Contains)) continue;
+            // a take without its voice is read even when all its clips exist (a new voice reads longer: the run may add
+            // a shot for it, then compose); for a single-shot run only that shot's scene
+            if (TakeOwner(take).VoiceBlobId != null || (shotId != null && !take.Any(todo.Contains))) continue;
             v.Progress = $"Đang đọc lời bình cảnh {take[0].Scene} (liền một mạch)…";
             await _db.SaveChangesAsync(ct);
             try
