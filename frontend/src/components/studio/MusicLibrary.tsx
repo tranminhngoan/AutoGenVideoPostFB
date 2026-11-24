@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import { Music2, Pencil, Trash2, Upload } from 'lucide-react';
+import { ExternalLink, Music2, Pencil, Trash2, Upload } from 'lucide-react';
 import { Button, Card, EmptyState, Field, Input, Skeleton } from '../ui';
 import { useConfirm, useToast } from '../feedback';
 import { StudioMusic, studio } from '../../services/studio';
+import { MUSIC_PRESETS, presetForFile } from '../../lib/musicPresets';
 
 const MOOD_SUGGESTIONS = ['vui tươi', 'hài hước', 'quê hương', 'nhẹ nhàng', 'buồn', 'cảm động', 'hồi hộp', 'kịch tính', 'lãng mạn', 'hùng tráng'];
 
@@ -13,7 +14,7 @@ export function MusicLibrary({ onAuthError }: { onAuthError: (e: unknown) => boo
   const toast = useToast();
   const confirm = useConfirm();
   const [tracks, setTracks] = useState<StudioMusic[] | null>(null);
-  const [file, setFile] = useState<File | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
   const [name, setName] = useState('');
   const [mood, setMood] = useState('');
   const [uploading, setUploading] = useState(false);
@@ -34,28 +35,48 @@ export function MusicLibrary({ onAuthError }: { onAuthError: (e: unknown) => boo
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const pick = (f: File | null) => {
-    setFile(f);
-    if (f && !name) setName(f.name.replace(/\.[^.]+$/, ''));
+  const pick = (list: FileList | null) => {
+    const picked = Array.from(list ?? []);
+    setFiles(picked);
+    if (picked.length === 1) {
+      // a suggested Pixabay track is recognised by its number: Vietnamese name and mood filled in
+      const preset = presetForFile(picked[0].name);
+      setName(preset?.name ?? picked[0].name.replace(/\.[^.]+$/, ''));
+      if (preset) setMood(preset.mood);
+    }
   };
 
   const upload = async () => {
-    if (!file || !name.trim()) return;
+    if (files.length === 0 || (files.length === 1 && !name.trim())) return;
     setUploading(true);
+    const added: string[] = [];
+    const failed: string[] = [];
     try {
-      await studio.addMusic(file, name.trim(), mood.trim());
-      toast.success(`Đã thêm "${name.trim()}"`);
-      setFile(null);
+      for (const f of files) {
+        const preset = presetForFile(f.name);
+        const trackName = files.length === 1 ? name.trim() : preset?.name ?? f.name.replace(/\.[^.]+$/, '');
+        const trackMood = files.length === 1 ? mood.trim() : preset?.mood ?? mood.trim();
+        try {
+          await studio.addMusic(f, trackName, trackMood);
+          added.push(trackName);
+        } catch (e) {
+          if (onAuthError(e)) return;
+          failed.push(`${trackName}: ${(e as Error).message}`);
+        }
+      }
+      if (added.length) toast.success(added.length === 1 ? `Đã thêm "${added[0]}"` : `Đã thêm ${added.length} bài vào kho nhạc`);
+      if (failed.length) toast.error(`Chưa thêm được ${failed.length} bài — ${failed.join(' | ')}`);
+      setFiles([]);
       setName('');
       setMood('');
       if (inputRef.current) inputRef.current.value = '';
       await load();
-    } catch (e) {
-      if (!onAuthError(e)) toast.error((e as Error).message);
     } finally {
       setUploading(false);
     }
   };
+
+  const inStore = (presetName: string) => (tracks ?? []).some((t) => t.name.trim().toLowerCase() === presetName.toLowerCase());
 
   const remove = async (t: StudioMusic) => {
     if (!(await confirm({ title: `Xoá "${t.name}"?`, confirmLabel: 'Xoá', danger: true }))) return;
@@ -88,11 +109,11 @@ export function MusicLibrary({ onAuthError }: { onAuthError: (e: unknown) => boo
           thoại. Chỉ dùng nhạc anh có quyền đăng (ví dụ tải từ Meta Sound Collection) — nhạc có bản quyền sẽ làm video bị chặn kiếm tiền.
         </p>
         <div className="grid gap-3 sm:grid-cols-3">
-          <Field label="File nhạc (MP3, M4A, WAV, OGG — tối đa 40 MB)">
-            <Input ref={inputRef} type="file" accept="audio/*" onChange={(e) => pick(e.target.files?.[0] ?? null)} />
+          <Field label="File nhạc (MP3, M4A, WAV, OGG — tối đa 40 MB; chọn được nhiều file một lần)">
+            <Input ref={inputRef} type="file" accept="audio/*" multiple onChange={(e) => pick(e.target.files)} />
           </Field>
-          <Field label="Tên bài">
-            <Input value={name} onChange={(e) => setName(e.target.value)} />
+          <Field label={files.length > 1 ? `Tên bài (${files.length} file: bài gợi ý tự đặt tên, còn lại lấy tên file)` : 'Tên bài'}>
+            <Input value={files.length > 1 ? '' : name} onChange={(e) => setName(e.target.value)} disabled={files.length > 1} />
           </Field>
           <Field label="Tâm trạng (cách nhau bằng dấu phẩy)">
             <Input value={mood} onChange={(e) => setMood(e.target.value)} placeholder="vd: vui tươi, quê hương" />
@@ -110,9 +131,36 @@ export function MusicLibrary({ onAuthError }: { onAuthError: (e: unknown) => boo
             </button>
           ))}
         </div>
-        <Button variant="primary" size="sm" icon={<Upload className="h-4 w-4" />} loading={uploading} disabled={!file || !name.trim()} onClick={upload}>
-          Tải lên
+        <Button variant="primary" size="sm" icon={<Upload className="h-4 w-4" />} loading={uploading}
+          disabled={files.length === 0 || (files.length === 1 && !name.trim())} onClick={upload}>
+          {files.length > 1 ? `Tải lên ${files.length} bài` : 'Tải lên'}
         </Button>
+      </Card>
+
+      <Card className="space-y-3 p-4">
+        <div className="text-sm font-semibold text-fg">🎵 Nhạc quê gợi ý — miễn phí trên Pixabay</div>
+        <p className="text-xs text-fg-muted">
+          Không lời, dùng thương mại được, không cần ghi nguồn; đã kiểm tra ngày 24/11/2026 là <b>không</b> đăng ký Content ID (không bị Facebook
+          báo bản quyền). Bấm từng bài → nút <b>Download</b> trên Pixabay (nếu trang có ghi “Content ID Registered” thì bỏ bài đó) → rồi chọn
+          tất cả file vừa tải ở ô “File nhạc” phía trên: tool tự nhận ra từng bài và điền tên + tâm trạng.
+        </p>
+        <ul className="grid gap-1.5 sm:grid-cols-2">
+          {MUSIC_PRESETS.map((p) => (
+            <li key={p.id} className="flex items-center justify-between gap-2 rounded-lg border border-line px-2.5 py-1.5 text-xs">
+              <div className="min-w-0">
+                <div className="truncate font-semibold text-fg">{p.name} <span className="font-normal text-fg-muted">· {fmtTime(p.seconds)}</span></div>
+                <div className="truncate text-fg-muted">{p.mood}</div>
+              </div>
+              {inStore(p.name) ? (
+                <span className="shrink-0 text-success">✓ đã có</span>
+              ) : (
+                <a href={p.url} target="_blank" rel="noopener noreferrer" className="inline-flex shrink-0 items-center gap-1 text-accent hover:underline">
+                  Mở <ExternalLink className="h-3 w-3" />
+                </a>
+              )}
+            </li>
+          ))}
+        </ul>
       </Card>
 
       {tracks === null ? (
