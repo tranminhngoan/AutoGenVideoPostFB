@@ -266,6 +266,8 @@ public class PageStatsService : IPageStatsService
                 p.PublishedAtUtc,
                 p.InstagramMediaId,
                 p.InstagramPermalink,
+                FirstComment = p.FirstCommentId != null ? "posted" : p.FirstCommentError,
+                InstagramFirstComment = p.InstagramFirstCommentId != null ? "posted" : p.InstagramFirstCommentError,
                 Metrics = p.Metrics.Select(m => new { m.Status, m.CollectedAtUtc, m.Views, m.Reach, m.Engagement, m.Comments, m.Shares }).ToList(),
                 Instagram = p.InstagramMetrics.Select(m => new { m.CollectedAtUtc, m.Views, m.Likes, m.Comments }).ToList()
             })
@@ -377,7 +379,9 @@ public class PageStatsService : IPageStatsService
                 Shares = p.Metrics.Count > 0 ? p.Metrics.Max(m => m.Shares) : null,
                 InstagramViews = p.Instagram.Count > 0 ? p.Instagram.Max(m => m.Views) : null,
                 InstagramLikes = p.Instagram.Count > 0 ? p.Instagram.Max(m => m.Likes) : null,
-                InstagramComments = p.Instagram.Count > 0 ? p.Instagram.Max(m => m.Comments) : null
+                InstagramComments = p.Instagram.Count > 0 ? p.Instagram.Max(m => m.Comments) : null,
+                FirstComment = p.FirstComment,
+                InstagramFirstComment = p.InstagramFirstComment
             }).ToList();
 
             // Instagram: same day-by-day gains from its own snapshots

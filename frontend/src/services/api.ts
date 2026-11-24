@@ -1328,6 +1328,9 @@ export interface PagePostStatsDto {
   instagramViews?: number | null;
   instagramLikes?: number | null;
   instagramComments?: number | null;
+  /** The page's first comment: "posted", the reason it failed, or null. */
+  firstComment?: string | null;
+  instagramFirstComment?: string | null;
 }
 
 export interface PageStatsOverviewDto {

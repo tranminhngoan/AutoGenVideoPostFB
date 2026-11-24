@@ -100,6 +100,9 @@ public class PagePostStatsDto
     public long? InstagramViews { get; set; }
     public long? InstagramLikes { get; set; }
     public long? InstagramComments { get; set; }
+    /// <summary>The page's first comment: "posted", the reason it failed, or null (not done / not for this post).</summary>
+    public string? FirstComment { get; set; }
+    public string? InstagramFirstComment { get; set; }
 }
 
 /// <summary>A viewer's comment with the reply drafted by AI (engagement inbox).</summary>

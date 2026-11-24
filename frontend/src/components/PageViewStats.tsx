@@ -158,6 +158,20 @@ function RecentPosts({ pages }: { pages: PageViewStatsDto[] }) {
                       </a>
                     )}
                   </div>
+                  {(p.firstComment || p.instagramFirstComment) && (
+                    <div className="mt-0.5 flex flex-wrap gap-x-4 text-[11px]">
+                      {p.firstComment && (
+                        <span className={p.firstComment === 'posted' ? 'text-success' : 'text-warning'} title={p.firstComment}>
+                          {p.firstComment === 'posted' ? '✓ Đã ghim câu hỏi (Facebook)' : `⚠ Câu hỏi Facebook: ${p.firstComment.slice(0, 90)}`}
+                        </span>
+                      )}
+                      {p.instagramFirstComment && (
+                        <span className={p.instagramFirstComment === 'posted' ? 'text-success' : 'text-warning'} title={p.instagramFirstComment}>
+                          {p.instagramFirstComment === 'posted' ? '✓ Đã ghim câu hỏi (Instagram)' : `⚠ Câu hỏi Instagram: ${p.instagramFirstComment.slice(0, 90)}`}
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </li>
               ))}
             </ul>
