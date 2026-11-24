@@ -265,6 +265,12 @@ public class ReupFlowTests : IClassFixture<WebApplicationFactory<Program>>
 
             var input = new ReupJobInputDto { RightsConfirmed = true, PeopleConsentConfirmed = true, AudioMode = "KeepOriginal", OutputShortSide = 720 };
             await reup.UpdateJobAsync(job.Id, input, CancellationToken.None);
+            // nothing to change on the picture: refused instead of re-encoding the same video
+            (await start.Should().ThrowAsync<InvalidOperationException>()).WithMessage("*Chưa bật Thay cảnh nền*");
+            var scene = await reup.AddBackdropAsync(await MakeClipAsync(dir, 1, false, "720x1280"), "s.mp4", new ReupBackdropInfoDto(), CancellationToken.None);
+            input.BackgroundEnabled = true;
+            input.Segments = new() { new() { Start = 0, BackdropId = scene.Id } };
+            await reup.UpdateJobAsync(job.Id, input, CancellationToken.None);
 
             // face swap stays locked without a commercially licensed model
             input.FaceSwapEnabled = true;
@@ -282,6 +288,7 @@ public class ReupFlowTests : IClassFixture<WebApplicationFactory<Program>>
             (await reup.CancelAsync(job.Id, CancellationToken.None)).Status.Should().Be("Cancelled");
             await reup.DeleteJobAsync(job.Id, CancellationToken.None);
             (await db.ReupJobs.AnyAsync(j => j.Id == job.Id)).Should().BeFalse();
+            await reup.DeleteBackdropAsync(scene.Id, CancellationToken.None);
         }
         finally
         {

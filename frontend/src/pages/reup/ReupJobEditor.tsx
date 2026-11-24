@@ -591,15 +591,20 @@ export function ReupJobEditor({ jobId }: { jobId: string }) {
               </>
             ) : (
               <>
+                {!draft.faceSwapEnabled && !draft.backgroundEnabled && (
+                  <Alert tone="warning" icon={<AlertTriangle />}>
+                    Chưa bật <b>Thay cảnh nền</b> (mục 3) hay <b>Thay khuôn mặt</b> (mục 2) — video sẽ ra y như cũ. Bật ít nhất một mục.
+                  </Alert>
+                )}
                 {eta && <div className="text-xs text-fg-muted">Ước tính (đo trên máy, thay nền {res}): {minutesText(eta)}{draft.faceSwapEnabled ? ' + thời gian thay mặt' : ''}</div>}
                 <div className="flex flex-wrap gap-2">
                   <Button variant="secondary" icon={<Save className="h-4 w-4" />} loading={busy === 'save'} disabled={!dirty} onClick={() => save()}>
                     Lưu
                   </Button>
-                  <Button variant="secondary" icon={<Eye className="h-4 w-4" />} loading={busy === 'preview'} onClick={() => run(true)} disabled={job.filesDeleted}>
+                  <Button variant="secondary" icon={<Eye className="h-4 w-4" />} loading={busy === 'preview'} onClick={() => run(true)} disabled={job.filesDeleted || (!draft.faceSwapEnabled && !draft.backgroundEnabled)}>
                     Xem thử 5 giây
                   </Button>
-                  <Button variant="primary" icon={job.status === 'Done' || job.status === 'Failed' ? <RotateCcw className="h-4 w-4" /> : <Play className="h-4 w-4" />} loading={busy === 'start'} onClick={() => run(false)} disabled={job.filesDeleted}>
+                  <Button variant="primary" icon={job.status === 'Done' || job.status === 'Failed' ? <RotateCcw className="h-4 w-4" /> : <Play className="h-4 w-4" />} loading={busy === 'start'} onClick={() => run(false)} disabled={job.filesDeleted || (!draft.faceSwapEnabled && !draft.backgroundEnabled)}>
                     {job.status === 'Done' || job.status === 'Failed' || job.status === 'Cancelled' ? 'Làm lại' : 'Bắt đầu'}
                   </Button>
                 </div>

@@ -546,6 +546,8 @@ public class ReupService
         if (j.FilesDeleted) return "File nguồn đã hết hạn lưu và bị xoá — tải video lên lại.";
         if (!j.RightsConfirmed) return "Cần xác nhận bạn có quyền sử dụng và chỉnh sửa video nguồn.";
         if (!j.PeopleConsentConfirmed) return "Cần xác nhận người xuất hiện trong video đã đồng ý cho chỉnh sửa và đăng lại.";
+        if (!j.FaceSwapEnabled && !j.BackgroundEnabled)
+            return "Chưa bật Thay cảnh nền hay Thay khuôn mặt — chạy như vậy chỉ xuất lại video (đổi tiếng). Bật ít nhất một mục rồi chạy.";
         if (j.FaceSwapEnabled)
         {
             if (await FaceSwapBlockerAsync(ct) is { } swap) return swap;
