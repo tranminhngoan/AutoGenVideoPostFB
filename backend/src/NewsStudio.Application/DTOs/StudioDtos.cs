@@ -103,6 +103,8 @@ public class StudioVideoDto : StudioVideoSummaryDto
     public string? InstagramPermalink { get; set; }
     public string? InstagramError { get; set; }
     public string? FacebookDraftId { get; set; }
+    /// <summary>The post's numbers once published through the app (read every 1–24 h).</summary>
+    public PagePostStatsDto? PostStats { get; set; }
     public List<StudioShotDto> Shots { get; set; } = new();
 }
 

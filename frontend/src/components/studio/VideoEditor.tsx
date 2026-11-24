@@ -527,6 +527,17 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
     });
   const draftPage = pages.find((p) => p.id === form.facebookAccountId);
 
+  /** The caption as it is posted (with the AI disclosure line), copied for pasting into Facebook / Instagram / TikTok. */
+  const copyCaption = async () => {
+    const text = caption.includes('tạo bằng AI') ? caption.trim() : `${caption.trim()}\n\n🤖 Video được tạo bằng AI.`.trim();
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success('Đã copy chú thích — dán vào ô mô tả khi đăng.');
+    } catch {
+      toast.error('Trình duyệt không cho copy tự động — bôi đen chú thích rồi bấm giữ để copy.');
+    }
+  };
+
   const purge = () =>
     guarded('purge', async () => {
       if (!(await confirm({ title: 'Xoá các clip lẻ?', description: 'Giữ video hoàn chỉnh, xoá các clip từng shot để giải phóng dung lượng. Sau đó không tạo lại từng shot được nữa.', confirmLabel: 'Xoá clip' }))) return;
@@ -1137,6 +1148,26 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
             <Field label="Chú thích" hint='Tự kèm dòng "🤖 Video được tạo bằng AI." khi đăng. Nhớ bật nhãn AI nếu Facebook hỏi.'>
               <Textarea rows={3} value={caption} onChange={(e) => setCaption(e.target.value)} disabled={locked} />
             </Field>
+            <div className="-mt-1">
+              <Button size="sm" variant="secondary" onClick={copyCaption}>📋 Copy chú thích</Button>
+            </div>
+            {video.postStats && (
+              <div className="rounded-lg bg-subtle p-2.5 text-xs text-fg">
+                <div className="mb-0.5 font-semibold">Số liệu bài đã đăng (tự cập nhật 1–24 giờ một lần)</div>
+                <div className="flex flex-wrap gap-x-5 gap-y-1 text-fg-muted">
+                  {video.postStats.facebookUrl && (
+                    <a href={video.postStats.facebookUrl} target="_blank" rel="noreferrer" className="hover:text-fg">
+                      Facebook: 👁 {video.postStats.views ?? '—'} · 👍 {video.postStats.likes ?? '—'} · 💬 {video.postStats.comments ?? '—'} · ↗ {video.postStats.shares ?? '—'}
+                    </a>
+                  )}
+                  {(video.postStats.instagramUrl || video.postStats.instagramViews != null) && (
+                    <a href={video.postStats.instagramUrl ?? undefined} target="_blank" rel="noreferrer" className="hover:text-fg">
+                      Instagram: 👁 {video.postStats.instagramViews ?? '—'} · ❤ {video.postStats.instagramLikes ?? '—'} · 💬 {video.postStats.instagramComments ?? '—'}
+                    </a>
+                  )}
+                </div>
+              </div>
+            )}
             <div className="flex flex-wrap items-center gap-2">
               <Button variant="primary" icon={<Send className="h-4 w-4" />} loading={busy === 'publish'} disabled={locked || !video.hasFinal || !form.facebookAccountId} onClick={publish}>
                 Đăng lên {pages.find((p) => p.id === form.facebookAccountId)?.pageName ?? 'Page'}

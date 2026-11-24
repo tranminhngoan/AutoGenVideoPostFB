@@ -39,6 +39,65 @@ public class PageStatsService : IPageStatsService
         public string? Error { get; set; }
         public DateTime? InstagramLastSyncUtc { get; set; }
         public string? InstagramError { get; set; }
+        /// <summary>Last look for posts made outside the app and for the follower counts.</summary>
+        public DateTime? DiscoveredUtc { get; set; }
+    }
+
+    /// <summary>
+    /// Finds the page's videos the app doesn't know yet (posted by hand on Facebook or Instagram) so their numbers are
+    /// followed too, and stores today's follower counts. At most once an hour per page (every time when forced).
+    /// </summary>
+    private async Task DiscoverAsync(Dictionary<Guid, PageSyncState> state, bool force, CancellationToken ct)
+    {
+        var now = DateTime.UtcNow;
+        var today = DateOnly.FromDateTime(now.AddHours(7));
+        var accounts = await _context.FacebookAccounts.AsNoTracking().Where(a => a.IsActive).ToListAsync(ct);
+        foreach (var account in accounts)
+        {
+            var s = state.TryGetValue(account.Id, out var existing) ? existing : state[account.Id] = new PageSyncState();
+            if (!force && s.DiscoveredUtc != null && now - s.DiscoveredUtc.Value < TimeSpan.FromHours(1)) continue;
+            s.DiscoveredUtc = now;
+            try
+            {
+                var found = await _facebook.ListRecentPagePostsAsync(account.Id, now - TrackFor, ct);
+                var fbIds = found.Where(f => f.Network == "facebook").Select(f => f.Id).ToList();
+                var igIds = found.Where(f => f.Network == "instagram").Select(f => f.Id).ToList();
+                var knownFb = await _context.FacebookPosts.Where(p => p.FacebookVideoId != null && fbIds.Contains(p.FacebookVideoId)).Select(p => p.FacebookVideoId!).ToListAsync(ct);
+                var knownIg = await _context.FacebookPosts.Where(p => p.InstagramMediaId != null && igIds.Contains(p.InstagramMediaId)).Select(p => p.InstagramMediaId!).ToListAsync(ct);
+                foreach (var f in found)
+                {
+                    if (f.Network == "facebook" ? knownFb.Contains(f.Id) : knownIg.Contains(f.Id)) continue;
+                    var title = string.IsNullOrWhiteSpace(f.Text) ? (f.Network == "facebook" ? "Video trên Facebook" : "Reel trên Instagram") : f.Text.Trim();
+                    _context.FacebookPosts.Add(new FacebookPost
+                    {
+                        FacebookAccountId = account.Id, Source = "Discovered", Title = title.Length > 300 ? title[..300] : title,
+                        Status = "Published", UploadStatus = "Published", PublishedAtUtc = f.CreatedUtc,
+                        FacebookVideoId = f.Network == "facebook" ? f.Id : null,
+                        FacebookPostId = f.Network == "facebook" ? $"{account.PageId}_{f.Id}" : null,
+                        InstagramMediaId = f.Network == "instagram" ? f.Id : null,
+                        InstagramPermalink = f.Network == "instagram" ? f.Permalink : null
+                    });
+                }
+                var (facebook, instagram) = await _facebook.ReadFollowersAsync(account.Id, ct);
+                if (facebook != null || instagram != null)
+                {
+                    var snap = await _context.PageFollowerSnapshots.FirstOrDefaultAsync(x => x.FacebookAccountId == account.Id && x.Date == today, ct);
+                    if (snap == null)
+                    {
+                        snap = new PageFollowerSnapshot { FacebookAccountId = account.Id, Date = today };
+                        _context.PageFollowerSnapshots.Add(snap);
+                    }
+                    if (facebook != null) snap.FacebookFollowers = facebook.Value;
+                    if (instagram != null) snap.InstagramFollowers = instagram;
+                    snap.CollectedAtUtc = now;
+                }
+                await _context.SaveChangesAsync(ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogWarning("Discovering posts of page {Page} failed: {Message}", account.PageName, ex.Message);
+            }
+        }
     }
 
     /// <summary>How long a Reel's numbers stay fresh enough: new videos change fast, old ones slowly.</summary>
@@ -62,6 +121,9 @@ public class PageStatsService : IPageStatsService
         {
             var now = DateTime.UtcNow;
             var since = now - TrackFor;
+            var discoveryState = await ReadStateAsync(cancellationToken);
+            await DiscoverAsync(discoveryState, force, cancellationToken);
+            await SaveStateAsync(discoveryState, cancellationToken);
             var posts = await _context.FacebookPosts.AsNoTracking()
                 .Where(p => p.Status == "Published" && p.FacebookAccountId != null && p.FacebookVideoId != null
                             && p.PublishedAtUtc != null && p.PublishedAtUtc >= since
@@ -183,15 +245,19 @@ public class PageStatsService : IPageStatsService
                 p.Id,
                 PageId = p.FacebookAccountId!.Value,
                 p.VideoProjectId,
-                Title = p.VideoProject != null ? p.VideoProject.Title : null,
+                Title = p.VideoProject != null ? p.VideoProject.Title : p.Title,
+                p.Source,
                 p.FacebookVideoId,
                 p.PublishedAtUtc,
                 p.InstagramMediaId,
+                p.InstagramPermalink,
                 Metrics = p.Metrics.Select(m => new { m.Status, m.CollectedAtUtc, m.Views, m.Reach, m.Engagement, m.Comments, m.Shares }).ToList(),
                 Instagram = p.InstagramMetrics.Select(m => new { m.CollectedAtUtc, m.Views, m.Likes, m.Comments }).ToList()
             })
             .ToListAsync(cancellationToken);
         var state = await ReadStateAsync(cancellationToken);
+        var followers = await _context.PageFollowerSnapshots.AsNoTracking()
+            .Where(f => f.Date >= today.AddDays(-30)).ToListAsync(cancellationToken);
 
         var overview = new PageStatsOverviewDto
         {
@@ -214,7 +280,7 @@ public class PageStatsService : IPageStatsService
                 Topic = topic,
                 TopicName = topic != null ? NewsTopics.NameOf(topic) : null,
                 IsActive = account.IsActive,
-                Videos = pagePosts.Count,
+                Videos = pagePosts.Count(p => p.FacebookVideoId != null),
                 DailyViews = new List<long>(new long[days]),
                 LastSyncedUtc = sync?.LastSyncUtc,
                 SyncError = sync?.Error,
@@ -269,6 +335,36 @@ public class PageStatsService : IPageStatsService
             }
             dto.AverageViewsPerVideo = dto.VideosWithStats > 0 ? dto.TotalViews / dto.VideosWithStats : 0;
 
+            // followers now and a week ago
+            var snaps = followers.Where(f => f.FacebookAccountId == account.Id).OrderBy(f => f.Date).ToList();
+            if (snaps.Count > 0)
+            {
+                var latest = snaps[^1];
+                var weekAgo = snaps.LastOrDefault(f => f.Date <= today.AddDays(-7)) ?? snaps[0];
+                dto.Followers = latest.FacebookFollowers;
+                dto.FollowersChange7Days = latest.FacebookFollowers - weekAgo.FacebookFollowers;
+                dto.InstagramFollowers = latest.InstagramFollowers;
+                dto.InstagramFollowersChange7Days = latest.InstagramFollowers != null && weekAgo.InstagramFollowers != null
+                    ? latest.InstagramFollowers - weekAgo.InstagramFollowers : null;
+            }
+
+            // the latest posts with their numbers
+            dto.RecentPosts = pagePosts.OrderByDescending(p => p.PublishedAtUtc).Take(15).Select(p => new PagePostStatsDto
+            {
+                Title = p.Title ?? "(không tên)",
+                Source = p.Source,
+                PublishedAtUtc = p.PublishedAtUtc,
+                FacebookUrl = string.IsNullOrWhiteSpace(p.FacebookVideoId) ? null : $"https://www.facebook.com/reel/{p.FacebookVideoId}",
+                InstagramUrl = p.InstagramPermalink,
+                Views = p.Metrics.Count > 0 ? p.Metrics.Max(m => m.Views) : null,
+                Likes = p.Metrics.Count > 0 ? p.Metrics.Max(m => m.Engagement) : null,
+                Comments = p.Metrics.Count > 0 ? p.Metrics.Max(m => m.Comments) : null,
+                Shares = p.Metrics.Count > 0 ? p.Metrics.Max(m => m.Shares) : null,
+                InstagramViews = p.Instagram.Count > 0 ? p.Instagram.Max(m => m.Views) : null,
+                InstagramLikes = p.Instagram.Count > 0 ? p.Instagram.Max(m => m.Likes) : null,
+                InstagramComments = p.Instagram.Count > 0 ? p.Instagram.Max(m => m.Comments) : null
+            }).ToList();
+
             // Instagram: same day-by-day gains from its own snapshots
             foreach (var post in pagePosts.Where(p => p.InstagramMediaId != null))
             {
@@ -300,6 +396,10 @@ public class PageStatsService : IPageStatsService
             overview.Totals.InstagramViews += dto.InstagramViews;
             overview.Totals.InstagramViewsToday += dto.InstagramViewsToday;
             overview.Totals.InstagramViews7Days += dto.InstagramViews7Days;
+            overview.Totals.Followers += dto.Followers ?? 0;
+            overview.Totals.FollowersChange7Days += dto.FollowersChange7Days ?? 0;
+            overview.Totals.InstagramFollowers += dto.InstagramFollowers ?? 0;
+            overview.Totals.InstagramFollowersChange7Days += dto.InstagramFollowersChange7Days ?? 0;
             overview.Pages.Add(dto);
         }
 

@@ -60,6 +60,15 @@ public interface IFacebookPublishingService
     /// </summary>
     Task<string> UploadReelDraftAsync(Guid facebookAccountId, string videoPath, string caption, CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Videos / Reels published on the page and its linked Instagram account since <paramref name="sinceUtc"/> —
+    /// also the ones posted by hand — so their numbers can be followed.
+    /// </summary>
+    Task<List<DiscoveredPostDto>> ListRecentPagePostsAsync(Guid facebookAccountId, DateTime sinceUtc, CancellationToken cancellationToken = default);
+
+    /// <summary>Followers of the page and of its linked Instagram account (null when they can't be read).</summary>
+    Task<(long? Facebook, long? Instagram)> ReadFollowersAsync(Guid facebookAccountId, CancellationToken cancellationToken = default);
+
     /// <summary>The page's current name on Facebook (a renamed page is picked up and stored); null when it can't be read.</summary>
     Task<string?> RefreshPageNameAsync(Guid facebookAccountId, CancellationToken cancellationToken = default);
 

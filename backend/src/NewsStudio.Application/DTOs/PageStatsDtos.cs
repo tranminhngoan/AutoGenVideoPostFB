@@ -26,6 +26,12 @@ public class PageStatsTotalsDto
     public long InstagramViews { get; set; }
     public long InstagramViewsToday { get; set; }
     public long InstagramViews7Days { get; set; }
+
+    /// <summary>Followers of all pages / Instagram accounts now, and the change over the last 7 days.</summary>
+    public long Followers { get; set; }
+    public long FollowersChange7Days { get; set; }
+    public long InstagramFollowers { get; set; }
+    public long InstagramFollowersChange7Days { get; set; }
 }
 
 public class PageViewStatsDto
@@ -68,11 +74,47 @@ public class PageViewStatsDto
     public List<long> InstagramDailyViews { get; set; } = new();
     /// <summary>Why the Instagram numbers couldn't be read (e.g. the token lacks instagram_manage_insights).</summary>
     public string? InstagramSyncError { get; set; }
+
+    /// <summary>Page followers now (null until first read) and gained over the last 7 days.</summary>
+    public long? Followers { get; set; }
+    public long? FollowersChange7Days { get; set; }
+    public long? InstagramFollowers { get; set; }
+    public long? InstagramFollowersChange7Days { get; set; }
+
+    /// <summary>Latest posts of the page with their numbers (Facebook and Instagram), newest first.</summary>
+    public List<PagePostStatsDto> RecentPosts { get; set; } = new();
+}
+
+/// <summary>One post's lifetime numbers (news Reel, Video AI video, or a post made by hand on the page).</summary>
+public class PagePostStatsDto
+{
+    public string Title { get; set; } = string.Empty;
+    public string Source { get; set; } = "Tool";
+    public DateTime? PublishedAtUtc { get; set; }
+    public string? FacebookUrl { get; set; }
+    public string? InstagramUrl { get; set; }
+    public long? Views { get; set; }
+    public long? Likes { get; set; }
+    public long? Comments { get; set; }
+    public long? Shares { get; set; }
+    public long? InstagramViews { get; set; }
+    public long? InstagramLikes { get; set; }
+    public long? InstagramComments { get; set; }
+}
+
+/// <summary>A post found on a page / its Instagram account (also ones made by hand).</summary>
+public class DiscoveredPostDto
+{
+    public string Network { get; set; } = "facebook"; // facebook | instagram
+    public string Id { get; set; } = string.Empty;
+    public DateTime CreatedUtc { get; set; }
+    public string? Text { get; set; }
+    public string? Permalink { get; set; }
 }
 
 public class PageTopVideoDto
 {
-    public Guid VideoProjectId { get; set; }
+    public Guid? VideoProjectId { get; set; }
     public string Title { get; set; } = string.Empty;
     public string? PostUrl { get; set; }
     public long Views { get; set; }

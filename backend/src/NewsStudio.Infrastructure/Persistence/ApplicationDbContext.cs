@@ -36,6 +36,7 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
     public DbSet<AutoPostRun> AutoPostRuns => Set<AutoPostRun>();
     public DbSet<DailyDigestRun> DailyDigestRuns => Set<DailyDigestRun>();
     public DbSet<InstagramMetric> InstagramMetrics => Set<InstagramMetric>();
+    public DbSet<PageFollowerSnapshot> PageFollowerSnapshots => Set<PageFollowerSnapshot>();
     public DbSet<AiUsage> AiUsages => Set<AiUsage>();
 
     // AI Film Factory DbSets
@@ -355,6 +356,17 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
             entity.HasIndex(e => e.VideoProjectId);
             entity.HasIndex(e => e.FacebookPostId);
             entity.HasIndex(e => e.FacebookVideoId);
+            entity.HasIndex(e => e.StudioVideoId);
+            entity.HasIndex(e => e.InstagramMediaId);
+            entity.Property(e => e.Title).HasMaxLength(300);
+            entity.Property(e => e.Source).HasMaxLength(20);
+        });
+
+        modelBuilder.Entity<PageFollowerSnapshot>(entity =>
+        {
+            entity.ToTable("PageFollowerSnapshots");
+            entity.HasKey(e => e.Id);
+            entity.HasIndex(e => new { e.FacebookAccountId, e.Date }).IsUnique();
         });
 
         // VideoMetric Configuration

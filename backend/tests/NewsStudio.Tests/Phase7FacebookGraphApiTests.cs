@@ -54,6 +54,45 @@ public class Phase7FacebookGraphApiTests : IClassFixture<WebApplicationFactory<P
     }
 
     [Fact]
+    public async Task Page_stats_follow_studio_and_hand_made_posts_and_followers()
+    {
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IApplicationDbContext>();
+        var stats = scope.ServiceProvider.GetRequiredService<IPageStatsService>();
+        var page = new FacebookAccount { PageId = $"page_{Guid.NewGuid():N}", PageName = "Trạm ký ức", EncryptedAccessToken = "x", IsActive = false };
+        db.FacebookAccounts.Add(page);
+        var studio = new FacebookPost { FacebookAccountId = page.Id, Source = "Studio", Title = "Bát tóp mỡ", FacebookVideoId = "111",
+            Status = "Published", UploadStatus = "Published", PublishedAtUtc = DateTime.UtcNow.AddHours(-3) };
+        var byHand = new FacebookPost { FacebookAccountId = page.Id, Source = "Discovered", Title = "Reel đăng tay", InstagramMediaId = "ig1",
+            Status = "Published", UploadStatus = "Published", PublishedAtUtc = DateTime.UtcNow.AddHours(-1) };
+        db.FacebookPosts.Add(studio);
+        db.FacebookPosts.Add(byHand);
+        db.VideoMetrics.Add(new VideoMetric { FacebookPostId = studio.Id, Status = "Recorded", Views = 120, Engagement = 9, Comments = 3, CollectedAtUtc = DateTime.UtcNow });
+        db.InstagramMetrics.Add(new InstagramMetric { FacebookPostId = byHand.Id, Views = 450, Likes = 30, Comments = 4, CollectedAtUtc = DateTime.UtcNow });
+        var today = DateOnly.FromDateTime(DateTime.UtcNow.AddHours(7));
+        db.PageFollowerSnapshots.Add(new PageFollowerSnapshot { FacebookAccountId = page.Id, Date = today.AddDays(-8), FacebookFollowers = 100, InstagramFollowers = 40, CollectedAtUtc = DateTime.UtcNow.AddDays(-8) });
+        db.PageFollowerSnapshots.Add(new PageFollowerSnapshot { FacebookAccountId = page.Id, Date = today, FacebookFollowers = 130, InstagramFollowers = 55, CollectedAtUtc = DateTime.UtcNow });
+        await db.SaveChangesAsync();
+
+        var overview = await stats.GetOverviewAsync(14);
+        var dto = overview.Pages.Single(p => p.FacebookAccountId == page.Id);
+        dto.Videos.Should().Be(1);                                   // the Instagram-only post is not a Facebook video
+        dto.Followers.Should().Be(130);
+        dto.FollowersChange7Days.Should().Be(30);
+        dto.InstagramFollowersChange7Days.Should().Be(15);
+        dto.RecentPosts.Select(p => p.Title).Should().Equal("Reel đăng tay", "Bát tóp mỡ"); // newest first
+        dto.RecentPosts[1].Views.Should().Be(120);
+        dto.RecentPosts[1].Source.Should().Be("Studio");
+        dto.RecentPosts[0].InstagramViews.Should().Be(450);
+        dto.TopVideo!.Title.Should().Be("Bát tóp mỡ");
+
+        db.FacebookPosts.RemoveRange(studio, byHand);
+        db.PageFollowerSnapshots.RemoveRange(db.PageFollowerSnapshots.Where(f => f.FacebookAccountId == page.Id));
+        db.FacebookAccounts.Remove(page);
+        await db.SaveChangesAsync();
+    }
+
+    [Fact]
     public async Task Deleting_a_page_removes_its_settings_but_keeps_videos()
     {
         using var scope = _factory.Services.CreateScope();

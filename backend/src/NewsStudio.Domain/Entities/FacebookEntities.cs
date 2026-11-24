@@ -23,8 +23,15 @@ public class FacebookAccount : BaseEntity
 
 public class FacebookPost : BaseEntity
 {
-    public Guid VideoProjectId { get; set; }
+    /// <summary>The news video it came from; null for a Video AI post or a post found on the page.</summary>
+    public Guid? VideoProjectId { get; set; }
     public VideoProject? VideoProject { get; set; }
+    /// <summary>The Video AI (studio) video it came from.</summary>
+    public Guid? StudioVideoId { get; set; }
+    /// <summary>Title shown in the stats when there is no news video (studio title, or the post's text).</summary>
+    public string? Title { get; set; }
+    /// <summary>Tool (news), Studio (Video AI), Discovered (posted by hand on Facebook / Instagram, found on the page).</summary>
+    public string Source { get; set; } = "Tool";
 
     public Guid? FacebookAccountId { get; set; }
     public FacebookAccount? FacebookAccount { get; set; }
@@ -51,6 +58,16 @@ public class FacebookPost : BaseEntity
 
     // Navigation
     public ICollection<VideoMetric> Metrics { get; set; } = new List<VideoMetric>();
+}
+
+/// <summary>Followers of a page and of its linked Instagram account, one snapshot per (Vietnam) day.</summary>
+public class PageFollowerSnapshot : BaseEntity
+{
+    public Guid FacebookAccountId { get; set; }
+    public DateOnly Date { get; set; }
+    public long FacebookFollowers { get; set; }
+    public long? InstagramFollowers { get; set; }
+    public DateTime CollectedAtUtc { get; set; }
 }
 
 /// <summary>

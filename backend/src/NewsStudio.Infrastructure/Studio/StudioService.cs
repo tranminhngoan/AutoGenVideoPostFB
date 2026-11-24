@@ -464,6 +464,17 @@ public class StudioService
         dto.InstagramPermalink = v.InstagramPermalink;
         dto.InstagramError = v.InstagramError;
         dto.FacebookDraftId = v.FacebookDraftId;
+        dto.PostStats = await _db.FacebookPosts.AsNoTracking().Where(p => p.StudioVideoId == v.Id).OrderByDescending(p => p.CreatedAtUtc)
+            .Select(p => new PagePostStatsDto
+            {
+                Title = p.Title ?? v.Title, Source = p.Source, PublishedAtUtc = p.PublishedAtUtc,
+                FacebookUrl = p.FacebookVideoId != null ? "https://www.facebook.com/reel/" + p.FacebookVideoId : null,
+                InstagramUrl = p.InstagramPermalink,
+                Views = p.Metrics.Max(m => (long?)m.Views), Likes = p.Metrics.Max(m => (long?)m.Engagement),
+                Comments = p.Metrics.Max(m => (long?)m.Comments), Shares = p.Metrics.Max(m => (long?)m.Shares),
+                InstagramViews = p.InstagramMetrics.Max(m => (long?)m.Views), InstagramLikes = p.InstagramMetrics.Max(m => (long?)m.Likes),
+                InstagramComments = p.InstagramMetrics.Max(m => (long?)m.Comments)
+            }).FirstOrDefaultAsync(ct);
         var voiceFrom = new Dictionary<Guid, int>();
         foreach (var take in SceneTakes(v.Shots))
         {
@@ -2215,9 +2226,16 @@ Trả về JSON:
             var blob = await GetBlobAsync(v.FinalBlobId.Value, ct) ?? throw new InvalidOperationException("Mất file video.");
             var path = Path.Combine(dir, "post.mp4");
             await File.WriteAllBytesAsync(path, blob.Data, ct);
-            var (_, postId) = await _facebook.PublishVideoFileAsync(v.FacebookAccountId.Value, path, CaptionWithDisclosure(v.Caption),
+            var (videoId, postId) = await _facebook.PublishVideoFileAsync(v.FacebookAccountId.Value, path, CaptionWithDisclosure(v.Caption),
                 v.FinalDurationSeconds ?? 0, ct);
             v.PublishedPostId = postId;
+            // followed like the news Reels: views, likes, comments (and Instagram's once posted there)
+            _db.FacebookPosts.Add(new FacebookPost
+            {
+                FacebookAccountId = v.FacebookAccountId, StudioVideoId = v.Id, Source = "Studio",
+                Title = v.Title.Length > 300 ? v.Title[..300] : v.Title,
+                FacebookVideoId = videoId, FacebookPostId = postId, Status = "Published", UploadStatus = "Published", PublishedAtUtc = DateTime.UtcNow
+            });
             v.PublishedAtUtc = DateTime.UtcNow;
             v.Status = "Published";
             v.Progress = null;
@@ -2259,9 +2277,21 @@ Trả về JSON:
             v.Progress = "Facebook xong — đang đăng lên Instagram…";
             await _db.SaveChangesAsync(ct);
             var publicUrl = PublicBaseUrl() is { } baseUrl ? $"{baseUrl}/api/studio/videos/{v.Id}/final" : null;
-            var (_, permalink) = await _facebook.PublishInstagramVideoFileAsync(v.FacebookAccountId!.Value, path, CaptionWithDisclosure(v.Caption), publicUrl, ct);
+            var (mediaId, permalink) = await _facebook.PublishInstagramVideoFileAsync(v.FacebookAccountId!.Value, path, CaptionWithDisclosure(v.Caption), publicUrl, ct);
             v.InstagramPermalink = permalink ?? "posted";
             v.InstagramError = null;
+            var record = await _db.FacebookPosts.Where(p => p.StudioVideoId == v.Id).OrderByDescending(p => p.CreatedAtUtc).FirstOrDefaultAsync(ct);
+            if (record == null)
+            {
+                record = new FacebookPost
+                {
+                    FacebookAccountId = v.FacebookAccountId, StudioVideoId = v.Id, Source = "Studio", Title = v.Title.Length > 300 ? v.Title[..300] : v.Title,
+                    Status = "Published", UploadStatus = "Published", PublishedAtUtc = DateTime.UtcNow
+                };
+                _db.FacebookPosts.Add(record);
+            }
+            record.InstagramMediaId = mediaId;
+            record.InstagramPermalink = permalink;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

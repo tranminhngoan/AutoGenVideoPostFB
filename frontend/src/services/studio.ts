@@ -209,6 +209,18 @@ export interface StudioVideo extends StudioVideoSummary {
   instagramError?: string | null;
   /** The video sent to the page as a draft Reel (to add Facebook music by hand). */
   facebookDraftId?: string | null;
+  /** Numbers of the post once published through the app. */
+  postStats?: {
+    facebookUrl?: string | null;
+    instagramUrl?: string | null;
+    views?: number | null;
+    likes?: number | null;
+    comments?: number | null;
+    shares?: number | null;
+    instagramViews?: number | null;
+    instagramLikes?: number | null;
+    instagramComments?: number | null;
+  } | null;
   shots: StudioShot[];
 }
 

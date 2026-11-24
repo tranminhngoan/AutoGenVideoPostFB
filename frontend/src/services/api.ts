@@ -1214,7 +1214,7 @@ export interface AutoPostOverviewDto {
 
 // ── Lượt xem theo Page ──
 export interface PageTopVideoDto {
-  videoProjectId: string;
+  videoProjectId?: string | null;
   title: string;
   postUrl?: string | null;
   views: number;
@@ -1252,6 +1252,27 @@ export interface PageViewStatsDto {
   instagramComments: number;
   instagramDailyViews: number[];
   instagramSyncError?: string | null;
+  followers?: number | null;
+  followersChange7Days?: number | null;
+  instagramFollowers?: number | null;
+  instagramFollowersChange7Days?: number | null;
+  recentPosts: PagePostStatsDto[];
+}
+
+/** One post's numbers: a news Reel (Tool), a Video AI video (Studio) or a post made by hand (Discovered). */
+export interface PagePostStatsDto {
+  title: string;
+  source: 'Tool' | 'Studio' | 'Discovered' | string;
+  publishedAtUtc?: string | null;
+  facebookUrl?: string | null;
+  instagramUrl?: string | null;
+  views?: number | null;
+  likes?: number | null;
+  comments?: number | null;
+  shares?: number | null;
+  instagramViews?: number | null;
+  instagramLikes?: number | null;
+  instagramComments?: number | null;
 }
 
 export interface PageStatsOverviewDto {
@@ -1269,6 +1290,10 @@ export interface PageStatsOverviewDto {
     instagramViews: number;
     instagramViewsToday: number;
     instagramViews7Days: number;
+    followers: number;
+    followersChange7Days: number;
+    instagramFollowers: number;
+    instagramFollowersChange7Days: number;
   };
   pages: PageViewStatsDto[];
   lastSyncUtc?: string | null;

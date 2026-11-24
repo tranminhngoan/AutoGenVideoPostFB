@@ -656,10 +656,22 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                     b.Property<DateTime?>("PublishedAtUtc")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
                     b.Property<string>("Status")
                         .IsRequired()
                         .HasMaxLength(50)
                         .HasColumnType("character varying(50)");
+
+                    b.Property<Guid?>("StudioVideoId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Title")
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)");
 
                     b.Property<DateTime?>("UpdatedAtUtc")
                         .HasColumnType("timestamp with time zone");
@@ -672,7 +684,7 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                         .HasMaxLength(50)
                         .HasColumnType("character varying(50)");
 
-                    b.Property<Guid>("VideoProjectId")
+                    b.Property<Guid?>("VideoProjectId")
                         .HasColumnType("uuid");
 
                     b.HasKey("Id");
@@ -682,6 +694,10 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                     b.HasIndex("FacebookPostId");
 
                     b.HasIndex("FacebookVideoId");
+
+                    b.HasIndex("InstagramMediaId");
+
+                    b.HasIndex("StudioVideoId");
 
                     b.HasIndex("VideoProjectId");
 
@@ -1513,6 +1529,41 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                     b.HasIndex("FacebookPostId", "CollectedAtUtc");
 
                     b.ToTable("InstagramMetrics", (string)null);
+                });
+
+            modelBuilder.Entity("NewsStudio.Domain.Entities.PageFollowerSnapshot", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CollectedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateOnly>("Date")
+                        .HasColumnType("date");
+
+                    b.Property<Guid>("FacebookAccountId")
+                        .HasColumnType("uuid");
+
+                    b.Property<long>("FacebookFollowers")
+                        .HasColumnType("bigint");
+
+                    b.Property<long?>("InstagramFollowers")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime?>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("FacebookAccountId", "Date")
+                        .IsUnique();
+
+                    b.ToTable("PageFollowerSnapshots", (string)null);
                 });
 
             modelBuilder.Entity("NewsStudio.Domain.Entities.ProcessingJob", b =>
@@ -2569,8 +2620,7 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                     b.HasOne("NewsStudio.Domain.Entities.VideoProject", "VideoProject")
                         .WithMany("FacebookPosts")
                         .HasForeignKey("VideoProjectId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
+                        .OnDelete(DeleteBehavior.Cascade);
 
                     b.Navigation("FacebookAccount");
 

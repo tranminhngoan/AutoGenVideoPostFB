@@ -1072,6 +1072,88 @@ public class FacebookPublishingService : IFacebookPublishingService
         }
     }
 
+    public async Task<List<DiscoveredPostDto>> ListRecentPagePostsAsync(Guid facebookAccountId, DateTime sinceUtc, CancellationToken cancellationToken = default)
+    {
+        var found = new List<DiscoveredPostDto>();
+        var account = await _context.FacebookAccounts.FirstOrDefaultAsync(a => a.Id == facebookAccountId, cancellationToken);
+        if (account == null || !account.IsActive || string.IsNullOrWhiteSpace(account.EncryptedAccessToken)) return found;
+        var token = Uri.EscapeDataString(_tokenProtection.DecryptToken(account.EncryptedAccessToken));
+        static DateTime? Time(JsonElement e, string name) =>
+            e.TryGetProperty(name, out var t) && t.ValueKind == JsonValueKind.String && DateTimeOffset.TryParse(t.GetString(), out var d) ? d.UtcDateTime : null;
+        static string? Str(JsonElement e, string name) => e.TryGetProperty(name, out var t) && t.ValueKind == JsonValueKind.String ? t.GetString() : null;
+
+        // page videos and Reels (the Reels edge first; /videos also lists longer videos)
+        foreach (var edge in new[] { "video_reels", "videos" })
+        {
+            var (ok, body, error) = await GetGraphAsync(
+                $"https://graph.facebook.com/{_graphApiVersion}/{account.PageId}/{edge}?fields=id,description,created_time,permalink_url&limit=50&access_token={token}", cancellationToken);
+            if (!ok) { _logger.LogInformation("Listing {Edge} of page {Page} failed: {Error}", edge, account.PageId, error); continue; }
+            if (!body.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array) continue;
+            foreach (var v in data.EnumerateArray())
+            {
+                var id = Str(v, "id");
+                var created = Time(v, "created_time");
+                if (id == null || created == null || created < sinceUtc || found.Any(f => f.Network == "facebook" && f.Id == id)) continue;
+                var link = Str(v, "permalink_url");
+                found.Add(new DiscoveredPostDto
+                {
+                    Network = "facebook", Id = id, CreatedUtc = created.Value, Text = Str(v, "description"),
+                    Permalink = link == null ? $"https://www.facebook.com/reel/{id}" : link.StartsWith("http") ? link : "https://www.facebook.com" + link
+                });
+            }
+        }
+
+        // Instagram Reels of the linked account
+        try
+        {
+            var ig = account.InstagramAccountId ?? await ResolveInstagramAsync(account, _tokenProtection.DecryptToken(account.EncryptedAccessToken), cancellationToken);
+            if (ig != null)
+            {
+                var (ok, body, error) = await GetGraphAsync(
+                    $"https://graph.facebook.com/{_graphApiVersion}/{ig}/media?fields=id,caption,media_type,media_product_type,timestamp,permalink&limit=50&access_token={token}", cancellationToken);
+                if (!ok) _logger.LogInformation("Listing Instagram media of {Ig} failed: {Error}", ig, error);
+                else if (body.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Array)
+                    foreach (var m in data.EnumerateArray())
+                    {
+                        var id = Str(m, "id");
+                        var created = Time(m, "timestamp");
+                        var isVideo = Str(m, "media_type") == "VIDEO" || Str(m, "media_product_type") == "REELS";
+                        if (id == null || created == null || created < sinceUtc || !isVideo) continue;
+                        found.Add(new DiscoveredPostDto { Network = "instagram", Id = id, CreatedUtc = created.Value, Text = Str(m, "caption"), Permalink = Str(m, "permalink") });
+                    }
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogInformation("Listing Instagram media failed: {Message}", ex.Message);
+        }
+        return found;
+    }
+
+    public async Task<(long? Facebook, long? Instagram)> ReadFollowersAsync(Guid facebookAccountId, CancellationToken cancellationToken = default)
+    {
+        var account = await _context.FacebookAccounts.AsNoTracking().FirstOrDefaultAsync(a => a.Id == facebookAccountId, cancellationToken);
+        if (account == null || !account.IsActive || string.IsNullOrWhiteSpace(account.EncryptedAccessToken)) return (null, null);
+        var token = Uri.EscapeDataString(_tokenProtection.DecryptToken(account.EncryptedAccessToken));
+        static long? Count(JsonElement e, params string[] names)
+        {
+            foreach (var n in names)
+                if (e.TryGetProperty(n, out var v) && v.TryGetInt64(out var c)) return c;
+            return null;
+        }
+        long? facebook = null, instagram = null;
+        var (ok, body, error) = await GetGraphAsync($"https://graph.facebook.com/{_graphApiVersion}/{account.PageId}?fields=followers_count,fan_count&access_token={token}", cancellationToken);
+        if (ok) facebook = Count(body, "followers_count", "fan_count");
+        else _logger.LogInformation("Followers of page {Page}: {Error}", account.PageId, error);
+        if (account.InstagramAccountId != null)
+        {
+            var (igOk, igBody, igError) = await GetGraphAsync($"https://graph.facebook.com/{_graphApiVersion}/{account.InstagramAccountId}?fields=followers_count&access_token={token}", cancellationToken);
+            if (igOk) instagram = Count(igBody, "followers_count");
+            else _logger.LogInformation("Followers of Instagram {Ig}: {Error}", account.InstagramAccountId, igError);
+        }
+        return (facebook, instagram);
+    }
+
     public async Task<string> UploadReelDraftAsync(Guid facebookAccountId, string videoPath, string caption, CancellationToken cancellationToken = default)
     {
         if (!File.Exists(videoPath)) throw new InvalidOperationException("Không tìm thấy file video.");
@@ -1443,7 +1525,7 @@ public class FacebookPublishingService : IFacebookPublishingService
             return new FacebookPostDto
             {
                 Id = p.Id,
-                VideoProjectId = p.VideoProjectId,
+                VideoProjectId = p.VideoProjectId ?? Guid.Empty,
                 FacebookAccountId = p.FacebookAccountId,
                 PageName = p.FacebookAccount?.PageName,
                 FacebookPostId = p.FacebookPostId,

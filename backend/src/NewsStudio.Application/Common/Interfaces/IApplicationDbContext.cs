@@ -23,6 +23,7 @@ public interface IApplicationDbContext
     DbSet<AutoPostRun> AutoPostRuns { get; }
     DbSet<DailyDigestRun> DailyDigestRuns { get; }
     DbSet<InstagramMetric> InstagramMetrics { get; }
+    DbSet<PageFollowerSnapshot> PageFollowerSnapshots { get; }
     DbSet<AiUsage> AiUsages { get; }
 
     // AI Film Factory Entities

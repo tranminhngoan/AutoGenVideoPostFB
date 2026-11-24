@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { AlertTriangle, ArrowDownRight, ArrowUpRight, ExternalLink, RefreshCw } from 'lucide-react';
-import { api, PageStatsOverviewDto, PageViewStatsDto } from '../services/api';
+import { api, PagePostStatsDto, PageStatsOverviewDto, PageViewStatsDto } from '../services/api';
 import { Button, Card, CardHeader, Segmented, Skeleton, cn } from './ui';
 import { PageAvatar } from './AutoPostWidgets';
 import { useToast } from './feedback';
@@ -107,6 +107,68 @@ function SyncWarning({ error }: { error?: string | null }) {
 
 type Platform = 'facebook' | 'instagram';
 
+const signed = (n: number) => (n > 0 ? `+${formatNumber(n)}` : n < 0 ? `−${formatNumber(-n)}` : '±0');
+
+/** "1.234 theo dõi (+12 tuần này)" for the chosen platform, or nothing before the first read. */
+function FollowersLine({ page, platform }: { page: PageViewStatsDto; platform: Platform }) {
+  const count = platform === 'instagram' ? page.instagramFollowers : page.followers;
+  const change = platform === 'instagram' ? page.instagramFollowersChange7Days : page.followersChange7Days;
+  if (count == null) return null;
+  return (
+    <p className="text-xs text-fg-muted">
+      👥 <b className="tabular-nums text-fg">{formatNumber(count)}</b> người theo dõi
+      {change != null && <span className={cn('ml-1 tabular-nums', change > 0 ? 'text-success' : change < 0 ? 'text-danger' : '')}>({signed(change)} / 7 ngày)</span>}
+    </p>
+  );
+}
+
+const SOURCE_LABEL: Record<string, string> = { Tool: 'Tin tức', Studio: 'Video AI', Discovered: 'Đăng tay' };
+
+/** The page's latest posts with views / likes / comments on Facebook and Instagram. */
+function RecentPosts({ pages }: { pages: PageViewStatsDto[] }) {
+  const withPosts = pages.filter((p) => (p.recentPosts?.length ?? 0) > 0);
+  if (withPosts.length === 0) return null;
+  const n = (v?: number | null) => (v == null ? '—' : formatNumber(v));
+  return (
+    <div className="mt-5 border-t border-line px-5 py-4">
+      <p className="mb-2 text-[13px] font-medium text-fg">Bài đăng gần đây (cả bài đăng tay trên Facebook / Instagram)</p>
+      <div className="space-y-2">
+        {withPosts.map((page) => (
+          <details key={page.facebookAccountId} className="rounded-lg border border-line">
+            <summary className="cursor-pointer px-3 py-2 text-[13px] text-fg">
+              {page.pageName} <span className="text-fg-muted">· {page.recentPosts.length} bài gần nhất</span>
+            </summary>
+            <ul className="divide-y divide-line">
+              {page.recentPosts.map((p: PagePostStatsDto, i: number) => (
+                <li key={i} className="px-3 py-2 text-xs">
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                    <span className="line-clamp-1 min-w-0 flex-1 font-medium text-fg" title={p.title}>{p.title}</span>
+                    <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-fg-muted">{SOURCE_LABEL[p.source] ?? p.source}</span>
+                    {p.publishedAtUtc && <span className="text-fg-subtle">{timeAgo(p.publishedAtUtc)}</span>}
+                  </div>
+                  <div className="mt-0.5 flex flex-wrap gap-x-4 gap-y-0.5 text-fg-muted">
+                    {p.facebookUrl && (
+                      <a href={p.facebookUrl} target="_blank" rel="noreferrer" className="hover:text-fg">
+                        Facebook: 👁 {n(p.views)} · 👍 {n(p.likes)} · 💬 {n(p.comments)} · ↗ {n(p.shares)}
+                      </a>
+                    )}
+                    {(p.instagramUrl || p.instagramViews != null) && (
+                      <a href={p.instagramUrl ?? undefined} target="_blank" rel="noreferrer" className="hover:text-fg">
+                        Instagram: 👁 {n(p.instagramViews)} · ❤ {n(p.instagramLikes)} · 💬 {n(p.instagramComments)}
+                      </a>
+                    )}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </details>
+        ))}
+      </div>
+      <p className="mt-2 text-[11px] text-fg-subtle">— là chưa đọc được số liệu (bài mới đăng hoặc token chưa có quyền xem thống kê).</p>
+    </div>
+  );
+}
+
 /** The numbers of one page on the chosen platform. */
 function figuresOf(page: PageViewStatsDto, platform: Platform) {
   return platform === 'instagram'
@@ -147,6 +209,7 @@ function PageCardMobile({ page, dates, platform }: { page: PageViewStatsDto; dat
           <p className="truncate text-xs text-fg-subtle">
             {platform === 'instagram' ? `@${page.instagramUsername ?? '—'}` : page.topicName ?? 'Chưa đặt chủ đề'} · {f.videos} video
           </p>
+          <FollowersLine page={page} platform={platform} />
         </div>
         <Sparkline dates={dates} values={f.daily} />
       </div>
@@ -166,7 +229,7 @@ function PageCardMobile({ page, dates, platform }: { page: PageViewStatsDto; dat
       ) : page.topVideo && (
         <p className="mt-1.5 truncate text-xs text-fg-muted">
           Nhiều lượt xem nhất:{' '}
-          <a href={href(`/videos/${page.topVideo.videoProjectId}`)} className="text-fg hover:underline">
+          <a href={page.topVideo.videoProjectId ? href(`/videos/${page.topVideo.videoProjectId}`) : page.topVideo.postUrl ?? '#'} className="text-fg hover:underline">
             {page.topVideo.title}
           </a>{' '}
           ({formatNumber(page.topVideo.views)})
@@ -190,6 +253,7 @@ function PageRow({ page, dates, platform }: { page: PageViewStatsDto; dates: str
             <p className="text-xs text-fg-subtle">
               {platform === 'instagram' ? `@${page.instagramUsername ?? '—'}` : page.topicName ?? 'Chưa đặt chủ đề'} · {f.videos} video
             </p>
+            <FollowersLine page={page} platform={platform} />
           </div>
         </div>
         <SyncWarning error={f.error} />
@@ -208,7 +272,7 @@ function PageRow({ page, dates, platform }: { page: PageViewStatsDto; dates: str
           </span>
         ) : page.topVideo ? (
           <div className="max-w-[240px]">
-            <a href={href(`/videos/${page.topVideo.videoProjectId}`)} className="line-clamp-2 text-fg hover:underline">
+            <a href={page.topVideo.videoProjectId ? href(`/videos/${page.topVideo.videoProjectId}`) : page.topVideo.postUrl ?? '#'} className="line-clamp-2 text-fg hover:underline">
               {page.topVideo.title}
             </a>
             <p className="mt-0.5 flex items-center gap-1.5 text-xs text-fg-muted">
@@ -280,12 +344,14 @@ export function PageViewStats() {
           { label: 'Hôm nay', value: formatNumber(t.instagramViewsToday) },
           { label: '7 ngày qua', value: formatNumber(t.instagramViews7Days) },
           { label: 'TB mỗi video', value: formatNumber(t.instagramVideos ? Math.round(t.instagramViews / t.instagramVideos) : 0) },
+          { label: 'Người theo dõi Instagram', value: formatNumber(t.instagramFollowers ?? 0), hint: `${signed(t.instagramFollowersChange7Days ?? 0)} trong 7 ngày` },
         ]
       : [
           { label: 'Tổng lượt xem', value: formatNumber(t.totalViews), hint: `${formatNumber(t.videos)} video đã đăng` },
           { label: 'Hôm nay', value: formatNumber(t.viewsToday) },
           { label: '7 ngày qua', value: formatNumber(t.views7Days), hint: <Change now={t.views7Days} before={t.viewsPrevious7Days} /> },
           { label: 'TB mỗi video', value: formatNumber(withStats ? Math.round(t.totalViews / withStats) : 0) },
+          { label: 'Người theo dõi Page', value: formatNumber(t.followers ?? 0), hint: `${signed(t.followersChange7Days ?? 0)} trong 7 ngày` },
         ];
   const shownPlatform: Platform = ig ? 'instagram' : 'facebook';
   const shownPages = stats ? (ig ? stats.pages.filter((p) => p.instagramVideos > 0 || p.instagramUsername) : stats.pages) : [];
@@ -301,7 +367,7 @@ export function PageViewStats() {
         title="Lượt xem theo Page"
         description={
           <>
-            Lượt xem Reels (tính cả xem lại) lấy từ Facebook{hasInstagram ? ' và Instagram' : ''}, tự cập nhật mỗi 30 phút
+            Lượt xem, thích, bình luận và người theo dõi lấy từ Facebook{hasInstagram ? ' và Instagram' : ''} (cả bài đăng tay), tự cập nhật mỗi 30 phút
             {stats?.lastSyncUtc ? ` · lần gần nhất ${timeAgo(stats.lastSyncUtc).toLowerCase()}` : ''}.
           </>
         }
@@ -336,7 +402,7 @@ export function PageViewStats() {
               />
             </div>
           )}
-          <div className="mx-5 mt-4 grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-line bg-line lg:grid-cols-4">
+          <div className="mx-5 mt-4 grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-line bg-line lg:grid-cols-5">
             {tiles.map((tile) => (
               <div key={tile.label} className="bg-surface px-4 py-3">
                 <p className="text-xs text-fg-muted">{tile.label}</p>
@@ -379,6 +445,7 @@ export function PageViewStats() {
               </tbody>
             </table>
           </div>
+          <RecentPosts pages={shownPages} />
         </>
       )}
     </Card>

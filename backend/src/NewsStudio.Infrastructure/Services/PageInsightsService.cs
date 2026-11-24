@@ -54,7 +54,7 @@ public class PageInsightsService : IPageInsightsService
             .Where(p => p.Views != null) // never read from Facebook yet: no number, not a zero
             .Select(p => new Sample(p.PublishedAtUtc, p.Views!.Value,
                 NewsTopics.Classify(p.Title, null, null).Where(t => t != NewsTopics.General).ToList(),
-                regionOf.GetValueOrDefault(p.VideoProjectId)))
+                p.VideoProjectId is { } pid ? regionOf.GetValueOrDefault(pid) : null))
             .ToList();
 
         var settings = await _context.AutoPostSettings.AsNoTracking().FirstOrDefaultAsync(s => s.FacebookAccountId == facebookAccountId, cancellationToken);
