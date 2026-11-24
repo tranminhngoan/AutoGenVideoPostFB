@@ -230,6 +230,23 @@ public class FacebookPublishingService : IFacebookPublishingService
         return true;
     }
 
+    public async Task<bool> DeletePageAsync(Guid accountId, CancellationToken cancellationToken = default)
+    {
+        var account = await _context.FacebookAccounts.FirstOrDefaultAsync(a => a.Id == accountId, cancellationToken);
+        if (account == null) return false;
+        // the page's own settings go with it; what was made or posted stays (unlinked) — posts keep their history,
+        // the database sets their page to null
+        _context.AutoPostSettings.RemoveRange(await _context.AutoPostSettings.Where(s => s.FacebookAccountId == accountId).ToListAsync(cancellationToken));
+        foreach (var v in await _context.StudioVideos.Where(v => v.FacebookAccountId == accountId).ToListAsync(cancellationToken)) v.FacebookAccountId = null;
+        foreach (var p in await _context.VideoProjects.Where(p => p.FacebookAccountId == accountId).ToListAsync(cancellationToken)) p.FacebookAccountId = null;
+        foreach (var r in await _context.AutoPostRuns.Where(r => r.FacebookAccountId == accountId).ToListAsync(cancellationToken)) r.FacebookAccountId = null;
+        foreach (var r in await _context.DailyDigestRuns.Where(r => r.FacebookAccountId == accountId).ToListAsync(cancellationToken)) r.FacebookAccountId = null;
+        _context.FacebookAccounts.Remove(account);
+        await _context.SaveChangesAsync(cancellationToken);
+        _logger.LogInformation("Page {PageName} ({PageId}) deleted", account.PageName, account.PageId);
+        return true;
+    }
+
     public async Task<PublishReelResultDto> PublishReelAsync(Guid videoProjectId, PublishReelRequestDto? request = null, CancellationToken cancellationToken = default)
     {
         _logger.LogInformation("Beginning Facebook Reels publishing pipeline for VideoProject {ProjectId}", videoProjectId);

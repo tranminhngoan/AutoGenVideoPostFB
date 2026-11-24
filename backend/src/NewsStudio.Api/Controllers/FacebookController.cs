@@ -102,9 +102,11 @@ public class FacebookController : ControllerBase
     /// Ngắt kết nối một Facebook Page khỏi hệ thống.
     /// </summary>
     [HttpDelete("pages/{id:guid}")]
-    public async Task<IActionResult> DisconnectPage(Guid id, CancellationToken cancellationToken)
+    public async Task<IActionResult> DisconnectPage(Guid id, [FromQuery] bool permanent, CancellationToken cancellationToken)
     {
-        var success = await _facebookService.DisconnectPageAsync(id, cancellationToken);
+        var success = permanent
+            ? await _facebookService.DeletePageAsync(id, cancellationToken)
+            : await _facebookService.DisconnectPageAsync(id, cancellationToken);
         if (!success)
         {
             return NotFound(new { message = "Không tìm thấy Facebook Page cần ngắt kết nối." });

@@ -54,6 +54,33 @@ public class Phase7FacebookGraphApiTests : IClassFixture<WebApplicationFactory<P
     }
 
     [Fact]
+    public async Task Deleting_a_page_removes_its_settings_but_keeps_videos()
+    {
+        using var scope = _factory.Services.CreateScope();
+        var facebookService = scope.ServiceProvider.GetRequiredService<IFacebookPublishingService>();
+        var db = scope.ServiceProvider.GetRequiredService<IApplicationDbContext>();
+        var page = new FacebookAccount { PageId = $"page_{Guid.NewGuid():N}", PageName = "Coi chừng nghiện", EncryptedAccessToken = "x", IsActive = false };
+        db.FacebookAccounts.Add(page);
+        var settings = new AutoPostSettings { FacebookAccountId = page.Id };
+        db.AutoPostSettings.Add(settings);
+        var video = new StudioVideo { Title = "Kem mút", FacebookAccountId = page.Id };
+        db.StudioVideos.Add(video);
+        await db.SaveChangesAsync();
+
+        (await facebookService.DeletePageAsync(page.Id)).Should().BeTrue();
+
+        using var check = _factory.Services.CreateScope();
+        var fresh = check.ServiceProvider.GetRequiredService<IApplicationDbContext>();
+        fresh.FacebookAccounts.Any(a => a.Id == page.Id).Should().BeFalse();
+        fresh.AutoPostSettings.Any(s => s.Id == settings.Id).Should().BeFalse();
+        var kept = fresh.StudioVideos.Single(v => v.Id == video.Id);
+        kept.FacebookAccountId.Should().BeNull();                       // the video stays, just unlinked
+        fresh.StudioVideos.Remove(kept);
+        await fresh.SaveChangesAsync();
+        (await facebookService.DeletePageAsync(Guid.NewGuid())).Should().BeFalse();
+    }
+
+    [Fact]
     public async Task FacebookPublishingService_Connects_And_Retrieves_Pages_Safely()
     {
         // Arrange

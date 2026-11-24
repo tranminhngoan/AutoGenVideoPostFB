@@ -601,9 +601,9 @@ export const api = {
     return await res.json();
   },
 
-  async disconnectFacebookPage(id: string): Promise<boolean> {
+  async disconnectFacebookPage(id: string, permanent = false): Promise<boolean> {
     try {
-      const res = await fetch(`${API_BASE}/facebook/pages/${id}`, { method: 'DELETE' });
+      const res = await fetch(`${API_BASE}/facebook/pages/${id}${permanent ? '?permanent=true' : ''}`, { method: 'DELETE' });
       return res.ok;
     } catch {
       return false;

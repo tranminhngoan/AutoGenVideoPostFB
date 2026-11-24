@@ -351,6 +351,22 @@ function FacebookSection() {
     }
   };
 
+  const remove = async (p: FacebookAccountDto) => {
+    const ok = await confirm({
+      title: `Xoá hẳn “${p.pageName}” khỏi hệ thống?`,
+      description: 'Xoá token và cài đặt tự đăng của trang này. Video và lịch sử bài đã đăng vẫn giữ lại. Muốn dùng lại thì kết nối lại từ đầu.',
+      confirmLabel: 'Xoá hẳn',
+      danger: true,
+    });
+    if (!ok) return;
+    if (await api.disconnectFacebookPage(p.id, true)) {
+      toast.success(`Đã xoá ${p.pageName}`);
+      await load();
+    } else {
+      toast.error('Không xoá được trang');
+    }
+  };
+
   return (
     <div className="space-y-6">
       <Card>
@@ -393,8 +409,13 @@ function FacebookSection() {
                     >
                       Chủ đề &amp; lịch
                     </a>
-                    <Button size="sm" variant="danger-soft" icon={<Trash2 className="h-3.5 w-3.5" />} onClick={() => disconnect(p)}>
-                      Ngắt
+                    {p.isActive && (
+                      <Button size="sm" variant="ghost" onClick={() => disconnect(p)}>
+                        Ngắt
+                      </Button>
+                    )}
+                    <Button size="sm" variant="danger-soft" icon={<Trash2 className="h-3.5 w-3.5" />} onClick={() => remove(p)}>
+                      Xoá
                     </Button>
                   </div>
                 </li>

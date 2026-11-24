@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ArrowLeft, Plus, RotateCw } from 'lucide-react';
+import { ArrowLeft, Plus, RotateCw, Trash2 } from 'lucide-react';
 import { Badge, Button, Card, EmptyState, PageHeader, Skeleton, Tabs } from '../components/ui';
 import { MusicLibrary } from '../components/studio/MusicLibrary';
 import { CostPanel } from '../components/studio/CostPanel';
@@ -7,6 +7,7 @@ import { StudioUnlock } from '../components/studio/StudioUnlock';
 import { VideoEditor, fmtDuration } from '../components/studio/VideoEditor';
 import { BUSY, STATUS_LABEL, StudioError, StudioSettings, StudioVideoSummary, getStudioKey, studio, usd } from '../services/studio';
 import { navigate } from '../lib/router';
+import { useConfirm, useToast } from '../components/feedback';
 
 type Tab = 'videos' | 'music' | 'costs';
 
@@ -98,7 +99,7 @@ export function StudioPage({ segments }: { segments: string[] }) {
             value={tab}
             onChange={(t) => navigate(t === 'videos' ? '/studio' : `/studio/${t}`)}
           />
-          {tab === 'videos' && <VideoList />}
+          {tab === 'videos' && <VideoList onAuthError={onAuthError} />}
           {tab === 'music' && <MusicLibrary onAuthError={onAuthError} />}
           {tab === 'costs' && <CostPanel onAuthError={onAuthError} />}
         </>
@@ -107,9 +108,13 @@ export function StudioPage({ segments }: { segments: string[] }) {
   );
 }
 
-function VideoList() {
+function VideoList({ onAuthError }: { onAuthError: (e: unknown) => boolean }) {
   const [videos, setVideos] = useState<StudioVideoSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<string[]>([]);
+  const [deleting, setDeleting] = useState(false);
+  const confirm = useConfirm();
+  const toast = useToast();
 
   const load = async () => {
     try {
@@ -124,6 +129,35 @@ function VideoList() {
     const t = window.setInterval(load, 10000);
     return () => window.clearInterval(t);
   }, []);
+
+  const toggle = (id: string) => setSelected((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
+
+  /** Deletes videos for good (clips, voices, final file); a post already on Facebook stays there. */
+  const remove = async (ids: string[]) => {
+    if (ids.length === 0 || !videos) return;
+    const one = ids.length === 1 ? videos.find((v) => v.id === ids[0]) : null;
+    if (!(await confirm({
+      title: one ? `Xoá video “${one.title}”?` : `Xoá ${ids.length} video đã chọn?`,
+      description: 'Xoá hẳn khỏi tool (clip, giọng đọc, video ghép). Bài đã đăng trên Facebook vẫn còn trên Facebook. Video đang tạo / ghép thì chờ xong mới xoá được.',
+      confirmLabel: 'Xoá',
+      danger: true,
+    }))) return;
+    setDeleting(true);
+    const errors: string[] = [];
+    for (const id of ids) {
+      try {
+        await studio.deleteVideo(id);
+      } catch (e) {
+        if (onAuthError(e)) break;
+        errors.push((e as Error).message);
+      }
+    }
+    setDeleting(false);
+    setSelected([]);
+    await load();
+    if (errors.length) toast.error(`Không xoá được ${errors.length} video — ${errors[0]}`);
+    else toast.success(ids.length === 1 ? 'Đã xoá video' : `Đã xoá ${ids.length} video`);
+  };
 
   if (error) return <p className="text-sm text-danger">{error}</p>;
   if (!videos) return <Skeleton className="h-40 w-full" />;
@@ -142,7 +176,19 @@ function VideoList() {
 
   return (
     <div className="space-y-2">
-      <div className="flex justify-end">
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        {selected.length > 0 && (
+          <>
+            <span className="text-xs text-fg-muted">Đã chọn {selected.length}</span>
+            <Button size="sm" variant="danger-soft" icon={<Trash2 className="h-3.5 w-3.5" />} loading={deleting} onClick={() => remove(selected)}>
+              Xoá {selected.length} video
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => setSelected([])}>Bỏ chọn</Button>
+          </>
+        )}
+        <Button size="sm" variant="ghost" onClick={() => setSelected(selected.length === videos.length ? [] : videos.map((v) => v.id))}>
+          {selected.length === videos.length ? 'Bỏ chọn tất cả' : 'Chọn tất cả'}
+        </Button>
         <Button size="sm" variant="ghost" icon={<RotateCw className="h-3.5 w-3.5" />} onClick={load}>
           Làm mới
         </Button>
@@ -150,6 +196,8 @@ function VideoList() {
       {videos.map((v) => (
         <Card key={v.id} className="cursor-pointer p-3 transition-colors hover:bg-subtle" onClick={() => navigate(`/studio/videos/${v.id}`)}>
           <div className="flex flex-wrap items-center gap-2">
+            <input type="checkbox" aria-label="Chọn video" checked={selected.includes(v.id)}
+              onClick={(e) => e.stopPropagation()} onChange={() => toggle(v.id)} />
             <span className="min-w-0 flex-1 truncate text-sm font-semibold text-fg">{v.title}</span>
             <Badge
               tone={v.status === 'Published' || v.status === 'Ready' ? 'success' : v.status === 'Failed' ? 'danger' : BUSY.includes(v.status) ? 'warning' : 'neutral'}
@@ -158,6 +206,11 @@ function VideoList() {
             >
               {STATUS_LABEL[v.status]}
             </Badge>
+            <button type="button" aria-label="Xoá video" title="Xoá video"
+              className="rounded-md p-1.5 text-fg-subtle hover:bg-danger/10 hover:text-danger"
+              onClick={(e) => { e.stopPropagation(); remove([v.id]); }}>
+              <Trash2 className="h-4 w-4" />
+            </button>
           </div>
           <div className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-fg-muted">
             <span>{v.pageName ?? 'Chưa chọn Page'}</span>

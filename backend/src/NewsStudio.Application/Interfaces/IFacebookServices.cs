@@ -19,6 +19,11 @@ public interface IFacebookPublishingService
     Task<List<FacebookAccountDto>> GetConnectedPagesAsync(CancellationToken cancellationToken = default);
     Task<FacebookAccountDto> ConnectPageAsync(ConnectFacebookPageRequestDto request, CancellationToken cancellationToken = default);
     Task<bool> DisconnectPageAsync(Guid accountId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Removes a page for good: its token and auto-post settings go; videos and post history stay, no longer tied to it.
+    /// </summary>
+    Task<bool> DeletePageAsync(Guid accountId, CancellationToken cancellationToken = default);
     Task<PublishReelResultDto> PublishReelAsync(Guid videoProjectId, PublishReelRequestDto? request = null, CancellationToken cancellationToken = default);
     Task<VideoMetricDto?> FetchMetricsAsync(Guid facebookPostId, CancellationToken cancellationToken = default);
     Task<List<FacebookPostDto>> GetProjectPostsAsync(Guid videoProjectId, CancellationToken cancellationToken = default);

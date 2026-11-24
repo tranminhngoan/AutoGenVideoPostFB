@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Plus, RefreshCw, Search, Film, ChevronRight } from 'lucide-react';
+import { Plus, RefreshCw, Search, Film, ChevronRight, Trash2 } from 'lucide-react';
 import { VideoProject } from '../types';
 import { Button, ButtonLink, Card, EmptyState, IconButton, Input, PageHeader, Skeleton, Tabs } from '../components/ui';
 import { StatusBadge, ReelThumb, projectThumb } from '../components/VideoBits';
@@ -7,6 +7,8 @@ import { GATE } from '../components/FactCheckPanel';
 import { Badge as GateTag } from '../components/ui';
 import { href, navigate, useRoute } from '../lib/router';
 import { domainOf, formatClock, statusMeta, timeAgo } from '../lib/format';
+import { api } from '../services/api';
+import { useConfirm, useToast } from '../components/feedback';
 
 const PAGE = 25;
 
@@ -39,6 +41,10 @@ export const VideosPage: React.FC<VideosPageProps> = ({ projects, onRefresh }) =
   const [query, setQuery] = useState('');
   const [refreshing, setRefreshing] = useState(false);
   const [limit, setLimit] = useState(PAGE);
+  const [selected, setSelected] = useState<string[]>([]);
+  const [deleting, setDeleting] = useState(false);
+  const confirm = useConfirm();
+  const toast = useToast();
 
   useEffect(() => setLimit(PAGE), [filter, query]);
 
@@ -60,6 +66,30 @@ export const VideosPage: React.FC<VideosPageProps> = ({ projects, onRefresh }) =
     setRefreshing(true);
     await onRefresh();
     setRefreshing(false);
+  };
+
+  const toggle = (id: string) => setSelected((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
+  const shown = visible.slice(0, limit);
+  const allShown = shown.length > 0 && shown.every((p) => selected.includes(p.id));
+
+  /** Deletes videos for good (their files too); posts already on Facebook stay on Facebook. */
+  const remove = async (ids: string[]) => {
+    if (ids.length === 0) return;
+    const one = ids.length === 1 ? list.find((p) => p.id === ids[0]) : null;
+    if (!(await confirm({
+      title: one ? `Xoá video “${one.title}”?` : `Xoá ${ids.length} video đã chọn?`,
+      description: 'Xoá hẳn khỏi hệ thống (cả file video, kịch bản, ảnh). Bài đã đăng trên Facebook vẫn còn trên Facebook. Không hoàn tác được.',
+      confirmLabel: 'Xoá',
+      danger: true,
+    }))) return;
+    setDeleting(true);
+    let failed = 0;
+    for (const id of ids) if (!(await api.deleteVideoProject(id))) failed++;
+    setDeleting(false);
+    setSelected((s) => s.filter((x) => !ids.includes(x)));
+    await onRefresh();
+    if (failed) toast.error(`Không xoá được ${failed} video`);
+    else toast.success(ids.length === 1 ? 'Đã xoá video' : `Đã xoá ${ids.length} video`);
   };
 
   return (
@@ -90,6 +120,18 @@ export const VideosPage: React.FC<VideosPageProps> = ({ projects, onRefresh }) =
           <Input leading={<Search />} value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Tìm theo tiêu đề, nguồn…" />
         </div>
       </div>
+
+      {selected.length > 0 && (
+        <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-line bg-subtle px-3 py-2 text-sm">
+          <span className="text-fg">Đã chọn {selected.length} video</span>
+          <Button size="sm" variant="danger-soft" icon={<Trash2 className="h-3.5 w-3.5" />} loading={deleting} onClick={() => remove(selected)}>
+            Xoá {selected.length} video
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => setSelected([])}>
+            Bỏ chọn
+          </Button>
+        </div>
+      )}
 
       <Card className="overflow-hidden">
         {!projects ? (
@@ -137,7 +179,11 @@ export const VideosPage: React.FC<VideosPageProps> = ({ projects, onRefresh }) =
           <table className="w-full text-sm">
             <thead className="hidden border-b border-line bg-subtle text-left text-xs text-fg-muted md:table-header-group">
               <tr>
-                <th className="py-2.5 pl-4 pr-3 font-medium">Video</th>
+                <th className="w-8 pl-4">
+                  <input type="checkbox" aria-label="Chọn tất cả" checked={allShown}
+                    onChange={() => setSelected(allShown ? selected.filter((id) => !shown.some((p) => p.id === id)) : Array.from(new Set([...selected, ...shown.map((p) => p.id)])))} />
+                </th>
+                <th className="py-2.5 pl-2 pr-3 font-medium">Video</th>
                 <th className="px-3 py-2.5 font-medium">Trạng thái</th>
                 <th className="px-3 py-2.5 text-right font-medium">Thời lượng</th>
                 <th className="px-3 py-2.5 text-right font-medium">Cảnh</th>
@@ -146,13 +192,16 @@ export const VideosPage: React.FC<VideosPageProps> = ({ projects, onRefresh }) =
               </tr>
             </thead>
             <tbody className="divide-y divide-line">
-              {visible.slice(0, limit).map((p) => (
+              {shown.map((p) => (
                 <tr
                   key={p.id}
                   onClick={() => navigate(`/videos/${p.id}`)}
                   className="group cursor-pointer transition-colors hover:bg-subtle"
                 >
-                  <td className="py-3 pl-4 pr-3">
+                  <td className="w-8 pl-4 align-middle" onClick={(e) => e.stopPropagation()}>
+                    <input type="checkbox" aria-label="Chọn video" checked={selected.includes(p.id)} onChange={() => toggle(p.id)} />
+                  </td>
+                  <td className="py-3 pl-2 pr-3">
                     <div className="flex items-center gap-3">
                       <ReelThumb src={projectThumb(p)} className="w-8" />
                       <div className="min-w-0">
@@ -190,7 +239,14 @@ export const VideosPage: React.FC<VideosPageProps> = ({ projects, onRefresh }) =
                     {timeAgo(p.updatedAtUtc ?? p.createdAtUtc)}
                   </td>
                   <td className="pr-3">
-                    <ChevronRight className="h-4 w-4 text-fg-subtle transition-transform group-hover:translate-x-0.5" />
+                    <div className="flex items-center justify-end gap-1">
+                      <button type="button" aria-label="Xoá video" title="Xoá video"
+                        className="rounded-md p-1.5 text-fg-subtle hover:bg-danger/10 hover:text-danger"
+                        onClick={(e) => { e.stopPropagation(); remove([p.id]); }}>
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                      <ChevronRight className="hidden h-4 w-4 text-fg-subtle transition-transform group-hover:translate-x-0.5 md:block" />
+                    </div>
                   </td>
                 </tr>
               ))}
