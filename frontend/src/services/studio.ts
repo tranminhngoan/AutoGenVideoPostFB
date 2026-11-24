@@ -82,6 +82,12 @@ export interface StudioShot {
   hasVoice: boolean;
   voiceSeconds?: number | null;
   hasSfx: boolean;
+  /** Scene of a library script: its narration is read in one take running over the scene's shots. */
+  scene?: number | null;
+  /** How the scene's narration is performed (English direction for the voice model). */
+  voiceStyle?: string | null;
+  /** This shot's words are part of the scene take held by shot number N. */
+  voiceFromShot?: number | null;
   status: 'Pending' | 'Generating' | 'Done' | 'Failed';
   hasClip: boolean;
   costUsd: number;
@@ -207,6 +213,8 @@ export interface StudioShotInput {
   speaker?: string | null;
   dialogue?: string | null;
   sound?: string | null;
+  scene?: number | null;
+  voiceStyle?: string | null;
 }
 
 export interface StudioCosts {

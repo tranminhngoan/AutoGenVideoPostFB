@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using NewsStudio.Application.DTOs;
@@ -102,10 +103,43 @@ public class GeminiTtsService : ITtsService
             Encoding.UTF8.GetBytes($"{m}|{voiceName}|{prompt}")))[..32].ToLowerInvariant() + ".pcm");
 
         byte[]? pcm = null;
-        var cached = models.Select(CachePath).FirstOrDefault(File.Exists);
-        var fromCache = cached != null;
-        if (cached != null)
+        var fromCache = false;
+        // An acting direction goes to the expressive TTS model, apart from the words (never read aloud). If that model
+        // or its API is not available, the plain narration below is used instead: a video never fails over style.
+        var style = request.Style?.Trim();
+        if (!string.IsNullOrEmpty(style) && ExpressiveModel is { } expressive)
         {
+            var styledCache = Path.Combine(cacheDir, Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+                Encoding.UTF8.GetBytes($"{expressive}|{voiceName}|{style}|{text}")))[..32].ToLowerInvariant() + ".pcm");
+            if (File.Exists(styledCache))
+            {
+                pcm = await File.ReadAllBytesAsync(styledCache, cancellationToken);
+                fromCache = true;
+            }
+            else
+            {
+                try
+                {
+                    pcm = await RequestExpressiveSpeechAsync(expressive, voiceName, text, style, cancellationToken);
+                    try { await File.WriteAllBytesAsync(styledCache, pcm, cancellationToken); }
+                    catch (IOException ex) { _logger.LogWarning("Could not cache TTS audio: {Message}", ex.Message); }
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.LogWarning("Expressive Gemini TTS ({Model}) unavailable, reading without direction: {Message}", expressive, ex.Message);
+                    pcm = null;
+                }
+            }
+        }
+
+        var cached = pcm != null ? null : models.Select(CachePath).FirstOrDefault(File.Exists);
+        if (pcm != null)
+        {
+            // the styled take
+        }
+        else if (cached != null)
+        {
+            fromCache = true;
             pcm = await File.ReadAllBytesAsync(cached, cancellationToken);
             _logger.LogInformation("Gemini TTS: reused cached narration for project {ProjectId} (no API call)", request.ProjectId);
         }
@@ -168,6 +202,143 @@ public class GeminiTtsService : ITtsService
     {
         var style = _configuration["Tts:Gemini:Style"];
         return string.IsNullOrWhiteSpace(style) ? text : $"{style.Trim()}: {text}";
+    }
+
+    /// <summary>
+    /// The expressive TTS model used when a request carries an acting direction (Tts:Gemini:ExpressiveModel,
+    /// default gemini-3.8-flash-tts; "off" disables it).
+    /// </summary>
+    private string? ExpressiveModel
+    {
+        get
+        {
+            var m = _configuration["Tts:Gemini:ExpressiveModel"]?.Trim();
+            if (string.Equals(m, "off", StringComparison.OrdinalIgnoreCase)) return null;
+            return string.IsNullOrEmpty(m) ? "gemini-3.8-flash-tts" : m;
+        }
+    }
+
+    /// <summary>
+    /// Request body of the Interactions API for one styled take: the text is a verbatim transcript and the direction
+    /// rides in a speech_metadata annotation, so the model performs it instead of reading it out.
+    /// </summary>
+    public static JsonObject BuildExpressiveRequest(string model, string voiceName, string text, string style) => new()
+    {
+        ["model"] = model,
+        ["input"] = new JsonArray(new JsonObject
+        {
+            ["type"] = "user_input",
+            ["content"] = new JsonArray(new JsonObject
+            {
+                ["type"] = "text",
+                ["text"] = text,
+                ["annotations"] = new JsonArray(new JsonObject { ["type"] = "speech_metadata", ["style"] = style })
+            })
+        }),
+        ["response_format"] = new JsonObject { ["type"] = "audio" },
+        ["generation_config"] = new JsonObject { ["speech_config"] = new JsonArray(new JsonObject { ["voice"] = voiceName }) }
+    };
+
+    /// <summary>
+    /// The audio of an Interactions answer as 16-bit mono PCM at 24 kHz: the first base64 "data" of an audio item
+    /// (WAV with its header, or raw PCM). Null when there is none or it is in another format.
+    /// </summary>
+    public static byte[]? ParseExpressiveAudio(string json)
+    {
+        using var doc = JsonDocument.Parse(json);
+        var found = FindAudio(doc.RootElement);
+        if (found == null) return null;
+        var bytes = Convert.FromBase64String(found.Value.Data);
+        if (bytes.Length >= 44 && Encoding.ASCII.GetString(bytes, 0, 4) == "RIFF" && Encoding.ASCII.GetString(bytes, 8, 4) == "WAVE")
+        {
+            int? rate = null, bits = null, channels = null;
+            var pos = 12;
+            while (pos + 8 <= bytes.Length)
+            {
+                var id = Encoding.ASCII.GetString(bytes, pos, 4);
+                var size = BitConverter.ToInt32(bytes, pos + 4);
+                if (id == "fmt " && pos + 24 <= bytes.Length)
+                {
+                    channels = BitConverter.ToInt16(bytes, pos + 10);
+                    rate = BitConverter.ToInt32(bytes, pos + 12);
+                    bits = BitConverter.ToInt16(bytes, pos + 22);
+                }
+                else if (id == "data")
+                {
+                    if (rate != SampleRate || bits != 16 || channels != 1) return null;
+                    var len = size < 0 ? bytes.Length - pos - 8 : Math.Min(size, bytes.Length - pos - 8);
+                    return bytes.AsSpan(pos + 8, len - len % 2).ToArray();
+                }
+                if (size < 0) return null;
+                pos += 8 + size + (size % 2);
+            }
+            return null;
+        }
+        // raw PCM: accept only the 24 kHz rate this pipeline writes (stated in the mime type when given)
+        var rateMatch = System.Text.RegularExpressions.Regex.Match(found.Value.Mime ?? "", @"rate=(\d+)");
+        if (rateMatch.Success && rateMatch.Groups[1].Value != SampleRate.ToString(CultureInfo.InvariantCulture)) return null;
+        return bytes.Length % 2 == 0 ? bytes : bytes[..^1];
+    }
+
+    private static (string Data, string? Mime)? FindAudio(JsonElement e)
+    {
+        switch (e.ValueKind)
+        {
+            case JsonValueKind.Object:
+                string? type = null, mime = null, data = null;
+                foreach (var p in e.EnumerateObject())
+                {
+                    if (p.Value.ValueKind != JsonValueKind.String) continue;
+                    if (p.NameEquals("type")) type = p.Value.GetString();
+                    else if (p.NameEquals("mime_type") || p.NameEquals("mimeType")) mime = p.Value.GetString();
+                    else if (p.NameEquals("data")) data = p.Value.GetString();
+                }
+                if (data is { Length: > 100 } && (type == "audio" || mime?.StartsWith("audio", StringComparison.OrdinalIgnoreCase) == true))
+                    return (data, mime);
+                foreach (var p in e.EnumerateObject())
+                    if (FindAudio(p.Value) is { } inner) return inner;
+                return null;
+            case JsonValueKind.Array:
+                foreach (var x in e.EnumerateArray())
+                    if (FindAudio(x) is { } inner) return inner;
+                return null;
+            default:
+                return null;
+        }
+    }
+
+    /// <summary>One styled take through the Interactions API, free keys first then the paid key.</summary>
+    private async Task<byte[]> RequestExpressiveSpeechAsync(string model, string voiceName, string text, string style, CancellationToken ct)
+    {
+        var body = BuildExpressiveRequest(model, voiceName, text, style).ToJsonString();
+        string? last = null;
+        foreach (var key in GeminiKeys.InOrder(_configuration, model))
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Post, "https://generativelanguage.googleapis.com/v1beta/interactions")
+            {
+                Content = new StringContent(body, Encoding.UTF8, "application/json")
+            };
+            req.Headers.Add("x-goog-api-key", key.Value);
+            using var res = await _httpClient.SendAsync(req, ct);
+            var json = await res.Content.ReadAsStringAsync(ct);
+            if (res.IsSuccessStatusCode)
+            {
+                var pcm = ParseExpressiveAudio(json);
+                if (pcm is { Length: > 4800 })
+                {
+                    _logger.LogInformation("Gemini TTS: styled take with {Model} ({KeyType} key)", model, key.Label);
+                    JsonElement? usage = null;
+                    using (var doc = JsonDocument.Parse(json))
+                        if (doc.RootElement.TryGetProperty("usage", out var u)) usage = u.Clone();
+                    await _meter.RecordAsync("tts", model, key.IsFree, usage, speech: true);
+                    return pcm;
+                }
+                last = "no usable audio in the answer";
+                continue;
+            }
+            last = $"HTTP {(int)res.StatusCode}: {ExtractError(json)}";
+        }
+        throw new InvalidOperationException(last ?? "no Gemini key");
     }
 
     /// <summary>

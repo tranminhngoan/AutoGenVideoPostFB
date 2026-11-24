@@ -11,6 +11,11 @@ public class TtsSynthesisRequest
     public string Pitch { get; set; } = "+0Hz";
     public string Format { get; set; } = "audio/mpeg";
     public TtsProviderType Provider { get; set; } = TtsProviderType.EdgeTts;
+    /// <summary>
+    /// Optional acting direction (Gemini TTS only), e.g. "warm and nostalgic, slow, voice catching at the sad lines".
+    /// Sent apart from the text (speech_metadata), never read aloud.
+    /// </summary>
+    public string? Style { get; set; }
 }
 
 public class SubtitleCueDto

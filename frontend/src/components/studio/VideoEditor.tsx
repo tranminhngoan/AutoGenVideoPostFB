@@ -94,7 +94,7 @@ function statusTone(s: string): 'success' | 'warning' | 'danger' | 'info' | 'neu
 
 const toInput = (s: StudioShot): StudioShotInput => ({
   id: s.id, durationSeconds: s.durationSeconds, action: s.action, camera: s.camera, location: s.location ?? '', cast: s.cast ?? [],
-  speaker: s.speaker ?? '', dialogue: s.dialogue ?? '', sound: s.sound ?? '',
+  speaker: s.speaker ?? '', dialogue: s.dialogue ?? '', sound: s.sound ?? '', scene: s.scene ?? null, voiceStyle: s.voiceStyle ?? '',
 });
 
 /** Plays one short clip of audio (voice sample / a shot's line) without leaving the page. */
@@ -278,7 +278,7 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
   const shotCost = (x: { id?: string; durationSeconds: number; dialogue?: string | null }, rate = perSecond) => {
     const st = video?.shots.find((s) => s.id === x.id);
     return clampSecs(x.durationSeconds) * rate
-      + (x.dialogue?.trim() && !st?.hasVoice ? secondsToSay(x.dialogue) * voicePrice : 0)
+      + (x.dialogue?.trim() && !st?.hasVoice && !st?.voiceFromShot ? secondsToSay(x.dialogue) * voicePrice : 0)
       + (form.sfxEnabled && !st?.hasSfx ? clampSecs(x.durationSeconds) * sfxPrice : 0);
   };
   const shotSeconds = shots.reduce((s, x) => s + clampSecs(x.durationSeconds), 0);
@@ -286,7 +286,17 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
   const pendingShots = (video?.shots ?? []).filter((s) => !s.hasClip || s.status !== 'Done');
   const pendingSeconds = pendingShots.reduce((s, x) => s + clampSecs(x.durationSeconds), 0);
   const pendingCost = pendingShots.reduce((s, x) => s + shotCost(x), 0);
-  const missingVoices = (video?.shots ?? []).filter((s) => s.dialogue?.trim() && !s.hasVoice).length;
+  // a scene of a library script is read in one take: it counts once
+  const missingVoices = new Set((video?.shots ?? []).filter((s) => s.dialogue?.trim() && !s.hasVoice && !s.voiceFromShot)
+    .map((s) => (s.scene ? `scene-${s.scene}` : s.id))).size;
+  /** The shot a scene's one-take narration starts on (its first shot with words). */
+  const isTakeStart = (i: number) => {
+    const s = shots[i];
+    if (!s.scene || !s.dialogue?.trim()) return false;
+    return !shots.slice(0, i).some((x) => x.scene === s.scene && x.dialogue?.trim());
+  };
+  const setSceneStyle = (scene: number, voiceStyle: string) =>
+    setShots((list) => list.map((x) => (x.scene === scene ? { ...x, voiceStyle } : x)));
   const clipsWithoutSfx = (video?.shots ?? []).filter((s) => s.hasClip && !s.hasSfx);
   const scriptEstimate = useMemo(() => estimateScriptSeconds(form.script ?? ''), [form.script]);
   const onScreen = characters.filter((c) => !isNarrator(c.name));
@@ -826,6 +836,7 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
                     <li key={s.id ?? `new-${i}`} className="rounded-lg border border-line p-3">
                       <div className="mb-2 flex flex-wrap items-center gap-2 text-xs">
                         <span className="font-semibold text-fg">Shot {i + 1}</span>
+                        {s.scene ? <Badge tone="neutral">Cảnh {s.scene}</Badge> : null}
                         {st && <Badge tone={statusTone(st.status)}>{st.status === 'Done' ? 'Có clip' : st.status === 'Failed' ? 'Lỗi' : st.status === 'Generating' ? 'Đang tạo' : 'Chưa tạo'}</Badge>}
                         {st && st.costUsd > 0 && <span className="text-fg-muted">đã chi {usd(st.costUsd, 3)}</span>}
                         <div className="ml-auto flex gap-1">
@@ -854,7 +865,7 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
                               <Input value={s.dialogue ?? ''} disabled={locked} onChange={(e) => updateShot(i, { dialogue: e.target.value })} />
                             </Field>
                           </div>
-                          {needs > clampSecs(s.durationSeconds) && !st?.hasVoice && (
+                          {needs > clampSecs(s.durationSeconds) && !st?.hasVoice && !s.scene && (
                             <p className="text-[11px] text-warning">
                               Câu thoại cần khoảng {Math.min(12, needs)}s — shot sẽ tự dài ra cho vừa giọng đọc.
                               {needs > 12 && ' Câu quá dài cho 1 clip (tối đa 12s): nên tách thành 2 shot.'}
@@ -864,13 +875,24 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
                             <div className="flex flex-wrap items-center gap-2 text-[11px] text-fg-muted">
                               <Button size="sm" variant="ghost" icon={audio.playing === 'line-' + s.id ? <Square className="h-3.5 w-3.5" /> : <Volume2 className="h-3.5 w-3.5" />}
                                 onClick={() => audio.toggle('line-' + s.id, studio.voiceUrl(s.id!) + `?v=${st.voiceSeconds}`)}>
-                                Nghe giọng đọc ({st.voiceSeconds?.toFixed(1)}s)
+                                {s.scene ? `Nghe lời bình cả cảnh ${s.scene}` : 'Nghe giọng đọc'} ({st.voiceSeconds?.toFixed(1)}s)
                               </Button>
                               <span>giọng {voiceName(characters.find((c) => c.name.trim().toLowerCase() === (s.speaker ?? '').trim().toLowerCase())?.voice ?? 'gemini:Charon')}</span>
                               <Button size="sm" variant="ghost" icon={<Mic className="h-3.5 w-3.5" />} loading={busy === 'voice-' + s.id} disabled={locked} onClick={() => rereadShot(s)}>
-                                Đọc lại
+                                {s.scene ? 'Đọc lại cả cảnh' : 'Đọc lại'}
                               </Button>
                             </div>
+                          )}
+                          {st?.voiceFromShot && (
+                            <p className="text-[11px] text-fg-muted">
+                              🎙 Câu này nằm trong lời bình cả cảnh {s.scene}, đọc liền một mạch từ shot {st.voiceFromShot} — nghe ở shot đó.
+                            </p>
+                          )}
+                          {isTakeStart(i) && (
+                            <Field label={`Cách đọc lời bình cảnh ${s.scene} (tiếng Anh: cảm xúc, nhịp — AI diễn theo, không đọc ra)`}>
+                              <Input value={s.voiceStyle ?? ''} disabled={locked} placeholder="tender, slow, voice catching at the saddest words…"
+                                onChange={(e) => setSceneStyle(s.scene!, e.target.value)} />
+                            </Field>
                           )}
                           <Field label="Hành động (tiếng Anh để model hiểu tốt nhất)">
                             <Textarea rows={2} value={s.action} disabled={locked} onChange={(e) => updateShot(i, { action: e.target.value })} />

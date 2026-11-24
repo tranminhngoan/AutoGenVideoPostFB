@@ -107,6 +107,13 @@ public class StudioShot : BaseEntity
     public double? VoiceSeconds { get; set; }
     /// <summary>Sound effects made for the shot by ElevenLabs (small AAC in the database).</summary>
     public Guid? SfxBlobId { get; set; }
+    /// <summary>
+    /// Scene of a library script (1, 2…). The narration of a scene is read in ONE take that runs across its shots
+    /// (stored on the scene's first spoken shot), so the voice flows instead of stopping at every cut. Null = per-shot lines.
+    /// </summary>
+    public int? Scene { get; set; }
+    /// <summary>How the scene's narration is performed (English direction for the TTS model: emotion, pace, tone).</summary>
+    public string? VoiceStyle { get; set; }
 
     public string Status { get; set; } = "Pending"; // Pending, Generating, Done, Failed
     public Guid? ClipBlobId { get; set; }

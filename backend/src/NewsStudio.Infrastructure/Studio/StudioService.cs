@@ -326,11 +326,19 @@ public class StudioService
         dto.FinalDurationSeconds = v.FinalDurationSeconds;
         dto.ErrorMessage = v.ErrorMessage;
         dto.PublishedPostId = v.PublishedPostId;
+        var voiceFrom = new Dictionary<Guid, int>();
+        foreach (var take in SceneTakes(v.Shots))
+        {
+            var owner = TakeOwner(take);
+            if (owner.VoiceBlobId == null) continue;
+            foreach (var s in take.Where(s => s != owner && s.Dialogue != null)) voiceFrom[s.Id] = owner.Index;
+        }
         dto.Shots = v.Shots.OrderBy(s => s.Index).Select(s => new StudioShotDto
         {
             Id = s.Id, Index = s.Index, DurationSeconds = s.DurationSeconds, Action = s.Action, Camera = s.Camera,
             Location = s.Location, Cast = Names(s.CastJson), Speaker = s.Speaker, Dialogue = s.Dialogue, Sound = s.Sound,
             HasVoice = s.VoiceBlobId != null, VoiceSeconds = s.VoiceSeconds, HasSfx = s.SfxBlobId != null, Status = s.Status,
+            Scene = s.Scene, VoiceStyle = s.VoiceStyle, VoiceFromShot = voiceFrom.TryGetValue(s.Id, out var from) ? from : null,
             HasClip = s.ClipBlobId != null, CostUsd = s.CostUsd, Attempts = s.Attempts, ErrorMessage = s.ErrorMessage,
             EstimatedCostUsd = ShotCost(v, s)
         }).ToList();
@@ -680,6 +688,7 @@ Trả về JSON:
         EnsureNotBusy(v);
         var existing = v.Shots.ToDictionary(s => s.Id);
         var keep = new HashSet<Guid>();
+        var staleScenes = new HashSet<int>(); // scenes whose one-take narration no longer matches its words
         var index = 1;
         foreach (var input in shots)
         {
@@ -688,7 +697,13 @@ Trả về JSON:
             if (input.Id is { } sid && existing.TryGetValue(sid, out var found))
             {
                 shot = found;
-                var lineChanged = shot.Dialogue != NullIfEmpty(input.Dialogue) || shot.Speaker != NullIfEmpty(input.Speaker);
+                var lineChanged = shot.Dialogue != NullIfEmpty(input.Dialogue) || shot.Speaker != NullIfEmpty(input.Speaker)
+                                  || shot.VoiceStyle != NullIfEmpty(input.VoiceStyle) || shot.Scene != input.Scene;
+                if (lineChanged)
+                {
+                    if (shot.Scene is { } before) staleScenes.Add(before);
+                    if (input.Scene is { } after) staleScenes.Add(after);
+                }
                 var changed = lineChanged || shot.DurationSeconds != SeedanceVideoClient.ClampSeconds(input.DurationSeconds) || shot.Action != input.Action.Trim()
                               || shot.Camera != input.Camera.Trim() || shot.Sound != NullIfEmpty(input.Sound) || shot.CastJson != castJson
                               || shot.Location != NullIfEmpty(input.Location);
@@ -710,6 +725,7 @@ Trả về JSON:
             {
                 shot = new StudioShot { StudioVideoId = v.Id };
                 _db.StudioShots.Add(shot); // via the DbSet: see RunPlanAsync
+                if (input.Scene is { } scene && NullIfEmpty(input.Dialogue) != null) staleScenes.Add(scene);
             }
             keep.Add(shot.Id);
             shot.Index = index++;
@@ -721,15 +737,24 @@ Trả về JSON:
             shot.Speaker = NullIfEmpty(input.Speaker);
             shot.Dialogue = NullIfEmpty(input.Dialogue);
             shot.Sound = NullIfEmpty(input.Sound);
+            shot.Scene = input.Scene;
+            shot.VoiceStyle = NullIfEmpty(input.VoiceStyle) is { } vs && vs.Length > 600 ? vs[..600] : NullIfEmpty(input.VoiceStyle);
         }
         foreach (var gone in v.Shots.Where(s => !keep.Contains(s.Id)).ToList())
         {
+            if (gone.Scene is { } goneScene && gone.Dialogue != null) staleScenes.Add(goneScene);
             if (gone.ClipBlobId != null) await DeleteBlobAsync(gone.ClipBlobId.Value, ct);
             if (gone.VoiceBlobId != null) await DeleteBlobAsync(gone.VoiceBlobId.Value, ct);
             if (gone.SfxBlobId != null) await DeleteBlobAsync(gone.SfxBlobId.Value, ct);
             if (gone.KeyframeBlobId != null) await DeleteBlobAsync(gone.KeyframeBlobId.Value, ct);
             _db.StudioShots.Remove(gone);
             v.Shots.Remove(gone);
+        }
+        foreach (var s in v.Shots.Where(s => s.Scene is { } sc && staleScenes.Contains(sc) && s.VoiceBlobId != null))
+        {
+            await DeleteBlobAsync(s.VoiceBlobId!.Value, ct);
+            s.VoiceBlobId = null;
+            s.VoiceSeconds = null;
         }
         v.EstimatedCostUsd = EstimateVideoCost(v);
         if (v.Shots.Count > 0) v.TargetDurationSeconds = v.Shots.Sum(s => SeedanceVideoClient.ClampSeconds(s.DurationSeconds));
@@ -797,7 +822,9 @@ Trả về JSON:
             {
                 StudioVideoId = v.Id, Index = index++, DurationSeconds = s.Duration, Action = s.Action, Camera = s.Camera,
                 Speaker = s.Dialogue == null ? null : StudioVoices.NarratorName, Dialogue = s.Dialogue, Sound = s.Sound,
-                Location = input.Scenes[s.Scene].Title is { Length: > 0 } t ? (t.Length > 200 ? t[..200] : t) : null
+                Location = input.Scenes[s.Scene].Title is { Length: > 0 } t ? (t.Length > 200 ? t[..200] : t) : null,
+                Scene = s.Scene + 1, // the scene's narration is read in one take across these shots
+                VoiceStyle = StudioScriptImporter.NarratorStyleFor(input.Mood)
             });
         }
         v.TargetDurationSeconds = planned.Sum(s => s.Duration);
@@ -813,8 +840,8 @@ Trả về JSON:
         }
         v.Status = "Planning";
         v.Progress = input.AutoGenerate
-            ? "Đang chuẩn bị kịch bản (dịch âm thanh, chọn nhạc, viết chú thích) rồi tạo video…"
-            : "Đang chuẩn bị kịch bản (dịch âm thanh, chọn nhạc, viết chú thích)…";
+            ? "Đang dựng hồ sơ nhân vật, bối cảnh và mô tả chi tiết từng shot, rồi tạo video…"
+            : "Đang dựng hồ sơ nhân vật, bối cảnh và mô tả chi tiết từng shot…";
         await _db.SaveChangesAsync(ct);
         _jobs.Enqueue<StudioService>(x => x.RunPrepareImportAsync(v.Id, input.AutoGenerate, CancellationToken.None));
         return await GetVideoAsync(v.Id, ct);
@@ -827,32 +854,30 @@ Trả về JSON:
         var v = await _db.StudioVideos.Include(x => x.Shots).FirstOrDefaultAsync(x => x.Id == id, ct);
         if (v == null || v.Status != "Planning") return;
         var music = await _db.StudioMusicTracks.AsNoTracking().OrderBy(m => m.UseCount).ToListAsync(ct);
-        var sounds = v.Shots.Select(s => s.Sound).Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s!).Distinct().ToList();
         try
         {
-            var (system, user) = BuildPreparePrompt(v, sounds, music);
-            var (result, model) = await AskWithFallbackAsync(v, system, user, text => ParsePrepare(text, sounds.Count, new HashSet<Guid>()),
-                "Gemini đang dịch âm thanh, chọn nhạc và viết chú thích", ct);
-            var prep = ParsePrepare(result.Text, sounds.Count, music.Select(m => m.Id).ToHashSet());
-            var english = sounds.Zip(prep.Sounds, (vi, en) => (vi, en)).Where(p => !string.IsNullOrWhiteSpace(p.en)).ToDictionary(p => p.vi, p => p.en);
-            foreach (var s in v.Shots)
-                if (s.Sound != null && english.TryGetValue(s.Sound, out var en)) s.Sound = en.Length > 500 ? en[..500] : en;
-            if (!string.IsNullOrWhiteSpace(prep.Caption)) v.Caption = prep.Caption;
-            if (v.MusicMode == "Auto" && v.MusicTrackId == null) v.MusicTrackId = prep.MusicTrackId ?? music.FirstOrDefault()?.Id;
+            var (system, user) = BuildDirectionPrompt(v, music);
+            var (result, model) = await AskWithFallbackAsync(v, system, user, text => ParseDirection(text, v.Shots.Count, new HashSet<Guid>()),
+                "Gemini đang dựng hồ sơ nhân vật, bối cảnh và mô tả chi tiết từng shot", ct);
+            var direction = ParseDirection(result.Text, v.Shots.Count, music.Select(m => m.Id).ToHashSet());
+            ApplyDirection(v, direction);
+            if (!string.IsNullOrWhiteSpace(direction.Caption)) v.Caption = direction.Caption;
+            if (v.MusicMode == "Auto" && v.MusicTrackId == null) v.MusicTrackId = direction.MusicTrackId ?? music.FirstOrDefault()?.Id;
             _db.StudioCostRecords.Add(new StudioCostRecord
             {
                 StudioVideoId = v.Id, Kind = "Plan", Model = model, Tokens = result.Tokens, CostUsd = result.CostUsd,
-                Note = "chuẩn bị kịch bản thư viện" + (result.FreeKey ? " (khoá miễn phí)" : "")
+                Note = "dựng hồ sơ & mô tả shot từ kịch bản thư viện" + (result.FreeKey ? " (khoá miễn phí)" : "")
             });
             v.ActualCostUsd += result.CostUsd;
             v.ErrorMessage = null;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            // the script itself is complete: carry on with the Vietnamese sound notes and the hook as caption
-            _logger.LogWarning(ex, "Studio import preparation failed for {Id}", id);
+            // the script itself is complete: carry on with its own prompts and the hook as caption
+            _logger.LogWarning(ex, "Studio import direction failed for {Id}", id);
             if (v.MusicMode == "Auto" && v.MusicTrackId == null) v.MusicTrackId = music.FirstOrDefault()?.Id;
-            v.ErrorMessage = "Chưa dịch được ghi chú âm thanh / viết chú thích (" + ex.Message + ") — video vẫn dựng đúng kịch bản.";
+            v.ErrorMessage = "Chưa dựng được hồ sơ nhân vật / mô tả chi tiết (" + ex.Message + ") — video vẫn dựng theo prompt gốc của kịch bản; " +
+                             "nên bấm tạo lại video từ trang kịch bản để nhân vật đồng nhất hơn.";
         }
         v.EstimatedCostUsd = EstimateVideoCost(v);
         if (autoGenerate && _video.IsConfigured)
@@ -869,32 +894,89 @@ Trả về JSON:
         await _db.SaveChangesAsync(CancellationToken.None);
     }
 
-    public static (string System, string User) BuildPreparePrompt(StudioVideo v, IReadOnlyList<string> sounds, IReadOnlyList<StudioMusicTrack> music)
+    /// <summary>
+    /// The "director" step for a library script. Seedance has no reference images, so the only way to keep the same
+    /// people and places from clip to clip is to describe them identically, in detail, in every clip: Gemini reads the
+    /// whole script once and writes a fixed identity for each person (face, hair, build — no clothes), a fixed look
+    /// for each place, each scene's time / weather / light and costumes (the same in every shot of the scene; costumes
+    /// change only when the story moves on in time or place), and for every shot what the camera sees while its piece
+    /// of narration is heard. Plus the narrator's acting direction per scene, the sound effects, caption and music.
+    /// </summary>
+    public static (string System, string User) BuildDirectionPrompt(StudioVideo v, IReadOnlyList<StudioMusicTrack> music)
     {
-        var system = "Bạn là biên tập viên hậu kỳ video ngắn cho Facebook. Chỉ trả về JSON hợp lệ.";
+        var system =
+            "Bạn là đạo diễn kiêm biên kịch hình ảnh cho phim ngắn NGƯỜI THẬT, chân thực như phim tài liệu, tạo bằng model TEXT-TO-VIDEO " +
+            "Seedance (mỗi shot là 1 clip 2–12 giây, KHÔNG có ảnh tham chiếu, KHÔNG có tiếng — lời bình đọc bằng giọng AI và nhạc thêm sau). " +
+            "Model chỉ nhìn thấy chữ bạn viết cho từng shot, nên muốn cùng một người / một nơi trông giống nhau ở mọi clip thì phải tả họ " +
+            "Y HỆT nhau, thật chi tiết. Chỉ trả về JSON hợp lệ.";
         var sb = new StringBuilder();
         sb.AppendLine($"VIDEO: {v.Title}");
-        sb.AppendLine($"Mở đầu (hook): {v.Caption}");
-        sb.AppendLine($"Ghi chú: {v.PlanNotes}");
-        sb.AppendLine("\nGHI CHÚ ÂM THANH (tiếng Việt), theo thứ tự:");
-        for (var i = 0; i < sounds.Count; i++) sb.AppendLine($"{i + 1}. {sounds[i]}");
+        if (!string.IsNullOrWhiteSpace(v.PlanNotes)) sb.AppendLine($"Ghi chú: {v.PlanNotes}");
+        if (!string.IsNullOrWhiteSpace(v.StyleNotes)) sb.AppendLine($"Phong cách hình ảnh: {v.StyleNotes}");
+        sb.AppendLine($"Khung hình: {(v.AspectRatio == "16:9" ? "ngang 16:9" : "dọc 9:16")}");
+        if (!string.IsNullOrWhiteSpace(v.Script))
+        {
+            var script = v.Script!.Length > 14000 ? v.Script[..14000] + "…" : v.Script;
+            sb.AppendLine($"\nKỊCH BẢN ĐẦY ĐỦ:\n{script}");
+        }
+        sb.AppendLine("\nDANH SÁCH SHOT (đã chia sẵn — giữ nguyên số shot và lời bình):");
+        foreach (var scene in v.Shots.OrderBy(x => x.Index).GroupBy(x => x.Scene ?? 0))
+        {
+            var first = scene.First();
+            sb.AppendLine($"\nCẢNH {scene.Key}: {first.Location}");
+            sb.AppendLine($"  Mô tả hình gốc (EN): {first.Action}");
+            if (!string.IsNullOrWhiteSpace(first.Camera)) sb.AppendLine($"  Góc máy gốc: {first.Camera}");
+            if (!string.IsNullOrWhiteSpace(first.Sound)) sb.AppendLine($"  Âm thanh gốc: {first.Sound}");
+            foreach (var shot in scene)
+                sb.AppendLine($"  - shot {shot.Index} ({shot.DurationSeconds}s): " +
+                              (shot.Dialogue != null ? $"lời bình \"{shot.Dialogue}\"" : "(không lời — nhịp hình lặng cuối cảnh)"));
+        }
         sb.AppendLine("\nKHO NHẠC NỀN (chọn 1 bài hợp tâm trạng video, hoặc null):");
         if (music.Count == 0) sb.AppendLine("- (trống)");
         foreach (var m in music) sb.AppendLine($"- id={m.Id} | {m.Name} | tâm trạng: {m.Mood}");
         sb.AppendLine(@"
-VIỆC CẦN LÀM:
-- ""sounds"": dịch từng ghi chú âm thanh sang TIẾNG ANH ngắn gọn cho model tạo hiệu ứng âm thanh (tiếng động, không khí); giữ đúng thứ tự
-  và đúng số lượng; bỏ mọi tiếng nói / lời thoại / nhạc (vd ""tiếng mẹ thở dài"" → ""a soft sigh"", ""tiếng mưa trên lá chuối"" → ""rain pattering on banana leaves"").
-- ""caption"": chú thích Facebook tiếng Việt 1–3 câu gợi cảm xúc, mở bằng ý của hook, kèm 3–5 hashtag.
-- ""musicTrackId"": id bài nhạc hợp nhất hoặc null.
+VIỆC CẦN LÀM (mọi mô tả hình viết bằng TIẾNG ANH):
+1. ""characters"": MỌI người cụ thể xuất hiện trong hình (mẹ, bố, bà, đứa trẻ…), kể cả không có thoại. ""name"" tiếng Việt ngắn
+   (vd ""Mẹ"", ""Bé Tí""). ""look"": 45–70 từ, CHỈ nhận dạng cố định, KHÔNG tả quần áo: người Việt Nam, tuổi chính xác, chiều cao /
+   dáng người, khuôn mặt (hình dáng mặt, mắt, lông mày, mũi, môi), làn da (rám nắng, nếp nhăn…), tóc (dài ngắn, kiểu, màu, cách búi),
+   dấu hiệu riêng (nốt ruồi, sẹo…). Người lao động bình thường, chân thực — không phải người mẫu. Cùng một người ở 2 độ tuổi khác hẳn
+   (lúc bé / lúc lớn) thì là 2 mục riêng (vd ""Tí (8 tuổi)"", ""Tí (35 tuổi)"") nhưng giữ cùng nét mặt đặc trưng để nhận ra.
+2. ""locations"": mỗi nơi chốn 1 mục, ""name"" ngắn tiếng Việt, ""look"" 40–70 từ CỐ ĐỊNH: loại nơi, kiến trúc & vật liệu, bố cục,
+   đồ vật chính kèm màu sắc, cây cối, xung quanh, đúng thời đại và vùng miền. Cảnh quay lại nơi cũ thì dùng lại đúng ""name"" đó.
+3. ""scenes"": mỗi CẢNH ở trên 1 mục:
+   - ""scene"": số cảnh; ""location"": tên một mục trong locations;
+   - ""time"": giờ trong ngày, thời tiết, chất ánh sáng — giống nhau cho mọi shot của cảnh, nối tiếp hợp lý với cảnh trước;
+   - ""wardrobe"": object { tên nhân vật: trang phục } cho người có mặt trong cảnh (màu sắc, chất vải, cũ / vá, đúng thời đại).
+     Cùng ngày thì GIỮ NGUYÊN trang phục qua các cảnh; chỉ đổi khi câu chuyện sang ngày khác / nơi khác / tuổi khác;
+   - ""voiceStyle"": 1–2 câu tiếng Anh chỉ đạo người đọc lời bình cảnh này (cảm xúc, nhịp, độ nhấn) đúng tâm trạng cảnh, giọng Việt
+     tự nhiên như đang kể chuyện với người thân, không đọc kiểu phát thanh viên;
+   - ""sound"": hiệu ứng âm thanh tiếng Anh từ ""âm thanh gốc"" (tiếng động, không khí; KHÔNG lời nói, KHÔNG nhạc);
+   - ""shots"": MỖI shot của cảnh 1 mục { ""shot"": số shot, ""cast"": [tên trong characters NHÌN THẤY trong hình],
+     ""action"": 35–60 từ — đúng khoảnh khắc người xem thấy khi nghe lời bình của shot đó: minh hoạ đúng điều lời bình nói (hoặc
+     phản ứng cảm xúc của nhân vật), gọi nhân vật bằng đúng ""name"", vị trí trong khung hình, MỘT hành động liền mạch, chậm, tự
+     nhiên đủ cho 4–12 giây, nét mặt, người phụ / quần chúng phía sau tả ngắn; ""camera"": cỡ cảnh + chuyển động máy chậm, mượt }.
+4. Bám đúng nội dung, thời đại, vùng miền của kịch bản; không thêm chi tiết hiện đại; không chữ / biển hiệu trong hình. Tránh thứ
+   AI video làm kém: đám đông cận mặt, thao tác tay phức tạp cận cảnh, chuyển động nhanh. Shot đầu mỗi cảnh: toàn cảnh (wide) cho
+   thấy rõ nơi chốn; các shot sau xen trung cảnh / toàn trung; cận cảnh tối đa 1/4 số shot.
+5. ""caption"": chú thích Facebook tiếng Việt 1–3 câu gợi cảm xúc + 3–5 hashtag. ""musicTrackId"": id bài nhạc hợp nhất hoặc null.
 
-Trả về JSON: { ""sounds"": [""...""], ""caption"": ""..."", ""musicTrackId"": ""id hoặc null"" }");
+Trả về JSON:
+{ ""caption"": ""..."", ""musicTrackId"": ""id hoặc null"",
+  ""characters"": [ { ""name"": ""..."", ""gender"": ""female"", ""look"": ""..."" } ],
+  ""locations"": [ { ""name"": ""..."", ""look"": ""..."" } ],
+  ""scenes"": [ { ""scene"": 1, ""location"": ""..."", ""time"": ""..."", ""wardrobe"": { ""Mẹ"": ""..."" }, ""voiceStyle"": ""..."", ""sound"": ""..."",
+                 ""shots"": [ { ""shot"": 1, ""cast"": [""Mẹ""], ""action"": ""..."", ""camera"": ""..."" } ] } ] }");
         return (system, sb.ToString());
     }
 
-    public sealed record Prepared(List<string> Sounds, string? Caption, Guid? MusicTrackId);
+    public sealed record DirectedShot(int Index, List<string> Cast, string? Action, string? Camera);
+    public sealed record DirectedScene(int Scene, string? Location, string? Time, Dictionary<string, string> Wardrobe, string? VoiceStyle, string? Sound,
+        List<DirectedShot> Shots);
+    public sealed record Direction(string? Caption, Guid? MusicTrackId, List<StudioCharacterDto> Characters, List<StudioLocationDto> Locations,
+        List<DirectedScene> Scenes);
 
-    public static Prepared ParsePrepare(string json, int soundCount, ISet<Guid> knownMusic)
+    /// <summary>Reads the director's JSON; it must describe most of the shots to be worth using.</summary>
+    public static Direction ParseDirection(string json, int shotCount, ISet<Guid> knownMusic)
     {
         var text = json.Trim();
         var start = text.IndexOf('{');
@@ -902,14 +984,82 @@ Trả về JSON: { ""sounds"": [""...""], ""caption"": ""..."", ""musicTrackId""
         if (start < 0 || end <= start) throw new InvalidOperationException("Gemini không trả về JSON.");
         using var doc = JsonDocument.Parse(text[start..(end + 1)]);
         var root = doc.RootElement;
-        var sounds = new List<string>();
-        if (root.TryGetProperty("sounds", out var a) && a.ValueKind == JsonValueKind.Array)
-            foreach (var x in a.EnumerateArray()) sounds.Add(x.ValueKind == JsonValueKind.String ? x.GetString()?.Trim() ?? "" : "");
-        if (sounds.Count != soundCount) throw new InvalidOperationException($"Gemini dịch {sounds.Count}/{soundCount} ghi chú âm thanh.");
-        string? caption = root.TryGetProperty("caption", out var c) && c.ValueKind == JsonValueKind.String ? c.GetString()?.Trim() : null;
-        Guid? music = root.TryGetProperty("musicTrackId", out var m) && m.ValueKind == JsonValueKind.String
-                      && Guid.TryParse(m.GetString(), out var g) && knownMusic.Contains(g) ? g : null;
-        return new Prepared(sounds, caption, music);
+        static string? S(JsonElement e, string n) => e.TryGetProperty(n, out var p) && p.ValueKind == JsonValueKind.String ? NullIfNull(p.GetString()?.Trim()) : null;
+        static int? I(JsonElement e, string n) => e.TryGetProperty(n, out var p) && p.ValueKind == JsonValueKind.Number && p.TryGetInt32(out var i) ? i
+            : e.TryGetProperty(n, out var q) && q.ValueKind == JsonValueKind.String && int.TryParse(q.GetString(), out var j) ? j : null;
+
+        var characters = new List<StudioCharacterDto>();
+        if (root.TryGetProperty("characters", out var ca) && ca.ValueKind == JsonValueKind.Array)
+            foreach (var c in ca.EnumerateArray())
+                if (S(c, "name") is { } name && !IsNarrator(name))
+                    characters.Add(new StudioCharacterDto { Name = name, Gender = S(c, "gender") ?? "male", Look = S(c, "look") ?? "" });
+        var locations = new List<StudioLocationDto>();
+        if (root.TryGetProperty("locations", out var la) && la.ValueKind == JsonValueKind.Array)
+            foreach (var l in la.EnumerateArray())
+                if (S(l, "name") is { } name) locations.Add(new StudioLocationDto { Name = name, Look = S(l, "look") ?? "" });
+
+        var scenes = new List<DirectedScene>();
+        if (root.TryGetProperty("scenes", out var sa) && sa.ValueKind == JsonValueKind.Array)
+            foreach (var sc in sa.EnumerateArray())
+            {
+                if (I(sc, "scene") is not { } number) continue;
+                var wardrobe = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                if (sc.TryGetProperty("wardrobe", out var wa) && wa.ValueKind == JsonValueKind.Object)
+                    foreach (var w in wa.EnumerateObject())
+                        if (w.Value.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(w.Value.GetString()))
+                            wardrobe[w.Name.Trim()] = w.Value.GetString()!.Trim();
+                var shots = new List<DirectedShot>();
+                if (sc.TryGetProperty("shots", out var sh) && sh.ValueKind == JsonValueKind.Array)
+                    foreach (var x in sh.EnumerateArray())
+                    {
+                        if (I(x, "shot") is not { } index) continue;
+                        var cast = new List<string>();
+                        if (x.TryGetProperty("cast", out var cs) && cs.ValueKind == JsonValueKind.Array)
+                            foreach (var n in cs.EnumerateArray())
+                                if (n.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(n.GetString())) cast.Add(n.GetString()!.Trim());
+                        shots.Add(new DirectedShot(index, cast, S(x, "action"), S(x, "camera")));
+                    }
+                scenes.Add(new DirectedScene(number, S(sc, "location"), S(sc, "time"), wardrobe, S(sc, "voiceStyle"), S(sc, "sound"), shots));
+            }
+        var described = scenes.SelectMany(x => x.Shots).Where(x => x.Action != null).Select(x => x.Index).Distinct().Count();
+        if (scenes.Count == 0 || described < Math.Ceiling(shotCount * 0.7))
+            throw new InvalidOperationException($"Gemini chỉ mô tả {described}/{shotCount} shot.");
+        Guid? musicId = Guid.TryParse(S(root, "musicTrackId"), out var mid) && knownMusic.Contains(mid) ? mid : null;
+        return new Direction(S(root, "caption"), musicId, characters, locations, scenes);
+    }
+
+    /// <summary>
+    /// Puts the direction on the shots: the bible (narrator kept), each shot's location, visible cast and action —
+    /// with the scene's costumes for the people in frame and its time / light written the same way in every shot of
+    /// the scene — its camera, the scene's sound effects and the narrator's direction.
+    /// </summary>
+    public static void ApplyDirection(StudioVideo v, Direction d)
+    {
+        var narrator = ReadBible(v.BibleJson).Characters.Where(c => IsNarrator(c.Name));
+        var bible = NormalizeBible(narrator.Concat(d.Characters), d.Locations);
+        v.BibleJson = WriteBible(bible);
+        foreach (var scene in d.Scenes)
+        {
+            var location = bible.Location(scene.Location)?.Name;
+            foreach (var shot in v.Shots.Where(x => x.Scene == scene.Scene))
+            {
+                var directed = scene.Shots.FirstOrDefault(x => x.Index == shot.Index);
+                if (location != null) shot.Location = location;
+                var cast = (directed?.Cast ?? new List<string>())
+                    .Select(n => bible.Character(n)).Where(c => c != null && !IsNarrator(c.Name)).Select(c => c!.Name).Distinct().ToList();
+                if (directed != null) shot.CastJson = JsonSerializer.Serialize(cast);
+                var action = (directed?.Action ?? shot.Action).Trim().TrimEnd('.');
+                var wardrobe = cast.Select(n => scene.Wardrobe.FirstOrDefault(w => SameName(w.Key, n)))
+                    .Where(w => !string.IsNullOrWhiteSpace(w.Value)).Select(w => $"{w.Key} wears {w.Value.TrimEnd('.')}").ToList();
+                var sb = new StringBuilder(action).Append('.');
+                if (wardrobe.Count > 0) sb.Append(" Wardrobe: ").Append(string.Join("; ", wardrobe)).Append('.');
+                if (!string.IsNullOrWhiteSpace(scene.Time)) sb.Append(" Time and light: ").Append(scene.Time!.TrimEnd('.')).Append('.');
+                shot.Action = sb.ToString();
+                if (directed?.Camera is { Length: > 0 } camera) shot.Camera = camera.Length > 500 ? camera[..500] : camera;
+                if (scene.Sound is { Length: > 0 } sound) shot.Sound = sound.Length > 500 ? sound[..500] : sound;
+                if (scene.VoiceStyle is { Length: > 0 } style) shot.VoiceStyle = style.Length > 600 ? style[..600] : style;
+            }
+        }
     }
 
     // ═══════════════════════════════ Voices ═══════════════════════════════
@@ -919,11 +1069,11 @@ Trả về JSON: { ""sounds"": [""...""], ""caption"": ""..."", ""musicTrackId""
     {
         var v = await _db.StudioVideos.Include(x => x.Shots).FirstOrDefaultAsync(x => x.Id == id, ct) ?? throw new KeyNotFoundException("Không tìm thấy video.");
         EnsureNotBusy(v);
-        var todo = v.Shots.Where(s => s.Dialogue != null && (shotId != null ? s.Id == shotId : s.VoiceBlobId == null)).ToList();
+        var todo = VoiceUnits(v.Shots, shotId);
         if (todo.Count == 0)
             throw new InvalidOperationException(shotId != null ? "Shot này không có lời thoại." : "Mọi câu thoại đều đã có giọng đọc — bấm \"Đọc lại\" ở từng shot nếu muốn đổi.");
         v.Status = "Generating";
-        v.Progress = $"Đang đọc {todo.Count} câu thoại bằng giọng AI…";
+        v.Progress = $"Đang đọc {todo.Count} đoạn lời bằng giọng AI…";
         v.ErrorMessage = null;
         await _db.SaveChangesAsync(ct);
         _jobs.Enqueue<StudioService>(s => s.RunVoicesAsync(id, shotId, CancellationToken.None));
@@ -938,21 +1088,25 @@ Trả về JSON: { ""sounds"": [""...""], ""caption"": ""..."", ""musicTrackId""
         var v = await _db.StudioVideos.Include(x => x.Shots).FirstOrDefaultAsync(x => x.Id == id, ct);
         if (v == null || v.Status != "Generating") return;
         var bible = ReadBible(v.BibleJson);
-        var todo = v.Shots.OrderBy(s => s.Index).Where(s => s.Dialogue != null && (shotId != null ? s.Id == shotId : s.VoiceBlobId == null)).ToList();
+        var todo = VoiceUnits(v.Shots, shotId);
         var errors = new List<string>();
         var n = 0;
-        foreach (var s in todo)
+        foreach (var unit in todo)
         {
-            v.Progress = $"Đang đọc câu thoại {++n}/{todo.Count} (shot {s.Index})…";
+            var take = InSceneTake(unit[0]);
+            v.Progress = take
+                ? $"Đang đọc lời bình {++n}/{todo.Count} (cảnh {unit[0].Scene}, liền một mạch)…"
+                : $"Đang đọc câu thoại {++n}/{todo.Count} (shot {unit[0].Index})…";
             await _db.SaveChangesAsync(ct);
             try
             {
-                await MakeVoiceAsync(v, bible, s, ct);
+                if (take) await MakeSceneVoiceAsync(v, bible, unit, ct);
+                else await MakeVoiceAsync(v, bible, unit[0], ct);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                s.ErrorMessage = "Giọng đọc: " + ex.Message;
-                errors.Add($"shot {s.Index}");
+                foreach (var s in unit.Where(s => s.Dialogue != null)) s.ErrorMessage = "Giọng đọc: " + ex.Message;
+                errors.Add(take ? $"cảnh {unit[0].Scene}" : $"shot {unit[0].Index}");
             }
             await _db.SaveChangesAsync(ct);
         }
@@ -1076,6 +1230,114 @@ Trả về JSON: { ""sounds"": [""...""], ""caption"": ""..."", ""musicTrackId""
         await _db.SaveChangesAsync(ct);
     }
 
+    /// <summary>A shot whose words belong to its scene's single narration take (library scripts; not a character's own line).</summary>
+    public static bool InSceneTake(StudioShot s) => s.Scene != null && (s.Dialogue == null || IsNarrator(s.Speaker));
+
+    /// <summary>The shots of each scene read in one take (in order), for scenes that have narration.</summary>
+    public static List<List<StudioShot>> SceneTakes(IEnumerable<StudioShot> shots) =>
+        shots.Where(InSceneTake).OrderBy(s => s.Index).GroupBy(s => s.Scene!.Value)
+            .Select(g => g.ToList()).Where(g => g.Any(s => s.Dialogue != null)).ToList();
+
+    /// <summary>The shot holding a take's audio: the scene's first spoken shot (the take starts there).</summary>
+    public static StudioShot TakeOwner(IReadOnlyList<StudioShot> take) => take.First(s => s.Dialogue != null);
+
+    /// <summary>
+    /// What has to be read: scene takes and single lines without a voice yet — or, for <paramref name="shotId"/>, that
+    /// shot's line again (its whole scene take when it is part of one).
+    /// </summary>
+    public static List<List<StudioShot>> VoiceUnits(IEnumerable<StudioShot> all, Guid? shotId)
+    {
+        var shots = all.OrderBy(s => s.Index).ToList();
+        var takes = SceneTakes(shots);
+        if (shotId != null)
+        {
+            var shot = shots.FirstOrDefault(s => s.Id == shotId);
+            if (shot == null) return new();
+            if (takes.FirstOrDefault(t => t.Contains(shot)) is { } take) return new() { take };
+            return shot.Dialogue != null ? new() { new() { shot } } : new();
+        }
+        var units = takes.Where(t => TakeOwner(t).VoiceBlobId == null).ToList();
+        units.AddRange(shots.Where(s => s.Dialogue != null && !InSceneTake(s) && s.VoiceBlobId == null).Select(s => new List<StudioShot> { s }));
+        return units.OrderBy(u => u[0].Index).ToList();
+    }
+
+    public static int WordCount(string? text) => string.IsNullOrWhiteSpace(text) ? 0 : text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Length;
+
+    /// <summary>
+    /// Clip lengths for a scene read in one take of <paramref name="seconds"/>, from its first spoken shot on. Each
+    /// spoken shot lasts about as long as its own words take to say (Vietnamese words ≈ syllables, so their share of
+    /// the take is a good clock), rounded on the running total so the picture never drifts more than half a second
+    /// from the words; the last spoken shot holds the end of the take plus a breath. Shots that already have a clip
+    /// keep their length. A take longer than the scene can ever be is refused.
+    /// </summary>
+    public static int[] FitSceneTake(IReadOnlyList<(int Words, int Duration, bool Fixed)> shots, double seconds)
+    {
+        const double lead = 0.25; // the voice starts a quarter second into the first clip
+        var total = Math.Max(1, shots.Sum(x => x.Words));
+        var lastSpoken = Enumerable.Range(0, shots.Count).Where(i => shots[i].Words > 0).DefaultIfEmpty(shots.Count - 1).Last();
+        var d = new int[shots.Count];
+        double spoken = lead;
+        var placed = 0;
+        for (var k = 0; k < shots.Count; k++)
+        {
+            var x = shots[k];
+            if (x.Words > 0) spoken += seconds * x.Words / total;
+            if (x.Fixed) d[k] = x.Duration;
+            else if (x.Words > 0)
+            {
+                var end = k == lastSpoken ? (int)Math.Ceiling(lead + seconds + VoiceTail - 1e-6) : (int)Math.Round(spoken, MidpointRounding.AwayFromZero);
+                d[k] = SeedanceVideoClient.ClampSeconds(end - placed);
+            }
+            else d[k] = SeedanceVideoClient.ClampSeconds(x.Duration);
+            placed += d[k];
+        }
+        var needed = lead + seconds + MinVoiceRoom;
+        for (var k = lastSpoken; k >= 0 && d.Sum() < needed - 1e-6; k--)
+            if (!shots[k].Fixed) d[k] = Math.Min(SeedanceVideoClient.MaxSeconds, d[k] + (int)Math.Ceiling(needed - d.Sum() - 1e-6));
+        if (d.Sum() < needed - 1e-6)
+            throw new InvalidOperationException($"Lời bình của cảnh đọc mất {seconds:0.0}s — dài hơn cả cảnh có thể chứa ({d.Sum()}s). " +
+                                                "Thêm 1 shot cho cảnh này hoặc rút gọn lời bình.");
+        return d;
+    }
+
+    /// <summary>
+    /// Reads a scene's narration in ONE take (its own acting direction, so it flows and keeps its emotion instead of
+    /// restarting at every cut) and times the scene's clips to it. The audio sits on the first spoken shot and runs on
+    /// over the following shots when the video is put together.
+    /// </summary>
+    private async Task MakeSceneVoiceAsync(StudioVideo v, Bible bible, List<StudioShot> take, CancellationToken ct)
+    {
+        var owner = TakeOwner(take);
+        var span = take.Skip(take.IndexOf(owner)).ToList();
+        var text = string.Join(" ", span.Where(s => s.Dialogue != null).Select(s => s.Dialogue!.Trim()));
+        var voice = VoiceFor(bible, owner.Speaker);
+        var style = !string.IsNullOrWhiteSpace(owner.VoiceStyle) ? owner.VoiceStyle : take.Select(s => s.VoiceStyle).FirstOrDefault(x => !string.IsNullOrWhiteSpace(x));
+        var (audio, seconds, fromCache) = await _voices.SpeakAsync(v.Id, text, voice, SpeedFor(bible, owner.Speaker), ct, style);
+        var durations = FitSceneTake(span.Select(s => (WordCount(s.Dialogue), s.DurationSeconds, s.ClipBlobId != null && s.Status == "Done")).ToList(), seconds);
+
+        foreach (var s in take.Where(s => s.VoiceBlobId != null))
+        {
+            await DeleteBlobAsync(s.VoiceBlobId!.Value, ct);
+            s.VoiceBlobId = null;
+            s.VoiceSeconds = null;
+        }
+        var blob = new StudioBlob { MimeType = "audio/mp4", Data = audio, SizeBytes = audio.Length };
+        _db.StudioBlobs.Add(blob);
+        owner.VoiceBlobId = blob.Id;
+        owner.VoiceSeconds = seconds;
+        for (var k = 0; k < span.Count; k++) span[k].DurationSeconds = durations[k];
+        foreach (var s in take.Where(s => s.ErrorMessage?.StartsWith("Giọng đọc") == true)) s.ErrorMessage = null;
+        var cost = fromCache ? 0m : Math.Round((decimal)seconds * _voices.PricePerSecond, 5);
+        owner.CostUsd += cost;
+        v.ActualCostUsd += cost;
+        _db.StudioCostRecords.Add(new StudioCostRecord
+        {
+            StudioVideoId = v.Id, StudioShotId = owner.Id, Kind = "Voice", Model = voice, Seconds = seconds, CostUsd = cost,
+            Note = $"lời bình cảnh {owner.Scene} (shot {span[0].Index}–{span[^1].Index}, liền một mạch)" + (fromCache ? " (dùng lại, miễn phí)" : "")
+        });
+        await _db.SaveChangesAsync(ct);
+    }
+
     /// <summary>Whether a line read in <paramref name="voiceSeconds"/> fits one clip (with a little tolerance for rounding).</summary>
     public static bool FitsOneClip(double voiceSeconds) => voiceSeconds + MinVoiceRoom <= SeedanceVideoClient.MaxSeconds + 1e-6;
 
@@ -1129,8 +1391,33 @@ Trả về JSON: { ""sounds"": [""...""], ""caption"": ""..."", ""musicTrackId""
         var done = 0;
         string? accountProblem = null;
 
+        // 0. each scene's narration in one take first: its length sets the lengths of the scene's clips
+        var noVoice = new HashSet<Guid>();
+        foreach (var take in SceneTakes(v.Shots))
+        {
+            if (TakeOwner(take).VoiceBlobId != null || !take.Any(todo.Contains)) continue;
+            v.Progress = $"Đang đọc lời bình cảnh {take[0].Scene} (liền một mạch)…";
+            await _db.SaveChangesAsync(ct);
+            try
+            {
+                await MakeSceneVoiceAsync(v, bible, take, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                foreach (var s in take.Where(todo.Contains))
+                {
+                    s.Status = "Failed";
+                    s.ErrorMessage = "Giọng đọc: " + ex.Message;
+                    noVoice.Add(s.Id); // no clip paid for a scene whose narration can't be voiced
+                }
+                failed.Add($"cảnh {take[0].Scene}: Giọng đọc: {ex.Message}");
+                await _db.SaveChangesAsync(ct);
+            }
+        }
+
         foreach (var shot in todo)
         {
+            if (noVoice.Contains(shot.Id)) continue;
             v.Progress = $"Đang tạo clip {++done}/{todo.Count} (shot {shot.Index})…";
             // a job already paid for and not turned into a clip yet (restart, timeout, failed download) is picked up
             // again instead of paying for a new one
@@ -1138,8 +1425,8 @@ Trả về JSON: { ""sounds"": [""...""], ""caption"": ""..."", ""musicTrackId""
             shot.Status = "Generating";
             await _db.SaveChangesAsync(ct);
 
-            // 1. the line first: its length decides the clip's length
-            if (shot.Dialogue != null && shot.VoiceBlobId == null)
+            // 1. the line first: its length decides the clip's length (scene takes were read above)
+            if (shot.Dialogue != null && shot.VoiceBlobId == null && !InSceneTake(shot))
             {
                 try { await MakeVoiceAsync(v, bible, shot, ct); }
                 catch (Exception ex) when (ex is not OperationCanceledException)
@@ -1268,6 +1555,7 @@ Trả về JSON: { ""sounds"": [""...""], ""caption"": ""..."", ""musicTrackId""
     {
         var sb = new StringBuilder();
         sb.Append($"Live-action cinematic film shot, photorealistic, {(v.AspectRatio == "16:9" ? "horizontal 16:9" : "vertical 9:16")} framing. ");
+        sb.Append("Documentary realism: real ordinary people with natural skin texture and true-to-life proportions, lived-in places, authentic period details. ");
         var location = bible.Location(shot.Location);
         if (location != null) sb.Append("Setting: ").Append(location.Look.TrimEnd('.')).Append(". ");
         else if (!string.IsNullOrWhiteSpace(shot.Location)) sb.Append("Setting: ").Append(shot.Location.TrimEnd('.')).Append(". ");
@@ -1285,7 +1573,8 @@ Trả về JSON: { ""sounds"": [""...""], ""caption"": ""..."", ""musicTrackId""
             sb.Append("Nobody is talking to the camera. ");
         if (!string.IsNullOrWhiteSpace(v.StyleNotes)) sb.Append("Style: ").Append(v.StyleNotes!.TrimEnd('.')).Append(". ");
         sb.Append("Continuous natural motion for the whole clip (people keep acting, background alive, smooth camera); no frozen frames, no slow motion. ");
-        sb.Append("Consistent faces and costumes, realistic hands. No text, no subtitles, no captions, no logos, no watermark.");
+        sb.Append("Same people and places as the rest of this film: keep every face, hairstyle, body and costume exactly as described. ");
+        sb.Append("Realistic hands. No text, no subtitles, no captions, no logos, no watermark.");
         return sb.ToString();
     }
 

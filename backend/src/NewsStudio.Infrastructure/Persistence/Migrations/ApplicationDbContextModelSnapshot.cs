@@ -1815,6 +1815,9 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                         .HasMaxLength(200)
                         .HasColumnType("character varying(200)");
 
+                    b.Property<int?>("Scene")
+                        .HasColumnType("integer");
+
                     b.Property<Guid?>("SfxBlobId")
                         .HasColumnType("uuid");
 
@@ -1841,6 +1844,9 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
 
                     b.Property<double?>("VoiceSeconds")
                         .HasColumnType("double precision");
+
+                    b.Property<string>("VoiceStyle")
+                        .HasColumnType("text");
 
                     b.HasKey("Id");
 

@@ -26,6 +26,11 @@ public class StudioShotDto
     public bool HasVoice { get; set; }
     public double? VoiceSeconds { get; set; }
     public bool HasSfx { get; set; }
+    /// <summary>Scene of a library script whose narration is read in one take (null = this shot's own line).</summary>
+    public int? Scene { get; set; }
+    public string? VoiceStyle { get; set; }
+    /// <summary>For a shot whose line is part of its scene's single take: the index of the shot that holds that take.</summary>
+    public int? VoiceFromShot { get; set; }
     public string Status { get; set; } = "Pending";
     public bool HasClip { get; set; }
     public decimal CostUsd { get; set; }
@@ -123,6 +128,8 @@ public class StudioShotInputDto
     public string? Speaker { get; set; }
     public string? Dialogue { get; set; }
     public string? Sound { get; set; }
+    public int? Scene { get; set; }
+    public string? VoiceStyle { get; set; }
 }
 
 public class StudioCostSummaryDto

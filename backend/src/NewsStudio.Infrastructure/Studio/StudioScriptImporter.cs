@@ -31,6 +31,23 @@ public static class StudioScriptImporter
 
     public sealed record ImportedShot(int Scene, int Duration, string Action, string Camera, string? Dialogue, string? Sound);
 
+    /// <summary>
+    /// How the narrator performs a script of this mood (English direction for the TTS model, sent apart from the
+    /// words). The preparation step may refine it per scene.
+    /// </summary>
+    public static string NarratorStyleFor(string? mood)
+    {
+        var m = (mood ?? "").ToLowerInvariant();
+        var core =
+            m.Contains("nghẹn") || m.Contains("nước mắt") ? "a gentle Vietnamese woman remembering her poor childhood, slow and tender, voice soft and catching with tears at the saddest words"
+            : m.Contains("da diết") || m.Contains("day dứt") || m.Contains("nhớ cha mẹ") ? "a warm Vietnamese man remembering his late parents, deep and heartfelt, slow and reflective, longing in his voice"
+            : m.Contains("xót xa") || m.Contains("thương quê") ? "a weathered Vietnamese man telling a bittersweet memory of his village, low, sincere and compassionate, unhurried"
+            : m.Contains("hóm hỉnh") || m.Contains("ngây ngô") || m.Contains("vui") ? "a playful Vietnamese storyteller recalling childhood mischief, light and smiling, lively but natural rhythm"
+            : m.Contains("ấm áp") || m.Contains("hoài niệm") ? "a warm, gentle Vietnamese woman telling a cozy nostalgic memory, a soft smile in her voice, calm and intimate"
+            : "a warm, sincere Vietnamese storyteller sharing a nostalgic memory, intimate and unhurried";
+        return core + "; natural native Vietnamese, like talking to a close friend, real breaths and pauses between sentences, never like a newsreader or a robot";
+    }
+
     /// <summary>Narrator voice and reading speed that suit the script's mood (the user can change both).</summary>
     public static (string Voice, string Gender, string Speed) NarratorFor(string? mood)
     {
@@ -118,13 +135,18 @@ public static class StudioScriptImporter
             var scene = s.Scenes[i];
             var prompt = MotionPrompt(string.IsNullOrWhiteSpace(scene.PromptEn) ? scene.VisualVi ?? scene.Title ?? "" : scene.PromptEn!);
             if (prompt.Length == 0) continue;
-            var pieces = SplitNarration(NarrationOf(s, i));
+            var narration = NarrationOf(s, i);
+            var pieces = SplitNarration(narration);
             var sceneSeconds = Math.Max(scene.DurationSeconds, 4);
-            var count = Math.Clamp(Math.Max(pieces.Count, (int)Math.Ceiling(sceneSeconds / 10.0)), 1, MaxShotsPerScene);
+            var wanted = Math.Clamp((int)Math.Ceiling(sceneSeconds / 10.0), 1, MaxShotsPerScene);
+            // the scene is read in ONE take running over its shots: rather than silent shots between the words,
+            // cut the narration finer so every picture carries (and illustrates) a piece of it
+            for (var max = MaxWordsPerShot - 4; pieces.Count < wanted && max >= 8; max -= 4) pieces = SplitNarration(narration, max);
+            var count = Math.Clamp(Math.Max(pieces.Count, wanted), 1, MaxShotsPerScene);
             count = Math.Max(count, pieces.Count); // never drop narration
-            // spread the spoken pieces over the scene's shots; the rest are silent picture beats
+            // spoken pieces first, in order; any silent picture beats close the scene after the words
             var lineFor = new string?[count];
-            for (var p = 0; p < pieces.Count; p++) lineFor[(int)Math.Floor(p * (double)count / pieces.Count)] = pieces[p];
+            for (var p = 0; p < pieces.Count; p++) lineFor[p] = pieces[p];
             var spoken = lineFor.Where(l => l != null).Sum(l => StudioService.SecondsToSay(l));
             var silentShots = lineFor.Count(l => l == null);
             var silentLength = silentShots == 0 ? 0 : Math.Clamp((int)Math.Round((sceneSeconds - spoken) / (double)silentShots), 4, 8);

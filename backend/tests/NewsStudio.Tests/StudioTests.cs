@@ -418,14 +418,128 @@ public class StudioTests
     public void Speed_is_normalized(string input, string expected) => StudioVoices.NormalizeSpeed(input).Should().Be(expected);
 
     [Fact]
-    public void Prepare_answer_must_translate_every_sound()
+    public void Imported_scenes_put_the_words_first_and_any_silent_beat_last()
+    {
+        var shots = StudioScriptImporter.BuildShots(LibraryScript());
+        foreach (var scene in shots.GroupBy(x => x.Scene))
+        {
+            var lines = scene.Select(x => x.Dialogue != null).ToList();
+            lines.SkipWhile(x => x).Should().NotContain(true, "the scene is read in one take: no silent shot between its words");
+        }
+        StudioScriptImporter.NarratorStyleFor("Nghẹn ngào rớt nước mắt").Should().Contain("tears").And.Contain("never like a newsreader");
+    }
+
+    [Fact]
+    public void Direction_answer_must_describe_most_shots()
     {
         var song = Guid.NewGuid();
-        var ok = StudioService.ParsePrepare($$"""{"sounds":["rain on banana leaves","a soft sigh"],"caption":"Nồi cơm của mẹ #kyuc","musicTrackId":"{{song}}"}""", 2, new HashSet<Guid> { song });
-        ok.Sounds.Should().Equal("rain on banana leaves", "a soft sigh");
-        ok.MusicTrackId.Should().Be(song);
-        var act = () => StudioService.ParsePrepare("""{"sounds":["one"]}""", 2, new HashSet<Guid>());
-        act.Should().Throw<InvalidOperationException>();
+        var json = $$"""
+            {"caption":"Nồi cơm của mẹ #kyuc","musicTrackId":"{{song}}",
+             "characters":[{"name":"Mẹ","gender":"female","look":"Vietnamese woman, 38, thin, oval sun-tanned face, hair in a low bun"},
+                           {"name":"Lời dẫn","gender":"female","look":"narrator"},
+                           {"name":"Bé Tí","gender":"male","look":"Vietnamese boy, 8, skinny, shaved head with a tuft, big dark eyes"}],
+             "locations":[{"name":"Bếp tranh","look":"mud-brick kitchen hut with a straw roof, clay stove, soot-black walls"}],
+             "scenes":[{"scene":1,"location":"Bếp tranh","time":"late afternoon, heavy rain, dim grey light",
+                        "wardrobe":{"Mẹ":"faded brown blouse with patched elbows","Bé Tí":"oversized white shirt"},
+                        "voiceStyle":"tender, slow, voice catching","sound":"heavy rain on banana leaves",
+                        "shots":[{"shot":1,"cast":["Mẹ","Ai đó","Lời dẫn"],"action":"Mẹ blows on the fire.","camera":"wide shot, slow push-in"},
+                                 {"shot":2,"cast":["Bé Tí"],"action":"Bé Tí watches the pot","camera":"medium shot"}]}]}
+            """;
+        var d = StudioService.ParseDirection(json, 2, new HashSet<Guid> { song });
+        d.MusicTrackId.Should().Be(song);
+        d.Characters.Select(c => c.Name).Should().Equal("Mẹ", "Bé Tí"); // narrator is not a person in the picture
+
+        var video = new StudioVideo
+        {
+            BibleJson = JsonSerializer.Serialize(new { characters = new[] { new { name = "Lời dẫn", gender = "female", look = "", voice = "gemini:Sulafat", speed = "-8%" } } },
+                new JsonSerializerOptions(JsonSerializerDefaults.Web))
+        };
+        var one = new StudioShot { Index = 1, Scene = 1, Action = "original prompt", Dialogue = "Có những đứa trẻ…", Speaker = "Lời dẫn" };
+        var two = new StudioShot { Index = 2, Scene = 1, Action = "original prompt", Dialogue = "Mẹ khẽ cười…", Speaker = "Lời dẫn" };
+        video.Shots.Add(one);
+        video.Shots.Add(two);
+        StudioService.ApplyDirection(video, d);
+
+        var bible = StudioService.ReadBible(video.BibleJson);
+        bible.Characters.Select(c => c.Name).Should().Equal("Lời dẫn", "Mẹ", "Bé Tí");
+        bible.Characters[0].Voice.Should().Be("gemini:Sulafat");                     // the chosen narrator voice stays
+        one.Location.Should().Be("Bếp tranh");
+        StudioService.Names(one.CastJson).Should().Equal("Mẹ");                       // unknown + narrator dropped
+        one.Action.Should().Be("Mẹ blows on the fire. Wardrobe: Mẹ wears faded brown blouse with patched elbows. Time and light: late afternoon, heavy rain, dim grey light.");
+        two.Action.Should().Contain("Bé Tí wears oversized white shirt").And.NotContain("Mẹ wears");  // only who is in frame
+        two.Action.Should().Contain("late afternoon, heavy rain");                                    // same light in every shot of the scene
+        one.Sound.Should().Be("heavy rain on banana leaves");
+        one.VoiceStyle.Should().Be("tender, slow, voice catching");
+
+        var prompt = StudioService.BuildShotPrompt(new StudioVideo { AspectRatio = "9:16" }, bible, one);
+        prompt.Should().Contain("Setting: mud-brick kitchen hut").And.Contain("Mẹ — Vietnamese woman, 38").And.Contain("keep every face, hairstyle, body and costume");
+
+        var tooFew = () => StudioService.ParseDirection("""{"scenes":[{"scene":1,"shots":[{"shot":1,"action":"x"}]}]}""", 5, new HashSet<Guid>());
+        tooFew.Should().Throw<InvalidOperationException>();
+    }
+
+    [Fact]
+    public void Scene_take_times_each_clip_to_its_words()
+    {
+        // 3 spoken shots of 10, 20, 10 words read in 13 s: the words' share of the take sets each clip
+        var d = StudioService.FitSceneTake(new[] { (10, 4, false), (20, 6, false), (10, 4, false) }, 13);
+        d.Should().Equal(4, 6, 4);                          // words end at 3.5 → 4, 10 → 10; 13.25 + breath → 14
+        d.Sum().Should().BeGreaterThanOrEqualTo(14);        // the whole take plays inside the scene
+        d.Should().OnlyContain(x => x >= 2 && x <= 12);
+
+        // a shot that already has its clip keeps its length; a silent closing beat keeps its own
+        StudioService.FitSceneTake(new[] { (10, 8, true), (10, 4, false), (0, 5, false) }, 9).Should().Equal(8, 2, 5);
+
+        // a take the scene can never hold is refused before any clip is paid for
+        var tooLong = () => StudioService.FitSceneTake(new[] { (10, 4, false) }, 20);
+        tooLong.Should().Throw<InvalidOperationException>().WithMessage("*Thêm 1 shot*");
+    }
+
+    [Fact]
+    public void A_scene_is_read_in_one_take_and_a_character_line_alone()
+    {
+        StudioShot Shot(int i, int? scene, string? line, string? speaker = "Lời dẫn") =>
+            new() { Id = Guid.NewGuid(), Index = i, Scene = scene, Dialogue = line, Speaker = line == null ? null : speaker };
+        var shots = new List<StudioShot>
+        {
+            Shot(1, 1, null), Shot(2, 1, "Câu một."), Shot(3, 1, "Câu hai."), Shot(4, 1, null),
+            Shot(5, 2, "Mẹ ơi!", "Bé Tí"),                 // a character's own line: read on its own
+            Shot(6, 2, "Câu ba."),
+            Shot(7, null, "Lời của kế hoạch AI."),         // planned video: one line per shot as before
+        };
+        var takes = StudioService.SceneTakes(shots);
+        takes.Select(t => t.Select(s => s.Index)).Should().BeEquivalentTo(new[] { new[] { 1, 2, 3, 4 }, new[] { 6 } }, o => o.WithStrictOrdering());
+        StudioService.TakeOwner(takes[0]).Index.Should().Be(2);           // the take starts at the first words
+
+        StudioService.VoiceUnits(shots, null).Select(u => u[0].Index).Should().Equal(1, 5, 6, 7);
+        StudioService.VoiceUnits(shots, shots[2].Id).Single().Select(s => s.Index).Should().Equal(1, 2, 3, 4); // "Đọc lại" redoes the scene
+        shots[1].VoiceBlobId = Guid.NewGuid();
+        StudioService.VoiceUnits(shots, null).Select(u => u[0].Index).Should().Equal(5, 6, 7);
+    }
+
+    [Fact]
+    public void Styled_take_sends_the_direction_apart_from_the_words()
+    {
+        var body = NewsStudio.Infrastructure.Rendering.GeminiTtsService.BuildExpressiveRequest("gemini-3.8-flash-tts", "Sulafat", "Mẹ khẽ cười.", "tender, slow");
+        body["model"]!.GetValue<string>().Should().Be("gemini-3.8-flash-tts");
+        var content = body["input"]![0]!["content"]![0]!;
+        content["text"]!.GetValue<string>().Should().Be("Mẹ khẽ cười.");                       // verbatim transcript only
+        content["annotations"]![0]!["type"]!.GetValue<string>().Should().Be("speech_metadata");
+        content["annotations"]![0]!["style"]!.GetValue<string>().Should().Be("tender, slow");
+        body["generation_config"]!["speech_config"]![0]!["voice"]!.GetValue<string>().Should().Be("Sulafat");
+
+        var pcm = Enumerable.Range(0, 9600).Select(i => (byte)(i % 251)).ToArray();
+        using var wav = new MemoryStream();
+        using (var w = new BinaryWriter(wav, System.Text.Encoding.ASCII, leaveOpen: true))
+        {
+            w.Write("RIFF"u8.ToArray()); w.Write(36 + pcm.Length); w.Write("WAVE"u8.ToArray());
+            w.Write("fmt "u8.ToArray()); w.Write(16); w.Write((short)1); w.Write((short)1); w.Write(24000); w.Write(48000); w.Write((short)2); w.Write((short)16);
+            w.Write("data"u8.ToArray()); w.Write(pcm.Length); w.Write(pcm);
+        }
+        var answer = JsonSerializer.Serialize(new { steps = new object[] { new { content = new object[] { new { type = "audio", mime_type = "audio/wav", data = Convert.ToBase64String(wav.ToArray()) } } } } });
+        NewsStudio.Infrastructure.Rendering.GeminiTtsService.ParseExpressiveAudio(answer).Should().Equal(pcm);
+        NewsStudio.Infrastructure.Rendering.GeminiTtsService.ParseExpressiveAudio("""{"steps":[]}""").Should().BeNull();
+        StudioVoices.MaxPlausibleSeconds(string.Join(" ", Enumerable.Repeat("chữ", 36))).Should().Be(24);
     }
 
     // ───────────── Bible, planning, prompts ─────────────
@@ -564,6 +678,50 @@ public class StudioTests
             var quiet = await Run($"-ss 3.5 -t 1 -i \"{output}\" -af volumedetect -f null -");
             double Mean(string log) => double.Parse(System.Text.RegularExpressions.Regex.Match(log, @"mean_volume: (-?[\d.]+) dB").Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture);
             Mean(loud).Should().BeGreaterThan(Mean(quiet) + 20); // first clip carries the line, second is silent
+        }
+        finally
+        {
+            StudioMedia.TryDelete(dir);
+        }
+    }
+
+    [Fact]
+    public async Task Compose_lets_a_scene_take_run_across_cuts()
+    {
+        var ffmpeg = StudioMedia.LocateFfmpeg();
+        if (ffmpeg == null) return;
+        var dir = StudioMedia.TempDir();
+        try
+        {
+            async Task<string> Run(string args)
+            {
+                using var p = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(ffmpeg, "-hide_banner -y " + args)
+                    { UseShellExecute = false, RedirectStandardError = true, StandardErrorEncoding = System.Text.Encoding.UTF8 })!;
+                var err = await p.StandardError.ReadToEndAsync();
+                await p.WaitForExitAsync();
+                p.ExitCode.Should().Be(0, err);
+                return err;
+            }
+            var clips = new[] { "a", "b", "c" }.Select(n => Path.Combine(dir, n + ".mp4")).ToArray();
+            foreach (var c in clips) await Run($"-loglevel error -f lavfi -i testsrc=size=720x1280:rate=24 -t 2 -c:v libx264 -pix_fmt yuv420p \"{c}\"");
+            var take = Path.Combine(dir, "take.m4a");  // one 3.5 s take on clip a, running into clip b
+            var line = Path.Combine(dir, "line.m4a");  // the next voice, on clip c
+            await Run($"-loglevel error -f lavfi -i sine=f=300:sample_rate=48000 -t 3.5 -c:a aac \"{take}\"");
+            await Run($"-loglevel error -f lavfi -i sine=f=300:sample_rate=48000 -t 1 -c:a aac \"{line}\"");
+
+            var media = new StudioMedia(new ConfigurationBuilder().Build());
+            var output = Path.Combine(dir, "final.mp4");
+            var seconds = await media.ComposeAsync(clips, null, 0.15, "9:16", "720p", output, CancellationToken.None, voices: new string?[] { take, null, line });
+
+            seconds.Should().BeApproximately(6.0, 0.3);
+            async Task<double> Mean(double from, double length)
+            {
+                var log = await Run($"-ss {from.ToString(System.Globalization.CultureInfo.InvariantCulture)} -t {length.ToString(System.Globalization.CultureInfo.InvariantCulture)} -i \"{output}\" -af volumedetect -f null -");
+                return double.Parse(System.Text.RegularExpressions.Regex.Match(log, @"mean_volume: (-?[\d.]+) dB").Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture);
+            }
+            (await Mean(2.3, 1.0)).Should().BeGreaterThan(-40, "the take goes on over the cut into clip b");
+            (await Mean(3.85, 0.25)).Should().BeLessThan(-60, "the take ends with its words, before clip c's voice (from 4.25 s)");
+            (await Mean(4.4, 0.6)).Should().BeGreaterThan(-40);
         }
         finally
         {

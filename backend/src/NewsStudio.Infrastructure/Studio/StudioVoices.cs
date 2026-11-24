@@ -77,21 +77,38 @@ public class StudioVoices
         _configuration = configuration;
     }
 
+    /// <summary>Longest a take of these words can plausibly last (very slow, with pauses): ~1.8 words a second + 4 s.</summary>
+    public static double MaxPlausibleSeconds(string line) =>
+        line.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Length / 1.8 + 4;
+
     /// <summary>Gemini TTS ≈ $10 per million audio tokens at 25 tokens a second, plus the short text: ~$0.0003 a second.</summary>
     public decimal PricePerSecond =>
         decimal.TryParse(_configuration["Studio:VoicePricePerSecondUsd"], NumberStyles.Number, CultureInfo.InvariantCulture, out var p) && p >= 0 ? p : 0.0003m;
 
-    /// <summary>One spoken line as a compact AAC file (kept in the database: a few KB a second) and its length.</summary>
-    public async Task<(byte[] Audio, double Seconds, bool FromCache)> SpeakAsync(Guid videoId, string line, string voice, string? speed, CancellationToken ct)
+    /// <summary>
+    /// One spoken take as a compact AAC file (kept in the database: a few KB a second) and its length. A
+    /// <paramref name="style"/> (English acting direction) makes it performed rather than read; a take far longer
+    /// than its words could ever need (the direction spoken aloud) is read again without it.
+    /// </summary>
+    public async Task<(byte[] Audio, double Seconds, bool FromCache)> SpeakAsync(Guid videoId, string line, string voice, string? speed, CancellationToken ct,
+        string? style = null)
     {
-        var result = await _tts.SynthesizeSpeechWithSubtitlesAsync(new TtsSynthesisRequest
+        var request = new TtsSynthesisRequest
         {
             ProjectId = videoId,
             Text = line.Trim(),
             Voice = IsKnown(voice) ? voice : DefaultNarratorVoice,
             Speed = NormalizeSpeed(speed),
-            Provider = TtsProviderType.GoogleTts
-        }, ct);
+            Provider = TtsProviderType.GoogleTts,
+            Style = string.IsNullOrWhiteSpace(style) ? null : style.Trim()
+        };
+        var result = await _tts.SynthesizeSpeechWithSubtitlesAsync(request, ct);
+        if (request.Style != null && result.AudioDurationSeconds > MaxPlausibleSeconds(line))
+        {
+            try { File.Delete(result.AudioFilePath); } catch { /* best effort */ }
+            request.Style = null;
+            result = await _tts.SynthesizeSpeechWithSubtitlesAsync(request, ct);
+        }
         try
         {
             var aac = await _media.EncodeVoiceAsync(result.AudioFilePath, ct);
