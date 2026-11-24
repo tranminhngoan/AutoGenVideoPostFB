@@ -991,8 +991,9 @@ Trả về JSON: { ""sounds"": [""...""], ""caption"": ""..."", ""musicTrackId""
     // ═══════════════════════════════ Sound effects ═══════════════════════════════
 
     /// <summary>
-    /// Sound effects for one clip (MMAudio watches it and adds wind, footsteps, laughter…). A failure is shown on the
-    /// shot but never fails the clip: the video can still be made, just without that shot's effects.
+    /// Sound effects for one clip (ElevenLabs via the Vercel AI Gateway) from the shot's sound notes — for a library
+    /// script these are the script's own "âm thanh" lines, translated to English on import — exactly as long as the
+    /// clip. A failure is shown on the shot but never fails the clip: the video is still made, without that shot's effects.
     /// </summary>
     private async Task TryMakeSfxAsync(StudioVideo v, StudioShot s, byte[] clip, CancellationToken ct)
     {
@@ -1000,10 +1001,8 @@ Trả về JSON: { ""sounds"": [""...""], ""caption"": ""..."", ""musicTrackId""
         {
             var seconds = await _media.ProbeSecondsAsync(clip, ".mp4", ct);
             if (seconds <= 0) seconds = s.DurationSeconds;
-            // fal downloads the clip from the app's public address (open media endpoint); without one it goes inline
-            var clipUrl = _sfx.PublicBaseUrl() is { } baseUrl && s.ClipBlobId != null ? $"{baseUrl}/api/studio/shots/{s.Id}/clip" : null;
-            var result = await _sfx.GenerateAsync(clipUrl, clip, SoundEffectsClient.BuildPrompt(s.Sound, s.Action), seconds, v.Seed, ct);
-            var audio = await _media.ExtractAudioAsync(result, ct);
+            var result = await _sfx.GenerateAsync(SoundEffectsClient.BuildPrompt(s.Sound, s.Action), seconds, ct);
+            var audio = await _media.ExtractAudioAsync(result, ct, ".mp3");
             if (s.SfxBlobId != null) await DeleteBlobAsync(s.SfxBlobId.Value, ct);
             var blob = new StudioBlob { MimeType = "audio/mp4", Data = audio, SizeBytes = audio.Length };
             _db.StudioBlobs.Add(blob);
@@ -1014,7 +1013,7 @@ Trả về JSON: { ""sounds"": [""...""], ""caption"": ""..."", ""musicTrackId""
             v.ActualCostUsd += cost;
             _db.StudioCostRecords.Add(new StudioCostRecord
             {
-                StudioVideoId = v.Id, StudioShotId = s.Id, Kind = "Sfx", Model = "fal-ai/mmaudio-v2", Seconds = seconds, CostUsd = cost,
+                StudioVideoId = v.Id, StudioShotId = s.Id, Kind = "Sfx", Model = SoundEffectsClient.Model, Seconds = seconds, CostUsd = cost,
                 Note = $"hiệu ứng âm thanh shot {s.Index}"
             });
         }
@@ -1029,7 +1028,7 @@ Trả về JSON: { ""sounds"": [""...""], ""caption"": ""..."", ""musicTrackId""
     /// <summary>Adds sound effects to clips that have none (or redoes one shot's), then composes the video again.</summary>
     public async Task<StudioVideoDto> StartEffectsAsync(Guid id, Guid? shotId, CancellationToken ct)
     {
-        if (!_sfx.IsConfigured) throw new InvalidOperationException("Chưa có khoá fal.ai (biến FAL_KEY trên Railway) — chưa tạo được hiệu ứng âm thanh.");
+        if (!_sfx.IsConfigured) throw new InvalidOperationException("Chưa có khoá Vercel AI Gateway (AI_GATEWAY_API_KEY trên Railway) — chưa tạo được hiệu ứng âm thanh.");
         await ReconcileLostFilesAsync(id, ct);
         var v = await _db.StudioVideos.Include(x => x.Shots).FirstOrDefaultAsync(x => x.Id == id, ct) ?? throw new KeyNotFoundException("Không tìm thấy video.");
         EnsureNotBusy(v);

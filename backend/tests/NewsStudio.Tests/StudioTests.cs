@@ -204,70 +204,79 @@ public class StudioTests
             new((System.Net.HttpStatusCode)status) { Content = new StringContent(JsonSerializer.Serialize(new { error = new { message, type } })) };
     }
 
-    // ───────────── Sound effects (fal.ai MMAudio) ─────────────
+    // ───────────── Sound effects (ElevenLabs through the Vercel AI Gateway) ─────────────
 
     [Fact]
-    public void Sfx_request_keeps_voices_and_music_out()
+    public void Sfx_prompt_uses_the_script_sound_notes()
     {
-        var prompt = SoundEffectsClient.BuildPrompt("wind through bamboo, birds chirping.", "A farmer walks along the canal");
-        prompt.Should().Be("wind through bamboo, birds chirping. A farmer walks along the canal. Realistic sound effects and ambience only.");
-        var body = SoundEffectsClient.BuildRequest("https://app.test/api/studio/shots/1/clip", prompt, 45, 70000);
-        body["video_url"]!.GetValue<string>().Should().Be("https://app.test/api/studio/shots/1/clip");
-        body["negative_prompt"]!.GetValue<string>().Should().Contain("speech").And.Contain("music");
-        body["duration"]!.GetValue<double>().Should().Be(30); // model max
-        body["seed"]!.GetValue<int>().Should().Be(70000 % 65536);
-        SoundEffectsClient.BuildPrompt(null, "").Should().StartWith("natural ambient sound");
+        SoundEffectsClient.BuildPrompt("rain pattering on banana leaves, a wood fire crackling.", "A mother in a mud kitchen")
+            .Should().Be("rain pattering on banana leaves, a wood fire crackling");
+        SoundEffectsClient.BuildPrompt(null, "A farmer walks along the canal at dusk").Should().StartWith("soft natural ambience for this scene: A farmer walks");
+        var body = SoundEffectsClient.BuildRequest("rain", 40);
+        body["text"]!.GetValue<string>().Should().Be("rain");
+        body["outputFormat"]!.GetValue<string>().Should().Be("mp3");
+        body["providerOptions"]!["elevenlabs"]!["durationSeconds"]!.GetValue<double>().Should().Be(22); // model max
+        SoundEffectsClient.BuildRequest("rain", 6.4)["providerOptions"]!["elevenlabs"]!["durationSeconds"]!.GetValue<double>().Should().Be(6.4);
     }
-
-    [Theory]
-    [InlineData("""{"video":{"url":"https://fal.media/out.mp4","content_type":"application/octet-stream"}}""", "https://fal.media/out.mp4")]
-    [InlineData("""{"audio":{"url":"https://fal.media/out.wav"}}""", "https://fal.media/out.wav")]
-    [InlineData("""{"other":1}""", null)]
-    public void Sfx_result_file_is_found(string json, string? url) => SoundEffectsClient.ParseResultUrl(json).Should().Be(url);
 
     [Fact]
-    public async Task Sfx_job_is_queued_polled_and_downloaded()
+    public async Task Sfx_goes_through_the_gateway_speech_endpoint()
     {
-        var fal = new FakeFal();
-        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["Ai:Fal:ApiKey"] = "test-fal-key" }).Build();
-        var client = new SoundEffectsClient(new HttpClient(fal), config, Microsoft.Extensions.Logging.Abstractions.NullLogger<SoundEffectsClient>.Instance)
-        {
-            PollInterval = TimeSpan.FromMilliseconds(1)
-        };
-        var bytes = await client.GenerateAsync(null, new byte[] { 1, 2, 3 }, "rain", 6, 1, CancellationToken.None);
+        var gw = new FakeSpeechGateway();
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+            { ["Ai:Gateway:ApiKey"] = "test-gateway-key", ["Ai:Gateway:BaseUrl"] = "https://gw.test/v4/ai" }).Build();
+        var client = new SoundEffectsClient(new HttpClient(gw), config, Microsoft.Extensions.Logging.Abstractions.NullLogger<SoundEffectsClient>.Instance);
 
-        bytes.Should().Equal(FakeFal.Output);
-        fal.Auth.Should().OnlyContain(a => a == "Key test-fal-key");
-        fal.Submitted!["video_url"]!.GetValue<string>().Should().Be("data:video/mp4;base64,AQID"); // no public URL → inline
-        fal.Polls.Should().Be(2);
-        client.EstimateCost(10).Should().Be(0.01m);
+        var audio = await client.GenerateAsync("frogs croaking at dusk", 8, CancellationToken.None);
+
+        audio.Should().Equal(FakeSpeechGateway.Audio);
+        gw.Url.Should().Be("https://gw.test/v4/ai/speech-model");
+        gw.Headers["authorization"].Should().Be("Bearer test-gateway-key");
+        gw.Headers["ai-model-id"].Should().Be("elevenlabs/sound-effects-v2");
+        gw.Headers["ai-speech-model-specification-version"].Should().Be("4");
+        gw.Body!["text"]!.GetValue<string>().Should().Be("frogs croaking at dusk");
+        client.IsConfigured.Should().BeTrue(); // same key as the video clips
+        client.EstimateCost(10).Should().Be(0.02m);
     }
 
-    private sealed class FakeFal : HttpMessageHandler
+    private sealed class FakeSpeechGateway : HttpMessageHandler
     {
-        public static readonly byte[] Output = { 9, 8, 7, 6 };
-        public JsonObject? Submitted { get; private set; }
-        public int Polls { get; private set; }
-        public List<string> Auth { get; } = new();
+        public static readonly byte[] Audio = Enumerable.Range(0, 2048).Select(i => (byte)(i * 7)).ToArray();
+        public string? Url { get; private set; }
+        public JsonObject? Body { get; private set; }
+        public Dictionary<string, string> Headers { get; } = new(StringComparer.OrdinalIgnoreCase);
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
-            var url = request.RequestUri!.ToString();
-            if (url == "https://fal.media/out.mp4") return new HttpResponseMessage(System.Net.HttpStatusCode.OK) { Content = new ByteArrayContent(Output) };
-            Auth.Add(request.Headers.Authorization?.ToString() ?? "");
-            if (request.Method == HttpMethod.Post && url == "https://queue.fal.run/fal-ai/mmaudio-v2")
-            {
-                Submitted = JsonNode.Parse(await request.Content!.ReadAsStringAsync(ct))!.AsObject();
-                return Json("""{"request_id":"r1","status_url":"https://queue.fal.run/fal-ai/mmaudio-v2/requests/r1/status","response_url":"https://queue.fal.run/fal-ai/mmaudio-v2/requests/r1"}""");
-            }
-            if (url.EndsWith("/requests/r1/status"))
-                return Json(++Polls < 2 ? """{"status":"IN_PROGRESS"}""" : """{"status":"COMPLETED"}""");
-            if (url.EndsWith("/requests/r1")) return Json("""{"video":{"url":"https://fal.media/out.mp4"}}""");
-            return new HttpResponseMessage(System.Net.HttpStatusCode.NotFound);
+            Url = request.RequestUri!.ToString();
+            foreach (var h in request.Headers) Headers[h.Key] = string.Join(",", h.Value);
+            Body = JsonNode.Parse(await request.Content!.ReadAsStringAsync(ct))!.AsObject();
+            var json = JsonSerializer.Serialize(new { audio = Convert.ToBase64String(Audio), warnings = Array.Empty<object>() });
+            return new HttpResponseMessage(System.Net.HttpStatusCode.OK) { Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json") };
         }
+    }
 
-        private static HttpResponseMessage Json(string body) =>
-            new(System.Net.HttpStatusCode.OK) { Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json") };
+    [Fact]
+    public async Task An_mp3_effects_track_is_turned_into_compact_aac()
+    {
+        var ffmpeg = StudioMedia.LocateFfmpeg();
+        if (ffmpeg == null) return;
+        var dir = StudioMedia.TempDir();
+        try
+        {
+            var mp3 = Path.Combine(dir, "fx.mp3");
+            using (var p = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(ffmpeg,
+                       $"-hide_banner -loglevel error -y -f lavfi -i anoisesrc=d=3:c=pink -c:a libmp3lame \"{mp3}\"") { UseShellExecute = false })!)
+                await p.WaitForExitAsync();
+            var media = new StudioMedia(new ConfigurationBuilder().Build());
+            var aac = await media.ExtractAudioAsync(await File.ReadAllBytesAsync(mp3), CancellationToken.None, ".mp3");
+            aac.Length.Should().BeGreaterThan(1000);
+            (await media.ProbeSecondsAsync(aac, ".m4a", CancellationToken.None)).Should().BeApproximately(3, 0.3);
+        }
+        finally
+        {
+            StudioMedia.TryDelete(dir);
+        }
     }
 
     [Fact]

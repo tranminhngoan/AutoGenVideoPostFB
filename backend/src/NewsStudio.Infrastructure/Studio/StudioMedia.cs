@@ -232,7 +232,7 @@ public class StudioMedia
     /// padded to the clip.
     /// </summary>
     /// <param name="voices">Per clip, the spoken line (TTS), starting a quarter second in.</param>
-    /// <param name="effects">Per clip, its sound effects (MMAudio), mixed at <paramref name="effectsVolume"/>.</param>
+    /// <param name="effects">Per clip, its sound effects track, mixed at <paramref name="effectsVolume"/>.</param>
     public async Task<double> ComposeAsync(IReadOnlyList<string> clips, string? music, double musicVolume,
         string aspectRatio, string resolution, string output, CancellationToken ct, string? watermarkPng = null, string? brand = null,
         IReadOnlyList<string?>? voices = null, IReadOnlyList<string?>? effects = null, double effectsVolume = 0.7)
@@ -336,13 +336,14 @@ public class StudioMedia
         if (code != 0 || !File.Exists(output)) throw new InvalidOperationException($"FFmpeg không ghép được các đoạn: {Tail(err)}");
     }
 
-    /// <summary>The soundtrack of a video file (MMAudio returns the clip with its new audio) as compact AAC.</summary>
-    public async Task<byte[]> ExtractAudioAsync(byte[] video, CancellationToken ct)
+    /// <summary>The audio of a media file (an MP3 effects track, or a video's soundtrack) as compact AAC.</summary>
+    public async Task<byte[]> ExtractAudioAsync(byte[] media, CancellationToken ct, string extension = ".mp4")
     {
         var dir = TempDir();
+        var video = media;
         try
         {
-            var input = Path.Combine(dir, "in.mp4");
+            var input = Path.Combine(dir, "in" + extension);
             var output = Path.Combine(dir, "sound.m4a");
             await File.WriteAllBytesAsync(input, video, ct);
             if (!await HasAudioAsync(input, ct)) throw new InvalidOperationException("File trả về không có âm thanh.");

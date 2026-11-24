@@ -433,7 +433,7 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
       const cost = clipsWithoutSfx.reduce((s, x) => s + clampSecs(x.durationSeconds) * sfxPrice, 0);
       if (!(await confirm({
         title: `Thêm hiệu ứng âm thanh cho ${clipsWithoutSfx.length} clip?`,
-        description: `AI xem từng clip rồi tạo tiếng động khớp hình (gió, mưa, bước chân, tiếng cười, chim…), khoảng ${usd(cost, 3)}. Xong thì video tự ghép lại, nhạc nền vẫn giữ.`,
+        description: `AI tạo tiếng động theo mô tả âm thanh của từng shot (mưa, gió, bếp củi, chim, ếch nhái…), dài đúng bằng clip, khoảng ${usd(cost, 3)}. Xong thì video tự ghép lại, nhạc nền vẫn giữ.`,
         confirmLabel: `Thêm (~${usd(cost, 3)})`,
       }))) return;
       applyVideo(await studio.effects(videoId!), true);
@@ -585,7 +585,7 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
             </ol>
             <p className="text-[11px] text-fg-subtle">
               Mỗi phân cảnh dùng đúng prompt tiếng Anh của kịch bản, chia thành các clip ≤ 12s với góc máy khác nhau; lời bình (kèm hook và lời kết)
-              đọc bằng giọng AI theo cảm xúc; ghi chú âm thanh được dịch sang tiếng Anh để AI tạo tiếng động khớp hình; nhạc nền AI chọn hợp tâm trạng.
+              đọc bằng giọng AI theo cảm xúc; mô tả âm thanh của kịch bản được dịch sang tiếng Anh để AI tạo đúng tiếng động đó; nhạc nền AI chọn hợp tâm trạng.
             </p>
             <div className="grid gap-2 sm:grid-cols-[1fr_180px]">
               <Field label="Giọng lời bình (chọn theo cảm xúc kịch bản, đổi được)">
@@ -649,9 +649,9 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
           <Input value={form.styleNotes} onChange={(e) => setForm({ ...form, styleNotes: e.target.value })} disabled={locked} />
         </Field>
         <div className="grid gap-3 sm:grid-cols-3">
-          <Field label="Hiệu ứng âm thanh AI" hint={settings && !settings.sfxConfigured ? 'Chưa có khoá fal.ai (FAL_KEY trên Railway) — thêm khoá để bật.' : `Tiếng gió, mưa, bước chân, tiếng cười… khớp hình · ~${usd(sfxPrice, 3)}/giây`}>
+          <Field label="Hiệu ứng âm thanh AI" hint={settings && !settings.sfxConfigured ? 'Chưa có khoá Vercel AI Gateway (AI_GATEWAY_API_KEY) — thêm khoá để bật.' : `Tiếng mưa, gió, bếp củi, ếch nhái… theo mô tả âm thanh của từng shot · ~${usd(sfxPrice, 3)}/giây`}>
             <Select value={form.sfxEnabled ? 'on' : 'off'} onChange={(e) => setForm({ ...form, sfxEnabled: e.target.value === 'on' })} disabled={locked}>
-              <option value="on">Có — AI tạo tiếng động khớp từng clip</option>
+              <option value="on">Có — AI tạo tiếng động theo mô tả âm thanh của từng shot</option>
               <option value="off">Không</option>
             </Select>
           </Field>
@@ -888,7 +888,7 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
                             <Field label="Góc máy">
                               <Input value={s.camera} disabled={locked} onChange={(e) => updateShot(i, { camera: e.target.value })} />
                             </Field>
-                            <Field label="Hiệu ứng âm thanh (tiếng Anh, AI tạo khớp hình)">
+                            <Field label="Hiệu ứng âm thanh (tiếng Anh — AI tạo tiếng theo mô tả này)">
                               <Input value={s.sound ?? ''} disabled={locked} onChange={(e) => updateShot(i, { sound: e.target.value })} />
                             </Field>
                           </div>
@@ -968,7 +968,7 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
               <p className="text-xs text-fg-muted">
                 Mỗi shot là một <b>đoạn video chuyển động như phim</b> do <b>{models.find((m) => m.id === video.videoModel)?.label ?? video.videoModel}</b> tạo từ mô tả,
                 ở <b>{video.resolution}</b> ({usd(rateOf(video.videoModel, video.resolution), 4)}/giây). Video gốc không có tiếng: lời thoại được đọc bằng giọng AI,
-                {form.sfxEnabled ? ' AI tạo thêm tiếng động khớp hình (gió, mưa, bước chân, tiếng cười…),' : ''} rồi trộn với nhạc nền, ghép liền và xuất 1080p. Còn {pendingSeconds}s chưa tạo, ước tính <b>{usd(pendingCost)}</b>
+                {form.sfxEnabled ? ' AI tạo thêm tiếng động theo mô tả âm thanh của từng shot (mưa, gió, bếp củi…),' : ''} rồi trộn với nhạc nền, ghép liền và xuất 1080p. Còn {pendingSeconds}s chưa tạo, ước tính <b>{usd(pendingCost)}</b>
                 {remaining != null && <> · ngân sách tháng còn <b>{usd(remaining)}</b></>}.
               </p>
             )}

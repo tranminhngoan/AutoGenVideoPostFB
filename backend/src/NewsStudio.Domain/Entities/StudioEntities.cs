@@ -57,7 +57,7 @@ public class StudioVideo : BaseEntity
     public string BibleJson { get; set; } = "{}";
     /// <summary>Same seed for every clip of the video, to keep faces and look as alike as text-to-video allows.</summary>
     public int Seed { get; set; }
-    /// <summary>Add AI sound effects (MMAudio) matching each clip; their level in the mix.</summary>
+    /// <summary>Add AI sound effects (ElevenLabs, from each shot's sound notes); their level in the mix.</summary>
     public bool SfxEnabled { get; set; } = true;
     public double SfxVolume { get; set; } = 0.7;
 
@@ -105,7 +105,7 @@ public class StudioShot : BaseEntity
     /// <summary>The spoken line read by TTS (small AAC in the database) and its length.</summary>
     public Guid? VoiceBlobId { get; set; }
     public double? VoiceSeconds { get; set; }
-    /// <summary>Sound effects made from the clip by MMAudio (small AAC in the database).</summary>
+    /// <summary>Sound effects made for the shot by ElevenLabs (small AAC in the database).</summary>
     public Guid? SfxBlobId { get; set; }
 
     public string Status { get; set; } = "Pending"; // Pending, Generating, Done, Failed

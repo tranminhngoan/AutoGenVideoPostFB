@@ -9,25 +9,23 @@ using Microsoft.Extensions.Logging;
 namespace NewsStudio.Infrastructure.Studio;
 
 /// <summary>
-/// Sound effects that match the picture: fal.ai's MMAudio v2 (video-to-audio) watches a silent Seedance clip and adds
-/// the sounds of what happens in it — wind in the leaves, footsteps, a slammed table, laughter, rain, birds — in sync.
-/// Queue API: POST https://queue.fal.run/fal-ai/mmaudio-v2 → status_url / response_url, polled until COMPLETED; the
-/// result is the clip with its new soundtrack, whose audio is kept. The clip is passed as a public URL of the app (fal
-/// downloads it) or, without one, as a data URI. Key: Ai:Fal:ApiKey / FAL_KEY. Price ≈ $0.001 a second.
+/// Sound effects for a shot: ElevenLabs Sound Effects v2 through the Vercel AI Gateway — the same key and credit as the
+/// Seedance clips, no other account. It turns the shot's sound notes (the script's own "âm thanh" lines, translated to
+/// English when the script is imported) into an effects track exactly as long as the clip: rain on banana leaves, a
+/// crackling wood stove, frogs at dusk, footsteps on a dirt road… The AI SDK sends sound effects through the gateway's
+/// speech endpoint: POST {base}/speech-model with { text, outputFormat, providerOptions.elevenlabs.durationSeconds },
+/// answered with { audio: base64 }. Billed per second of audio (ElevenLabs list price ≈ $0.12 a minute).
 /// </summary>
 public class SoundEffectsClient
 {
-    private const string SubmitUrl = "https://queue.fal.run/fal-ai/mmaudio-v2";
-
-    /// <summary>What MMAudio must not add: voices are dubbed by TTS and the music comes from the user's library.</summary>
-    public const string NegativePrompt = "speech, talking, human voice, dialogue, narration, singing, music, melody, background music";
+    public const string Model = "elevenlabs/sound-effects-v2";
+    public const double MinSeconds = 0.5;
+    public const double MaxSeconds = 22;
+    private const string DefaultBaseUrl = "https://ai-gateway.vercel.sh/v4/ai";
 
     private readonly HttpClient _http;
     private readonly IConfiguration _configuration;
     private readonly ILogger<SoundEffectsClient> _logger;
-
-    public TimeSpan PollInterval { get; set; } = TimeSpan.FromSeconds(3);
-    public TimeSpan MaxWait { get; set; } = TimeSpan.FromMinutes(6);
 
     public SoundEffectsClient(HttpClient http, IConfiguration configuration, ILogger<SoundEffectsClient> logger)
     {
@@ -36,133 +34,90 @@ public class SoundEffectsClient
         _logger = logger;
     }
 
-    public static string? ApiKey(IConfiguration configuration) =>
-        NonEmpty(configuration["Ai:Fal:ApiKey"]) ?? NonEmpty(configuration["FAL_KEY"]) ?? NonEmpty(Environment.GetEnvironmentVariable("FAL_KEY"));
+    /// <summary>Same key as the video clips (AI_GATEWAY_API_KEY).</summary>
+    public bool IsConfigured => SeedanceVideoClient.ApiKey(_configuration) != null;
 
-    public bool IsConfigured => ApiKey(_configuration) != null;
+    private string BaseUrl => string.IsNullOrWhiteSpace(_configuration["Ai:Gateway:BaseUrl"]) ? DefaultBaseUrl : _configuration["Ai:Gateway:BaseUrl"]!.Trim().TrimEnd('/');
 
     public decimal PricePerSecond =>
-        decimal.TryParse(_configuration["Studio:SfxPricePerSecondUsd"], NumberStyles.Number, CultureInfo.InvariantCulture, out var p) && p >= 0 ? p : 0.001m;
+        decimal.TryParse(_configuration["Studio:SfxPricePerSecondUsd"], NumberStyles.Number, CultureInfo.InvariantCulture, out var p) && p >= 0 ? p : 0.002m;
 
-    public decimal EstimateCost(double seconds) => Math.Round((decimal)Math.Max(1, seconds) * PricePerSecond, 4);
-
-    /// <summary>The app's own public address (fal fetches clips from it): App:PublicBaseUrl, else Railway's public domain.</summary>
-    public string? PublicBaseUrl()
-    {
-        var configured = NonEmpty(_configuration["App:PublicBaseUrl"]);
-        if (configured != null) return configured.TrimEnd('/');
-        var railway = NonEmpty(_configuration["RAILWAY_PUBLIC_DOMAIN"]) ?? NonEmpty(Environment.GetEnvironmentVariable("RAILWAY_PUBLIC_DOMAIN"));
-        return railway == null ? null : "https://" + railway.TrimEnd('/');
-    }
-
-    /// <summary>MMAudio's brief for one clip: the planned sound plus what happens on screen.</summary>
-    public static string BuildPrompt(string? sound, string action)
-    {
-        var parts = new[] { sound, action }.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s!.Trim().TrimEnd('.'));
-        var text = string.Join(". ", parts);
-        if (text.Length == 0) text = "natural ambient sound of the scene";
-        return (text.Length > 600 ? text[..600] : text) + ". Realistic sound effects and ambience only.";
-    }
-
-    public static JsonObject BuildRequest(string videoUrl, string prompt, double seconds, int? seed)
-    {
-        var body = new JsonObject
-        {
-            ["video_url"] = videoUrl,
-            ["prompt"] = prompt,
-            ["negative_prompt"] = NegativePrompt,
-            ["duration"] = Math.Round(Math.Clamp(seconds, 1, 30), 2),
-            ["num_steps"] = 25,
-            ["cfg_strength"] = 4.5
-        };
-        if (seed != null) body["seed"] = seed.Value % 65536;
-        return body;
-    }
+    public decimal EstimateCost(double seconds) => Math.Round((decimal)Math.Clamp(seconds, MinSeconds, MaxSeconds) * PricePerSecond, 4);
 
     /// <summary>
-    /// Sound for one clip, as the video file MMAudio returns (the caller keeps its audio track).
-    /// <paramref name="clipUrl"/> is used when given (public URL), otherwise the clip goes inline as a data URI.
+    /// What ElevenLabs is asked to make: the shot's sound notes; with none, a quiet ambience taken from the start of
+    /// the picture's description. Sound effects only — voices are dubbed by TTS and the music is the user's own.
     /// </summary>
-    public async Task<byte[]> GenerateAsync(string? clipUrl, byte[] clip, string prompt, double seconds, int? seed, CancellationToken ct)
+    public static string BuildPrompt(string? sound, string action)
     {
-        var key = ApiKey(_configuration) ?? throw new InvalidOperationException("Chưa có khoá fal.ai (biến FAL_KEY trên Railway) — chưa tạo được hiệu ứng âm thanh.");
-        var videoUrl = clipUrl ?? "data:video/mp4;base64," + Convert.ToBase64String(clip);
-
-        using var submit = new HttpRequestMessage(HttpMethod.Post, SubmitUrl)
+        var text = sound?.Trim().TrimEnd('.');
+        if (string.IsNullOrWhiteSpace(text))
         {
-            Content = new StringContent(BuildRequest(videoUrl, prompt, seconds, seed).ToJsonString(), Encoding.UTF8, "application/json")
-        };
-        submit.Headers.Authorization = new AuthenticationHeaderValue("Key", key);
-        string statusUrl, responseUrl;
-        using (var res = await _http.SendAsync(submit, ct))
-        {
-            var text = await res.Content.ReadAsStringAsync(ct);
-            if (!res.IsSuccessStatusCode) throw Failure("gửi yêu cầu", (int)res.StatusCode, text);
-            using var doc = JsonDocument.Parse(text);
-            statusUrl = Str(doc.RootElement, "status_url") ?? throw new InvalidOperationException("fal.ai không trả về status_url.");
-            responseUrl = Str(doc.RootElement, "response_url") ?? throw new InvalidOperationException("fal.ai không trả về response_url.");
+            var scene = (action ?? "").Trim();
+            if (scene.Length > 160) scene = scene[..160];
+            text = scene.Length == 0 ? "soft natural ambience" : $"soft natural ambience for this scene: {scene}";
         }
-
-        var started = DateTime.UtcNow;
-        while (true)
-        {
-            await Task.Delay(PollInterval, ct);
-            using var poll = new HttpRequestMessage(HttpMethod.Get, statusUrl);
-            poll.Headers.Authorization = new AuthenticationHeaderValue("Key", key);
-            using var res = await _http.SendAsync(poll, ct);
-            var text = await res.Content.ReadAsStringAsync(ct);
-            if (res.IsSuccessStatusCode)
-            {
-                using var doc = JsonDocument.Parse(text);
-                var status = Str(doc.RootElement, "status");
-                if (status == "COMPLETED")
-                {
-                    if (Str(doc.RootElement, "error") is { Length: > 0 } err) throw new InvalidOperationException($"fal.ai không tạo được âm thanh: {err}");
-                    break;
-                }
-            }
-            else if ((int)res.StatusCode is 401 or 403 or 404) throw Failure("kiểm tra trạng thái", (int)res.StatusCode, text);
-            if (DateTime.UtcNow - started > MaxWait) throw new InvalidOperationException("fal.ai tạo âm thanh quá lâu — bấm tạo lại hiệu ứng sau ít phút.");
-        }
-
-        using var result = new HttpRequestMessage(HttpMethod.Get, responseUrl);
-        result.Headers.Authorization = new AuthenticationHeaderValue("Key", key);
-        string fileUrl;
-        using (var res = await _http.SendAsync(result, ct))
-        {
-            var text = await res.Content.ReadAsStringAsync(ct);
-            if (!res.IsSuccessStatusCode) throw Failure("lấy kết quả", (int)res.StatusCode, text);
-            fileUrl = ParseResultUrl(text) ?? throw new InvalidOperationException("fal.ai không trả về file âm thanh.");
-        }
-        using var dl = await _http.GetAsync(fileUrl, ct);
-        if (!dl.IsSuccessStatusCode) throw new InvalidOperationException($"Không tải được file âm thanh từ fal.ai (HTTP {(int)dl.StatusCode}).");
-        var bytes = await dl.Content.ReadAsByteArrayAsync(ct);
-        _logger.LogInformation("MMAudio {Seconds:F1}s in {Elapsed:F0}s", seconds, (DateTime.UtcNow - started).TotalSeconds);
-        return bytes;
+        return text.Length > 450 ? text[..450] : text;
     }
 
-    /// <summary>The generated file of a result: {"video":{"url":…}} (or "audio" / "audio_file" should the model change).</summary>
-    public static string? ParseResultUrl(string json)
+    public static JsonObject BuildRequest(string prompt, double seconds) => new()
+    {
+        ["text"] = prompt,
+        ["outputFormat"] = "mp3",
+        ["providerOptions"] = new JsonObject
+        {
+            ["elevenlabs"] = new JsonObject { ["durationSeconds"] = Math.Round(Math.Clamp(seconds, MinSeconds, MaxSeconds), 2) }
+        }
+    };
+
+    /// <summary>The effects track (MP3 bytes) for one clip of <paramref name="seconds"/>.</summary>
+    public async Task<byte[]> GenerateAsync(string prompt, double seconds, CancellationToken ct)
+    {
+        var key = SeedanceVideoClient.ApiKey(_configuration)
+                  ?? throw new InvalidOperationException("Chưa có khoá Vercel AI Gateway (AI_GATEWAY_API_KEY) — chưa tạo được hiệu ứng âm thanh.");
+        using var req = new HttpRequestMessage(HttpMethod.Post, $"{BaseUrl}/speech-model")
+        {
+            Content = new StringContent(BuildRequest(prompt, seconds).ToJsonString(), Encoding.UTF8, "application/json")
+        };
+        req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
+        req.Headers.Add("ai-gateway-protocol-version", "0.0.1");
+        req.Headers.Add("ai-gateway-auth-method", "api-key");
+        req.Headers.Add("ai-speech-model-specification-version", "4");
+        req.Headers.Add("ai-model-id", Model);
+        using var res = await _http.SendAsync(req, ct);
+        var text = await res.Content.ReadAsStringAsync(ct);
+        if (!res.IsSuccessStatusCode)
+        {
+            var message = ErrorOf(text);
+            var code = (int)res.StatusCode;
+            _logger.LogWarning("Sound effects HTTP {Status}: {Message}", code, message);
+            if (code is 401 or 402 or 403 || SeedanceVideoClient.IsAccountProblem(message))
+                throw new InvalidOperationException($"Tài khoản Vercel AI Gateway không dùng được cho hiệu ứng âm thanh (HTTP {code}: {message}).");
+            throw new InvalidOperationException($"Không tạo được hiệu ứng âm thanh (HTTP {code}): {message}");
+        }
+        var audio = ParseAudio(text) ?? throw new InvalidOperationException("Vercel không trả về âm thanh.");
+        if (audio.Length < 512) throw new InvalidOperationException("File âm thanh trả về bị hỏng.");
+        return audio;
+    }
+
+    /// <summary>The base64 "audio" of a speech-model answer.</summary>
+    public static byte[]? ParseAudio(string json)
     {
         using var doc = JsonDocument.Parse(json);
-        foreach (var name in new[] { "video", "audio", "audio_file" })
-            if (doc.RootElement.TryGetProperty(name, out var f) && f.ValueKind == JsonValueKind.Object && Str(f, "url") is { Length: > 0 } url)
-                return url;
-        return null;
+        return doc.RootElement.TryGetProperty("audio", out var a) && a.ValueKind == JsonValueKind.String && a.GetString() is { Length: > 0 } b64
+            ? Convert.FromBase64String(b64)
+            : null;
     }
 
-    private static InvalidOperationException Failure(string step, int status, string body)
+    private static string ErrorOf(string body)
     {
-        var detail = body.Length > 300 ? body[..300] : body;
-        return status is 401 or 403
-            ? new InvalidOperationException($"fal.ai từ chối khoá (HTTP {status}) — kiểm tra FAL_KEY và số dư tài khoản fal.ai.")
-            : status == 402 || detail.Contains("balance", StringComparison.OrdinalIgnoreCase) || detail.Contains("credit", StringComparison.OrdinalIgnoreCase)
-                ? new InvalidOperationException("Tài khoản fal.ai hết tiền — nạp thêm ở fal.ai rồi bấm tạo hiệu ứng lại.")
-                : new InvalidOperationException($"fal.ai lỗi khi {step} (HTTP {status}): {detail}");
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            if (doc.RootElement.TryGetProperty("error", out var err))
+                return err.ValueKind == JsonValueKind.Object && err.TryGetProperty("message", out var m) ? m.GetString() ?? err.GetRawText() : err.ToString();
+        }
+        catch (JsonException) { }
+        return body.Length > 300 ? body[..300] : body;
     }
-
-    private static string? NonEmpty(string? s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();
-
-    private static string? Str(JsonElement e, string name) =>
-        e.ValueKind == JsonValueKind.Object && e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
 }
