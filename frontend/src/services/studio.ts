@@ -203,6 +203,8 @@ export interface StudioVideo extends StudioVideoSummary {
   finalDurationSeconds?: number | null;
   errorMessage?: string | null;
   publishedPostId?: string | null;
+  instagramPermalink?: string | null;
+  instagramError?: string | null;
   shots: StudioShot[];
 }
 
@@ -333,6 +335,7 @@ export const studio = {
   compose: (id: string) => call<StudioVideo>('POST', `/videos/${id}/compose`),
   recoverClips: (id: string) => call<StudioVideo>('POST', `/videos/${id}/recover-clips`),
   publish: (id: string, caption: string) => call<StudioVideo>('POST', `/videos/${id}/publish`, { caption }),
+  instagram: (id: string) => call<StudioVideo>('POST', `/videos/${id}/instagram`),
   purgeClips: (id: string) => call<StudioVideo>('POST', `/videos/${id}/purge-clips`),
   finalUrl: (id: string, download = false) => `${BASE}/videos/${id}/final${download ? '?download=true' : ''}`,
   clipUrl: (shotId: string) => `${BASE}/shots/${shotId}/clip`,

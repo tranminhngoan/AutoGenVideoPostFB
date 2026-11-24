@@ -42,6 +42,16 @@ public interface IFacebookPublishingService
     Task<(string VideoId, string PostId)> PublishVideoFileAsync(Guid facebookAccountId, string videoPath, string caption, double durationSeconds,
         CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Posts a finished video file as a Reel on the Instagram professional account linked to the page (Instagram fetches
+    /// it from <paramref name="publicVideoUrl"/> when given, else the file is uploaded). Returns (media id, permalink).
+    /// </summary>
+    Task<(string MediaId, string? Permalink)> PublishInstagramVideoFileAsync(Guid facebookAccountId, string videoPath, string caption,
+        string? publicVideoUrl, CancellationToken cancellationToken = default);
+
+    /// <summary>The page's current name on Facebook (a renamed page is picked up and stored); null when it can't be read.</summary>
+    Task<string?> RefreshPageNameAsync(Guid facebookAccountId, CancellationToken cancellationToken = default);
+
     /// <summary>One post on the page's wall with several pictures (in order) and a text; returns the post id.</summary>
     Task<string> PublishPhotoPostAsync(Guid facebookAccountId, IReadOnlyList<string> imagePaths, string message, CancellationToken cancellationToken = default);
 

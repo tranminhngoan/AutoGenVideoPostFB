@@ -215,6 +215,10 @@ public class StudioController : ControllerBase
     public async Task<IActionResult> Publish(Guid id, [FromBody] PublishRequest req, CancellationToken ct) =>
         Denied() ?? await Run(async () => await _studio.StartPublishAsync(id, req.Caption, ct));
 
+    [HttpPost("videos/{id:guid}/instagram")]
+    public async Task<IActionResult> Instagram(Guid id, CancellationToken ct) =>
+        Denied() ?? await Run(async () => await _studio.StartInstagramAsync(id, ct));
+
     [HttpPost("videos/{id:guid}/purge-clips")]
     public async Task<IActionResult> PurgeClips(Guid id, CancellationToken ct) =>
         Denied() ?? await Run(async () => await _studio.PurgeClipsAsync(id, ct));

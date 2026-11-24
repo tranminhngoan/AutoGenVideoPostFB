@@ -1087,8 +1087,9 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
           {/* 5. Publish */}
           <Card className="space-y-3 p-4">
             <div className="flex items-center gap-2 text-sm font-semibold text-fg">
-              <Send className="h-4 w-4" /> 5. Đăng lên Facebook
+              <Send className="h-4 w-4" /> 5. Đăng lên Facebook + Instagram
             </div>
+            <p className="text-xs text-fg-muted">Đăng Facebook xong, video tự đăng tiếp thành Reel trên tài khoản Instagram chuyên nghiệp đã liên kết với Page.</p>
             <Field label="Chú thích" hint='Tự kèm dòng "🤖 Video được tạo bằng AI." khi đăng. Nhớ bật nhãn AI nếu Facebook hỏi.'>
               <Textarea rows={3} value={caption} onChange={(e) => setCaption(e.target.value)} disabled={locked} />
             </Field>
@@ -1106,7 +1107,22 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
                   Xem bài đã đăng ↗
                 </a>
               )}
+              {video.instagramPermalink?.startsWith('http') && (
+                <a className="text-xs text-accent hover:underline" href={video.instagramPermalink} target="_blank" rel="noopener noreferrer">
+                  Xem trên Instagram ↗
+                </a>
+              )}
+              {video.instagramPermalink && !video.instagramPermalink.startsWith('http') && <span className="text-xs text-success">Đã đăng Instagram</span>}
+              {video.status === 'Published' && !video.instagramPermalink && video.hasFinal && (
+                <Button variant="secondary" size="sm" loading={busy === 'instagram'} disabled={locked}
+                  onClick={() => guarded('instagram', async () => applyVideo(await studio.instagram(videoId!), true))}>
+                  Đăng lên Instagram
+                </Button>
+              )}
             </div>
+            {video.instagramError && !video.instagramPermalink && (
+              <p className="text-xs text-danger">Instagram chưa đăng được: {video.instagramError}</p>
+            )}
           </Card>
         </>
       )}

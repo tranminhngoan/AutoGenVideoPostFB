@@ -1031,6 +1031,58 @@ public class FacebookPublishingService : IFacebookPublishingService
         return (expires, scopes, null);
     }
 
+    public async Task<(string MediaId, string? Permalink)> PublishInstagramVideoFileAsync(Guid facebookAccountId, string videoPath, string caption,
+        string? publicVideoUrl, CancellationToken cancellationToken = default)
+    {
+        if (!File.Exists(videoPath)) throw new InvalidOperationException("Không tìm thấy file video để đăng.");
+        var account = await _context.FacebookAccounts.FirstOrDefaultAsync(a => a.Id == facebookAccountId, cancellationToken);
+        if (account == null || !account.IsActive || string.IsNullOrWhiteSpace(account.EncryptedAccessToken))
+            throw new InvalidOperationException("Page chưa được kết nối hoặc đã ngắt kết nối. Vào Cài đặt → Facebook để kết nối lại.");
+        var token = _tokenProtection.DecryptToken(account.EncryptedAccessToken);
+        var ig = await ResolveInstagramAsync(account, token, cancellationToken)
+                 ?? throw new InvalidOperationException("Page chưa liên kết tài khoản Instagram chuyên nghiệp (Cài đặt Page → Tài khoản được liên kết → Instagram).");
+        try
+        {
+            return await PublishInstagramReelAsync(ig, token, videoPath, caption, cancellationToken, publicVideoUrl);
+        }
+        catch (InvalidOperationException first) when (publicVideoUrl != null && !first.Message.Contains("permission", StringComparison.OrdinalIgnoreCase))
+        {
+            // Instagram couldn't fetch the link: upload the file instead (same as for the news Reels)
+            _logger.LogInformation("Instagram by video link failed ({Message}); retrying by file upload", first.Message);
+            await Task.Delay(TimeSpan.FromSeconds(10), cancellationToken);
+            return await PublishInstagramReelAsync(ig, token, videoPath, caption, cancellationToken);
+        }
+    }
+
+    public async Task<string?> RefreshPageNameAsync(Guid facebookAccountId, CancellationToken cancellationToken = default)
+    {
+        var account = await _context.FacebookAccounts.FirstOrDefaultAsync(a => a.Id == facebookAccountId, cancellationToken);
+        if (account == null || !account.IsActive || string.IsNullOrWhiteSpace(account.EncryptedAccessToken)) return null;
+        try
+        {
+            var token = _tokenProtection.DecryptToken(account.EncryptedAccessToken);
+            var (ok, body, error) = await GetGraphAsync(
+                $"https://graph.facebook.com/{_graphApiVersion}/{account.PageId}?fields=name&access_token={Uri.EscapeDataString(token)}", cancellationToken);
+            if (!ok || !body.TryGetProperty("name", out var n) || n.GetString() is not { Length: > 0 } name)
+            {
+                _logger.LogInformation("Could not read the name of page {PageId}: {Error}", account.PageId, error);
+                return account.PageName;
+            }
+            if (name != account.PageName)
+            {
+                _logger.LogInformation("Page {PageId} renamed: {Old} → {New}", account.PageId, account.PageName, name);
+                account.PageName = name;
+                await _context.SaveChangesAsync(cancellationToken);
+            }
+            return name;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogInformation("Could not refresh the page name: {Message}", ex.Message);
+            return account.PageName;
+        }
+    }
+
     private async Task<(string PageId, string Token)> PageTokenAsync(Guid facebookAccountId, CancellationToken ct)
     {
         var account = await _context.FacebookAccounts.AsNoTracking().FirstOrDefaultAsync(a => a.Id == facebookAccountId, ct);

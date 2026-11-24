@@ -98,6 +98,8 @@ public class StudioVideoDto : StudioVideoSummaryDto
     public double? FinalDurationSeconds { get; set; }
     public string? ErrorMessage { get; set; }
     public string? PublishedPostId { get; set; }
+    public string? InstagramPermalink { get; set; }
+    public string? InstagramError { get; set; }
     public List<StudioShotDto> Shots { get; set; } = new();
 }
 

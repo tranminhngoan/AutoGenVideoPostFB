@@ -76,6 +76,9 @@ public class StudioVideo : BaseEntity
     public decimal ActualCostUsd { get; set; }
     public string? ErrorMessage { get; set; }
     public string? PublishedPostId { get; set; }
+    /// <summary>The same video as a Reel on the Instagram account linked to the page (link), or why it couldn't be posted.</summary>
+    public string? InstagramPermalink { get; set; }
+    public string? InstagramError { get; set; }
     public DateTime? PublishedAtUtc { get; set; }
 
     public ICollection<StudioShot> Shots { get; set; } = new List<StudioShot>();

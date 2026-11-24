@@ -1900,6 +1900,12 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                     b.Property<double?>("FinalDurationSeconds")
                         .HasColumnType("double precision");
 
+                    b.Property<string>("InstagramError")
+                        .HasColumnType("text");
+
+                    b.Property<string>("InstagramPermalink")
+                        .HasColumnType("text");
+
                     b.Property<string>("MusicMode")
                         .IsRequired()
                         .HasMaxLength(20)

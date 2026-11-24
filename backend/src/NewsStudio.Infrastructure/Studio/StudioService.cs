@@ -443,6 +443,8 @@ public class StudioService
         dto.FinalDurationSeconds = v.FinalDurationSeconds;
         dto.ErrorMessage = v.ErrorMessage;
         dto.PublishedPostId = v.PublishedPostId;
+        dto.InstagramPermalink = v.InstagramPermalink;
+        dto.InstagramError = v.InstagramError;
         var voiceFrom = new Dictionary<Guid, int>();
         foreach (var take in SceneTakes(v.Shots))
         {
@@ -2121,6 +2123,8 @@ Trả về JSON:
             v.Status = "Published";
             v.Progress = null;
             await _db.SaveChangesAsync(ct);
+            // the same Reel on the linked Instagram (Facebook is already live: a failure is only noted)
+            await PostToInstagramAsync(v, path, ct);
             // posted: the clips have done their job — free the disk (the final video stays until the next redeploy)
             var posted = await _db.StudioVideos.Include(x => x.Shots).FirstAsync(x => x.Id == id, ct);
             foreach (var s in posted.Shots.Where(s => s.ClipBlobId != null))
@@ -2138,6 +2142,81 @@ Trả về JSON:
             v.Progress = null;
             v.ErrorMessage = "Đăng Facebook thất bại: " + ex.Message;
             await _db.SaveChangesAsync(CancellationToken.None);
+        }
+        finally
+        {
+            StudioMedia.TryDelete(dir);
+        }
+    }
+
+    /// <summary>
+    /// Posts the final video on the Instagram account linked to the video's Page; the result (link or reason) is kept on
+    /// the video. Instagram fetches the file from the app's public link, or it is uploaded.
+    /// </summary>
+    private async Task PostToInstagramAsync(StudioVideo v, string path, CancellationToken ct)
+    {
+        try
+        {
+            v.Progress = "Facebook xong — đang đăng lên Instagram…";
+            await _db.SaveChangesAsync(ct);
+            var publicUrl = PublicBaseUrl() is { } baseUrl ? $"{baseUrl}/api/studio/videos/{v.Id}/final" : null;
+            var (_, permalink) = await _facebook.PublishInstagramVideoFileAsync(v.FacebookAccountId!.Value, path, CaptionWithDisclosure(v.Caption), publicUrl, ct);
+            v.InstagramPermalink = permalink ?? "posted";
+            v.InstagramError = null;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning("Studio Instagram post failed for {Id}: {Message}", v.Id, ex.Message);
+            v.InstagramError = ex.Message.Length > 1000 ? ex.Message[..1000] : ex.Message;
+        }
+        v.Progress = null;
+        await _db.SaveChangesAsync(CancellationToken.None);
+    }
+
+    private string? PublicBaseUrl()
+    {
+        var configured = _configuration["App:PublicBaseUrl"];
+        var domain = Environment.GetEnvironmentVariable("RAILWAY_PUBLIC_DOMAIN");
+        return !string.IsNullOrWhiteSpace(configured) ? configured.TrimEnd('/')
+            : !string.IsNullOrWhiteSpace(domain) ? $"https://{domain.Trim().TrimEnd('/')}"
+            : null;
+    }
+
+    /// <summary>Posts an already published video to Instagram too (e.g. after linking Instagram), while its file still exists.</summary>
+    public async Task<StudioVideoDto> StartInstagramAsync(Guid id, CancellationToken ct)
+    {
+        var v = await _db.StudioVideos.FirstOrDefaultAsync(x => x.Id == id, ct) ?? throw new KeyNotFoundException("Không tìm thấy video.");
+        if (v.Status != "Published" || v.FacebookAccountId == null) throw new InvalidOperationException("Đăng Facebook trước — Instagram đăng kèm theo.");
+        if (!string.IsNullOrEmpty(v.InstagramPermalink)) throw new InvalidOperationException("Video này đã có trên Instagram.");
+        if (v.FinalBlobId == null || await GetBlobAsync(v.FinalBlobId.Value, ct) == null)
+            throw new InvalidOperationException("File video không còn trên server (server đã khởi động lại) nên không đăng Instagram được.");
+        v.Progress = "Đang đăng lên Instagram…";
+        v.InstagramError = null;
+        await _db.SaveChangesAsync(ct);
+        _jobs.Enqueue<StudioService>(s => s.RunInstagramAsync(id, CancellationToken.None));
+        return await GetVideoAsync(id, ct);
+    }
+
+    [Queue("critical")]
+    [AutomaticRetry(Attempts = 0)]
+    public async Task RunInstagramAsync(Guid id, CancellationToken ct)
+    {
+        var v = await _db.StudioVideos.FirstOrDefaultAsync(x => x.Id == id, ct);
+        if (v == null || v.FinalBlobId == null || v.FacebookAccountId == null) return;
+        var dir = StudioMedia.TempDir();
+        try
+        {
+            var blob = await GetBlobAsync(v.FinalBlobId.Value, ct);
+            if (blob == null)
+            {
+                v.Progress = null;
+                v.InstagramError = "File video không còn trên server.";
+                await _db.SaveChangesAsync(CancellationToken.None);
+                return;
+            }
+            var path = Path.Combine(dir, "post.mp4");
+            await File.WriteAllBytesAsync(path, blob.Data, ct);
+            await PostToInstagramAsync(v, path, ct);
         }
         finally
         {
@@ -2247,8 +2326,10 @@ Trả về JSON:
     /// <summary>Page name (fallback Branding:Name, then "Trạm Tin 24/7") and the Page's brand-kit logo, if any.</summary>
     private async Task<(string Name, byte[]? Logo)> BrandAsync(Guid? pageId, CancellationToken ct)
     {
+        // the name as it is on Facebook now: a renamed page must not stamp its old name on new videos
         var name = pageId == null ? null
-            : await _db.FacebookAccounts.AsNoTracking().Where(a => a.Id == pageId).Select(a => a.PageName).FirstOrDefaultAsync(ct);
+            : await _facebook.RefreshPageNameAsync(pageId.Value, ct)
+              ?? await _db.FacebookAccounts.AsNoTracking().Where(a => a.Id == pageId).Select(a => a.PageName).FirstOrDefaultAsync(ct);
         var logo = pageId == null ? null
             : await _db.AutoPostSettings.AsNoTracking().Where(s => s.FacebookAccountId == pageId).Select(s => s.BrandLogo).FirstOrDefaultAsync(ct);
         var brand = !string.IsNullOrWhiteSpace(name) ? name.Trim()
