@@ -1091,7 +1091,8 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
             </div>
             {video.hasFinal && (
               <div className="space-y-2">
-                <video key={video.finalDurationSeconds ?? 0} src={studio.finalUrl(video.id) + `?t=${encodeURIComponent(video.finalDurationSeconds ?? 0)}`} controls preload="metadata"
+                <video key={video.finalVersion ?? video.finalDurationSeconds ?? 0}
+                  src={studio.finalUrl(video.id) + `?v=${encodeURIComponent(video.finalVersion ?? String(video.finalDurationSeconds ?? 0))}`} controls preload="metadata"
                   className={cn('mx-auto rounded-lg bg-black', video.aspectRatio === '16:9' ? 'aspect-video w-full' : 'aspect-[9/16] max-h-[70vh]')} />
                 <div className="flex flex-wrap items-center gap-2 text-xs text-fg-muted">
                   <span>Dài {video.finalDurationSeconds}s{video.musicName ? ` · nhạc: ${video.musicName}` : ''}</span>

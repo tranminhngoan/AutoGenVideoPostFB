@@ -201,6 +201,8 @@ export interface StudioVideo extends StudioVideoSummary {
   planNotes?: string | null;
   caption?: string | null;
   finalDurationSeconds?: number | null;
+  /** Changes with every new final file. */
+  finalVersion?: string | null;
   errorMessage?: string | null;
   publishedPostId?: string | null;
   instagramPermalink?: string | null;

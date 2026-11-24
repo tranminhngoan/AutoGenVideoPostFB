@@ -445,6 +445,7 @@ public class StudioService
         dto.PlanNotes = v.PlanNotes;
         dto.Caption = v.Caption;
         dto.FinalDurationSeconds = v.FinalDurationSeconds;
+        dto.FinalVersion = v.FinalBlobId?.ToString("N")[..12];
         dto.ErrorMessage = v.ErrorMessage;
         dto.PublishedPostId = v.PublishedPostId;
         dto.InstagramPermalink = v.InstagramPermalink;

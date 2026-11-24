@@ -96,6 +96,8 @@ public class StudioVideoDto : StudioVideoSummaryDto
     public string? PlanNotes { get; set; }
     public string? Caption { get; set; }
     public double? FinalDurationSeconds { get; set; }
+    /// <summary>Changes with every new final file (a re-compose of the same length too): the player's cache key.</summary>
+    public string? FinalVersion { get; set; }
     public string? ErrorMessage { get; set; }
     public string? PublishedPostId { get; set; }
     public string? InstagramPermalink { get; set; }
