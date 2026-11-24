@@ -29,15 +29,17 @@ Chỉ riêng bước này đã có lợi: **cập nhật code / server khởi đ
 
 ## 3. Chuẩn bị máy tính (một lần)
 
-1. Cài **Docker Desktop** (https://www.docker.com/products/docker-desktop/) → mở lên, trong Settings bật **Start Docker Desktop when you sign in**.
+1. Cần có **.NET 8**, **Git**, **FFmpeg** (`D:\tools\ffmpeg-master-latest-win64-gpl\bin` hoặc trong PATH) và Python 3 có
+   `pillow` + `edge-tts` (cho video tin tức). Chạy thẳng trên Windows — **không cần Docker**.
 2. Trong thư mục dự án, copy `.env.pc.example` thành **`.env.pc`** và điền theo hướng dẫn trong file
-   (cách nhanh: Railway → Variables → **Raw Editor** → copy hết → dán; rồi sửa `DATABASE_URL` thành địa chỉ **public**
-   của Postgres và thêm 5 dòng `Storage__S3__…`).
+   (cách nhanh: Railway → app → Variables → **Raw Editor** → copy hết → dán; thêm dòng `DATABASE_PUBLIC_URL=…`
+   lấy từ Railway → Postgres → Variables, và 5 dòng `Storage__S3__…`). Dòng `${{…}}`, `PORT`, `RAILWAY_*` được bỏ qua tự động.
 3. Windows → **Settings → System → Power** → khi cắm sạc: **Sleep = Never** (máy ngủ là ngừng làm việc).
 
 ## 4. Chạy
 
-- Bấm đúp **`scripts\pc\start-pc-worker.bat`**. Lần đầu build mất 5–10 phút. Để cửa sổ mở: nó tự cập nhật khi có bản code mới.
+- Bấm đúp **`scripts\pc\start-pc-worker.bat`**. Lần đầu build mất vài phút. Để cửa sổ mở: nó tự cập nhật khi có bản code mới
+  và tự chạy lại nếu chương trình dừng. Nhật ký: `%USERPROFILE%\TramTinPcWorker-data\worker.log`.
 - Muốn tự chạy khi mở máy: nhấn `Win + R` → gõ `shell:startup` → kéo **lối tắt** của `start-pc-worker.bat` vào thư mục đó.
 - Muốn dừng ngay (Railway nhận việc liền): bấm đúp **`scripts\pc\stop-pc-worker.bat`**.
 
