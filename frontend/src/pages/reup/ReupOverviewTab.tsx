@@ -36,7 +36,12 @@ export function ReupOverviewTab() {
           Video chỉ được xử lý trên máy tính (không tốn CPU Railway). Bật máy và chạy <code>scripts\pc\start-pc-worker.bat</code> — video đang chờ sẽ tự chạy.
         </Alert>
       )}
-      {o.pcOnline && !e.ready && (
+      {o.pcOnline && !e.ready && !e.checkedAtUtc && (
+        <Alert tone="info" icon={<Gauge />} title="Đang chờ máy tính kiểm tra engine">
+          Máy tính tự kiểm tra engine và đo tốc độ khoảng 1 phút sau khi bật / cập nhật — trang tự làm mới, không cần làm gì.
+        </Alert>
+      )}
+      {o.pcOnline && !e.ready && e.checkedAtUtc && (
         <Alert tone="danger" icon={<AlertTriangle />} title="Engine trên máy tính chưa sẵn sàng">
           {e.error ?? 'Chưa cài.'} — chạy <code>scripts\pc\setup-reup-engine.bat</code> một lần (tải ~55 MB model miễn phí), sau đó chờ vài phút.
         </Alert>
