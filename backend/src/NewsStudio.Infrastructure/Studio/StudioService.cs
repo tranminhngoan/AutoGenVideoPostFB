@@ -1586,7 +1586,7 @@ Trả về JSON:
     /// from the words; the last spoken shot holds the end of the take plus a breath. Shots that already have a clip
     /// keep their length. A take longer than the scene can ever be is refused.
     /// </summary>
-    public static int[] FitSceneTake(IReadOnlyList<(int Words, int Duration, bool Fixed)> shots, double seconds)
+    public static int[] FitSceneTake(IReadOnlyList<(int Words, int Duration, bool Fixed)> shots, double seconds, double minRoom = MinVoiceRoom)
     {
         const double lead = 0.25; // the voice starts a quarter second into the first clip
         var total = Math.Max(1, shots.Sum(x => x.Words));
@@ -1607,7 +1607,7 @@ Trả về JSON:
             else d[k] = SeedanceVideoClient.ClampSeconds(x.Duration);
             placed += d[k];
         }
-        var needed = seconds + MinVoiceRoom; // MinVoiceRoom already holds the 0.25 s lead and a short breath
+        var needed = seconds + minRoom; // the room holds the 0.25 s lead and a short breath
         for (var k = lastSpoken; k >= 0 && d.Sum() < needed - 1e-6; k--)
             if (!shots[k].Fixed) d[k] = Math.Min(SeedanceVideoClient.MaxSeconds, d[k] + (int)Math.Ceiling(needed - d.Sum() - 1e-6));
         if (d.Sum() < needed - 1e-6)
@@ -1637,7 +1637,9 @@ Trả về JSON:
         var added = new List<StudioShot>();
         bool Fixed(StudioShot s) => s.ClipBlobId != null && s.Status == "Done";
         double Capacity() => span.Sum(s => Fixed(s) ? s.DurationSeconds : SeedanceVideoClient.MaxSeconds);
-        while (allowExtraShots && seconds + MinVoiceRoom > Capacity() + 1e-6 && added.Count < 3)
+        // clips already made can't grow: the take only has to end before their end (0.25 s lead + a hair)
+        var room = span.All(Fixed) ? 0.3 : MinVoiceRoom;
+        while (allowExtraShots && seconds + room > Capacity() + 1e-6 && added.Count < 3)
         {
             var last = span[^1];
             foreach (var later in v.Shots.Where(s => s.Index > last.Index)) later.Index++;
@@ -1652,7 +1654,8 @@ Trả về JSON:
             take.Add(extra);
             added.Add(extra);
         }
-        var durations = FitSceneTake(span.Select(s => (WordCount(s.Dialogue), s.DurationSeconds, Fixed(s))).ToList(), seconds);
+        var durations = FitSceneTake(span.Select(s => (WordCount(s.Dialogue), s.DurationSeconds, Fixed(s))).ToList(), seconds,
+            span.All(Fixed) ? 0.3 : MinVoiceRoom);
 
         foreach (var s in take.Where(s => s.VoiceBlobId != null))
         {

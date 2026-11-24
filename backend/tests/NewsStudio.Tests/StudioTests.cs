@@ -573,6 +573,9 @@ public class StudioTests
         // the real case (BCN-03, scene 2): one shot, 11.6 s read slowly — fits one 12 s clip like a single line does
         StudioService.FitSceneTake(new[] { (26, 9, false) }, 11.6).Should().Equal(12);
 
+        // clips already made: a 9.68 s take only has to end inside the 10 s clip (BCN-03 scene 4 got a needless extra shot)
+        StudioService.FitSceneTake(new[] { (20, 10, true) }, 9.68, 0.3).Should().Equal(10);
+
         // a take the scene can never hold is refused before any clip is paid for
         var tooLong = () => StudioService.FitSceneTake(new[] { (10, 4, false) }, 20);
         tooLong.Should().Throw<InvalidOperationException>().WithMessage("*Thêm 1 shot*");

@@ -140,8 +140,10 @@ public class GeminiTtsService : ITtsService
             }
         }
 
+        // a designed voice that can't be used is an error, not a silent switch to another voice mid-video
         if (pcm == null && designed)
-            voiceName = IsGeminiVoice(request.FallbackVoice) ? request.FallbackVoice![VoicePrefix.Length..] : "Charon"; // plain fallback
+            throw new InvalidOperationException("Giọng thiết kế chưa dùng được (" + (styleError ?? "không rõ lỗi") +
+                                                ") — tạo lại giọng ở tab Giọng đọc rồi đọc lại.");
         var cached = pcm != null ? null : models.Select(CachePath).FirstOrDefault(File.Exists);
         if (pcm != null)
         {
@@ -340,7 +342,9 @@ public class GeminiTtsService : ITtsService
             }
         }.ToJsonString();
         string? last = null;
-        foreach (var key in GeminiKeys.InOrder(_configuration, model))
+        // a designed voice belongs to the Google project of the key that made it: always the paid key when there is one,
+        // so every later take (also read with the paid key first) finds it
+        foreach (var key in DesignedVoiceKeys(model))
         {
             using var req = new HttpRequestMessage(HttpMethod.Post, "https://generativelanguage.googleapis.com/v1beta/voices")
             {
@@ -406,12 +410,17 @@ public class GeminiTtsService : ITtsService
         return null;
     }
 
+    /// <summary>Keys for designed voices: the paid key first (stable project, no free-tier rests), then the others.</summary>
+    private List<GeminiKeys.Key> DesignedVoiceKeys(string model) =>
+        GeminiKeys.InOrder(_configuration, model).OrderBy(k => k.IsFree).ToList();
+
     /// <summary>One styled take through the Interactions API, free keys first then the paid key.</summary>
     private async Task<byte[]> RequestExpressiveSpeechAsync(string model, string voiceName, string text, string style, CancellationToken ct)
     {
         var body = BuildExpressiveRequest(model, voiceName, text, style).ToJsonString();
         string? last = null;
-        foreach (var key in GeminiKeys.InOrder(_configuration, model))
+        var keys = voiceName.StartsWith("voice_", StringComparison.Ordinal) ? DesignedVoiceKeys(model) : GeminiKeys.InOrder(_configuration, model);
+        foreach (var key in keys)
         {
             using var req = new HttpRequestMessage(HttpMethod.Post, "https://generativelanguage.googleapis.com/v1beta/interactions")
             {
