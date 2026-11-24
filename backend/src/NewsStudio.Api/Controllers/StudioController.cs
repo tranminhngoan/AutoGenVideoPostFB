@@ -91,7 +91,7 @@ public class StudioController : ControllerBase
             foreach (var p in (await _facebook.GetConnectedPagesAsync(ct)).Where(p => p.IsActive))
                 await _facebook.RefreshPageNameAsync(p.Id, ct);
         }
-        return Ok((await _facebook.GetConnectedPagesAsync(ct)).Select(p => new { p.Id, p.PageName, p.IsActive }));
+        return Ok((await _facebook.GetConnectedPagesAsync(ct)).Select(p => new { p.Id, p.PageId, p.PageName, p.IsActive }));
     }
 
     // ───────────── designed voices ─────────────
@@ -245,6 +245,16 @@ public class StudioController : ControllerBase
     [HttpPost("videos/{id:guid}/publish")]
     public async Task<IActionResult> Publish(Guid id, [FromBody] PublishRequest req, CancellationToken ct) =>
         Denied() ?? await Run(async () => await _studio.StartPublishAsync(id, req.Caption, ct));
+
+    [HttpPost("videos/{id:guid}/mark-published")]
+    public async Task<IActionResult> MarkPublished(Guid id, CancellationToken ct) =>
+        Denied() ?? await Run(async () => await _studio.MarkPublishedAsync(id, ct));
+
+    public sealed record DraftRequest(string? Caption);
+
+    [HttpPost("videos/{id:guid}/facebook-draft")]
+    public async Task<IActionResult> FacebookDraft(Guid id, [FromBody] DraftRequest body, CancellationToken ct) =>
+        Denied() ?? await Run(async () => await _studio.StartFacebookDraftAsync(id, body.Caption, ct));
 
     [HttpPost("videos/{id:guid}/instagram")]
     public async Task<IActionResult> Instagram(Guid id, CancellationToken ct) =>

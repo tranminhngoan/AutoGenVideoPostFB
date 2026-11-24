@@ -1894,6 +1894,9 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                     b.Property<Guid?>("FacebookAccountId")
                         .HasColumnType("uuid");
 
+                    b.Property<string>("FacebookDraftId")
+                        .HasColumnType("text");
+
                     b.Property<Guid?>("FinalBlobId")
                         .HasColumnType("uuid");
 

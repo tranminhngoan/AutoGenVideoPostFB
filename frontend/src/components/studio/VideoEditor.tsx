@@ -509,6 +509,24 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
       applyVideo(await studio.publish(videoId!, caption), true);
     });
 
+  /**
+   * Music from Facebook's own library can only be added in Facebook's composer: the video is sent to the page as a
+   * DRAFT Reel (caption included); the user opens the draft, adds music under Edit, and publishes it there.
+   */
+  const sendDraft = () =>
+    guarded('draft', async () => {
+      const page = pages.find((p) => p.id === form.facebookAccountId);
+      if (!page) throw new Error('Chọn Page ở mục 1 rồi bấm Lưu trước.');
+      applyVideo(await studio.facebookDraft(videoId!, caption), true);
+      toast.success('Đang gửi video sang Facebook dạng bản nháp — xong sẽ hiện link mở bản nháp.');
+    });
+  const markPublished = () =>
+    guarded('mark', async () => {
+      applyVideo(await studio.markPublished(videoId!), true);
+      toast.success('Đã đánh dấu video là đã đăng.');
+    });
+  const draftPage = pages.find((p) => p.id === form.facebookAccountId);
+
   const purge = () =>
     guarded('purge', async () => {
       if (!(await confirm({ title: 'Xoá các clip lẻ?', description: 'Giữ video hoàn chỉnh, xoá các clip từng shot để giải phóng dung lượng. Sau đó không tạo lại từng shot được nữa.', confirmLabel: 'Xoá clip' }))) return;
@@ -1117,6 +1135,11 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
               <Button variant="primary" icon={<Send className="h-4 w-4" />} loading={busy === 'publish'} disabled={locked || !video.hasFinal || !form.facebookAccountId} onClick={publish}>
                 Đăng lên {pages.find((p) => p.id === form.facebookAccountId)?.pageName ?? 'Page'}
               </Button>
+              {video.hasFinal && video.status !== 'Published' && (
+                <Button variant="secondary" loading={busy === 'draft'} disabled={locked || !form.facebookAccountId || (video.finalDurationSeconds ?? 0) > 90} onClick={sendDraft}>
+                  🎵 Gửi bản nháp sang Facebook (tự chọn nhạc)
+                </Button>
+              )}
               {video.hasFinal && video.shots.some((s) => s.hasClip) && (
                 <Button variant="ghost" size="sm" loading={busy === 'purge'} disabled={locked} onClick={purge}>
                   Xoá clip lẻ (giải phóng dung lượng)
@@ -1140,6 +1163,29 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
                 </Button>
               )}
             </div>
+            {video.hasFinal && video.status !== 'Published' && form.musicMode !== 'None' && (
+              <p className="text-[11px] text-fg-muted">
+                Muốn chèn nhạc của Facebook khi đăng tay: ở mục 1 chọn Nhạc nền "Không dùng nhạc" rồi bấm Ghép lại trước, để video không bị 2 lớp nhạc.
+              </p>
+            )}
+            {video.facebookDraftId && video.status !== 'Published' && (
+              <div className="space-y-1.5 rounded-lg border border-accent/30 bg-accent/[0.04] p-3 text-xs text-fg">
+                <div className="font-semibold">✅ Video đã nằm trong bản nháp của Page{draftPage ? ` ${draftPage.pageName}` : ''} (kèm chú thích).</div>
+                <ol className="list-decimal space-y-0.5 pl-4">
+                  <li>
+                    Mở{' '}
+                    <a className="text-accent underline" target="_blank" rel="noopener noreferrer"
+                      href={`https://business.facebook.com/latest/content_management/?asset_id=${encodeURIComponent(draftPage?.pageId ?? '')}`}>
+                      Meta Business Suite → Nội dung ↗
+                    </a>{' '}
+                    → tab <b>Bản nháp</b> (Drafts) → mở thước phim vừa gửi.
+                  </li>
+                  <li>Bấm <b>Chỉnh sửa</b> → <b>🎵 Âm thanh / Thêm nhạc</b> → chọn bài, chỉnh nhạc nhỏ để nghe rõ lời bình.</li>
+                  <li>Bấm <b>Đăng</b>, rồi quay lại đây bấm nút bên dưới.</li>
+                </ol>
+                <Button size="sm" variant="primary" loading={busy === 'mark'} onClick={markPublished}>Tôi đã đăng xong</Button>
+              </div>
+            )}
             {video.instagramError && !video.instagramPermalink && (
               <p className="text-xs text-danger">Instagram chưa đăng được: {video.instagramError}</p>
             )}

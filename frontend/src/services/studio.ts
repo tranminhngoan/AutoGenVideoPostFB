@@ -207,6 +207,8 @@ export interface StudioVideo extends StudioVideoSummary {
   publishedPostId?: string | null;
   instagramPermalink?: string | null;
   instagramError?: string | null;
+  /** The video sent to the page as a draft Reel (to add Facebook music by hand). */
+  facebookDraftId?: string | null;
   shots: StudioShot[];
 }
 
@@ -285,6 +287,8 @@ export interface StudioSettings {
 
 export interface StudioPage {
   id: string;
+  /** The page's id on Facebook (opens its composer). */
+  pageId?: string;
   pageName: string;
   isActive: boolean;
 }
@@ -346,6 +350,8 @@ export const studio = {
   recoverClips: (id: string) => call<StudioVideo>('POST', `/videos/${id}/recover-clips`),
   publish: (id: string, caption: string) => call<StudioVideo>('POST', `/videos/${id}/publish`, { caption }),
   instagram: (id: string) => call<StudioVideo>('POST', `/videos/${id}/instagram`),
+  markPublished: (id: string) => call<StudioVideo>('POST', `/videos/${id}/mark-published`),
+  facebookDraft: (id: string, caption: string) => call<StudioVideo>('POST', `/videos/${id}/facebook-draft`, { caption }),
   purgeClips: (id: string) => call<StudioVideo>('POST', `/videos/${id}/purge-clips`),
   finalUrl: (id: string, download = false) => `${BASE}/videos/${id}/final${download ? '?download=true' : ''}`,
   clipUrl: (shotId: string) => `${BASE}/shots/${shotId}/clip`,

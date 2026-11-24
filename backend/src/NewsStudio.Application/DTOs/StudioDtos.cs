@@ -102,6 +102,7 @@ public class StudioVideoDto : StudioVideoSummaryDto
     public string? PublishedPostId { get; set; }
     public string? InstagramPermalink { get; set; }
     public string? InstagramError { get; set; }
+    public string? FacebookDraftId { get; set; }
     public List<StudioShotDto> Shots { get; set; } = new();
 }
 

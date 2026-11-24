@@ -79,6 +79,8 @@ public class StudioVideo : BaseEntity
     /// <summary>The same video as a Reel on the Instagram account linked to the page (link), or why it couldn't be posted.</summary>
     public string? InstagramPermalink { get; set; }
     public string? InstagramError { get; set; }
+    /// <summary>The video sent to the page as a draft Reel, to be finished (music added) in Facebook's composer.</summary>
+    public string? FacebookDraftId { get; set; }
     public DateTime? PublishedAtUtc { get; set; }
 
     public ICollection<StudioShot> Shots { get; set; } = new List<StudioShot>();

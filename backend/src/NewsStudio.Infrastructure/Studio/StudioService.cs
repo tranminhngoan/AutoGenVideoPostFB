@@ -450,6 +450,7 @@ public class StudioService
         dto.PublishedPostId = v.PublishedPostId;
         dto.InstagramPermalink = v.InstagramPermalink;
         dto.InstagramError = v.InstagramError;
+        dto.FacebookDraftId = v.FacebookDraftId;
         var voiceFrom = new Dictionary<Guid, int>();
         foreach (var take in SceneTakes(v.Shots))
         {
@@ -2233,6 +2234,78 @@ Trả về JSON:
         return !string.IsNullOrWhiteSpace(configured) ? configured.TrimEnd('/')
             : !string.IsNullOrWhiteSpace(domain) ? $"https://{domain.Trim().TrimEnd('/')}"
             : null;
+    }
+
+    /// <summary>
+    /// Sends the final video to the page as a DRAFT Reel with its caption: the owner opens it in Meta Business Suite,
+    /// adds music from Facebook's library under Edit, and publishes it there.
+    /// </summary>
+    public async Task<StudioVideoDto> StartFacebookDraftAsync(Guid id, string? caption, CancellationToken ct)
+    {
+        var v = await _db.StudioVideos.FirstOrDefaultAsync(x => x.Id == id, ct) ?? throw new KeyNotFoundException("Không tìm thấy video.");
+        EnsureNotBusy(v);
+        if (v.FacebookAccountId == null) throw new InvalidOperationException("Chọn Page ở mục 1 rồi bấm Lưu trước.");
+        if (v.FinalBlobId == null || await GetBlobAsync(v.FinalBlobId.Value, ct) == null) throw new InvalidOperationException("Video chưa ghép xong (hoặc file đã mất) — bấm Ghép lại.");
+        if ((v.FinalDurationSeconds ?? 0) > 90) throw new InvalidOperationException("Bản nháp thước phim chỉ nhận video dài tối đa 90 giây.");
+        if (caption != null) v.Caption = caption.Trim();
+        v.Status = "Publishing";
+        v.Progress = "Đang gửi video sang Facebook dạng bản nháp…";
+        v.ErrorMessage = null;
+        await _db.SaveChangesAsync(ct);
+        _jobs.Enqueue<StudioService>(s => s.RunFacebookDraftAsync(id, CancellationToken.None));
+        return await GetVideoAsync(id, ct);
+    }
+
+    [Queue("critical")]
+    [AutomaticRetry(Attempts = 0)]
+    public async Task RunFacebookDraftAsync(Guid id, CancellationToken ct)
+    {
+        var v = await _db.StudioVideos.FirstOrDefaultAsync(x => x.Id == id, ct);
+        if (v == null || v.FinalBlobId == null || v.FacebookAccountId == null) return;
+        var dir = StudioMedia.TempDir();
+        try
+        {
+            var blob = await GetBlobAsync(v.FinalBlobId.Value, ct) ?? throw new InvalidOperationException("Mất file video.");
+            var path = Path.Combine(dir, "draft.mp4");
+            await File.WriteAllBytesAsync(path, blob.Data, ct);
+            v.FacebookDraftId = await _facebook.UploadReelDraftAsync(v.FacebookAccountId.Value, path, CaptionWithDisclosure(v.Caption), ct);
+            v.ErrorMessage = null;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Facebook draft failed for {Id}", id);
+            v.ErrorMessage = "Chưa gửi được bản nháp sang Facebook: " + ex.Message;
+        }
+        finally
+        {
+            StudioMedia.TryDelete(dir);
+        }
+        v.Status = "Ready";
+        v.Progress = null;
+        await _db.SaveChangesAsync(CancellationToken.None);
+    }
+
+    /// <summary>
+    /// The video was posted by hand (in Facebook's own composer, e.g. to add music from Facebook's library): mark it
+    /// published and free the clips, like after a post from the app.
+    /// </summary>
+    public async Task<StudioVideoDto> MarkPublishedAsync(Guid id, CancellationToken ct)
+    {
+        var v = await _db.StudioVideos.Include(x => x.Shots).FirstOrDefaultAsync(x => x.Id == id, ct) ?? throw new KeyNotFoundException("Không tìm thấy video.");
+        EnsureNotBusy(v);
+        if (v.FinalBlobId == null) throw new InvalidOperationException("Video chưa ghép xong.");
+        v.Status = "Published";
+        v.PublishedAtUtc = DateTime.UtcNow;
+        v.Progress = null;
+        v.ErrorMessage = null;
+        foreach (var s in v.Shots.Where(s => s.ClipBlobId != null))
+        {
+            await DeleteBlobAsync(s.ClipBlobId!.Value, ct);
+            s.ClipBlobId = null;
+            s.InteractionId = null;
+        }
+        await _db.SaveChangesAsync(ct);
+        return await GetVideoAsync(id, ct);
     }
 
     /// <summary>Posts an already published video to Instagram too (e.g. after linking Instagram), while its file still exists.</summary>

@@ -54,6 +54,12 @@ public interface IFacebookPublishingService
     Task<(string MediaId, string? Permalink)> PublishInstagramVideoFileAsync(Guid facebookAccountId, string videoPath, string caption,
         string? publicVideoUrl, CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Uploads a video (≤ 90 s) to the page as a DRAFT Reel with its caption, for the owner to finish in Facebook's own
+    /// composer (e.g. to add music from Facebook's library, which no app can add). Returns the video id.
+    /// </summary>
+    Task<string> UploadReelDraftAsync(Guid facebookAccountId, string videoPath, string caption, CancellationToken cancellationToken = default);
+
     /// <summary>The page's current name on Facebook (a renamed page is picked up and stored); null when it can't be read.</summary>
     Task<string?> RefreshPageNameAsync(Guid facebookAccountId, CancellationToken cancellationToken = default);
 

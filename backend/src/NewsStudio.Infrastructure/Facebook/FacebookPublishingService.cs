@@ -782,7 +782,8 @@ public class FacebookPublishingService : IFacebookPublishingService
         string pageToken,
         string videoFilePath,
         string caption,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string videoState = "PUBLISHED")
     {
         // Step 1: Start upload session
         var startUrl = $"https://graph.facebook.com/{_graphApiVersion}/{pageId}/video_reels";
@@ -854,7 +855,7 @@ public class FacebookPublishingService : IFacebookPublishingService
             upload_phase = "finish",
             access_token = pageToken,
             video_id = videoId,
-            video_state = "PUBLISHED",
+            video_state = videoState,
             description = caption
         };
         var finishRes = await _httpClient.PostAsJsonAsync(startUrl, finishPayload, cancellationToken);
@@ -1069,6 +1070,14 @@ public class FacebookPublishingService : IFacebookPublishingService
             await Task.Delay(TimeSpan.FromSeconds(10), cancellationToken);
             return await PublishInstagramReelAsync(ig, token, videoPath, caption, cancellationToken);
         }
+    }
+
+    public async Task<string> UploadReelDraftAsync(Guid facebookAccountId, string videoPath, string caption, CancellationToken cancellationToken = default)
+    {
+        if (!File.Exists(videoPath)) throw new InvalidOperationException("Không tìm thấy file video.");
+        var (pageId, token) = await PageTokenAsync(facebookAccountId, cancellationToken);
+        var (videoId, _) = await ExecuteMetaReelsPublishAsync(pageId, token, videoPath, caption, cancellationToken, "DRAFT");
+        return videoId;
     }
 
     public async Task<string?> RefreshPageNameAsync(Guid facebookAccountId, CancellationToken cancellationToken = default)
