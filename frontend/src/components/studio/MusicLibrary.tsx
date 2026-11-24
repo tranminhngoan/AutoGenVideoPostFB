@@ -109,8 +109,8 @@ export function MusicLibrary({ onAuthError }: { onAuthError: (e: unknown) => boo
           thoại. Chỉ dùng nhạc anh có quyền đăng (ví dụ tải từ Meta Sound Collection) — nhạc có bản quyền sẽ làm video bị chặn kiếm tiền.
         </p>
         <div className="grid gap-3 sm:grid-cols-3">
-          <Field label="File nhạc (MP3, M4A, WAV, OGG — tối đa 40 MB; chọn được nhiều file một lần)">
-            <Input ref={inputRef} type="file" accept="audio/*" multiple onChange={(e) => pick(e.target.files)} />
+          <Field label="File nhạc (MP3, MP4, M4A, WAV, OGG — tối đa 25 MB; chọn được nhiều file một lần)">
+            <Input ref={inputRef} type="file" accept="audio/*,video/mp4,.mp3,.m4a,.mp4,.aac,.wav,.ogg" multiple onChange={(e) => pick(e.target.files)} />
           </Field>
           <Field label={files.length > 1 ? `Tên bài (${files.length} file: bài gợi ý tự đặt tên, còn lại lấy tên file)` : 'Tên bài'}>
             <Input value={files.length > 1 ? '' : name} onChange={(e) => setName(e.target.value)} disabled={files.length > 1} />
