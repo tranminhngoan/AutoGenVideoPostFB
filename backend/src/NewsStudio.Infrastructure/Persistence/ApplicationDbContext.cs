@@ -30,6 +30,9 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
     public DbSet<StudioVideo> StudioVideos => Set<StudioVideo>();
     public DbSet<StudioShot> StudioShots => Set<StudioShot>();
     public DbSet<StudioCostRecord> StudioCostRecords => Set<StudioCostRecord>();
+    public DbSet<ReupCharacter> ReupCharacters => Set<ReupCharacter>();
+    public DbSet<ReupBackdrop> ReupBackdrops => Set<ReupBackdrop>();
+    public DbSet<ReupJob> ReupJobs => Set<ReupJob>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
     public DbSet<TrendingArticle> TrendingArticles => Set<TrendingArticle>();
     public DbSet<AutoPostSettings> AutoPostSettings => Set<AutoPostSettings>();
@@ -660,6 +663,54 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
             entity.Property(e => e.CostUsd).HasPrecision(18, 6);
             entity.HasIndex(e => e.CreatedAtUtc);
             entity.HasIndex(e => e.StudioVideoId);
+        });
+
+        // ───────── Reup Video (free, on the owner's PC) ─────────
+        modelBuilder.Entity<ReupCharacter>(entity =>
+        {
+            entity.ToTable("ReupCharacters");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Name).HasMaxLength(200).IsRequired();
+            entity.Property(e => e.Notes).HasMaxLength(2000);
+            entity.Property(e => e.Status).HasMaxLength(20);
+            entity.Property(e => e.RejectReason).HasMaxLength(500);
+            entity.Property(e => e.FaceBoxJson).HasMaxLength(200);
+            entity.HasIndex(e => e.CreatedAtUtc);
+        });
+        modelBuilder.Entity<ReupBackdrop>(entity =>
+        {
+            entity.ToTable("ReupBackdrops");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Name).HasMaxLength(200).IsRequired();
+            entity.Property(e => e.Kind).HasMaxLength(10);
+            entity.Property(e => e.Category).HasMaxLength(40);
+            entity.Property(e => e.Tags).HasMaxLength(500);
+            entity.Property(e => e.MimeType).HasMaxLength(100);
+            entity.Property(e => e.SourceName).HasMaxLength(40);
+            entity.Property(e => e.SourceUrl).HasMaxLength(1000);
+            entity.Property(e => e.Author).HasMaxLength(200);
+            entity.Property(e => e.LicenseName).HasMaxLength(200).IsRequired();
+            entity.Property(e => e.LicenseUrl).HasMaxLength(1000);
+            entity.HasIndex(e => e.Category);
+        });
+        modelBuilder.Entity<ReupJob>(entity =>
+        {
+            entity.ToTable("ReupJobs");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Title).HasMaxLength(300).IsRequired();
+            entity.Property(e => e.SourceFileName).HasMaxLength(300);
+            entity.Property(e => e.SourceFps).HasMaxLength(30);
+            entity.Property(e => e.RightsNote).HasMaxLength(1000);
+            entity.Property(e => e.AudioMode).HasMaxLength(20);
+            entity.Property(e => e.AudioFileName).HasMaxLength(300);
+            entity.Property(e => e.Status).HasMaxLength(20);
+            entity.Property(e => e.Stage).HasMaxLength(40);
+            entity.Property(e => e.ProgressText).HasMaxLength(500);
+            entity.Property(e => e.HangfireJobId).HasMaxLength(50);
+            entity.Property(e => e.WorkerMachine).HasMaxLength(100);
+            entity.Property(e => e.ErrorMessage).HasMaxLength(2000);
+            entity.HasIndex(e => e.CreatedAtUtc);
+            entity.HasIndex(e => e.Status);
         });
     }
 

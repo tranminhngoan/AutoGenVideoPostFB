@@ -53,6 +53,36 @@ public class StudioFileStore
         if (_s3 != null) await _s3.PutAsync(Key(blobId), data, "application/octet-stream", ct);
     }
 
+    /// <summary>
+    /// Stores a file that is already on disk (big videos: never loaded whole into memory). With the shared bucket the
+    /// file is uploaded and, unless <paramref name="keepLocal"/>, removed from this disk (the bucket is the copy);
+    /// without it the file is moved into the store's folder.
+    /// </summary>
+    public async Task SaveFileAsync(Guid blobId, string sourcePath, string contentType, bool keepLocal, CancellationToken ct)
+    {
+        var path = PathFor(blobId);
+        if (_s3 != null)
+        {
+            await _s3.PutFileAsync(Key(blobId), sourcePath, contentType, ct);
+            if (keepLocal) File.Copy(sourcePath, path, overwrite: true);
+            return;
+        }
+        File.Copy(sourcePath, path + ".part", overwrite: true);
+        File.Move(path + ".part", path, overwrite: true);
+    }
+
+    /// <summary>Copies the stored file to <paramref name="destination"/> (streamed from the bucket when this disk lacks it). False when gone.</summary>
+    public async Task<bool> CopyToAsync(Guid blobId, string destination, CancellationToken ct)
+    {
+        var path = PathFor(blobId);
+        if (File.Exists(path))
+        {
+            File.Copy(path, destination, overwrite: true);
+            return true;
+        }
+        return _s3 != null && await _s3.GetToFileAsync(Key(blobId), destination, ct);
+    }
+
     public async Task<byte[]?> ReadAsync(Guid blobId, CancellationToken ct)
     {
         var path = PathFor(blobId);
@@ -68,7 +98,15 @@ public class StudioFileStore
     {
         var path = PathFor(blobId);
         if (File.Exists(path)) return path;
-        return await ReadAsync(blobId, ct) != null ? path : null;
+        if (_s3 == null) return null;
+        try
+        {
+            return await _s3.GetToFileAsync(Key(blobId), path, ct) ? path : null; // streamed: a big video never sits whole in memory
+        }
+        catch (IOException) when (File.Exists(path))
+        {
+            return path; // another request cached it at the same time
+        }
     }
 
     private static async Task CacheAsync(string path, byte[] data, CancellationToken ct)

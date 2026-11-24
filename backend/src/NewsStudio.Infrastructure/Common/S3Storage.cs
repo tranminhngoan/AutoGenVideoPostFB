@@ -15,6 +15,8 @@ namespace NewsStudio.Infrastructure.Common;
 public class S3Storage
 {
     private readonly HttpClient _http;
+    /// <summary>Big files (source videos up to ~600 MB over a home connection) get an hour, not the 5 minutes of small calls.</summary>
+    private static readonly HttpClient FileHttp = new() { Timeout = TimeSpan.FromHours(1) };
     private readonly Uri _endpoint;
     private readonly string _bucket;
     private readonly string _accessKey;
@@ -52,6 +54,45 @@ public class S3Storage
         if (!res.IsSuccessStatusCode) throw new InvalidOperationException($"Kho file S3 không lưu được ({(int)res.StatusCode}): {await Short(res, ct)}");
     }
 
+    /// <summary>
+    /// Uploads a file straight from disk (big videos never sit whole in memory). The body is streamed with
+    /// UNSIGNED-PAYLOAD (allowed over HTTPS by S3, R2 and B2), so the file is read only once.
+    /// </summary>
+    public async Task PutFileAsync(string key, string path, string contentType, CancellationToken ct)
+    {
+        await using var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 16, FileOptions.Asynchronous | FileOptions.SequentialScan);
+        using var req = Request(HttpMethod.Put, key, null, UnsignedPayload);
+        req.Content = new StreamContent(file, 1 << 16);
+        req.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(contentType);
+        req.Content.Headers.ContentLength = file.Length;
+        using var res = await FileHttp.SendAsync(req, ct);
+        if (!res.IsSuccessStatusCode) throw new InvalidOperationException($"Kho file S3 không lưu được ({(int)res.StatusCode}): {await Short(res, ct)}");
+    }
+
+    /// <summary>Downloads an object into a file (streamed). False when it doesn't exist.</summary>
+    public async Task<bool> GetToFileAsync(string key, string path, CancellationToken ct)
+    {
+        using var req = Request(HttpMethod.Get, key, null);
+        using var res = await FileHttp.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
+        if (res.StatusCode == HttpStatusCode.NotFound) return false;
+        if (!res.IsSuccessStatusCode) throw new InvalidOperationException($"Kho file S3 không đọc được ({(int)res.StatusCode}): {await Short(res, ct)}");
+        var tmp = path + "." + Guid.NewGuid().ToString("N")[..6] + ".part";
+        try
+        {
+            await using (var src = await res.Content.ReadAsStreamAsync(ct))
+            await using (var dst = new FileStream(tmp, FileMode.Create, FileAccess.Write, FileShare.None, 1 << 16, FileOptions.Asynchronous))
+                await src.CopyToAsync(dst, 1 << 16, ct);
+            File.Move(tmp, path, overwrite: true);
+        }
+        finally
+        {
+            if (File.Exists(tmp)) File.Delete(tmp);
+        }
+        return true;
+    }
+
+    private const string UnsignedPayload = "UNSIGNED-PAYLOAD";
+
     /// <summary>The object's bytes, or null when it doesn't exist.</summary>
     public async Task<byte[]?> GetAsync(string key, CancellationToken ct)
     {
@@ -75,14 +116,14 @@ public class S3Storage
         using var res = await _http.SendAsync(req, ct);
     }
 
-    private HttpRequestMessage Request(HttpMethod method, string key, byte[]? body)
+    private HttpRequestMessage Request(HttpMethod method, string key, byte[]? body, string? payloadHashOverride = null)
     {
         var path = "/" + Escape(_bucket) + "/" + string.Join("/", key.Split('/').Select(Escape));
         var uri = new Uri(_endpoint, path.TrimStart('/'));
         var req = new HttpRequestMessage(method, uri);
         var now = DateTime.UtcNow;
         var amzDate = now.ToString("yyyyMMdd'T'HHmmss'Z'", CultureInfo.InvariantCulture);
-        var payloadHash = Hex(SHA256.HashData(body ?? Array.Empty<byte>()));
+        var payloadHash = payloadHashOverride ?? Hex(SHA256.HashData(body ?? Array.Empty<byte>()));
         var host = uri.IsDefaultPort ? uri.Host : $"{uri.Host}:{uri.Port}";
         var headers = new SortedDictionary<string, string>(StringComparer.Ordinal)
         {

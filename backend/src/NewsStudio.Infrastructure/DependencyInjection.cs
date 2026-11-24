@@ -16,6 +16,7 @@ using NewsStudio.Infrastructure.Facebook;
 using NewsStudio.Infrastructure.Services;
 using NewsStudio.Infrastructure.FilmFactory;
 using NewsStudio.Infrastructure.Studio;
+using NewsStudio.Infrastructure.Reup;
 
 namespace NewsStudio.Infrastructure;
 
@@ -136,6 +137,9 @@ public static class DependencyInjection
         // AI video studio (Grok Imagine video) — registered in AddStudioServices below
         services.AddHttpClient<FilmGeminiClient>();
         services.AddStudioServices();
+
+        // Reup Video: free processing on the owner's PC (ONNX Runtime + OpenCV + FFmpeg; queue "pc_local")
+        services.AddReupServices(configuration);
 
         return services;
     }

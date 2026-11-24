@@ -1,5 +1,3 @@
-using System.Security.Cryptography;
-using System.Text;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
@@ -35,25 +33,7 @@ public class StudioController : ControllerBase
     // ───────────── access ─────────────
 
     /// <summary>Null when allowed; otherwise a 401 the page turns into its unlock box.</summary>
-    private IActionResult? Denied()
-    {
-        var keys = new[] { SeedanceVideoClient.ApiKey(_configuration), GeminiKeys.Paid(_configuration), _configuration["Security:AdminApiKey"] }
-            .Where(k => !string.IsNullOrWhiteSpace(k)).Select(k => k!.Trim()).ToList();
-        if (keys.Count == 0) return null; // nothing configured to compare with (and nothing paid can run either)
-        var given = Request.Headers.TryGetValue("X-Studio-Key", out var h) ? h.ToString().Trim() : "";
-        if (given.Length > 0)
-        {
-            var g = SHA256.HashData(Encoding.UTF8.GetBytes(given));
-            if (keys.Any(k => CryptographicOperations.FixedTimeEquals(g, SHA256.HashData(Encoding.UTF8.GetBytes(k))))) return null;
-        }
-        return StatusCode(StatusCodes.Status401Unauthorized, new
-        {
-            needsStudioKey = true,
-            message = given.Length == 0
-                ? "Cần mở khoá Studio bằng khoá Vercel AI Gateway (AI_GATEWAY_API_KEY) hoặc khoá Gemini đang đặt trên Railway (chỉ lưu trên trình duyệt này)."
-                : "Khoá không khớp với khoá Vercel / Gemini đang cấu hình trên server."
-        });
-    }
+    private IActionResult? Denied() => StudioAccess.Denied(Request, _configuration);
 
     private async Task<IActionResult> Run(Func<Task<object?>> action)
     {

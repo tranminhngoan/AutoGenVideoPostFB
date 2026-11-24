@@ -49,5 +49,10 @@ public interface IApplicationDbContext
     DbSet<StudioShot> StudioShots { get; }
     DbSet<StudioCostRecord> StudioCostRecords { get; }
 
+    // Reup Video (free, on the owner's PC)
+    DbSet<ReupCharacter> ReupCharacters { get; }
+    DbSet<ReupBackdrop> ReupBackdrops { get; }
+    DbSet<ReupJob> ReupJobs { get; }
+
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

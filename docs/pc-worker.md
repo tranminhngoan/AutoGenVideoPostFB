@@ -49,3 +49,19 @@ Chỉ riêng bước này đã có lợi: **cập nhật code / server khởi đ
 - Railway không bao giờ bỏ ngang một việc đang làm: nó chỉ nhường khi rảnh.
 - Video **tin tức** ghép trên máy tính vẫn đăng bình thường, nhưng xem lại trong trang web (Video → chi tiết) có thể không phát được
   vì file nằm trên máy tính. Video **Studio AI** thì xem được ở mọi nơi (nằm trong kho file chung).
+
+## Reup Video (thay nền / thay mặt / âm thanh — miễn phí, chạy trên máy tính)
+
+Menu **Reup Video** xử lý video **chỉ trên máy tính** (hàng đợi `pc_local`): Railway không bao giờ nhận việc này, nên không tốn CPU Railway.
+Máy tắt thì video nằm chờ, bật máy là tự chạy.
+
+1. Cài engine một lần: bấm đúp **`scripts\pc\setup-reup-engine.bat`** (thêm `-DirectML` để dùng card đồ hoạ sẵn có).
+   Tạo Python venv riêng ở `D:\TramTinAI` (đổi bằng biến `REUP_HOME`), cài ONNX Runtime + OpenCV, tải ~55 MB model miễn phí có kiểm tra SHA-256:
+   YuNet (MIT), SFace (Apache-2.0), Robust Video Matting (GPL-3.0 — dùng nội bộ, không phân phối lại). Sau đó xử lý hoàn toàn offline.
+2. Chạy `start-pc-worker.bat` như bình thường. Vài phút sau trang Reup Video › Cài đặt hiện "Engine sẵn sàng" và tốc độ đo được.
+3. **Thay mặt đang khoá**: các model thay mặt phổ biến (inswapper_128, ArcFace/buffalo_l của InsightFace, HyperSwap, SimSwap…) chỉ cho dùng
+   phi thương mại. Khi có giấy phép thương mại: đặt `swapper.onnx` + `identity.onnx` vào `D:\TramTinAI\models\licensed\` và xác nhận giấy phép trong Cài đặt.
+
+Tốc độ đo trên máy này (2× Xeon E5-2680 v4, CPU): thay nền ~8,4 khung/giây ở 720p, ~5,9 ở 1080p → video 60 giây 30 fps mất khoảng 4–6 phút.
+File tạm nằm ở `D:\TramTinAI\work` (khung hình đi qua pipe, không ghi ra đĩa) và tự xoá sau mỗi video. Video nguồn + kết quả trên R2 tự xoá sau 7 ngày.
+
