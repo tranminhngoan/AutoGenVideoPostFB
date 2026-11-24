@@ -1594,7 +1594,7 @@ Trả về JSON:
             else d[k] = SeedanceVideoClient.ClampSeconds(x.Duration);
             placed += d[k];
         }
-        var needed = lead + seconds + MinVoiceRoom;
+        var needed = seconds + MinVoiceRoom; // MinVoiceRoom already holds the 0.25 s lead and a short breath
         for (var k = lastSpoken; k >= 0 && d.Sum() < needed - 1e-6; k--)
             if (!shots[k].Fixed) d[k] = Math.Min(SeedanceVideoClient.MaxSeconds, d[k] + (int)Math.Ceiling(needed - d.Sum() - 1e-6));
         if (d.Sum() < needed - 1e-6)
@@ -1608,7 +1608,7 @@ Trả về JSON:
     /// restarting at every cut) and times the scene's clips to it. The audio sits on the first spoken shot and runs on
     /// over the following shots when the video is put together.
     /// </summary>
-    private async Task MakeSceneVoiceAsync(StudioVideo v, Bible bible, List<StudioShot> take, CancellationToken ct)
+    private async Task<List<StudioShot>> MakeSceneVoiceAsync(StudioVideo v, Bible bible, List<StudioShot> take, CancellationToken ct)
     {
         var owner = TakeOwner(take);
         var span = take.Skip(take.IndexOf(owner)).ToList();
@@ -1616,7 +1616,28 @@ Trả về JSON:
         var voice = VoiceFor(bible, owner.Speaker);
         var style = !string.IsNullOrWhiteSpace(owner.VoiceStyle) ? owner.VoiceStyle : take.Select(s => s.VoiceStyle).FirstOrDefault(x => !string.IsNullOrWhiteSpace(x));
         var (audio, seconds, fromCache, delivery) = await _voices.SpeakAsync(v.Id, text, voice, SpeedFor(bible, owner.Speaker), ct, style);
-        var durations = FitSceneTake(span.Select(s => (WordCount(s.Dialogue), s.DurationSeconds, s.ClipBlobId != null && s.Status == "Done")).ToList(), seconds);
+
+        // read slower than planned and longer than the scene's clips can ever be: add a shot (the same moment, another
+        // framing) instead of stopping the whole video
+        var added = new List<StudioShot>();
+        bool Fixed(StudioShot s) => s.ClipBlobId != null && s.Status == "Done";
+        double Capacity() => span.Sum(s => Fixed(s) ? s.DurationSeconds : SeedanceVideoClient.MaxSeconds);
+        while (seconds + MinVoiceRoom > Capacity() + 1e-6 && added.Count < 3)
+        {
+            var last = span[^1];
+            foreach (var later in v.Shots.Where(s => s.Index > last.Index)) later.Index++;
+            var extra = new StudioShot
+            {
+                StudioVideoId = v.Id, Index = last.Index + 1, DurationSeconds = 6, Action = last.Action, Location = last.Location,
+                CastJson = last.CastJson, Sound = last.Sound, Scene = last.Scene, VoiceStyle = last.VoiceStyle, Status = "Pending",
+                Camera = "slow gentle push-in on the same moment, a slightly different angle, people keep acting naturally"
+            };
+            _db.StudioShots.Add(extra); // through the DbSet: see RunPlanAsync
+            span.Add(extra);
+            take.Add(extra);
+            added.Add(extra);
+        }
+        var durations = FitSceneTake(span.Select(s => (WordCount(s.Dialogue), s.DurationSeconds, Fixed(s))).ToList(), seconds);
 
         foreach (var s in take.Where(s => s.VoiceBlobId != null))
         {
@@ -1637,9 +1658,10 @@ Trả về JSON:
         {
             StudioVideoId = v.Id, StudioShotId = owner.Id, Kind = "Voice", Model = voice, Seconds = seconds, CostUsd = cost,
             Note = $"lời bình cảnh {owner.Scene} (shot {span[0].Index}–{span[^1].Index}, liền một mạch" + (delivery != null ? ", " + delivery : "") + ")"
-                   + (fromCache ? " (dùng lại, miễn phí)" : "")
+                   + (fromCache ? " (dùng lại, miễn phí)" : "") + (added.Count > 0 ? $" — thêm {added.Count} shot cho vừa lời bình" : "")
         });
         await _db.SaveChangesAsync(ct);
+        return added;
     }
 
     /// <summary>Whether a line read in <paramref name="voiceSeconds"/> fits one clip (with a little tolerance for rounding).</summary>
@@ -1704,7 +1726,8 @@ Trả về JSON:
             await _db.SaveChangesAsync(ct);
             try
             {
-                await MakeSceneVoiceAsync(v, bible, take, ct);
+                var extra = await MakeSceneVoiceAsync(v, bible, take, ct);
+                if (extra.Count > 0) todo = todo.Concat(extra).OrderBy(s => s.Index).ToList(); // the new shots are made in this run too
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -1923,8 +1946,14 @@ Trả về JSON:
 
         int recovered = 0, done = 0;
         var gone = new List<int>();
+        var neverMade = new List<int>();
         foreach (var s in lost)
         {
+            if (string.IsNullOrEmpty(s.InteractionId) && s.ClipBlobId == null)
+            {
+                neverMade.Add(s.Index); // nothing was ever paid for: it is simply still to make
+                continue;
+            }
             v.Progress = $"Đang lấy lại clip {++done}/{lost.Count} (shot {s.Index}) — miễn phí…";
             await _db.SaveChangesAsync(ct);
             (byte[] Bytes, string Mime)? file = null;
@@ -1953,6 +1982,16 @@ Trả về JSON:
             await _db.SaveChangesAsync(ct);
         }
 
+        if (gone.Count == 0 && neverMade.Count > 0)
+        {
+            v.Status = "Planned";
+            v.Progress = null;
+            var todoCost = neverMade.Sum(i => ShotCost(v, shots.First(s => s.Index == i)));
+            v.ErrorMessage = $"Đã lấy lại {recovered} clip miễn phí. Còn shot {string.Join(", ", neverMade)} chưa từng được tạo — " +
+                             $"bấm \"Tạo các clip còn thiếu\" (~{todoCost:0.00} USD) là video tự ghép.";
+            await _db.SaveChangesAsync(ct);
+            return;
+        }
         if (gone.Count == 0)
         {
             if (v.FinalBlobId != null && await GetBlobAsync(v.FinalBlobId.Value, ct) == null)
@@ -1967,9 +2006,10 @@ Trả về JSON:
         }
         v.Status = "Failed";
         v.Progress = null;
-        var cost = gone.Sum(i => ShotCost(v, shots.First(s => s.Index == i)));
-        v.ErrorMessage = $"Lấy lại được {recovered}/{lost.Count} clip miễn phí. Shot {string.Join(", ", gone)} đã hết hạn — " +
-                         $"bấm \"Tạo các clip còn thiếu\" để tạo lại (~{cost:0.00} USD).";
+        var cost = gone.Concat(neverMade).Sum(i => ShotCost(v, shots.First(s => s.Index == i)));
+        v.ErrorMessage = $"Lấy lại được {recovered}/{lost.Count - neverMade.Count} clip miễn phí. Shot {string.Join(", ", gone)} đã hết hạn" +
+                         (neverMade.Count > 0 ? $", shot {string.Join(", ", neverMade)} chưa từng tạo" : "") +
+                         $" — bấm \"Tạo các clip còn thiếu\" (~{cost:0.00} USD).";
         await _db.SaveChangesAsync(ct);
     }
 

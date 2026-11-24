@@ -570,6 +570,9 @@ public class StudioTests
         // a shot that already has its clip keeps its length; a silent closing beat keeps its own
         StudioService.FitSceneTake(new[] { (10, 8, true), (10, 4, false), (0, 5, false) }, 9).Should().Equal(8, 2, 5);
 
+        // the real case (BCN-03, scene 2): one shot, 11.6 s read slowly — fits one 12 s clip like a single line does
+        StudioService.FitSceneTake(new[] { (26, 9, false) }, 11.6).Should().Equal(12);
+
         // a take the scene can never hold is refused before any clip is paid for
         var tooLong = () => StudioService.FitSceneTake(new[] { (10, 4, false) }, 20);
         tooLong.Should().Throw<InvalidOperationException>().WithMessage("*Thêm 1 shot*");
