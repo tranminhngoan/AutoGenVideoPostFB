@@ -296,6 +296,52 @@ public class ReupFlowTests : IClassFixture<WebApplicationFactory<Program>>
         }
     }
 
+    /// <summary>Big files go through the Vercel proxy in small pieces: start, pieces (one sent twice, like a retry), then the form.</summary>
+    [Fact]
+    public async Task A_video_sent_in_pieces_becomes_a_job()
+    {
+        var dir = NewDir();
+        try
+        {
+            var bytes = await File.ReadAllBytesAsync(await MakeClipAsync(dir, 3, audio: true));
+            var http = _factory.CreateClient();
+            var start = await http.PostAsync("/api/reup/uploads", null);
+            start.EnsureSuccessStatusCode();
+            var uploadId = System.Text.Json.JsonDocument.Parse(await start.Content.ReadAsStringAsync()).RootElement.GetProperty("uploadId").GetString();
+            const int piece = 64 * 1024;
+            for (var offset = 0; offset < bytes.Length; offset += piece)
+            {
+                var part = new ByteArrayContent(bytes, offset, Math.Min(piece, bytes.Length - offset));
+                (await http.PutAsync($"/api/reup/uploads/{uploadId}?offset={offset}", part)).EnsureSuccessStatusCode();
+                if (offset == piece) // the same piece again (a retry after a network error) changes nothing
+                    (await http.PutAsync($"/api/reup/uploads/{uploadId}?offset={offset}", new ByteArrayContent(bytes, offset, piece))).EnsureSuccessStatusCode();
+            }
+            var gap = await http.PutAsync($"/api/reup/uploads/{uploadId}?offset={bytes.Length + 10}", new ByteArrayContent(new byte[10]));
+            gap.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+
+            var form = new MultipartFormDataContent
+            {
+                { new StringContent(uploadId!), "uploadId" },
+                { new StringContent("Nhảy từng khúc.mp4"), "fileName" },
+                { new StringContent("video/mp4"), "contentType" }
+            };
+            var created = await http.PostAsync("/api/reup/jobs", form);
+            var body = await created.Content.ReadAsStringAsync();
+            created.StatusCode.Should().Be(HttpStatusCode.OK, body);
+            var job = System.Text.Json.JsonDocument.Parse(body).RootElement;
+            job.GetProperty("title").GetString().Should().Be("Nhảy từng khúc");
+            job.GetProperty("sourceSizeBytes").GetInt64().Should().Be(bytes.Length);
+            job.GetProperty("sourceHasAudio").GetBoolean().Should().BeTrue();
+
+            using var scope = _factory.Services.CreateScope();
+            await scope.ServiceProvider.GetRequiredService<ReupService>().DeleteJobAsync(Guid.Parse(job.GetProperty("id").GetString()!), CancellationToken.None);
+        }
+        finally
+        {
+            Directory.Delete(dir, true);
+        }
+    }
+
     [Fact]
     public async Task Backdrops_need_a_licence_and_characters_need_consent()
     {

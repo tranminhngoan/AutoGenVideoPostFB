@@ -47,26 +47,103 @@ public class ReupController : ControllerBase
         catch (HttpRequestException ex) { return BadRequest(new { message = "Không kết nối được: " + ex.Message }); }
     }
 
-    /// <summary>Saves an upload to a temporary file (streamed), runs <paramref name="use"/>, then deletes the file.</summary>
-    private async Task<IActionResult> WithUpload(IFormFile? file, long maxBytes, string tooBig, Func<string, Task<object?>> use, CancellationToken ct)
+    /// <summary>
+    /// A file sent either whole (multipart "file") or beforehand in small pieces (<see cref="UploadChunk"/>) and named
+    /// here by "uploadId": big videos go in 4 MB pieces because the Vercel proxy in front of the API refuses long / big requests.
+    /// </summary>
+    public class UploadFields
+    {
+        public IFormFile? File { get; set; }
+        public string? UploadId { get; set; }
+        public string? FileName { get; set; }
+        public string? ContentType { get; set; }
+    }
+
+    /// <summary>Puts the upload in a temporary file, runs <paramref name="use"/> (path, file name, content type), then deletes it.</summary>
+    private async Task<IActionResult> WithUpload(UploadFields form, long maxBytes, string tooBig, Func<string, string, string, Task<object?>> use, CancellationToken ct)
     {
         if (Denied() is { } d) return d;
-        if (file == null || file.Length == 0) return BadRequest(new { message = "Chưa chọn file." });
-        if (file.Length > maxBytes) return BadRequest(new { message = tooBig });
-        var dir = Path.Combine(Path.GetTempPath(), "reup-upload", Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(dir);
-        var ext = Path.GetExtension(file.FileName);
-        var path = Path.Combine(dir, "upload" + (ext.Length is > 1 and <= 6 ? ext.ToLowerInvariant() : ".bin"));
+        string? dir = null;
         try
         {
-            await using (var dst = System.IO.File.Create(path))
-                await file.CopyToAsync(dst, ct);
-            return await Run(() => use(path));
+            string path, name, type;
+            if (!string.IsNullOrWhiteSpace(form.UploadId))
+            {
+                if (!Guid.TryParse(form.UploadId, out var uploadId)) return BadRequest(new { message = "Mã tải lên không hợp lệ." });
+                dir = ChunkDir(uploadId);
+                path = Path.Combine(dir, "data.bin");
+                if (!System.IO.File.Exists(path) || new FileInfo(path).Length == 0) return BadRequest(new { message = "Chưa nhận được file (tải lên bị gián đoạn) — chọn file lại." });
+                if (new FileInfo(path).Length > maxBytes) return BadRequest(new { message = tooBig });
+                name = string.IsNullOrWhiteSpace(form.FileName) ? "upload.bin" : Path.GetFileName(form.FileName);
+                type = form.ContentType?.Trim().ToLowerInvariant() ?? "";
+            }
+            else
+            {
+                var file = form.File;
+                if (file == null || file.Length == 0) return BadRequest(new { message = "Chưa chọn file." });
+                if (file.Length > maxBytes) return BadRequest(new { message = tooBig });
+                dir = Path.Combine(Path.GetTempPath(), "reup-upload", Guid.NewGuid().ToString("N"));
+                Directory.CreateDirectory(dir);
+                path = Path.Combine(dir, "data.bin");
+                await using (var dst = System.IO.File.Create(path))
+                    await file.CopyToAsync(dst, ct);
+                name = Path.GetFileName(file.FileName);
+                type = file.ContentType?.ToLowerInvariant() ?? "";
+            }
+            return await Run(() => use(path, name, type));
         }
         finally
         {
-            try { Directory.Delete(dir, true); } catch { /* best effort */ }
+            if (dir != null) { try { Directory.Delete(dir, true); } catch { /* best effort */ } }
         }
+    }
+
+    private static string ChunkDir(Guid uploadId) => Path.Combine(Path.GetTempPath(), "reup-chunks", uploadId.ToString("N"));
+
+    /// <summary>Starts a piece-by-piece upload (big videos through the Vercel proxy).</summary>
+    [HttpPost("uploads")]
+    public IActionResult StartUpload()
+    {
+        if (Denied() is { } d) return d;
+        var id = Guid.NewGuid();
+        Directory.CreateDirectory(ChunkDir(id));
+        CleanOldChunks();
+        return Ok(new { uploadId = id });
+    }
+
+    /// <summary>One piece (up to 8 MB) written at its byte offset; sending the same piece again is harmless (retries).</summary>
+    [HttpPut("uploads/{id:guid}")]
+    [RequestSizeLimit(9 * 1024 * 1024)]
+    [Microsoft.AspNetCore.RateLimiting.DisableRateLimiting] // a 600 MB video is ~150 pieces
+    public async Task<IActionResult> UploadChunk(Guid id, [FromQuery] long offset, CancellationToken ct)
+    {
+        if (Denied() is { } d) return d;
+        var dir = ChunkDir(id);
+        if (!Directory.Exists(dir)) return NotFound(new { message = "Phiên tải lên đã hết hạn — chọn file lại." });
+        if (offset < 0 || offset > ReupService.MaxSourceBytes) return BadRequest(new { message = "Vị trí không hợp lệ." });
+        var path = Path.Combine(dir, "data.bin");
+        await using (var fs = new FileStream(path, FileMode.OpenOrCreate, FileAccess.Write, FileShare.None, 1 << 16, FileOptions.Asynchronous))
+        {
+            if (offset > fs.Length) return BadRequest(new { message = "Thiếu phần trước của file — tải lại." });
+            fs.Position = offset;
+            await Request.Body.CopyToAsync(fs, 1 << 16, ct);
+            if (fs.Length > ReupService.MaxSourceBytes + 1024 * 1024) return BadRequest(new { message = "File quá lớn (tối đa 600 MB)." });
+        }
+        return Ok(new { received = new FileInfo(path).Length });
+    }
+
+    /// <summary>Pieces of uploads that were never finished (closed tab...) are removed after 6 hours.</summary>
+    private static void CleanOldChunks()
+    {
+        try
+        {
+            var root = Path.Combine(Path.GetTempPath(), "reup-chunks");
+            if (!Directory.Exists(root)) return;
+            foreach (var dir in Directory.GetDirectories(root))
+                if (Directory.GetLastWriteTimeUtc(dir) < DateTime.UtcNow.AddHours(-6))
+                    try { Directory.Delete(dir, true); } catch { /* in use */ }
+        }
+        catch (IOException) { /* best effort */ }
     }
 
     private async Task<IActionResult> FileResult(Guid? blobId, string? downloadName, CancellationToken ct)
@@ -120,9 +197,8 @@ public class ReupController : ControllerBase
 
     // ───────────── characters ─────────────
 
-    public class CharacterForm
+    public class CharacterForm : UploadFields
     {
-        public IFormFile? File { get; set; }
         public string? Name { get; set; }
         public string? Notes { get; set; }
         public bool Consent { get; set; }
@@ -135,8 +211,8 @@ public class ReupController : ControllerBase
     [RequestSizeLimit(MaxImageBytes + 1024 * 1024)]
     [RequestFormLimits(MultipartBodyLengthLimit = MaxImageBytes + 1024 * 1024)]
     public Task<IActionResult> AddCharacter([FromForm] CharacterForm form, CancellationToken ct) =>
-        WithUpload(form.File, MaxImageBytes, "Ảnh quá lớn (tối đa 15 MB).",
-            async path => await _reup.AddCharacterAsync(form.Name ?? "", form.Notes, form.Consent, path, form.File!.ContentType?.ToLowerInvariant() ?? "", ct), ct);
+        WithUpload(form, MaxImageBytes, "Ảnh quá lớn (tối đa 15 MB).",
+            async (path, _, type) => await _reup.AddCharacterAsync(form.Name ?? "", form.Notes, form.Consent, path, type, ct), ct);
 
     [HttpPut("characters/{id:guid}")]
     public async Task<IActionResult> UpdateCharacter(Guid id, [FromBody] ReupCharacterUpdateDto input, CancellationToken ct) =>
@@ -158,9 +234,22 @@ public class ReupController : ControllerBase
 
     // ───────────── backdrops ─────────────
 
-    public class BackdropForm : ReupBackdropInfoDto
+    public class BackdropForm : UploadFields
     {
-        public IFormFile? File { get; set; }
+        public string? Name { get; set; }
+        public string? Category { get; set; }
+        public string? Tags { get; set; }
+        public string? SourceName { get; set; }
+        public string? SourceUrl { get; set; }
+        public string? Author { get; set; }
+        public string? LicenseName { get; set; }
+        public string? LicenseUrl { get; set; }
+
+        public ReupBackdropInfoDto Info() => new()
+        {
+            Name = Name, Category = Category, Tags = Tags, SourceName = SourceName, SourceUrl = SourceUrl,
+            Author = Author, LicenseName = LicenseName, LicenseUrl = LicenseUrl
+        };
     }
 
     [HttpGet("backdrops")]
@@ -171,7 +260,7 @@ public class ReupController : ControllerBase
     [RequestSizeLimit(MaxBackdropBytes + 1024 * 1024)]
     [RequestFormLimits(MultipartBodyLengthLimit = MaxBackdropBytes + 1024 * 1024)]
     public Task<IActionResult> AddBackdrop([FromForm] BackdropForm form, CancellationToken ct) =>
-        WithUpload(form.File, MaxBackdropBytes, "File quá lớn (tối đa 400 MB).", async path => await _reup.AddBackdropAsync(path, form.File!.FileName, form, ct), ct);
+        WithUpload(form, MaxBackdropBytes, "File quá lớn (tối đa 400 MB).", async (path, name, _) => await _reup.AddBackdropAsync(path, name, form.Info(), ct), ct);
 
     [HttpPost("backdrops/import")]
     public async Task<IActionResult> ImportBackdrop([FromBody] ReupBackdropImportDto input, CancellationToken ct) =>
@@ -201,15 +290,9 @@ public class ReupController : ControllerBase
 
     // ───────────── jobs ─────────────
 
-    public class SourceForm
+    public class SourceForm : UploadFields
     {
-        public IFormFile? File { get; set; }
         public string? Title { get; set; }
-    }
-
-    public class AudioForm
-    {
-        public IFormFile? File { get; set; }
     }
 
     [HttpGet("jobs")]
@@ -222,8 +305,8 @@ public class ReupController : ControllerBase
     [RequestSizeLimit(MaxSourceUpload)]
     [RequestFormLimits(MultipartBodyLengthLimit = MaxSourceUpload)]
     public Task<IActionResult> CreateJob([FromForm] SourceForm form, CancellationToken ct) =>
-        WithUpload(form.File, ReupService.MaxSourceBytes, "Video quá lớn (tối đa 600 MB).",
-            async path => await _reup.CreateJobAsync(path, form.File!.FileName, form.Title, ct), ct);
+        WithUpload(form, ReupService.MaxSourceBytes, "Video quá lớn (tối đa 600 MB).",
+            async (path, name, _) => await _reup.CreateJobAsync(path, name, form.Title, ct), ct);
 
     [HttpPut("jobs/{id:guid}")]
     public async Task<IActionResult> UpdateJob(Guid id, [FromBody] ReupJobInputDto input, CancellationToken ct) =>
@@ -232,8 +315,8 @@ public class ReupController : ControllerBase
     [HttpPost("jobs/{id:guid}/audio")]
     [RequestSizeLimit(MaxAudioBytes + 1024 * 1024)]
     [RequestFormLimits(MultipartBodyLengthLimit = MaxAudioBytes + 1024 * 1024)]
-    public Task<IActionResult> SetAudio(Guid id, [FromForm] AudioForm form, CancellationToken ct) =>
-        WithUpload(form.File, MaxAudioBytes, "File âm thanh quá lớn (tối đa 60 MB).", async path => await _reup.SetAudioAsync(id, path, form.File!.FileName, ct), ct);
+    public Task<IActionResult> SetAudio(Guid id, [FromForm] UploadFields form, CancellationToken ct) =>
+        WithUpload(form, MaxAudioBytes, "File âm thanh quá lớn (tối đa 60 MB).", async (path, name, _) => await _reup.SetAudioAsync(id, path, name, ct), ct);
 
     [HttpDelete("jobs/{id:guid}/audio")]
     public async Task<IActionResult> RemoveAudio(Guid id, CancellationToken ct) =>

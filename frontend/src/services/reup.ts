@@ -1,15 +1,19 @@
 /* Reup Video API client — free processing on the owner's PC. Writes need the same X-Studio-Key as the AI video studio
-   (kept only in this browser). Big uploads go through XMLHttpRequest to show their progress. */
+   (kept only in this browser). Files are sent in 4 MB pieces: the Vercel proxy in front of the API drops big / long
+   requests (HTTP 502), small pieces always get through and a failed piece is simply sent again. */
 import { getStudioKey, StudioError } from './studio';
 
 const BASE = '/api/reup';
+const CHUNK = 4 * 1024 * 1024;
 
-async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
-  const headers: Record<string, string> = {};
+function headers(extra?: Record<string, string>) {
+  const h: Record<string, string> = { ...(extra ?? {}) };
   const key = getStudioKey();
-  if (key) headers['X-Studio-Key'] = key;
-  if (body !== undefined) headers['Content-Type'] = 'application/json';
-  const res = await fetch(`${BASE}${path}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
+  if (key) h['X-Studio-Key'] = key;
+  return h;
+}
+
+async function read<T>(res: Response): Promise<T> {
   if (res.status === 204) return undefined as T;
   const text = await res.text();
   let data: any = null;
@@ -18,32 +22,59 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
   } catch {
     data = null;
   }
-  if (!res.ok) throw new StudioError(data?.message || data?.title || text || `Lỗi HTTP ${res.status}`, res.status === 401 && !!data?.needsStudioKey);
+  if (!res.ok) {
+    const msg =
+      data?.message || data?.title || (res.status >= 500 ? `Server tạm thời không phản hồi (HTTP ${res.status}) — thử lại sau ít phút.` : text || `Lỗi HTTP ${res.status}`);
+    throw new StudioError(msg, res.status === 401 && !!data?.needsStudioKey);
+  }
   return data as T;
 }
 
-/** multipart upload with progress (0–1) */
-function upload<T>(path: string, form: FormData, onProgress?: (p: number) => void): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    xhr.open('POST', `${BASE}${path}`);
-    const key = getStudioKey();
-    if (key) xhr.setRequestHeader('X-Studio-Key', key);
-    xhr.upload.onprogress = (e) => e.lengthComputable && onProgress?.(e.loaded / e.total);
-    xhr.onerror = () => reject(new StudioError('Mất kết nối khi tải file lên.'));
-    xhr.onload = () => {
-      let data: any = null;
-      try {
-        data = xhr.responseText ? JSON.parse(xhr.responseText) : null;
-      } catch {
-        data = null;
-      }
-      if (xhr.status >= 200 && xhr.status < 300) resolve(data as T);
-      else if (xhr.status === 413) reject(new StudioError('File quá lớn so với giới hạn của server.'));
-      else reject(new StudioError(data?.message || `Lỗi HTTP ${xhr.status}`, xhr.status === 401 && !!data?.needsStudioKey));
-    };
-    xhr.send(form);
+async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    method,
+    headers: headers(body !== undefined ? { 'Content-Type': 'application/json' } : undefined),
+    body: body === undefined ? undefined : JSON.stringify(body),
   });
+  return read<T>(res);
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** Sends a file piece by piece (progress 0–1); returns the upload id the form then refers to. */
+async function sendFile(file: File, onProgress?: (p: number) => void): Promise<string> {
+  const { uploadId } = await call<{ uploadId: string }>('POST', '/uploads');
+  onProgress?.(0);
+  for (let offset = 0; offset < file.size; offset += CHUNK) {
+    const piece = file.slice(offset, offset + CHUNK);
+    for (let attempt = 1; ; attempt++) {
+      try {
+        const res = await fetch(`${BASE}/uploads/${uploadId}?offset=${offset}`, {
+          method: 'PUT',
+          headers: headers({ 'Content-Type': 'application/octet-stream' }),
+          body: piece,
+        });
+        await read(res);
+        break;
+      } catch (e) {
+        if (attempt >= 4 || (e instanceof StudioError && e.needsKey)) throw e instanceof StudioError ? e : new StudioError('Mất kết nối khi tải file lên — thử lại.');
+        await sleep(1500 * attempt);
+      }
+    }
+    onProgress?.(Math.min(1, (offset + piece.size) / file.size));
+  }
+  return uploadId;
+}
+
+/** Sends the file in pieces, then the form (with the upload id instead of the file). */
+async function upload<T>(path: string, file: File, fields: Record<string, string | undefined | null>, onProgress?: (p: number) => void): Promise<T> {
+  const uploadId = await sendFile(file, onProgress);
+  const form = new FormData();
+  form.append('uploadId', uploadId);
+  form.append('fileName', file.name);
+  form.append('contentType', file.type || '');
+  Object.entries(fields).forEach(([k, v]) => v != null && v !== '' && form.append(k, String(v)));
+  return read<T>(await fetch(`${BASE}${path}`, { method: 'POST', headers: headers(), body: form }));
 }
 
 // ───────── types ─────────
@@ -267,14 +298,8 @@ export const reup = {
   checkEngine: (bench: boolean) => call<{ queued: boolean }>('POST', '/engine/check', { bench }),
 
   characters: () => call<ReupCharacter[]>('GET', '/characters'),
-  addCharacter: (file: File, name: string, notes: string, consent: boolean, onProgress?: (p: number) => void) => {
-    const f = new FormData();
-    f.append('file', file);
-    f.append('name', name);
-    f.append('notes', notes);
-    f.append('consent', String(consent));
-    return upload<ReupCharacter>('/characters', f, onProgress);
-  },
+  addCharacter: (file: File, name: string, notes: string, consent: boolean, onProgress?: (p: number) => void) =>
+    upload<ReupCharacter>('/characters', file, { name, notes, consent: String(consent) }, onProgress),
   updateCharacter: (id: string, body: { name?: string; notes?: string }) => call<ReupCharacter>('PUT', `/characters/${id}`, body),
   recheckCharacter: (id: string) => call<ReupCharacter>('POST', `/characters/${id}/recheck`),
   deleteCharacter: (id: string) => call<void>('DELETE', `/characters/${id}`),
@@ -288,12 +313,8 @@ export const reup = {
     if (q) p.set('q', q);
     return call<ReupBackdrop[]>('GET', `/backdrops?${p.toString()}`);
   },
-  addBackdrop: (file: File, info: BackdropInfo, onProgress?: (p: number) => void) => {
-    const f = new FormData();
-    f.append('file', file);
-    Object.entries(info).forEach(([k, v]) => v != null && v !== '' && f.append(k, String(v)));
-    return upload<ReupBackdrop>('/backdrops', f, onProgress);
-  },
+  addBackdrop: (file: File, info: BackdropInfo, onProgress?: (p: number) => void) =>
+    upload<ReupBackdrop>('/backdrops', file, { ...info }, onProgress),
   importBackdrop: (url: string, info: BackdropInfo) => call<ReupBackdrop>('POST', '/backdrops/import', { url, ...info }),
   searchStock: (provider: string, kind: string, q: string) =>
     call<StockItem[]>('GET', `/stock/search?provider=${encodeURIComponent(provider)}&kind=${encodeURIComponent(kind)}&q=${encodeURIComponent(q)}`),
@@ -305,18 +326,9 @@ export const reup = {
 
   jobs: () => call<ReupJob[]>('GET', '/jobs'),
   job: (id: string) => call<ReupJob>('GET', `/jobs/${id}`),
-  createJob: (file: File, title: string, onProgress?: (p: number) => void) => {
-    const f = new FormData();
-    f.append('file', file);
-    f.append('title', title);
-    return upload<ReupJob>('/jobs', f, onProgress);
-  },
+  createJob: (file: File, title: string, onProgress?: (p: number) => void) => upload<ReupJob>('/jobs', file, { title }, onProgress),
   updateJob: (id: string, input: JobInput) => call<ReupJob>('PUT', `/jobs/${id}`, input),
-  setAudio: (id: string, file: File, onProgress?: (p: number) => void) => {
-    const f = new FormData();
-    f.append('file', file);
-    return upload<ReupJob>(`/jobs/${id}/audio`, f, onProgress);
-  },
+  setAudio: (id: string, file: File, onProgress?: (p: number) => void) => upload<ReupJob>(`/jobs/${id}/audio`, file, {}, onProgress),
   removeAudio: (id: string) => call<ReupJob>('DELETE', `/jobs/${id}/audio`),
   preview: (id: string) => call<ReupJob>('POST', `/jobs/${id}/preview`),
   start: (id: string) => call<ReupJob>('POST', `/jobs/${id}/start`),
