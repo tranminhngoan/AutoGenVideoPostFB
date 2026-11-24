@@ -43,3 +43,6 @@ __pycache__/
 *.db
 *.db-shm
 *.db-wal
+
+# PC worker secrets (copied from Railway variables)
+.env.pc

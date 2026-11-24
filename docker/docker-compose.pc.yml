@@ -1,0 +1,29 @@
+# The owner's PC as the background worker (see backend/src/NewsStudio.Api/Workers/WorkerSwitchService.cs).
+# It shares the Railway database and the S3 bucket; while it runs the same version as Railway it does the heavy work
+# (renders, studio clips, auto-posting) and Railway only serves the website. Started by scripts/pc/start-pc-worker.bat.
+name: tramtin-pc
+
+services:
+  pc-worker:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.railway
+    container_name: tramtin-pc-worker
+    restart: unless-stopped
+    env_file:
+      - ../.env.pc
+    environment:
+      - Worker__Role=pc
+      - APP_VERSION=${APP_VERSION:-dev}
+      - Studio__MediaPath=/data/studio-media
+      - Storage__TempStoragePath=/data/newsstudio
+      - Hangfire__EmbeddedServer=true
+    volumes:
+      - pc_data:/data
+    ports:
+      - "127.0.0.1:8090:8080"
+    # let a running job finish and the PC hand the work back cleanly
+    stop_grace_period: 90s
+
+volumes:
+  pc_data:

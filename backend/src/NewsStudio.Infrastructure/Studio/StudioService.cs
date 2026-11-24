@@ -321,8 +321,9 @@ public class StudioService
     {
         var meta = await _db.StudioBlobs.AsNoTracking().Where(b => b.Id == blobId)
             .Select(b => new { b.MimeType, InDb = b.Data.Length > 0 }).FirstOrDefaultAsync(ct);
-        if (meta == null || meta.InDb || !_files.Exists(blobId)) return null;
-        return (_files.PathFor(blobId), meta.MimeType);
+        if (meta == null || meta.InDb) return null;
+        var path = await _files.LocalPathAsync(blobId, ct); // fetched from the shared bucket when this machine lacks it
+        return path == null ? null : (path, meta.MimeType);
     }
 
     /// <summary>Clips and final videos go to the app disk, never into the database (see <see cref="StudioFileStore"/>).</summary>
@@ -347,7 +348,10 @@ public class StudioService
         if (ids.Count == 0) return;
         var onDisk = await _db.StudioBlobs.AsNoTracking().Where(b => ids.Contains(b.Id) && b.Data.Length == 0).Select(b => b.Id).ToListAsync(ct);
         var known = await _db.StudioBlobs.AsNoTracking().Where(b => ids.Contains(b.Id)).Select(b => b.Id).ToListAsync(ct);
-        bool Lost(Guid id) => !known.Contains(id) || (onDisk.Contains(id) && !_files.Exists(id));
+        var missing = new HashSet<Guid>();
+        foreach (var id in onDisk)
+            if (!await _files.ExistsAsync(id, ct)) missing.Add(id);
+        bool Lost(Guid id) => !known.Contains(id) || missing.Contains(id);
         var changed = false;
         foreach (var s in v.Shots.Where(s => s.ClipBlobId is { } c && Lost(c)))
         {

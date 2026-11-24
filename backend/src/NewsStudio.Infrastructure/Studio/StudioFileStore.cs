@@ -8,26 +8,41 @@ using NewsStudio.Application.Common.Interfaces;
 namespace NewsStudio.Infrastructure.Studio;
 
 /// <summary>
-/// Where the studio keeps its big files (generated clips, final videos): the app's own disk, never the database.
-/// The Railway plan gives Postgres a tiny volume (≈0.5 GB) — a few videos stored as bytea filled it and crashed the
-/// database. The disk is wiped on redeploy, which is acceptable: clips only matter until the video is posted.
+/// Where the studio keeps its big files (generated clips, final videos): never the database (the Railway Postgres
+/// volume is tiny). With a shared S3-compatible bucket configured (Storage:S3:*, e.g. Cloudflare R2), every file goes
+/// there too, so it survives redeploys and the owner's PC and the cloud server see the same files; the app disk is
+/// then only a cache. Without it, files live on the app disk only (wiped on redeploy).
 /// A StudioBlob row whose Data is empty but SizeBytes &gt; 0 lives here. Folder: Studio:MediaPath (default the OS
 /// temp dir), kept apart from the news temp folder, whose quota cleaner deletes old files.
 /// </summary>
 public class StudioFileStore
 {
     private readonly string _root;
+    private readonly Common.S3Storage? _s3;
 
     public StudioFileStore(IConfiguration configuration)
     {
         var configured = configuration["Studio:MediaPath"];
         _root = Path.GetFullPath(string.IsNullOrWhiteSpace(configured) ? Path.Combine(Path.GetTempPath(), "studio-media") : configured);
         Directory.CreateDirectory(_root);
+        _s3 = Common.S3Storage.FromConfiguration(configuration);
     }
+
+    /// <summary>Files are kept in the shared bucket (they survive redeploys and are shared with the PC worker).</summary>
+    public bool Shared => _s3 != null;
+
+    private static string Key(Guid blobId) => $"studio/{blobId:N}.bin";
 
     public string PathFor(Guid blobId) => Path.Combine(_root, blobId.ToString("N") + ".bin");
 
-    public bool Exists(Guid blobId) => File.Exists(PathFor(blobId));
+    /// <summary>Whether the file exists here or in the shared bucket.</summary>
+    public async Task<bool> ExistsAsync(Guid blobId, CancellationToken ct)
+    {
+        if (File.Exists(PathFor(blobId))) return true;
+        if (_s3 == null) return false;
+        try { return await _s3.ExistsAsync(Key(blobId), ct); }
+        catch (Exception ex) when (ex is not OperationCanceledException) { return true; } // bucket unreachable: don't call it lost
+    }
 
     public async Task SaveAsync(Guid blobId, byte[] data, CancellationToken ct)
     {
@@ -35,14 +50,45 @@ public class StudioFileStore
         var tmp = path + ".part";
         await File.WriteAllBytesAsync(tmp, data, ct);
         File.Move(tmp, path, overwrite: true); // never leave a half-written clip under the real name
+        if (_s3 != null) await _s3.PutAsync(Key(blobId), data, "application/octet-stream", ct);
     }
 
-    public async Task<byte[]?> ReadAsync(Guid blobId, CancellationToken ct) =>
-        Exists(blobId) ? await File.ReadAllBytesAsync(PathFor(blobId), ct) : null;
+    public async Task<byte[]?> ReadAsync(Guid blobId, CancellationToken ct)
+    {
+        var path = PathFor(blobId);
+        if (File.Exists(path)) return await File.ReadAllBytesAsync(path, ct);
+        if (_s3 == null) return null;
+        var data = await _s3.GetAsync(Key(blobId), ct);
+        if (data != null) await CacheAsync(path, data, ct);
+        return data;
+    }
+
+    /// <summary>The file on this machine's disk (fetched from the bucket when needed), or null when it is gone.</summary>
+    public async Task<string?> LocalPathAsync(Guid blobId, CancellationToken ct)
+    {
+        var path = PathFor(blobId);
+        if (File.Exists(path)) return path;
+        return await ReadAsync(blobId, ct) != null ? path : null;
+    }
+
+    private static async Task CacheAsync(string path, byte[] data, CancellationToken ct)
+    {
+        try
+        {
+            var tmp = path + "." + Guid.NewGuid().ToString("N")[..6] + ".part";
+            await File.WriteAllBytesAsync(tmp, data, ct);
+            File.Move(tmp, path, overwrite: true);
+        }
+        catch (IOException) { /* another request cached it at the same time */ }
+    }
 
     public void Delete(Guid blobId)
     {
         try { File.Delete(PathFor(blobId)); } catch { /* best effort */ }
+        if (_s3 != null)
+        {
+            try { _s3.DeleteAsync(Key(blobId), CancellationToken.None).GetAwaiter().GetResult(); } catch { /* best effort */ }
+        }
     }
 }
 

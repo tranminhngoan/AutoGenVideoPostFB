@@ -123,12 +123,8 @@ try
     var embeddedWorker = builder.Configuration.GetValue<bool>("Hangfire:EmbeddedServer", false);
     if (embeddedWorker)
     {
-        builder.Services.AddHangfireServer(options =>
-        {
-            options.WorkerCount = builder.Configuration.GetValue<int>("Storage:MaxConcurrentRenderJobs", 2);
-            options.ServerName = $"NewsStudio-Api-{Environment.MachineName}";
-            options.Queues = new[] { "default", "critical", "render" };
-        });
+        // background jobs run on one machine at a time: the owner's PC while it is on (Worker:Role=pc), else this server
+        builder.Services.AddHostedService<NewsStudio.Api.Workers.WorkerSwitchService>();
     }
 
     var app = builder.Build();
