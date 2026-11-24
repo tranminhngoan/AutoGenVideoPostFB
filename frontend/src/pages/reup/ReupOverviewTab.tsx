@@ -10,8 +10,9 @@ export function ReupOverviewTab() {
   const { overview: o } = useReup();
   if (!o) return <Skeleton className="h-64 w-full" />;
   const e = o.engine;
-  const fps720 = e.backgroundFps?.['720p'];
-  const fps1080 = e.backgroundFps?.['1080p'];
+  // the default "high" quality when measured, else the fast one
+  const fps720 = e.backgroundFps?.['720p-high'] ?? e.backgroundFps?.['720p'];
+  const fps1080 = e.backgroundFps?.['1080p-high'] ?? e.backgroundFps?.['1080p'];
   // a 60 s video at 30 fps; ~15 % on top for decoding / encoding / audio / checks
   const eta = (fps?: number) => (fps ? minutesText((1800 / fps) * 1.15) : '—');
 
@@ -99,7 +100,7 @@ export function ReupOverviewTab() {
                 </div>
               </div>
               <p className="text-xs text-fg-subtle">
-                Số đo thật trên CPU của máy (không có thay mặt). Thay mặt cần thêm thời gian; thời gian thực tế hiện trong lúc xử lý.
+                Số đo thật trên CPU của máy, chế độ Đẹp (chế độ Nhanh: {e.backgroundFps?.['720p'] ?? '—'} khung/giây ở 720p). Thời gian thực tế hiện trong lúc xử lý.
               </p>
               {e.freeDiskGb != null && (
                 <div className="flex items-center gap-2 text-xs text-fg-muted">

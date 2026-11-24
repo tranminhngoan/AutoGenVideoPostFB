@@ -50,7 +50,8 @@ if ($LASTEXITCODE -ne 0) { Say 'Cài thư viện lỗi — xem thông báo ở t
 $list = @(
     @{ Name = 'face_detection_yunet_2023mar.onnx'; Url = 'https://github.com/opencv/opencv_zoo/raw/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx'; Sha = '8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4'; License = 'MIT (OpenCV Zoo YuNet)' },
     @{ Name = 'face_recognition_sface_2021dec.onnx'; Url = 'https://github.com/opencv/opencv_zoo/raw/main/models/face_recognition_sface/face_recognition_sface_2021dec.onnx'; Sha = '0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79'; License = 'Apache-2.0 (OpenCV Zoo SFace)' },
-    @{ Name = 'rvm_mobilenetv3_fp32.onnx'; Url = 'https://github.com/PeterL1n/RobustVideoMatting/releases/download/v1.0.0/rvm_mobilenetv3_fp32.onnx'; Sha = '88d4531297118f595bf2fd60f6f566aec2e559393802d1f436c380f0cbbd2828'; License = 'GPL-3.0 (Robust Video Matting) — dùng nội bộ, không phân phối lại' }
+    @{ Name = 'rvm_mobilenetv3_fp32.onnx'; Url = 'https://github.com/PeterL1n/RobustVideoMatting/releases/download/v1.0.0/rvm_mobilenetv3_fp32.onnx'; Sha = '88d4531297118f595bf2fd60f6f566aec2e559393802d1f436c380f0cbbd2828'; License = 'GPL-3.0 (Robust Video Matting) — dùng nội bộ, không phân phối lại' },
+    @{ Name = 'rvm_resnet50_fp32.onnx'; Url = 'https://github.com/PeterL1n/RobustVideoMatting/releases/download/v1.0.0/rvm_resnet50_fp32.onnx'; Sha = '25db300fcb6ee27f941a1b52c97856e8d1f13c7f35817f81a612f89af0e8a85c'; License = 'GPL-3.0 (Robust Video Matting, bản chất lượng cao) — dùng nội bộ' }
 )
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 foreach ($m in $list) {

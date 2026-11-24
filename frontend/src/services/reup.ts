@@ -159,6 +159,7 @@ export interface Placement {
   blur: number;
   crossfade: number;
   kenBurns: boolean;
+  quality: 'high' | 'fast';
 }
 
 export interface JobInput {

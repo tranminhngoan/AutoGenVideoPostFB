@@ -100,15 +100,17 @@ public class ReupPlacementDto
     public double OffsetX { get; set; }
     public double OffsetY { get; set; }
     /// <summary>How much the person's brightness / tint follows the new scene (0–1).</summary>
-    public double Harmonize { get; set; } = 0.3;
+    public double Harmonize { get; set; } = 0.5;
     /// <summary>Scene light wrapping the person's edges (0–1).</summary>
-    public double LightWrap { get; set; } = 0.25;
+    public double LightWrap { get; set; } = 0.3;
     /// <summary>Background blur (depth of field), 0–10.</summary>
-    public double Blur { get; set; } = 1.5;
+    public double Blur { get; set; } = 2.5;
     /// <summary>Cross-fade between scenes, seconds.</summary>
     public double Crossfade { get; set; } = 0.6;
     /// <summary>Slow zoom on picture backdrops so a still photo doesn't look frozen.</summary>
     public bool KenBurns { get; set; } = true;
+    /// <summary>"high": larger matting model, cleaner hair (~2.5x slower); "fast": the small model.</summary>
+    public string Quality { get; set; } = "high";
 }
 
 public class ReupJobInputDto

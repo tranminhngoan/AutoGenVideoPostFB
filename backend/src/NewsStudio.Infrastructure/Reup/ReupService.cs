@@ -389,7 +389,8 @@ public class ReupService
             LightWrap = Math.Clamp(p.LightWrap, 0, 1),
             Blur = Math.Clamp(p.Blur, 0, 10),
             Crossfade = Math.Clamp(p.Crossfade, 0, 2),
-            KenBurns = p.KenBurns
+            KenBurns = p.KenBurns,
+            Quality = string.Equals(p.Quality, "fast", StringComparison.OrdinalIgnoreCase) ? "fast" : "high"
         };
     }
 
@@ -763,7 +764,8 @@ public class ReupService
                 job["background"] = new JsonObject
                 {
                     ["segments"] = arr, ["scale"] = placement.Scale, ["offsetX"] = placement.OffsetX, ["offsetY"] = placement.OffsetY,
-                    ["harmonize"] = placement.Harmonize, ["lightWrap"] = placement.LightWrap, ["blur"] = placement.Blur, ["crossfade"] = placement.Crossfade
+                    ["harmonize"] = placement.Harmonize, ["lightWrap"] = placement.LightWrap, ["blur"] = placement.Blur, ["crossfade"] = placement.Crossfade,
+                    ["quality"] = placement.Quality
                 };
             }
             var jobPath = Path.Combine(work, "job.json");

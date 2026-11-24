@@ -91,7 +91,7 @@ export function ReupNewJob() {
 
 // ═══════════════════════════════ job editor ═══════════════════════════════
 
-const defaultPlacement: Placement = { scale: 1, offsetX: 0, offsetY: 0, harmonize: 0.3, lightWrap: 0.25, blur: 1.5, crossfade: 0.6, kenBurns: true };
+const defaultPlacement: Placement = { scale: 1, offsetX: 0, offsetY: 0, harmonize: 0.5, lightWrap: 0.3, blur: 2.5, crossfade: 0.6, kenBurns: true, quality: 'high' };
 
 function inputOf(j: ReupJob): JobInput {
   return {
@@ -240,7 +240,7 @@ export function ReupJobEditor({ jobId }: { jobId: string }) {
   const singleMode = draft.segments.length <= 1;
   const srcShort = Math.min(job.sourceWidth, job.sourceHeight);
   const res = draft.outputShortSide >= 1080 && srcShort >= 1080 ? '1080p' : '720p';
-  const benchFps = overview?.engine.backgroundFps?.[res];
+  const benchFps = overview?.engine.backgroundFps?.[draft.placement.quality === 'fast' ? res : `${res}-high`] ?? overview?.engine.backgroundFps?.[res];
   const frames = job.sourceDurationSeconds * (job.sourceFpsValue || 30);
   const eta = draft.backgroundEnabled && benchFps ? (frames / benchFps) * 1.15 : null;
   const version = job.finishedAtUtc ?? undefined;
@@ -475,7 +475,19 @@ export function ReupJobEditor({ jobId }: { jobId: string }) {
                     )}
                   </>
                 )}
-                <div className="grid gap-4 border-t border-line pt-4 sm:grid-cols-2">
+                <div className="space-y-1.5 border-t border-line pt-4">
+                  <div className="text-[13px] font-medium text-fg">Chất lượng tách nền</div>
+                  <Segmented
+                    value={draft.placement.quality}
+                    onChange={(v) => !locked && setPlacement({ quality: v })}
+                    options={[
+                      { value: 'high', label: 'Đẹp (chậm hơn)' },
+                      { value: 'fast', label: 'Nhanh' },
+                    ]}
+                  />
+                  <p className="text-xs text-fg-subtle">Đẹp: viền tóc và mép người sạch hơn, xử lý lâu hơn khoảng 2,5 lần.</p>
+                </div>
+                <div className="grid gap-4 sm:grid-cols-2">
                   <Slider label="Cỡ người" value={draft.placement.scale} min={0.5} max={1.3} step={0.05} onChange={(v) => setPlacement({ scale: v })} format={(v) => `${Math.round(v * 100)}%`} hint="Giữ chân người ở cạnh dưới khi đổi cỡ" disabled={locked} />
                   <Slider label="Lệch ngang" value={draft.placement.offsetX} min={-0.4} max={0.4} step={0.02} onChange={(v) => setPlacement({ offsetX: v })} format={(v) => `${Math.round(v * 100)}%`} disabled={locked} />
                   <Slider label="Lệch dọc" value={draft.placement.offsetY} min={-0.3} max={0.3} step={0.02} onChange={(v) => setPlacement({ offsetY: v })} format={(v) => `${Math.round(v * 100)}%`} disabled={locked} />

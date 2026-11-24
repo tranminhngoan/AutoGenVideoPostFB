@@ -30,6 +30,7 @@ import cv2
 YUNET = "face_detection_yunet_2023mar.onnx"
 SFACE = "face_recognition_sface_2021dec.onnx"
 RVM = "rvm_mobilenetv3_fp32.onnx"
+RVM_HQ = "rvm_resnet50_fp32.onnx"  # optional, "high" quality
 SWAPPER = os.path.join("licensed", "swapper.onnx")
 IDENTITY = os.path.join("licensed", "identity.onnx")
 SFACE_MATCH = 0.363  # OpenCV's cosine threshold for "same person"
@@ -465,83 +466,132 @@ class BackdropTimeline:
 
 class Matting:
     """Robust Video Matting: keeps a memory between frames, so hair and edges stay steady (no frame-by-frame flicker).
-    Runs at ≤1280 px (long side); for 1080p the mask is scaled up and the person's inside keeps the sharp source pixels."""
+    quality "high" = the ResNet50 model at a finer internal resolution (cleaner hair, ~5x slower); "fast" = MobileNetV3.
+    Runs at ≤1280 px (long side); for 1080p the mask is scaled up (colours come from the full-size frame anyway)."""
 
     MAX_SIDE = 1280
 
-    def __init__(self, models_dir, threads, provider, w, h):
-        self.sess = make_session(os.path.join(models_dir, RVM), threads, provider)
+    def __init__(self, models_dir, threads, provider, w, h, quality="fast"):
+        hq = quality == "high" and os.path.isfile(os.path.join(models_dir, RVM_HQ))
+        self.quality = "high" if hq else "fast"
+        self.sess = make_session(os.path.join(models_dir, RVM_HQ if hq else RVM), threads, provider)
         self.rec = [np.zeros((1, 1, 1, 1), np.float32)] * 4
         self.w, self.h = w, h
         s = min(1.0, self.MAX_SIDE / float(max(w, h)))
         self.mw, self.mh = int(round(w * s)) // 2 * 2, int(round(h * s)) // 2 * 2
-        self.ratio = np.array([min(1.0, 0.375 * 1280.0 / max(self.mw, self.mh))], np.float32)
+        base = 0.5 if hq else 0.375
+        self.ratio = np.array([min(1.0, base * 1280.0 / max(self.mw, self.mh))], np.float32)
 
     def run(self, frame_bgr):
-        """(foreground BGR uint8 without the old background's colours, alpha float32 0–1), both at the frame's size."""
+        """Alpha (float32 0–1) of the people in the frame, at the frame's size."""
         small = frame_bgr if (self.mw, self.mh) == (self.w, self.h) else cv2.resize(frame_bgr, (self.mw, self.mh), interpolation=cv2.INTER_AREA)
         src = cv2.dnn.blobFromImage(small, 1.0 / 255.0, swapRB=True)  # 1×3×H×W RGB 0–1
-        fgr, pha, *rec = self.sess.run(None, {"src": src, "r1i": self.rec[0], "r2i": self.rec[1], "r3i": self.rec[2],
-                                               "r4i": self.rec[3], "downsample_ratio": self.ratio})
+        _, pha, *rec = self.sess.run(None, {"src": src, "r1i": self.rec[0], "r2i": self.rec[1], "r3i": self.rec[2],
+                                             "r4i": self.rec[3], "downsample_ratio": self.ratio})
         self.rec = rec
-        fg = cv2.convertScaleAbs(np.ascontiguousarray(fgr[0].transpose(1, 2, 0)[:, :, ::-1]), alpha=255.0)
         alpha = pha[0, 0]
         if (self.mw, self.mh) != (self.w, self.h):
-            fg = cv2.resize(fg, (self.w, self.h), interpolation=cv2.INTER_LINEAR)
             alpha = cv2.resize(alpha, (self.w, self.h), interpolation=cv2.INTER_LINEAR)
-            inside = alpha > 0.97
-            np.copyto(fg, frame_bgr, where=inside[:, :, None])  # solid parts of the person: the sharp original pixels
-        return fg, alpha
+        return alpha
+
+
+def estimate_foreground(img_u8, a):
+    """The person's true colours at soft edges (hair, motion blur), without the old background mixed in:
+    approximate fast foreground colour estimation (Forte & Pitié 2020), two blur-fusion passes. Worked out at 1/4 size
+    and used only in the soft edge band (inside the person the original pixels are already right), so it stays fast."""
+    h, w = a.shape
+    hw, hh = max(2, w // 4), max(2, h // 4)
+    I = cv2.multiply(cv2.resize(img_u8, (hw, hh), interpolation=cv2.INTER_AREA), 1.0 / 255.0, dtype=cv2.CV_32F)
+    sa = cv2.resize(a, (hw, hh), interpolation=cv2.INTER_AREA)
+    a3 = cv2.merge([sa, sa, sa])
+    na3 = 1.0 - a3
+
+    def fuse(F, B, r):
+        ba = cv2.blur(sa, (r, r))
+        ba3 = cv2.merge([ba, ba, ba])
+        bF = cv2.divide(cv2.blur(cv2.multiply(F, a3), (r, r)), ba3 + 1e-5)
+        bB = cv2.divide(cv2.blur(cv2.multiply(B, na3), (r, r)), (1.0 - ba3) + 1e-5)
+        mix = cv2.add(cv2.multiply(a3, bF), cv2.multiply(na3, bB))
+        return np.clip(cv2.add(bF, cv2.multiply(a3, cv2.subtract(I, mix))), 0.0, 1.0), bB
+
+    F, bB = fuse(I, I, 23)
+    F, _ = fuse(F, bB, 3)
+    F = cv2.resize(F, (w, h), interpolation=cv2.INTER_LINEAR)
+    full = cv2.multiply(img_u8, 1.0 / 255.0, dtype=cv2.CV_32F)
+    edge = ((a > 0.02) & (a < 0.98)).astype(np.uint8)
+    edge = cv2.dilate(edge, np.ones((5, 5), np.uint8))
+    np.copyto(full, F, where=edge[:, :, None].astype(bool))
+    return full
 
 
 class Compositor:
-    """Puts the cut-out person on the new scene: trims halos, matches brightness/tint, lets the scene light wrap the edges."""
+    """Puts the cut-out person on the new scene: clean edge colours, brightness / contrast / tint matched to the scene
+    (smoothed over time), scene light wrapping the edges, and one even film grain over the whole frame so person and
+    scene look filmed by the same camera. Heavy steps use OpenCV (multi-threaded) rather than numpy."""
 
     def __init__(self, opts, w, h):
         self.w, self.h = w, h
         self.scale = float(opts.get("scale", 1.0))
         self.ox = float(opts.get("offsetX", 0.0))
         self.oy = float(opts.get("offsetY", 0.0))
-        self.harmonize = float(opts.get("harmonize", 0.3))
-        self.wrap = float(opts.get("lightWrap", 0.25))
-        self.shift = None
+        self.harmonize = float(opts.get("harmonize", 0.5))
+        self.wrap = float(opts.get("lightWrap", 0.3))
+        self.grain = float(opts.get("grain", 0.012))
+        self.state = None
         self.move = None
         if abs(self.scale - 1.0) > 1e-3 or abs(self.ox) > 1e-3 or abs(self.oy) > 1e-3:
             s = self.scale  # anchored bottom-centre: feet stay on the ground when the person is resized
             self.move = np.array([[s, 0, (1 - s) * w / 2 + self.ox * w], [0, s, (1 - s) * h + self.oy * h]], np.float32)
+        rng = np.random.default_rng(7)
+        self.noise = [(rng.normal(0.0, 1.0, (h, w, 3)) * self.grain).astype(np.float32) for _ in range(3)] if self.grain > 0 else []
+        self.n = 0
 
-    def run(self, fg, alpha, bg):
-        """fg / bg uint8 BGR, alpha float32 0–1 → composed uint8 BGR frame."""
+    def run(self, frame, alpha, bg_u8):
+        """Original frame (uint8), alpha (float32 0–1), new scene (uint8) → composed uint8 BGR frame."""
+        a = np.clip((alpha - 0.03) * (1.0 / 0.94), 0.0, 1.0).astype(np.float32)  # trims the faint halo of the old background
+        F = estimate_foreground(frame, a)
         if self.move is not None:
-            fg = cv2.warpAffine(fg, self.move, (self.w, self.h), flags=cv2.INTER_LINEAR, borderValue=0)
-            alpha = cv2.warpAffine(alpha, self.move, (self.w, self.h), flags=cv2.INTER_LINEAR, borderValue=0.0)
-        a = np.clip((alpha - 0.02) * (1.0 / 0.96), 0.0, 1.0)  # trims the faint halo of the old background
+            F = cv2.warpAffine(F, self.move, (self.w, self.h), flags=cv2.INTER_LINEAR, borderValue=0.0)
+            a = cv2.warpAffine(a, self.move, (self.w, self.h), flags=cv2.INTER_LINEAR, borderValue=0.0)
+        bg = cv2.multiply(bg_u8, 1.0 / 255.0, dtype=cv2.CV_32F)
         if self.harmonize > 0:
-            fg = self._harmonize(fg, a, bg)
-        out = cv2.blendLinear(fg, bg, a, 1.0 - a)
+            F = self._harmonize(F, a, bg)
+        out = cv2.blendLinear(F, bg, a, 1.0 - a)
         if self.wrap > 0:
             sigma = self.h * 0.012
-            k = np.clip(self.wrap * 2.0 * a * (1.0 - soft_blur(a, sigma)), 0.0, 1.0)
+            k = np.clip(self.wrap * 2.0 * a * (1.0 - soft_blur(a, sigma)), 0.0, 1.0).astype(np.float32)
             out = cv2.blendLinear(out, soft_blur(bg, sigma), 1.0 - k, k)
-        return out
+        if self.noise:
+            out = cv2.add(out, self.noise[self.n % len(self.noise)])
+            self.n += 1
+        return cv2.convertScaleAbs(out, alpha=255.0)
 
-    def _harmonize(self, fg, a, bg):
-        """Nudges the person's brightness and tint toward the new scene (smoothed over time — no flicker)."""
+    def _harmonize(self, F, a, bg):
+        """Moves the person's brightness, contrast and tint part of the way toward the new scene (LAB statistics,
+        smoothed over time so it never flickers)."""
         step = 4
-        fs = cv2.cvtColor(np.ascontiguousarray(fg[::step, ::step]), cv2.COLOR_BGR2LAB).astype(np.float32)
-        bs = cv2.cvtColor(np.ascontiguousarray(bg[::step, ::step]), cv2.COLOR_BGR2LAB).astype(np.float32)
-        region = a[::step, ::step] > 0.6
-        if region.sum() < 50:
-            return fg
-        fg_mean = fs[region].mean(0)
-        shift = (bs.reshape(-1, 3).mean(0) - fg_mean) * self.harmonize
-        shift[0] *= 0.6  # brightness moves less than tint
-        self.shift = shift if self.shift is None else self.shift * 0.9 + shift * 0.1
-        # the same LAB shift expressed as one BGR offset (two colour conversions of a single pixel instead of the frame)
-        px = np.array([[fg_mean, fg_mean + self.shift]], np.float32).clip(0, 255).astype(np.uint8)
-        bgr = cv2.cvtColor(px, cv2.COLOR_LAB2BGR).astype(np.float32)[0]
-        d = bgr[1] - bgr[0]
-        return cv2.add(fg, (float(d[0]), float(d[1]), float(d[2]), 0.0))
+        fl = cv2.cvtColor(np.ascontiguousarray(F[::step, ::step]), cv2.COLOR_BGR2LAB)
+        bl = cv2.cvtColor(np.ascontiguousarray(bg[::step, ::step]), cv2.COLOR_BGR2LAB)
+        m = a[::step, ::step] > 0.7
+        if m.sum() < 100:
+            return F
+        cur = np.concatenate([fl[m].mean(0), fl[m].std(0) + 1e-3, bl.reshape(-1, 3).mean(0), bl.reshape(-1, 3).std(0) + 1e-3])
+        self.state = cur if self.state is None else self.state * 0.92 + cur * 0.08
+        fm, fs, bm, bs = np.split(self.state, 4)
+        s = self.harmonize
+        gain = 1.0 + s * np.array([0.5, 0.3, 0.3]) * (bs / fs - 1.0)
+        target = fm + s * (bm - fm) * np.array([0.6, 0.5, 0.5])
+        # lab' = lab * gain + (target - fm * gain), per channel: done exactly on a sample of the person's pixels, then
+        # applied to the whole frame as the 3x4 colour matrix that fits it best (one fast cv2.transform)
+        offset = target - fm * gain
+        src = F[::step, ::step][m].reshape(-1, 1, 3).astype(np.float32)
+        if len(src) > 4000:
+            src = src[:: len(src) // 4000]
+        lab = cv2.cvtColor(src, cv2.COLOR_BGR2LAB).reshape(-1, 3) * gain + offset
+        dst = cv2.cvtColor(lab.astype(np.float32).reshape(-1, 1, 3), cv2.COLOR_LAB2BGR).reshape(-1, 3)
+        X = np.hstack([src.reshape(-1, 3), np.ones((len(src), 1), np.float32)])
+        M, *_ = np.linalg.lstsq(X, dst, rcond=None)
+        return np.clip(cv2.transform(F, M.T.astype(np.float32)), 0.0, 1.0)
 
 
 # ───────────────────────── commands ─────────────────────────
@@ -562,7 +612,7 @@ def cmd_probe(args):
         info["onnx"] = None
     md = os.path.join(args.home, "models")
     info["models"] = {k: os.path.isfile(os.path.join(md, v)) for k, v in
-                      {"yunet": YUNET, "sface": SFACE, "rvm": RVM, "swapper": SWAPPER, "identity": IDENTITY}.items()}
+                      {"yunet": YUNET, "sface": SFACE, "rvm": RVM, "rvmHigh": RVM_HQ, "swapper": SWAPPER, "identity": IDENTITY}.items()}
     info["home"] = args.home
     if not all(info["models"][k] for k in ("yunet", "sface", "rvm")):
         info["ok"] = False
@@ -575,25 +625,27 @@ def cmd_bench(args):
     threads = args.threads or default_threads()
     results = {}
     rng = np.random.default_rng(1)
-    for name, (w, h) in {"720p": (720, 1280), "1080p": (1080, 1920)}.items():
-        mat = Matting(md, threads, args.provider, w, h)
-        comp = Compositor({}, w, h)
-        bg = (rng.random((h, w, 3)) * 255).astype(np.uint8)
-        frame = np.full((h, w, 3), 90, np.uint8)
-        cv2.ellipse(frame, (w // 2, h // 2), (w // 5, h // 3), 0, 0, 360, (40, 160, 220), -1)
-        for _ in range(3):
-            mat.run(frame)
-        n, tm, tc = 10, 0.0, 0.0
-        for _ in range(n):
-            frame = np.roll(frame, 3, axis=1)
-            t0 = time.perf_counter()
-            fg, a = mat.run(frame)
-            t1 = time.perf_counter()
-            comp.run(fg, a, bg)
-            tm += t1 - t0
-            tc += time.perf_counter() - t1
-        # the render runs the two stages on two threads at once: the slower one sets the pace
-        results[name] = round(n / max(tm, tc), 2)
+    qualities = ["fast"] + (["high"] if os.path.isfile(os.path.join(md, RVM_HQ)) else [])
+    for quality in qualities:
+        for name, (w, h) in {"720p": (720, 1280), "1080p": (1080, 1920)}.items():
+            mat = Matting(md, threads, args.provider, w, h, quality)
+            comp = Compositor({}, w, h)
+            bg = (rng.random((h, w, 3)) * 255).astype(np.uint8)
+            frame = np.full((h, w, 3), 90, np.uint8)
+            cv2.ellipse(frame, (w // 2, h // 2), (w // 5, h // 3), 0, 0, 360, (40, 160, 220), -1)
+            for _ in range(2):
+                mat.run(frame)
+            n, tm, tc = 6, 0.0, 0.0
+            for _ in range(n):
+                frame = np.roll(frame, 3, axis=1)
+                t0 = time.perf_counter()
+                a = mat.run(frame)
+                t1 = time.perf_counter()
+                comp.run(frame, a, bg)
+                tm += t1 - t0
+                tc += time.perf_counter() - t1
+            # the render runs the two stages on two threads at once: the slower one sets the pace
+            results[name if quality == "fast" else f"{name}-high"] = round(n / max(tm, tc), 2)
     emit(type="bench", backgroundFps=results, threads=threads, provider=args.provider)
 
 
@@ -663,7 +715,7 @@ def cmd_render(args):
         track = FaceTrack(finder, swapper, face_opts)
     matting = comp = timeline = None
     if bg_opts:
-        matting = Matting(md, threads, provider, w, h)
+        matting = Matting(md, threads, provider, w, h, bg_opts.get("quality", "high"))
         comp = Compositor(bg_opts, w, h)
         timeline = BackdropTimeline(bg_opts["segments"], ffmpeg, w, h, fps, float(bg_opts.get("blur", 0)),
                                     float(bg_opts.get("crossfade", 0.5)))
@@ -717,8 +769,8 @@ def cmd_render(args):
                 item = comp_q.get()
                 if item is None:
                     break
-                idx, fg, alpha = item
-                out_q.put(comp.run(fg, alpha, timeline.frame(idx / fps_value)).tobytes())
+                idx, frame_, alpha = item
+                out_q.put(comp.run(frame_, alpha, timeline.frame(idx / fps_value)).tobytes())
         except Exception as ex:  # noqa: BLE001
             comp_error.append(f"{type(ex).__name__}: {ex}")
             while comp_q.get() is not None:  # drain so the producer never blocks
@@ -741,8 +793,8 @@ def cmd_render(args):
             if track is not None:
                 track.process(frame)
             if matting is not None:
-                fg, alpha = matting.run(frame)
-                comp_q.put((i, fg, alpha))
+                alpha = matting.run(frame)
+                comp_q.put((i, frame, alpha))
             else:
                 out_q.put(frame.tobytes())
             if write_error or comp_error:
