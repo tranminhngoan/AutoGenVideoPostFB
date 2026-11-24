@@ -33,6 +33,8 @@ function Read-EnvPc {
     if (-not $db -or $db -match 'MAT_KHAU|xxx\.proxy') { throw '.env.pc chưa có DATABASE_URL thật (Railway → Postgres → Variables → DATABASE_PUBLIC_URL).' }
     if ($db -match 'railway\.internal') { throw 'DATABASE_URL trong .env.pc là địa chỉ nội bộ (railway.internal) — dùng DATABASE_PUBLIC_URL của Postgres.' }
     if (-not $vars['Storage__S3__AccessKey'] -or -not $vars['Storage__S3__SecretKey']) { throw '.env.pc thiếu Storage__S3__AccessKey / Storage__S3__SecretKey (giống trên Railway).' }
+    # without the app's own keys the PC would take jobs and fail them all
+    if (-not ($vars.Keys | Where-Object { $_ -match 'GEMINI|Gemini' })) { throw '.env.pc chưa có các khoá của app (Gemini, Vercel, Facebook…): Railway → app → Variables → Raw Editor → copy hết → dán xuống cuối .env.pc.' }
     return $vars
 }
 
