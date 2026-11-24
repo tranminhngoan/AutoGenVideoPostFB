@@ -11,6 +11,21 @@ $envFile = Join-Path $repo '.env.pc'
 
 function Say($text, $color = 'Gray') { Write-Host "[$(Get-Date -Format 'HH:mm:ss')] $text" -ForegroundColor $color }
 
+# A click inside this window puts the console in "Select" mode, which freezes the script (no more updates, the PC
+# falls behind the cloud's version and stops taking jobs). Turn QuickEdit off for this window so that can't happen.
+try {
+    Add-Type -Namespace TramTin -Name ConsoleMode -MemberDefinition @'
+[DllImport("kernel32.dll")] public static extern IntPtr GetStdHandle(int handle);
+[DllImport("kernel32.dll")] public static extern bool GetConsoleMode(IntPtr handle, out uint mode);
+[DllImport("kernel32.dll")] public static extern bool SetConsoleMode(IntPtr handle, uint mode);
+'@
+    $stdin = [TramTin.ConsoleMode]::GetStdHandle(-10)
+    $mode = [uint32]0
+    if ([TramTin.ConsoleMode]::GetConsoleMode($stdin, [ref]$mode)) {
+        [void][TramTin.ConsoleMode]::SetConsoleMode($stdin, ($mode -band (-bnot [uint32]0x40)) -bor [uint32]0x80) # QuickEdit off, extended flags on
+    }
+} catch { }
+
 if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) { Say 'Chưa cài .NET 8 (https://dotnet.microsoft.com/download/dotnet/8.0 → SDK).' Red; exit 1 }
 if (-not (Get-Command git -ErrorAction SilentlyContinue)) { Say 'Chưa cài Git (https://git-scm.com/download/win).' Red; exit 1 }
 if (-not (Test-Path $envFile)) { Say "Chưa có file .env.pc trong $repo — làm theo docs\pc-worker.md." Red; exit 1 }

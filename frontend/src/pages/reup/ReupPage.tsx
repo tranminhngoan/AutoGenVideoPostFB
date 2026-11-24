@@ -100,6 +100,7 @@ export function ReupPage({ segments }: { segments: string[] }) {
 
 function ReupHero({ overview }: { overview: ReupOverview | null }) {
   const online = overview?.pcOnline;
+  const updating = !online && overview?.pcUpdating;
   const ready = overview?.engine.ready;
   return (
     <div className="relative overflow-hidden rounded-xl border border-line bg-surface">
@@ -121,11 +122,19 @@ function ReupHero({ overview }: { overview: ReupOverview | null }) {
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2 rounded-lg border border-line bg-surface/70 px-3 py-2 backdrop-blur">
-          <Cpu className={cn('h-4 w-4', online ? 'text-success' : 'text-fg-subtle')} />
+          <Cpu className={cn('h-4 w-4', online ? 'text-success' : updating ? 'text-warning' : 'text-fg-subtle')} />
           <div className="text-xs leading-tight">
-            <div className="font-medium text-fg">{overview == null ? 'Đang kiểm tra…' : online ? `Máy tính đang bật${overview.pcMachine ? ` (${overview.pcMachine})` : ''}` : 'Máy tính đang tắt'}</div>
+            <div className="font-medium text-fg">
+              {overview == null
+                ? 'Đang kiểm tra…'
+                : online
+                  ? `Máy tính đang bật${overview.pcMachine ? ` (${overview.pcMachine})` : ''}`
+                  : updating
+                    ? 'Máy tính đang cập nhật bản mới'
+                    : 'Máy tính đang tắt'}
+            </div>
             <div className="text-fg-muted">
-              {overview == null ? '' : !online ? 'Video sẽ chờ tới khi máy bật' : ready ? 'Engine sẵn sàng' : 'Engine chưa cài / lỗi'}
+              {overview == null ? '' : online ? (ready ? 'Engine sẵn sàng' : 'Engine chưa cài / lỗi') : updating ? 'Nhận việc lại khi cập nhật xong' : 'Video sẽ chờ tới khi máy bật'}
             </div>
           </div>
         </div>

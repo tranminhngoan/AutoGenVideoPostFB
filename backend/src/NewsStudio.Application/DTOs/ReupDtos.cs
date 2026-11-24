@@ -218,6 +218,8 @@ public class ReupEngineStatusDto
 public class ReupOverviewDto
 {
     public bool PcOnline { get; set; }
+    /// <summary>The PC is on but runs an older version than the cloud (updating): it takes jobs again once updated.</summary>
+    public bool PcUpdating { get; set; }
     public string? PcMachine { get; set; }
     public ReupEngineStatusDto Engine { get; set; } = new();
     public bool FaceSwapAvailable { get; set; }

@@ -24,7 +24,14 @@ export function ReupOverviewTab() {
         <Stat label="Kho file đang dùng" value={`${o.storageMb.toFixed(0)} MB`} hint="Miễn phí tới 10 GB (R2)" />
       </div>
 
-      {!o.pcOnline && (
+      {!o.pcOnline && o.pcUpdating && (
+        <Alert tone="warning" icon={<AlertTriangle />} title="Máy tính đang cập nhật bản mới">
+          Máy tính đang bật nhưng chạy bản cũ hơn Railway, nên tạm chưa nhận việc. Cửa sổ <code>start-pc-worker</code> tự cập nhật trong vài phút
+          (build lần đầu mất 2–4 phút). Nếu quá 10 phút: mở cửa sổ đen đó, bấm <b>Esc</b> (tiêu đề có chữ "Select" nghĩa là đang bị tạm dừng) hoặc
+          chạy lại <code>start-pc-worker.bat</code>.
+        </Alert>
+      )}
+      {!o.pcOnline && !o.pcUpdating && (
         <Alert tone="warning" icon={<AlertTriangle />} title="Máy tính đang tắt">
           Video chỉ được xử lý trên máy tính (không tốn CPU Railway). Bật máy và chạy <code>scripts\pc\start-pc-worker.bat</code> — video đang chờ sẽ tự chạy.
         </Alert>

@@ -84,8 +84,16 @@ public class ReupController : ControllerBase
     public async Task<IActionResult> Overview(CancellationToken ct)
     {
         var pc = await WorkerSwitchService.ReadBeatAsync(_db, WorkerSwitchService.PcKey, ct);
-        var online = pc is { Working: true } && WorkerSwitchService.Fresh(pc.HeartbeatUtc, DateTime.UtcNow);
-        return await Run(async () => await _reup.OverviewAsync(online, pc?.Machine, ct));
+        var now = DateTime.UtcNow;
+        var online = pc is { Working: true } && WorkerSwitchService.Fresh(pc.HeartbeatUtc, now);
+        // on, but on an older version than the cloud: it stays out of the work until its updater installs the new one
+        var updating = !online && WorkerSwitchService.Fresh(pc?.SeenUtc, now);
+        return await Run(async () =>
+        {
+            var o = await _reup.OverviewAsync(online, pc?.Machine, ct);
+            o.PcUpdating = updating;
+            return o;
+        });
     }
 
     [HttpGet("settings")]

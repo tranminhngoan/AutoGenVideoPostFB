@@ -223,6 +223,7 @@ export interface EngineStatus {
 
 export interface ReupOverview {
   pcOnline: boolean;
+  pcUpdating: boolean;
   pcMachine?: string | null;
   engine: EngineStatus;
   faceSwapAvailable: boolean;
