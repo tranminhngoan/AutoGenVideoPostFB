@@ -52,13 +52,13 @@ export function takeStudioImport(): StudioScriptImport | null {
 
 /** Same choice the server makes: a narrator voice and reading speed that suit the mood (changeable before creating). */
 export function narratorFor(mood?: string | null): { voice: string; speed: string } {
+  // Sulafat (warm, tender) reads every emotional script; only a playful one gets a lighter voice
   const m = (mood ?? '').toLowerCase();
-  if (m.includes('nghẹn') || m.includes('nước mắt')) return { voice: 'gemini:Sulafat', speed: '-8%' };
-  if (m.includes('da diết') || m.includes('day dứt') || m.includes('nhớ cha mẹ')) return { voice: 'gemini:Charon', speed: '-6%' };
-  if (m.includes('xót xa') || m.includes('thương quê')) return { voice: 'gemini:Algenib', speed: '-6%' };
   if (m.includes('hóm hỉnh') || m.includes('ngây ngô') || m.includes('vui')) return { voice: 'gemini:Puck', speed: '+0%' };
-  if (m.includes('ấm áp') || m.includes('hoài niệm')) return { voice: 'gemini:Aoede', speed: '-4%' };
-  return { voice: 'gemini:Charon', speed: '-4%' };
+  if (m.includes('nghẹn') || m.includes('nước mắt')) return { voice: 'gemini:Sulafat', speed: '-8%' };
+  if (m.includes('da diết') || m.includes('day dứt') || m.includes('nhớ cha mẹ') || m.includes('xót xa') || m.includes('thương quê'))
+    return { voice: 'gemini:Sulafat', speed: '-6%' };
+  return { voice: 'gemini:Sulafat', speed: '-4%' };
 }
 
 const words = (t?: string | null) => (t ?? '').trim().split(/\s+/).filter(Boolean).length;

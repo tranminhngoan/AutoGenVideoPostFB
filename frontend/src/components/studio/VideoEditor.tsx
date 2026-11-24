@@ -158,7 +158,9 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
   const loadImport = (s: StudioScriptImport) => {
     const n = narratorFor(s.mood);
     setImporting(s);
-    setImportLength(estimateImport(s).seconds > 105 ? 90 : 0); // long scripts default to a ~1:30 video
+    setImportLength(estimateImport(s).seconds > 70 ? 60 : 0); // default: a ~1 minute video (under 2 USD at Pro Fast 720p)
+    // recommended for realism within the budget: Seedance Pro Fast at 720p
+    setForm((f) => ({ ...f, videoModel: 'bytedance/seedance-v1.0-pro-fast', resolution: '720p' }));
     setNarratorVoice(n.voice);
     setNarratorSpeed(n.speed);
     setForm((prev) => ({ ...prev, title: s.code ? `${s.title} (${s.code})` : s.title, script: s.script ?? '' }));
@@ -225,7 +227,7 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
         setPages(p.filter((x) => x.isActive));
         setMusic(m);
         setSettings(st);
-        setForm((f) => ({ ...f, videoModel: f.videoModel || st.videoModel }));
+        setForm((f) => ({ ...f, videoModel: f.videoModel || 'bytedance/seedance-v1.0-pro-fast' }));
         setRemaining(c.monthlyBudgetUsd > 0 ? c.monthRemainingUsd : null);
       } catch (e) {
         toast.error((e as Error).message);

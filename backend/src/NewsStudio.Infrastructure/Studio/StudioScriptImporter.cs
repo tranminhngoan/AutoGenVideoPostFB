@@ -39,11 +39,11 @@ public static class StudioScriptImporter
     {
         var m = (mood ?? "").ToLowerInvariant();
         var core =
-            m.Contains("nghẹn") || m.Contains("nước mắt") ? "a gentle Vietnamese woman remembering her poor childhood, slow and tender, voice soft and catching with tears at the saddest words"
-            : m.Contains("da diết") || m.Contains("day dứt") || m.Contains("nhớ cha mẹ") ? "a warm Vietnamese man remembering his late parents, deep and heartfelt, slow and reflective, longing in his voice"
-            : m.Contains("xót xa") || m.Contains("thương quê") ? "a weathered Vietnamese man telling a bittersweet memory of his village, low, sincere and compassionate, unhurried"
+            m.Contains("nghẹn") || m.Contains("nước mắt") ? "a gentle Vietnamese storyteller remembering a poor childhood, slow and tender, voice soft and catching with tears at the saddest words"
+            : m.Contains("da diết") || m.Contains("day dứt") || m.Contains("nhớ cha mẹ") ? "a warm Vietnamese storyteller remembering late parents, heartfelt, slow and reflective, longing in the voice"
+            : m.Contains("xót xa") || m.Contains("thương quê") ? "a Vietnamese storyteller telling a bittersweet memory of the home village, low, sincere and compassionate, unhurried"
             : m.Contains("hóm hỉnh") || m.Contains("ngây ngô") || m.Contains("vui") ? "a playful Vietnamese storyteller recalling childhood mischief, light and smiling, lively but natural rhythm"
-            : m.Contains("ấm áp") || m.Contains("hoài niệm") ? "a warm, gentle Vietnamese woman telling a cozy nostalgic memory, a soft smile in her voice, calm and intimate"
+            : m.Contains("ấm áp") || m.Contains("hoài niệm") ? "a warm, gentle Vietnamese storyteller telling a cozy nostalgic memory, a soft smile in the voice, calm and intimate"
             : "a warm, sincere Vietnamese storyteller sharing a nostalgic memory, intimate and unhurried";
         return core + "; natural native Vietnamese, like talking to a close friend, real breaths and pauses between sentences, never like a newsreader or a robot";
     }
@@ -51,13 +51,13 @@ public static class StudioScriptImporter
     /// <summary>Narrator voice and reading speed that suit the script's mood (the user can change both).</summary>
     public static (string Voice, string Gender, string Speed) NarratorFor(string? mood)
     {
+        // Sulafat (warm, tender) reads every emotional script; only a playful one gets a lighter voice
         var m = (mood ?? "").ToLowerInvariant();
-        if (m.Contains("nghẹn") || m.Contains("nước mắt")) return ("gemini:Sulafat", "female", "-8%");
-        if (m.Contains("da diết") || m.Contains("day dứt") || m.Contains("nhớ cha mẹ")) return ("gemini:Charon", "male", "-6%");
-        if (m.Contains("xót xa") || m.Contains("thương quê")) return ("gemini:Algenib", "male", "-6%");
         if (m.Contains("hóm hỉnh") || m.Contains("ngây ngô") || m.Contains("vui")) return ("gemini:Puck", "male", "+0%");
-        if (m.Contains("ấm áp") || m.Contains("hoài niệm")) return ("gemini:Aoede", "female", "-4%");
-        return ("gemini:Charon", "male", "-4%");
+        if (m.Contains("nghẹn") || m.Contains("nước mắt")) return ("gemini:Sulafat", "female", "-8%");
+        if (m.Contains("da diết") || m.Contains("day dứt") || m.Contains("nhớ cha mẹ") || m.Contains("xót xa") || m.Contains("thương quê"))
+            return ("gemini:Sulafat", "female", "-6%");
+        return ("gemini:Sulafat", "female", "-4%");
     }
 
     /// <summary>Look of the whole film from the script's era / region (kept short; each prompt carries the details).</summary>

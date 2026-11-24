@@ -388,9 +388,9 @@ public class StudioTests
 
     [Theory]
     [InlineData("Nghẹn ngào rớt nước mắt", "gemini:Sulafat", "-8%")]
-    [InlineData("Da diết nhớ cha mẹ", "gemini:Charon", "-6%")]
+    [InlineData("Da diết nhớ cha mẹ", "gemini:Sulafat", "-6%")]
     [InlineData("Hóm hỉnh ngây ngô", "gemini:Puck", "+0%")]
-    [InlineData("Ấm áp hoài niệm", "gemini:Aoede", "-4%")]
+    [InlineData("Ấm áp hoài niệm", "gemini:Sulafat", "-4%")]
     public void Narrator_voice_follows_the_mood(string mood, string voice, string speed)
     {
         var n = StudioScriptImporter.NarratorFor(mood);
