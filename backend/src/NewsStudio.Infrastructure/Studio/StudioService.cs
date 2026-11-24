@@ -1621,7 +1621,8 @@ Trả về JSON:
     /// restarting at every cut) and times the scene's clips to it. The audio sits on the first spoken shot and runs on
     /// over the following shots when the video is put together.
     /// </summary>
-    private async Task<List<StudioShot>> MakeSceneVoiceAsync(StudioVideo v, Bible bible, List<StudioShot> take, CancellationToken ct)
+    private async Task<List<StudioShot>> MakeSceneVoiceAsync(StudioVideo v, Bible bible, List<StudioShot> take, CancellationToken ct,
+        bool allowExtraShots = true)
     {
         var owner = TakeOwner(take);
         var span = take.Skip(take.IndexOf(owner)).ToList();
@@ -1636,7 +1637,7 @@ Trả về JSON:
         var added = new List<StudioShot>();
         bool Fixed(StudioShot s) => s.ClipBlobId != null && s.Status == "Done";
         double Capacity() => span.Sum(s => Fixed(s) ? s.DurationSeconds : SeedanceVideoClient.MaxSeconds);
-        while (seconds + MinVoiceRoom > Capacity() + 1e-6 && added.Count < 3)
+        while (allowExtraShots && seconds + MinVoiceRoom > Capacity() + 1e-6 && added.Count < 3)
         {
             var last = span[^1];
             foreach (var later in v.Shots.Where(s => s.Index > last.Index)) later.Index++;
@@ -2060,6 +2061,32 @@ Trả về JSON:
         var dir = StudioMedia.TempDir();
         try
         {
+            // a voice dropped by a change (another narrator voice, an edited line) is read again first: never a silent video
+            var missing = VoiceUnits(v.Shots, null);
+            if (missing.Count > 0)
+            {
+                var bible = ReadBible(v.BibleJson);
+                var n = 0;
+                foreach (var unit in missing)
+                {
+                    v.Progress = $"Đang đọc lời bình bằng giọng mới {++n}/{missing.Count} trước khi ghép…";
+                    await _db.SaveChangesAsync(ct);
+                    try
+                    {
+                        if (InSceneTake(unit[0])) await MakeSceneVoiceAsync(v, bible, unit, ct, allowExtraShots: false); // the clips are made already
+                        else await MakeVoiceAsync(v, bible, unit[0], ct);
+                    }
+                    catch (InvalidOperationException ex)
+                    {
+                        throw new InvalidOperationException(ex.Message.Contains("Thêm 1 shot")
+                            ? ex.Message + " Bấm \"Tạo các clip còn thiếu\" — tool tự thêm shot cho vừa giọng mới rồi ghép."
+                            : "Chưa đọc được giọng: " + ex.Message, ex);
+                    }
+                }
+                v.Progress = "Đang ghép video, giọng đọc, hiệu ứng âm thanh và nhạc nền…";
+                await _db.SaveChangesAsync(ct);
+            }
+
             var clips = new List<string>();
             var voices = new List<string?>();
             var effects = new List<string?>();
