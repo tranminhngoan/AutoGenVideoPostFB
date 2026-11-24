@@ -667,8 +667,8 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
               ))}
             </Select>
           </Field>
-          <Field label="Độ phân giải clip" hint={form.resolution === '480p' || (form.videoModel ?? '').includes('fast')
-            ? `⚠ ${usd(perSecond, 4)}/giây — rẻ nhưng hình dễ bệt như tranh vẽ. Muốn chân thực: Seedance Pro + 720p (${usd(rateOf('bytedance/seedance-v1.0-pro', '720p'), 4)}/giây).`
+          <Field label="Độ phân giải clip" hint={form.resolution === '480p'
+            ? `⚠ ${usd(perSecond, 4)}/giây — rẻ nhưng hình mờ, dễ bệt như tranh vẽ. Nên dùng Pro Fast 720p (${usd(rateOf('bytedance/seedance-v1.0-pro-fast', '720p'), 4)}/giây): video ~1 phút 15 vẫn dưới 2 USD.`
             : `${usd(perSecond, 4)}/giây · video cuối luôn xuất 1080p`}>
             <Select value={form.resolution} onChange={(e) => setForm({ ...form, resolution: e.target.value })} disabled={locked}>
               {(['480p', '720p', '1080p'] as const).map((r) => (
@@ -737,6 +737,11 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
               Không cần lập kế hoạch: app dựng đúng kịch bản. "Xem / sửa trước" cho phép nghe giọng, sửa shot rồi mới bấm tạo.
               {settings && !settings.videoConfigured && ' Chưa có khoá Vercel AI Gateway nên chưa tạo video được.'}
             </span>
+            {importCost > 2 && (
+              <span className="w-full text-xs text-warning">
+                ⚠ Ước tính ~{usd(importCost)}, quá 2 USD. Để dưới 2 USD: chọn "Rút gọn còn ~1 phút 15" (hoặc ~1 phút), giữ Pro Fast 720p; tắt hiệu ứng âm thanh bớt thêm khoảng 0,15 USD.
+              </span>
+            )}
           </div>
         ) : (
         <div className="flex flex-wrap gap-2">
