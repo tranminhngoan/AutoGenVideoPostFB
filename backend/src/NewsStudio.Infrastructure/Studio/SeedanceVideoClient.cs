@@ -10,6 +10,9 @@ namespace NewsStudio.Infrastructure.Studio;
 
 public sealed record VideoClip(byte[] Video, string MimeType, string? RequestId, int Seconds, decimal CostUsd);
 
+/// <summary>A picture the clip starts from (image-to-video), sent inline to the gateway.</summary>
+public sealed record VideoStartImage(byte[] Data, string MediaType);
+
 /// <summary>The provider refused the clip (moderation, invalid argument…): retrying the same prompt will not help.</summary>
 public sealed class VideoRejectedException : InvalidOperationException
 {
@@ -123,8 +126,11 @@ public class SeedanceVideoClient
         return aspectRatio == "16:9" ? $"{w}x{h}" : $"{h}x{w}";
     }
 
-    /// <summary>Body of POST /video-model/start. <paramref name="resolution"/> null = let the model pick its default.</summary>
-    public static JsonObject BuildStartBody(string prompt, string aspectRatio, string? resolution, int seconds, int? seed)
+    /// <summary>
+    /// Body of POST /video-model/start. <paramref name="resolution"/> null = let the model pick its default.
+    /// <paramref name="image"/> (optional) = the first frame, as the AI SDK's gateway provider sends it ({type: file, mediaType, data: base64}).
+    /// </summary>
+    public static JsonObject BuildStartBody(string prompt, string aspectRatio, string? resolution, int seconds, int? seed, VideoStartImage? image = null)
     {
         var body = new JsonObject
         {
@@ -139,6 +145,8 @@ public class SeedanceVideoClient
         };
         if (resolution != null) body["resolution"] = resolution;
         if (seed != null) body["seed"] = seed.Value;
+        if (image != null)
+            body["image"] = new JsonObject { ["type"] = "file", ["mediaType"] = image.MediaType, ["data"] = Convert.ToBase64String(image.Data) };
         return body;
     }
 
@@ -169,7 +177,7 @@ public class SeedanceVideoClient
     /// to be stored; <paramref name="resumeOperation"/> picks such a stored job up again instead of paying for a new one.
     /// </summary>
     public async Task<VideoClip> GenerateAsync(string model, string prompt, string aspectRatio, string resolution, int seconds, int? seed,
-        CancellationToken ct, string? resumeOperation = null, Func<string, Task>? onStarted = null)
+        CancellationToken ct, string? resumeOperation = null, Func<string, Task>? onStarted = null, VideoStartImage? image = null)
     {
         var key = ApiKey(_configuration) ?? throw new VideoAccountException("Chưa có khoá Vercel AI Gateway (biến AI_GATEWAY_API_KEY trên Railway).");
         model = NormalizeModel(model);
@@ -183,7 +191,7 @@ public class SeedanceVideoClient
             return new VideoClip(resumed.Bytes, resumed.Mime, resumeOperation, seconds, 0m);
         }
 
-        var operation = await StartAsync(model, key, prompt, aspectRatio, resolution, seconds, seed, ct);
+        var operation = await StartAsync(model, key, prompt, aspectRatio, resolution, seconds, seed, ct, image);
         if (onStarted != null) await onStarted(operation);
         var started = DateTime.UtcNow;
         var status = await WaitAsync(model, operation, key, ct);
@@ -226,7 +234,8 @@ public class SeedanceVideoClient
     /// Starts the job. The exact resolution format the gateway wants for Seedance 1.0 isn't documented, so a request it
     /// rejects for its resolution (rejections are not billed) is sent again as "720p", then without one.
     /// </summary>
-    private async Task<string> StartAsync(string model, string key, string prompt, string aspectRatio, string resolution, int seconds, int? seed, CancellationToken ct)
+    private async Task<string> StartAsync(string model, string key, string prompt, string aspectRatio, string resolution, int seconds, int? seed, CancellationToken ct,
+        VideoStartImage? image = null)
     {
         var candidates = new List<string?> { FrameSize(aspectRatio, resolution), resolution, null };
         VideoRejectedException? last = null;
@@ -234,7 +243,7 @@ public class SeedanceVideoClient
         {
             try
             {
-                var text = await PostAsync(model, "video-model/start", key, BuildStartBody(prompt, aspectRatio, res, seconds, seed), ct);
+                var text = await PostAsync(model, "video-model/start", key, BuildStartBody(prompt, aspectRatio, res, seconds, seed, image), ct);
                 using var doc = JsonDocument.Parse(text);
                 if (!doc.RootElement.TryGetProperty("operation", out var op) || op.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
                     throw new InvalidOperationException("Vercel không trả về mã job video.");

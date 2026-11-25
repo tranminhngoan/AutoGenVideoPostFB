@@ -1,4 +1,4 @@
-﻿# Chạy song song máy tính + Railway
+# Chạy song song máy tính + Railway
 
 Máy tính bật thì **máy tính làm việc nặng** (ghép video, tạo clip, tự đăng…), Railway chỉ giữ trang web.
 Tắt máy thì khoảng 1 phút sau **Railway tự làm tiếp**. Bật máy lên lại thì máy tính tự nhận việc về.
@@ -50,18 +50,24 @@ Chỉ riêng bước này đã có lợi: **cập nhật code / server khởi đ
 - Video **tin tức** ghép trên máy tính vẫn đăng bình thường, nhưng xem lại trong trang web (Video → chi tiết) có thể không phát được
   vì file nằm trên máy tính. Video **Studio AI** thì xem được ở mọi nơi (nằm trong kho file chung).
 
-## Reup Video (thay nền / thay mặt / âm thanh — miễn phí, chạy trên máy tính)
+## AI Video Studio (phân tích video tham chiếu trên máy tính — miễn phí; tạo clip bằng Seedance)
 
-Menu **Reup Video** xử lý video **chỉ trên máy tính** (hàng đợi `pc_local`): Railway không bao giờ nhận việc này, nên không tốn CPU Railway.
-Máy tắt thì video nằm chờ, bật máy là tự chạy.
+Menu **AI Video Studio** thay cho Reup Video. Bước **phân tích** chạy **chỉ trên máy tính** (hàng đợi `pc_local`): không gọi AI trả phí,
+không tốn CPU Railway; máy tắt thì việc nằm chờ. Bước **tạo clip** dùng Seedance (Vercel AI Gateway, cùng khoá / cùng bảng chi phí và trần
+ngân sách tháng với Studio Video AI) — máy nào nhận việc cũng được vì Seedance chạy trên cloud.
 
-1. Cài engine một lần: bấm đúp **`scripts\pc\setup-reup-engine.bat`** (thêm `-DirectML` để dùng card đồ hoạ sẵn có).
-   Tạo Python venv riêng ở `D:\TramTinAI` (đổi bằng biến `REUP_HOME`), cài ONNX Runtime + OpenCV, tải ~55 MB model miễn phí có kiểm tra SHA-256:
-   YuNet (MIT), SFace (Apache-2.0), Robust Video Matting (GPL-3.0 — dùng nội bộ, không phân phối lại). Sau đó xử lý hoàn toàn offline.
-2. Chạy `start-pc-worker.bat` như bình thường. Vài phút sau trang Reup Video › Cài đặt hiện "Engine sẵn sàng" và tốc độ đo được.
-3. **Thay mặt đang khoá**: các model thay mặt phổ biến (inswapper_128, ArcFace/buffalo_l của InsightFace, HyperSwap, SimSwap…) chỉ cho dùng
-   phi thương mại. Khi có giấy phép thương mại: đặt `swapper.onnx` + `identity.onnx` vào `D:\TramTinAI\models\licensed\` và xác nhận giấy phép trong Cài đặt.
+1. Cài một lần: bấm đúp **`scripts\pc\setup-ai-studio.bat`** (thêm `-With8B` để có model 8B chính xác hơn, `-NoWhisper` để bỏ phần nghe lời nói).
+   Thư mục `D:\TramTinAI` (đổi bằng biến `AI_STUDIO_HOME`). Mọi file cố định phiên bản, kiểm tra SHA-256:
+   llama.cpp b12703 (MIT, Vulkan + CPU), Qwen3-VL 4B/8B Instruct GGUF Q4_K_M (Apache-2.0, bản chính thức của Qwen),
+   whisper.cpp b5907 + ggml-small (MIT), OpenCV (Apache-2.0) / NumPy (BSD).
+2. Chạy `start-pc-worker.bat` như bình thường. Khoảng 1 phút sau trang AI Video Studio hiện "Bộ phân tích sẵn sàng" và tốc độ đo được.
 
-Tốc độ đo trên máy này (2× Xeon E5-2680 v4, CPU): thay nền ~8,4 khung/giây ở 720p, ~5,9 ở 1080p → video 60 giây 30 fps mất khoảng 4–6 phút.
-File tạm nằm ở `D:\TramTinAI\work` (khung hình đi qua pipe, không ghi ra đĩa) và tự xoá sau mỗi video. Video nguồn + kết quả trên R2 tự xoá sau 7 ngày.
+Đo trên máy này (2× Xeon E5-2680 v4, 64 GB RAM, GTX 1050 Ti 4 GB, driver 532 / CUDA 12.1):
+- Bản CUDA 12.4 của llama.cpp **lỗi** với driver này → dùng **Vulkan** (không cần cập nhật driver).
+- Model 4B chạy hết trên card (~22 token/giây): khoảng 1,5–2,5 phút mỗi cảnh (8 khung hình) → video 22 giây 3 cảnh ≈ 8 phút.
+- Model 8B chỉ vừa một phần trên card 4 GB (~3,4 token/giây): chính xác hơn về góc máy / thứ tự hành động nhưng chậm ~4–5 lần.
+- Cắt cảnh, đo chuyển động máy quay (optical flow), màu (k-means) và chọn khung hình chạy bằng OpenCV, không cần AI: vài giây.
+- Kết quả từng cảnh được lưu đệm trong `D:\TramTinAI\work\ai-studio\<dự án>`: huỷ / lỗi giữa chừng thì lần sau chạy tiếp từ cảnh chưa xong.
 
+Video tham chiếu trên R2 tự xoá sau 7 ngày (phân tích, prompt, khung hình chính được giữ), clip Seedance sau 14 ngày (đổi trong Cài đặt).
+Bảng `Reup*` cũ vẫn còn trong cơ sở dữ liệu (không xoá dữ liệu); code không dùng nữa.

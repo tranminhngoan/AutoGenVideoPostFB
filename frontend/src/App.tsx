@@ -13,7 +13,7 @@ import { AutoPostPage } from './pages/AutoPostPage';
 import { StudioPage } from './pages/StudioPage';
 import { DramaScriptsPage } from './pages/DramaScriptsPage';
 import { CommentsPage } from './pages/CommentsPage';
-import { ReupPage } from './pages/reup/ReupPage';
+import { AiStudioPage } from './pages/ai-studio/AiStudioPage';
 import { SystemConfig, VideoProject } from './types';
 import { api } from './services/api';
 import { useRoute } from './lib/router';
@@ -30,7 +30,7 @@ const TITLES: Record<string, string> = {
   studio: 'Studio Video AI',
   'drama-scripts': 'Lên kịch bản',
   comments: 'Bình luận',
-  reup: 'Reup Video',
+  'ai-studio': 'AI Video Studio',
 };
 
 export function App() {
@@ -79,8 +79,8 @@ export function App() {
 
   useEffect(() => {
     const base = second && first === 'videos' ? 'Chi tiết video' : TITLES[active];
-    // (the video studio and Reup Video set their own sub-page titles)
-    if (active === 'reup') return;
+    // (AI Video Studio sets its own sub-page titles)
+    if (active === 'ai-studio') return;
     document.title = base ? `${base} · Trạm Tin 24/7` : 'Trạm Tin 24/7';
   }, [active, first, second]);
 
@@ -121,8 +121,8 @@ export function App() {
       case 'comments':
         page = <CommentsPage />;
         break;
-      case 'reup':
-        page = <ReupPage segments={route.segments.slice(1)} />;
+      case 'ai-studio':
+        page = <AiStudioPage segments={route.segments.slice(1)} />;
         break;
       default:
         page = <DashboardPage projects={projects} onCreated={refreshProjects} apiHealthy={apiHealthy} />;

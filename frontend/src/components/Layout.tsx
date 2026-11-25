@@ -96,7 +96,7 @@ function SidebarContent({
     { id: 'studio', path: '/studio', label: 'Studio Video AI', icon: Clapperboard },
     { id: 'comments', path: '/comments', label: 'Bình luận', icon: MessageCircle },
   ];
-  const local: NavItem[] = [{ id: 'reup', path: '/reup', label: 'Reup Video', icon: Wand2 }];
+  const local: NavItem[] = [{ id: 'ai-studio', path: '/ai-studio', label: 'AI Video Studio', icon: Wand2 }];
   const secondary: NavItem[] = [{ id: 'settings', path: '/settings', label: 'Cài đặt', icon: Settings }];
 
   const renderItem = (item: NavItem) => {
@@ -153,7 +153,7 @@ function SidebarContent({
         </div>
         {studio.map(renderItem)}
         <div className="!mt-5 mb-1.5 px-2.5 text-xs font-semibold uppercase tracking-wider text-violet-400">
-          Trên máy tính (0 đ)
+          Video từ video tham chiếu
         </div>
         {local.map(renderItem)}
         <div className="!mt-5 mb-1.5 px-2.5 text-xs font-medium text-fg-subtle">Hệ thống</div>

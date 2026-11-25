@@ -49,10 +49,11 @@ public interface IApplicationDbContext
     DbSet<StudioShot> StudioShots { get; }
     DbSet<StudioCostRecord> StudioCostRecords { get; }
 
-    // Reup Video (free, on the owner's PC)
-    DbSet<ReupCharacter> ReupCharacters { get; }
-    DbSet<ReupBackdrop> ReupBackdrops { get; }
-    DbSet<ReupJob> ReupJobs { get; }
+    // AI Video Studio (analysis on the owner's PC, clips by Seedance)
+    DbSet<AiStudioProject> AiStudioProjects { get; }
+    DbSet<AiStudioScene> AiStudioScenes { get; }
+    DbSet<AiStudioPromptVersion> AiStudioPromptVersions { get; }
+    DbSet<AiStudioGeneration> AiStudioGenerations { get; }
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

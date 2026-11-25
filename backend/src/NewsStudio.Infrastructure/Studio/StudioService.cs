@@ -2646,6 +2646,11 @@ Trả về JSON:
                 $"Vượt ngân sách tháng của Studio: đã chi {spent:0.00} USD, bước này cần ~{cost:0.00} USD, trần {budget:0.00} USD. Tăng trần trong tab Chi phí nếu muốn làm tiếp.");
     }
 
+    /// <summary>The studio's monthly cap, shared with AI Video Studio (same cost records, same budget).</summary>
+    public Task EnsureMonthlyBudgetAsync(decimal cost, CancellationToken ct) => EnsureBudgetAsync(cost, ct);
+
+    public Task<decimal> MonthSpentUsdAsync(CancellationToken ct) => MonthSpentAsync(ct);
+
     public async Task<StudioCostSummaryDto> GetCostsAsync(CancellationToken ct)
     {
         var start = MonthStartUtc();

@@ -22,6 +22,449 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("NewsStudio.Domain.Entities.AiStudioGeneration", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("AspectRatio")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)");
+
+                    b.Property<int>("Attempts")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("BatchId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("ClipBlobId")
+                        .HasColumnType("uuid");
+
+                    b.Property<decimal>("CostUsd")
+                        .HasPrecision(18, 6)
+                        .HasColumnType("numeric(18,6)");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ErrorMessage")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<decimal>("EstimatedCostUsd")
+                        .HasPrecision(18, 6)
+                        .HasColumnType("numeric(18,6)");
+
+                    b.Property<bool>("FilesDeleted")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTime?>("FinishedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ImageSource")
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
+
+                    b.Property<string>("Model")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("ParamsJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Prompt")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("ProviderOperation")
+                        .HasColumnType("text");
+
+                    b.Property<string>("RequestKey")
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
+                    b.Property<string>("Resolution")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)");
+
+                    b.Property<Guid>("SceneId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Seconds")
+                        .HasColumnType("integer");
+
+                    b.Property<int?>("Seed")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("StartedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<DateTime?>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("BatchId");
+
+                    b.HasIndex("RequestKey");
+
+                    b.HasIndex("SceneId");
+
+                    b.HasIndex("Status");
+
+                    b.HasIndex("ProjectId", "CreatedAtUtc");
+
+                    b.ToTable("AiStudioGenerations", (string)null);
+                });
+
+            modelBuilder.Entity("NewsStudio.Domain.Entities.AiStudioProject", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("AnalysisFinishedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("AnalysisMetaJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("AnalysisModel")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)");
+
+                    b.Property<DateTime?>("AnalysisStartedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("AspectRatio")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)");
+
+                    b.Property<string>("AudioJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<long?>("BitrateKbps")
+                        .HasColumnType("bigint");
+
+                    b.Property<bool>("CancelRequested")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("CharacterBibleJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<bool>("Continuity")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<double>("DurationSeconds")
+                        .HasColumnType("double precision");
+
+                    b.Property<string>("EnvironmentBibleJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("ErrorMessage")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<Guid?>("FinalBlobId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("FinalError")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<string>("FinalStatus")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<DateTime?>("FinalUpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<double>("Fps")
+                        .HasColumnType("double precision");
+
+                    b.Property<string>("FpsText")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
+
+                    b.Property<string>("GenAspectRatio")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)");
+
+                    b.Property<string>("GlobalPrompt")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("HangfireJobId")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<bool>("HasAudio")
+                        .HasColumnType("boolean");
+
+                    b.Property<int>("Height")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("NegativePrompt")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("OverviewJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("PaletteJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("ProgressPercent")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("ProgressText")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("PromptMode")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<Guid?>("ReferenceImageBlobId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Resolution")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)");
+
+                    b.Property<int>("ScenesDone")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("ScenesTotal")
+                        .HasColumnType("integer");
+
+                    b.Property<int?>("Seed")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid?>("SourceBlobId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("SourceContainer")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)");
+
+                    b.Property<bool>("SourceDeleted")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("SourceFileName")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)");
+
+                    b.Property<long>("SourceSizeBytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid?>("SourceThumbBlobId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Stage")
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<string>("StyleBibleJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)");
+
+                    b.Property<string>("TranscriptJson")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("VariationJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("VideoCodec")
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<string>("VideoModel")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<int>("Width")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("WorkerMachine")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CreatedAtUtc");
+
+                    b.HasIndex("Status");
+
+                    b.ToTable("AiStudioProjects", (string)null);
+                });
+
+            modelBuilder.Entity("NewsStudio.Domain.Entities.AiStudioPromptVersion", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Mode")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("SceneId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<string>("Text")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("Version")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProjectId", "SceneId", "Version");
+
+                    b.ToTable("AiStudioPromptVersions", (string)null);
+                });
+
+            modelBuilder.Entity("NewsStudio.Domain.Entities.AiStudioScene", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("AnalysisJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<double>("Confidence")
+                        .HasColumnType("double precision");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("Enabled")
+                        .HasColumnType("boolean");
+
+                    b.Property<double>("EndSeconds")
+                        .HasColumnType("double precision");
+
+                    b.Property<string>("FramesJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("Index")
+                        .HasColumnType("integer");
+
+                    b.Property<bool>("IsContinuation")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("MeasuredJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("Order")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Prompt")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<bool>("PromptEdited")
+                        .HasColumnType("boolean");
+
+                    b.Property<int>("PromptVersion")
+                        .HasColumnType("integer");
+
+                    b.Property<double>("StartSeconds")
+                        .HasColumnType("double precision");
+
+                    b.Property<string>("SummaryVi")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<int>("TargetSeconds")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid?>("ThumbBlobId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Transcript")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<DateTime?>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProjectId", "Order");
+
+                    b.ToTable("AiStudioScenes", (string)null);
+                });
+
             modelBuilder.Entity("NewsStudio.Domain.Entities.AiUsage", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1713,338 +2156,6 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                     b.ToTable("ProcessingJobs", (string)null);
                 });
 
-            modelBuilder.Entity("NewsStudio.Domain.Entities.ReupBackdrop", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("Author")
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)");
-
-                    b.Property<Guid>("BlobId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("Category")
-                        .IsRequired()
-                        .HasMaxLength(40)
-                        .HasColumnType("character varying(40)");
-
-                    b.Property<DateTime>("CreatedAtUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<DateTime>("DownloadedAtUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<double?>("DurationSeconds")
-                        .HasColumnType("double precision");
-
-                    b.Property<int>("Height")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("Kind")
-                        .IsRequired()
-                        .HasMaxLength(10)
-                        .HasColumnType("character varying(10)");
-
-                    b.Property<string>("LicenseName")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)");
-
-                    b.Property<string>("LicenseUrl")
-                        .HasMaxLength(1000)
-                        .HasColumnType("character varying(1000)");
-
-                    b.Property<string>("MimeType")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
-
-                    b.Property<string>("Name")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)");
-
-                    b.Property<long>("SizeBytes")
-                        .HasColumnType("bigint");
-
-                    b.Property<string>("SourceName")
-                        .IsRequired()
-                        .HasMaxLength(40)
-                        .HasColumnType("character varying(40)");
-
-                    b.Property<string>("SourceUrl")
-                        .HasMaxLength(1000)
-                        .HasColumnType("character varying(1000)");
-
-                    b.Property<string>("Tags")
-                        .HasMaxLength(500)
-                        .HasColumnType("character varying(500)");
-
-                    b.Property<Guid?>("ThumbBlobId")
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime?>("UpdatedAtUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<int>("UseCount")
-                        .HasColumnType("integer");
-
-                    b.Property<int>("Width")
-                        .HasColumnType("integer");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("Category");
-
-                    b.ToTable("ReupBackdrops", (string)null);
-                });
-
-            modelBuilder.Entity("NewsStudio.Domain.Entities.ReupCharacter", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime?>("CheckedAtUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<bool>("ConsentConfirmed")
-                        .HasColumnType("boolean");
-
-                    b.Property<DateTime>("CreatedAtUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("EmbeddingJson")
-                        .HasColumnType("text");
-
-                    b.Property<string>("FaceBoxJson")
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)");
-
-                    b.Property<double?>("FaceScore")
-                        .HasColumnType("double precision");
-
-                    b.Property<Guid>("ImageBlobId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("Name")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)");
-
-                    b.Property<string>("Notes")
-                        .HasMaxLength(2000)
-                        .HasColumnType("character varying(2000)");
-
-                    b.Property<string>("RejectReason")
-                        .HasMaxLength(500)
-                        .HasColumnType("character varying(500)");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("character varying(20)");
-
-                    b.Property<Guid?>("ThumbBlobId")
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime?>("UpdatedAtUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("CreatedAtUtc");
-
-                    b.ToTable("ReupCharacters", (string)null);
-                });
-
-            modelBuilder.Entity("NewsStudio.Domain.Entities.ReupJob", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<Guid?>("AudioBlobId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("AudioFileName")
-                        .HasMaxLength(300)
-                        .HasColumnType("character varying(300)");
-
-                    b.Property<string>("AudioMode")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("character varying(20)");
-
-                    b.Property<double>("AudioVolume")
-                        .HasColumnType("double precision");
-
-                    b.Property<bool>("BackgroundEnabled")
-                        .HasColumnType("boolean");
-
-                    b.Property<bool>("CancelRequested")
-                        .HasColumnType("boolean");
-
-                    b.Property<Guid?>("CharacterId")
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime>("CreatedAtUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("ErrorMessage")
-                        .HasMaxLength(2000)
-                        .HasColumnType("character varying(2000)");
-
-                    b.Property<DateTime?>("ExpiresAtUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<bool>("FaceSwapEnabled")
-                        .HasColumnType("boolean");
-
-                    b.Property<bool>("FilesDeleted")
-                        .HasColumnType("boolean");
-
-                    b.Property<DateTime?>("FinishedAtUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<double?>("Fps")
-                        .HasColumnType("double precision");
-
-                    b.Property<int>("FramesDone")
-                        .HasColumnType("integer");
-
-                    b.Property<int>("FramesTotal")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("HangfireJobId")
-                        .HasMaxLength(50)
-                        .HasColumnType("character varying(50)");
-
-                    b.Property<double>("OriginalVolume")
-                        .HasColumnType("double precision");
-
-                    b.Property<Guid?>("OutputBlobId")
-                        .HasColumnType("uuid");
-
-                    b.Property<double?>("OutputDurationSeconds")
-                        .HasColumnType("double precision");
-
-                    b.Property<int?>("OutputHeight")
-                        .HasColumnType("integer");
-
-                    b.Property<int>("OutputShortSide")
-                        .HasColumnType("integer");
-
-                    b.Property<long?>("OutputSizeBytes")
-                        .HasColumnType("bigint");
-
-                    b.Property<int?>("OutputWidth")
-                        .HasColumnType("integer");
-
-                    b.Property<bool>("PeopleConsentConfirmed")
-                        .HasColumnType("boolean");
-
-                    b.Property<string>("PlacementJson")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<Guid?>("PreviewBlobId")
-                        .HasColumnType("uuid");
-
-                    b.Property<bool>("PreviewRun")
-                        .HasColumnType("boolean");
-
-                    b.Property<int>("ProgressPercent")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("ProgressText")
-                        .HasMaxLength(500)
-                        .HasColumnType("character varying(500)");
-
-                    b.Property<string>("QcReportJson")
-                        .HasColumnType("text");
-
-                    b.Property<bool>("RightsConfirmed")
-                        .HasColumnType("boolean");
-
-                    b.Property<string>("RightsNote")
-                        .HasMaxLength(1000)
-                        .HasColumnType("character varying(1000)");
-
-                    b.Property<string>("SegmentsJson")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<Guid>("SourceBlobId")
-                        .HasColumnType("uuid");
-
-                    b.Property<double>("SourceDurationSeconds")
-                        .HasColumnType("double precision");
-
-                    b.Property<string>("SourceFileName")
-                        .IsRequired()
-                        .HasMaxLength(300)
-                        .HasColumnType("character varying(300)");
-
-                    b.Property<string>("SourceFps")
-                        .IsRequired()
-                        .HasMaxLength(30)
-                        .HasColumnType("character varying(30)");
-
-                    b.Property<bool>("SourceHasAudio")
-                        .HasColumnType("boolean");
-
-                    b.Property<int>("SourceHeight")
-                        .HasColumnType("integer");
-
-                    b.Property<long>("SourceSizeBytes")
-                        .HasColumnType("bigint");
-
-                    b.Property<Guid?>("SourceThumbBlobId")
-                        .HasColumnType("uuid");
-
-                    b.Property<int>("SourceWidth")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("Stage")
-                        .HasMaxLength(40)
-                        .HasColumnType("character varying(40)");
-
-                    b.Property<DateTime?>("StartedAtUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("StatsJson")
-                        .HasColumnType("text");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("character varying(20)");
-
-                    b.Property<string>("Title")
-                        .IsRequired()
-                        .HasMaxLength(300)
-                        .HasColumnType("character varying(300)");
-
-                    b.Property<DateTime?>("UpdatedAtUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("WorkerMachine")
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("CreatedAtUtc");
-
-                    b.HasIndex("Status");
-
-                    b.ToTable("ReupJobs", (string)null);
-                });
-
             modelBuilder.Entity("NewsStudio.Domain.Entities.StudioAsset", b =>
                 {
                     b.Property<Guid>("Id")
@@ -3008,6 +3119,17 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                     b.ToTable("VideoScripts", (string)null);
                 });
 
+            modelBuilder.Entity("NewsStudio.Domain.Entities.AiStudioScene", b =>
+                {
+                    b.HasOne("NewsStudio.Domain.Entities.AiStudioProject", "Project")
+                        .WithMany("Scenes")
+                        .HasForeignKey("ProjectId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Project");
+                });
+
             modelBuilder.Entity("NewsStudio.Domain.Entities.ArticleImage", b =>
                 {
                     b.HasOne("NewsStudio.Domain.Entities.Article", "Article")
@@ -3309,6 +3431,11 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                         .IsRequired();
 
                     b.Navigation("VideoProject");
+                });
+
+            modelBuilder.Entity("NewsStudio.Domain.Entities.AiStudioProject", b =>
+                {
+                    b.Navigation("Scenes");
                 });
 
             modelBuilder.Entity("NewsStudio.Domain.Entities.Article", b =>

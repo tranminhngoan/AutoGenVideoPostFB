@@ -30,9 +30,10 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
     public DbSet<StudioVideo> StudioVideos => Set<StudioVideo>();
     public DbSet<StudioShot> StudioShots => Set<StudioShot>();
     public DbSet<StudioCostRecord> StudioCostRecords => Set<StudioCostRecord>();
-    public DbSet<ReupCharacter> ReupCharacters => Set<ReupCharacter>();
-    public DbSet<ReupBackdrop> ReupBackdrops => Set<ReupBackdrop>();
-    public DbSet<ReupJob> ReupJobs => Set<ReupJob>();
+    public DbSet<AiStudioProject> AiStudioProjects => Set<AiStudioProject>();
+    public DbSet<AiStudioScene> AiStudioScenes => Set<AiStudioScene>();
+    public DbSet<AiStudioPromptVersion> AiStudioPromptVersions => Set<AiStudioPromptVersion>();
+    public DbSet<AiStudioGeneration> AiStudioGenerations => Set<AiStudioGeneration>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
     public DbSet<TrendingArticle> TrendingArticles => Set<TrendingArticle>();
     public DbSet<AutoPostSettings> AutoPostSettings => Set<AutoPostSettings>();
@@ -665,51 +666,67 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
             entity.HasIndex(e => e.StudioVideoId);
         });
 
-        // ───────── Reup Video (free, on the owner's PC) ─────────
-        modelBuilder.Entity<ReupCharacter>(entity =>
+        // ───────── AI Video Studio (analysis on the owner's PC, clips by Seedance) ─────────
+        modelBuilder.Entity<AiStudioProject>(entity =>
         {
-            entity.ToTable("ReupCharacters");
-            entity.HasKey(e => e.Id);
-            entity.Property(e => e.Name).HasMaxLength(200).IsRequired();
-            entity.Property(e => e.Notes).HasMaxLength(2000);
-            entity.Property(e => e.Status).HasMaxLength(20);
-            entity.Property(e => e.RejectReason).HasMaxLength(500);
-            entity.Property(e => e.FaceBoxJson).HasMaxLength(200);
-            entity.HasIndex(e => e.CreatedAtUtc);
-        });
-        modelBuilder.Entity<ReupBackdrop>(entity =>
-        {
-            entity.ToTable("ReupBackdrops");
-            entity.HasKey(e => e.Id);
-            entity.Property(e => e.Name).HasMaxLength(200).IsRequired();
-            entity.Property(e => e.Kind).HasMaxLength(10);
-            entity.Property(e => e.Category).HasMaxLength(40);
-            entity.Property(e => e.Tags).HasMaxLength(500);
-            entity.Property(e => e.MimeType).HasMaxLength(100);
-            entity.Property(e => e.SourceName).HasMaxLength(40);
-            entity.Property(e => e.SourceUrl).HasMaxLength(1000);
-            entity.Property(e => e.Author).HasMaxLength(200);
-            entity.Property(e => e.LicenseName).HasMaxLength(200).IsRequired();
-            entity.Property(e => e.LicenseUrl).HasMaxLength(1000);
-            entity.HasIndex(e => e.Category);
-        });
-        modelBuilder.Entity<ReupJob>(entity =>
-        {
-            entity.ToTable("ReupJobs");
+            entity.ToTable("AiStudioProjects");
             entity.HasKey(e => e.Id);
             entity.Property(e => e.Title).HasMaxLength(300).IsRequired();
-            entity.Property(e => e.SourceFileName).HasMaxLength(300);
-            entity.Property(e => e.SourceFps).HasMaxLength(30);
-            entity.Property(e => e.RightsNote).HasMaxLength(1000);
-            entity.Property(e => e.AudioMode).HasMaxLength(20);
-            entity.Property(e => e.AudioFileName).HasMaxLength(300);
             entity.Property(e => e.Status).HasMaxLength(20);
+            entity.Property(e => e.SourceFileName).HasMaxLength(300);
+            entity.Property(e => e.SourceContainer).HasMaxLength(10);
+            entity.Property(e => e.FpsText).HasMaxLength(30);
+            entity.Property(e => e.VideoCodec).HasMaxLength(40);
+            entity.Property(e => e.AspectRatio).HasMaxLength(10);
+            entity.Property(e => e.AnalysisModel).HasMaxLength(10);
             entity.Property(e => e.Stage).HasMaxLength(40);
             entity.Property(e => e.ProgressText).HasMaxLength(500);
             entity.Property(e => e.HangfireJobId).HasMaxLength(50);
             entity.Property(e => e.WorkerMachine).HasMaxLength(100);
             entity.Property(e => e.ErrorMessage).HasMaxLength(2000);
+            entity.Property(e => e.PromptMode).HasMaxLength(20);
+            entity.Property(e => e.VideoModel).HasMaxLength(100);
+            entity.Property(e => e.Resolution).HasMaxLength(10);
+            entity.Property(e => e.GenAspectRatio).HasMaxLength(10);
+            entity.Property(e => e.FinalStatus).HasMaxLength(20);
+            entity.Property(e => e.FinalError).HasMaxLength(1000);
+            entity.HasMany(e => e.Scenes).WithOne(s => s.Project!).HasForeignKey(s => s.ProjectId).OnDelete(DeleteBehavior.Cascade);
             entity.HasIndex(e => e.CreatedAtUtc);
+            entity.HasIndex(e => e.Status);
+        });
+        modelBuilder.Entity<AiStudioScene>(entity =>
+        {
+            entity.ToTable("AiStudioScenes");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.SummaryVi).HasMaxLength(1000);
+            entity.Property(e => e.Transcript).HasMaxLength(2000);
+            entity.HasIndex(e => new { e.ProjectId, e.Order });
+        });
+        modelBuilder.Entity<AiStudioPromptVersion>(entity =>
+        {
+            entity.ToTable("AiStudioPromptVersions");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Source).HasMaxLength(20);
+            entity.Property(e => e.Mode).HasMaxLength(20);
+            entity.HasIndex(e => new { e.ProjectId, e.SceneId, e.Version });
+        });
+        modelBuilder.Entity<AiStudioGeneration>(entity =>
+        {
+            entity.ToTable("AiStudioGenerations");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.RequestKey).HasMaxLength(80);
+            entity.Property(e => e.Status).HasMaxLength(20);
+            entity.Property(e => e.Model).HasMaxLength(100);
+            entity.Property(e => e.Resolution).HasMaxLength(10);
+            entity.Property(e => e.AspectRatio).HasMaxLength(10);
+            entity.Property(e => e.ImageSource).HasMaxLength(30);
+            entity.Property(e => e.ErrorMessage).HasMaxLength(2000);
+            entity.Property(e => e.EstimatedCostUsd).HasPrecision(18, 6);
+            entity.Property(e => e.CostUsd).HasPrecision(18, 6);
+            entity.HasIndex(e => new { e.ProjectId, e.CreatedAtUtc });
+            entity.HasIndex(e => e.SceneId);
+            entity.HasIndex(e => e.BatchId);
+            entity.HasIndex(e => e.RequestKey);
             entity.HasIndex(e => e.Status);
         });
     }

@@ -293,9 +293,10 @@ try
                 s => s.RunAsync(CancellationToken.None),
                 "17,47 * * * *");
             recurring.RemoveIfExists("film-gpu-tick"); // GPU film pipeline removed (the AI video studio replaces it)
-            // Reup Video: expired files out of the bucket (keeps the free 10 GB), stalled PC jobs failed
-            recurring.AddOrUpdate<NewsStudio.Infrastructure.Reup.ReupService>(
-                "reup-cleanup",
+            // AI Video Studio: expired files out of the bucket (keeps the free 10 GB), stalled PC analyses / clips failed
+            recurring.RemoveIfExists("reup-cleanup"); // Reup Video was replaced by AI Video Studio
+            recurring.AddOrUpdate<NewsStudio.Infrastructure.AiStudio.AiStudioService>(
+                "ai-studio-cleanup",
                 s => s.CleanupAsync(CancellationToken.None),
                 "23 * * * *");
             recurring.AddOrUpdate<NewsStudio.Application.Interfaces.IDailyDigestService>(

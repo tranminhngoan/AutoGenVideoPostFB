@@ -86,10 +86,10 @@ function Start-Worker {
         'Studio__MediaPath' = (Join-Path $data 'studio-media'); 'Storage__TempStoragePath' = (Join-Path $data 'newsstudio')
     }
     foreach ($k in $fixed.Keys) { [Environment]::SetEnvironmentVariable($k, $fixed[$k], 'Process') }
-    # Reup Video engine (same folder as setup-reup-engine.bat): REUP_HOME, else D:\TramTinAI, else %USERPROFILE%\TramTinAI
-    $reupHome = if ($env:REUP_HOME) { $env:REUP_HOME } elseif (Test-Path 'D:\') { 'D:\TramTinAI' } else { Join-Path $env:USERPROFILE 'TramTinAI' }
-    [Environment]::SetEnvironmentVariable('Reup__Home', $reupHome, 'Process')
-    if (-not (Test-Path (Join-Path $reupHome 'venv'))) { Say "Reup Video chưa cài engine — muốn dùng thì chạy scripts\pc\setup-reup-engine.bat một lần." Yellow }
+    # AI Video Studio analyzer (same folder as setup-ai-studio.bat): AI_STUDIO_HOME, else D:\TramTinAI, else %USERPROFILE%\TramTinAI
+    $aiHome = if ($env:AI_STUDIO_HOME) { $env:AI_STUDIO_HOME } elseif (Test-Path 'D:\') { 'D:\TramTinAI' } else { Join-Path $env:USERPROFILE 'TramTinAI' }
+    [Environment]::SetEnvironmentVariable('AiStudio__Home', $aiHome, 'Process')
+    if (-not (Test-Path (Join-Path $aiHome 'llm'))) { Say "AI Video Studio chưa cài bộ phân tích — muốn dùng thì chạy scripts\pc\setup-ai-studio.bat một lần." Yellow }
     $log = Join-Path $data 'worker.log'
     if ((Test-Path $log) -and (Get-Item $log).Length -gt 20MB) { Move-Item $log "$log.old" -Force }
     $p = Start-Process dotnet -ArgumentList "`"$(Join-Path $out 'NewsStudio.Api.dll')`"" -WorkingDirectory $out -WindowStyle Hidden `

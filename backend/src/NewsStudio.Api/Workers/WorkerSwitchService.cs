@@ -150,9 +150,9 @@ public class WorkerSwitchService : BackgroundService
         {
             WorkerCount = _configuration.GetValue<int>("Storage:MaxConcurrentRenderJobs", 2),
             ServerName = $"NewsStudio-{(IsPc ? "PC" : "Cloud")}-{Environment.MachineName}",
-            // "pc_local" = Reup Video (face swap / background on the CPU): only the PC takes it, so with the PC off those
-            // jobs wait instead of running for hours on Railway's billed CPU
-            Queues = IsPc ? new[] { "default", "critical", "render", Infrastructure.Reup.ReupService.PcQueue } : new[] { "default", "critical", "render" }
+            // "pc_local" = AI Video Studio analysis (local AI model on the PC's graphics card / CPU): only the PC takes it,
+            // so with the PC off those jobs wait instead of running on Railway's billed CPU
+            Queues = IsPc ? new[] { "default", "critical", "render", Infrastructure.AiStudio.AiStudioService.PcQueue } : new[] { "default", "critical", "render" }
         };
         _server = CreateServer(_services, options);
         Note($"Bắt đầu làm việc nền ({reason}).");

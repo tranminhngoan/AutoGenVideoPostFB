@@ -9,7 +9,7 @@ using NewsStudio.Infrastructure.Studio;
 namespace NewsStudio.Api.Controllers;
 
 /// <summary>
-/// The app has no login: writes of the studios (AI video studio, Reup Video) need X-Studio-Key equal to the server's
+/// The app has no login: writes of the studios (video studio, AI Video Studio) need X-Studio-Key equal to the server's
 /// Vercel AI Gateway key, its paid Gemini key or Security:AdminApiKey. The page asks for it once and keeps it in the browser.
 /// </summary>
 public static class StudioAccess

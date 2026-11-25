@@ -16,7 +16,7 @@ using NewsStudio.Infrastructure.Facebook;
 using NewsStudio.Infrastructure.Services;
 using NewsStudio.Infrastructure.FilmFactory;
 using NewsStudio.Infrastructure.Studio;
-using NewsStudio.Infrastructure.Reup;
+using NewsStudio.Infrastructure.AiStudio;
 
 namespace NewsStudio.Infrastructure;
 
@@ -138,8 +138,9 @@ public static class DependencyInjection
         services.AddHttpClient<FilmGeminiClient>();
         services.AddStudioServices();
 
-        // Reup Video: free processing on the owner's PC (ONNX Runtime + OpenCV + FFmpeg; queue "pc_local")
-        services.AddReupServices(configuration);
+        // AI Video Studio: reference-video analysis on the owner's PC (local Qwen3-VL + OpenCV + FFmpeg; queue "pc_local"),
+        // new clips through the Seedance client above
+        services.AddAiStudioServices(configuration);
 
         return services;
     }
