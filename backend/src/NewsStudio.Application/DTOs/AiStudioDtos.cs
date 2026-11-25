@@ -178,6 +178,9 @@ public class AiStudioProjectDto : AiStudioProjectSummaryDto
 
     public string PromptMode { get; set; } = "Faithful";
     public string Topic { get; set; } = string.Empty;
+    /// <summary>"None" (silent) or "Original" (the reference's own narration per scene).</summary>
+    public string AudioMode { get; set; } = "None";
+    public bool HasSourceAudio { get; set; }
     public AiStudioVariationDto Variation { get; set; } = new();
     public string GlobalPrompt { get; set; } = string.Empty;
     public string NegativePrompt { get; set; } = string.Empty;
@@ -264,6 +267,8 @@ public class AiStudioGeneratorSettingsDto
     public string AspectRatio { get; set; } = "9:16";
     public int? Seed { get; set; }
     public bool Continuity { get; set; }
+    /// <summary>Null = keep.</summary>
+    public string? AudioMode { get; set; }
 }
 
 public class AiStudioGenerateRequestDto

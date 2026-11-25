@@ -166,6 +166,7 @@ public partial class AiStudioService
     {
         var p = new AiStudioProject { Topic = AiStudioTopics.Normalize(topic) };
         await ApplySourceAsync(p, path, fileName, ct);
+        p.AudioMode = DefaultAudioMode(p);
         p.Title = !string.IsNullOrWhiteSpace(title) ? title.Trim() : Path.GetFileNameWithoutExtension(fileName);
         if (string.IsNullOrWhiteSpace(p.Title)) p.Title = "Video tham chiếu";
         if (p.Title.Length > 300) p.Title = p.Title[..300];
@@ -224,6 +225,27 @@ public partial class AiStudioService
         {
             if (File.Exists(thumbPath)) File.Delete(thumbPath);
         }
+        // the sound alone (small) outlives the video: the joined video can keep the original narration later
+        var oldAudio = p.SourceAudioBlobId;
+        p.SourceAudioBlobId = null;
+        if (probe.Audio.Count > 0)
+        {
+            var audioPath = path + ".audio.m4a";
+            try
+            {
+                await _media.ExtractAudioAsync(path, audioPath, ct);
+                p.SourceAudioBlobId = (await StoreFileAsync(audioPath, "audio/mp4", ct)).Id;
+            }
+            catch (InvalidOperationException ex)
+            {
+                _logger.LogWarning("AI Studio audio extract failed: {Message}", ex.Message);
+            }
+            finally
+            {
+                if (File.Exists(audioPath)) File.Delete(audioPath);
+            }
+        }
+        await DeleteBlobAsync(oldAudio, ct);
         var mime = container switch { "webm" => "video/webm", "mov" => "video/quicktime", _ => "video/mp4" };
         p.SourceBlobId = (await StoreFileAsync(path, mime, ct)).Id;
         p.SourceDeleted = false;
@@ -242,7 +264,14 @@ public partial class AiStudioService
         p.GenAspectRatio = AiStudioMedia.GenerationAspect(probe.Width, probe.Height);
         p.HasAudio = probe.Audio.Count > 0;
         p.AudioJson = JsonSerializer.Serialize(probe.Audio, Json);
+        if (p.SourceAudioBlobId == null) p.AudioMode = "None";
     }
+
+    public static readonly string[] AudioModes = { "None", "Original" };
+
+    /// <summary>The theme's default sound: the childhood-memories channel keeps the video's own narration, others are silent.</summary>
+    public static string DefaultAudioMode(AiStudioProject p) =>
+        p.Topic == AiStudioTopics.VietnamChildhood && p.SourceAudioBlobId != null ? "Original" : "None";
 
     private async Task ClearAnalysisAsync(AiStudioProject p, CancellationToken ct)
     {
@@ -303,7 +332,7 @@ public partial class AiStudioService
             _db.AiStudioGenerations.Remove(g);
         }
         _db.AiStudioPromptVersions.RemoveRange(await _db.AiStudioPromptVersions.Where(v => v.ProjectId == id).ToListAsync(ct));
-        foreach (var b in new[] { p.SourceBlobId, p.SourceThumbBlobId, p.ReferenceImageBlobId, p.FinalBlobId }) await DeleteBlobAsync(b, ct);
+        foreach (var b in new[] { p.SourceBlobId, p.SourceThumbBlobId, p.ReferenceImageBlobId, p.FinalBlobId, p.SourceAudioBlobId }) await DeleteBlobAsync(b, ct);
         _db.AiStudioProjects.Remove(p);
         await _db.SaveChangesAsync(ct);
     }
@@ -597,7 +626,11 @@ public partial class AiStudioService
         if (mode == AiStudioPromptEngine.Creative && !AiStudioPromptEngine.HasVariation(variation))
             throw new ArgumentException("Chế độ Biến tấu cần ít nhất một thay đổi (nhân vật, trang phục, bối cảnh, góc quay, ánh sáng hoặc phong cách).");
         p.PromptMode = mode;
-        if (input.Topic != null) p.Topic = AiStudioTopics.Normalize(input.Topic);
+        if (input.Topic != null && AiStudioTopics.Normalize(input.Topic) != p.Topic)
+        {
+            p.Topic = AiStudioTopics.Normalize(input.Topic);
+            p.AudioMode = DefaultAudioMode(p);
+        }
         p.VariationJson = JsonSerializer.Serialize(variation, Json);
         if (input.GlobalPrompt != null && input.GlobalPrompt.Trim() != p.GlobalPrompt)
         {
@@ -768,6 +801,8 @@ public partial class AiStudioService
         dto.Transcript = p.TranscriptJson != null ? ParseNode(p.TranscriptJson) : null;
         dto.PromptMode = p.PromptMode;
         dto.Topic = p.Topic;
+        dto.AudioMode = p.AudioMode;
+        dto.HasSourceAudio = p.SourceAudioBlobId != null;
         dto.Variation = ReadVariation(p.VariationJson);
         dto.GlobalPrompt = p.GlobalPrompt;
         dto.NegativePrompt = p.NegativePrompt;

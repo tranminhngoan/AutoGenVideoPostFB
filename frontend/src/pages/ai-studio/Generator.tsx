@@ -23,11 +23,12 @@ export function GeneratorPanel({ project: p, setProject, reload }: WorkspaceProp
 
   useEffect(() => setPicked((cur) => cur.filter((id) => p.scenes.some((s) => s.id === id && s.enabled))), [p.scenes.map((s) => `${s.id}${s.enabled}`).join()]);
 
-  const save = async (patch: Partial<{ videoModel: string; resolution: string; aspectRatio: string; seed: number | null; continuity: boolean }>) => {
+  const save = async (patch: Partial<{ videoModel: string; resolution: string; aspectRatio: string; seed: number | null; continuity: boolean; audioMode: 'None' | 'Original' }>) => {
     try {
       setProject(await aiStudio.generator(p.id, {
         videoModel: patch.videoModel ?? p.videoModel, resolution: patch.resolution ?? p.resolution, aspectRatio: patch.aspectRatio ?? p.genAspectRatio,
         seed: patch.seed !== undefined ? patch.seed : p.seed ?? null, continuity: patch.continuity ?? p.continuity,
+        audioMode: patch.audioMode ?? p.audioMode,
       }));
     } catch (e) {
       toast.error('Không lưu được', (e as Error).message);
@@ -151,7 +152,13 @@ export function GeneratorPanel({ project: p, setProject, reload }: WorkspaceProp
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <div className="flex items-center gap-2 text-[13px] font-semibold text-fg"><Layers className="h-4 w-4 text-accent" />Ghép thành một video</div>
-            <p className="text-xs text-fg-muted">Nối clip mới nhất của từng cảnh đang bật theo thứ tự storyboard (không tiếng — chọn nhạc khi đăng Facebook).</p>
+            <p className="text-xs text-fg-muted">Nối clip mới nhất của từng cảnh đang bật theo thứ tự storyboard.</p>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <Segmented size="sm" value={p.audioMode} onChange={(v) => save({ audioMode: v })}
+                options={[{ value: 'None', label: 'Không tiếng (chọn nhạc trên Facebook)' }, ...(p.hasSourceAudio ? [{ value: 'Original' as const, label: 'Giữ lời bình gốc' }] : [])]} />
+              {p.audioMode === 'Original' && <span className="text-[11px] text-fg-subtle">Mỗi cảnh dùng đúng đoạn tiếng của cảnh đó trong video gốc, khớp độ dài clip. Nhạc nền của video gốc (nếu có) cũng đi kèm.</span>}
+              {!p.hasSourceAudio && <span className="text-[11px] text-fg-subtle">Video tham chiếu không có tiếng.</span>}
+            </div>
           </div>
           <Button variant="primary" icon={<Clapperboard className="h-4 w-4" />} loading={p.finalStatus === 'Assembling'} disabled={!allDone}
             onClick={async () => { try { setProject(await aiStudio.assemble(p.id)); } catch (e) { toast.error('Chưa ghép được', (e as Error).message); } }}>

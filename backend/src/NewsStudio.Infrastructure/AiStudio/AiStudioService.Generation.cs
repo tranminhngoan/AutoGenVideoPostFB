@@ -35,6 +35,12 @@ public partial class AiStudioService
         p.GenAspectRatio = input.AspectRatio == "16:9" ? "16:9" : "9:16";
         p.Seed = input.Seed is { } seed ? Math.Clamp(seed, 0, int.MaxValue) : null;
         p.Continuity = input.Continuity;
+        if (input.AudioMode != null)
+        {
+            var mode = AudioModes.FirstOrDefault(m => string.Equals(m, input.AudioMode, StringComparison.OrdinalIgnoreCase)) ?? "None";
+            if (mode == "Original" && p.SourceAudioBlobId == null) throw new ArgumentException("Video tham chiếu không có âm thanh để giữ lại.");
+            p.AudioMode = mode;
+        }
         await _db.SaveChangesAsync(ct);
         return await GetProjectAsync(id, ct);
     }
@@ -425,6 +431,25 @@ public partial class AiStudioService
             var (w, h) = SeedanceFrame(clips[0].AspectRatio, clips[0].Resolution);
             var output = Path.Combine(temp, "final.mp4");
             await _media.ConcatAsync(paths, output, same, w, h, ct);
+            if (p.AudioMode == "Original")
+            {
+                // every clip gets the reference sound of its own scene (order and lengths as in the storyboard)
+                var audio = Path.Combine(temp, "source-audio.m4a");
+                if (p.SourceAudioBlobId is not { } aid || !await _files.CopyToAsync(aid, audio, ct))
+                    throw new InvalidOperationException("Âm thanh gốc không còn trong kho (hết hạn lưu) — chọn \"Không tiếng\" rồi ghép lại.");
+                var sceneIds = clips.Select(c => c.SceneId).ToList();
+                var scenes = await _db.AiStudioScenes.AsNoTracking().Where(s => sceneIds.Contains(s.Id)).ToDictionaryAsync(s => s.Id, ct);
+                var pieces = new List<AiStudioMedia.SoundPiece>();
+                for (var i = 0; i < clips.Count; i++)
+                {
+                    var s = scenes[clips[i].SceneId];
+                    var length = (await _media.ProbeAsync(paths[i], ct)).Duration;
+                    pieces.Add(new AiStudioMedia.SoundPiece(s.StartSeconds, s.EndSeconds, length > 0 ? length : clips[i].Seconds));
+                }
+                var withSound = Path.Combine(temp, "final-sound.mp4");
+                await _media.AddSoundAsync(output, audio, pieces, withSound, ct);
+                output = withSound;
+            }
             var old = p.FinalBlobId;
             p.FinalBlobId = (await StoreFileAsync(output, "video/mp4", ct)).Id;
             await DeleteBlobAsync(old, ct);

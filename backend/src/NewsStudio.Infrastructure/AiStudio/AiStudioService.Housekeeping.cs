@@ -161,6 +161,12 @@ public partial class AiStudioService
             g.ClipBlobId = null;
             g.FilesDeleted = true;
         }
+        foreach (var p in await _db.AiStudioProjects.Where(p => p.SourceAudioBlobId != null && p.CreatedAtUtc < clipCut).ToListAsync(ct))
+        {
+            await DeleteBlobAsync(p.SourceAudioBlobId, ct);
+            p.SourceAudioBlobId = null;
+            p.AudioMode = "None";
+        }
         foreach (var p in await _db.AiStudioProjects.Where(p => p.FinalBlobId != null && p.FinalUpdatedAtUtc < clipCut).ToListAsync(ct))
         {
             await DeleteBlobAsync(p.FinalBlobId, ct);

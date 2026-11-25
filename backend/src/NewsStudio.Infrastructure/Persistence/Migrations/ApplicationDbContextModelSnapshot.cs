@@ -160,6 +160,11 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<string>("AudioMode")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
                     b.Property<long?>("BitrateKbps")
                         .HasColumnType("bigint");
 
@@ -268,6 +273,9 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
 
                     b.Property<int?>("Seed")
                         .HasColumnType("integer");
+
+                    b.Property<Guid?>("SourceAudioBlobId")
+                        .HasColumnType("uuid");
 
                     b.Property<Guid?>("SourceBlobId")
                         .HasColumnType("uuid");

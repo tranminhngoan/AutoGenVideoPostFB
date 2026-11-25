@@ -82,6 +82,14 @@ public class AiStudioProject : BaseEntity
     /// <summary>The user's own image used as the first frame of the first scene (optional).</summary>
     public Guid? ReferenceImageBlobId { get; set; }
 
+    /// <summary>
+    /// Sound of the joined video: "None" (silent — music is picked on Facebook) or "Original" (each scene keeps the
+    /// reference video's own narration / sound of that scene, fitted to the new clip). Default follows the theme.
+    /// </summary>
+    public string AudioMode { get; set; } = "None";
+    /// <summary>The reference video's audio track (small AAC), kept after the video itself expires.</summary>
+    public Guid? SourceAudioBlobId { get; set; }
+
     /// <summary>All finished scene clips joined in order (optional).</summary>
     public Guid? FinalBlobId { get; set; }
     public string? FinalStatus { get; set; } // null, Assembling, Done, Failed

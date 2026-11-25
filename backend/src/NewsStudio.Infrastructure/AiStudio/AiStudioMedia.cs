@@ -211,6 +211,51 @@ public class AiStudioMedia
         if (code != 0 || !File.Exists(output)) throw new InvalidOperationException("FFmpeg không ghép được các clip: " + Tail(err));
     }
 
+    // ───────────── original sound ─────────────
+
+    /// <summary>The reference video's audio as a small AAC file (kept for the joined video after the video expires).</summary>
+    public async Task ExtractAudioAsync(string input, string output, CancellationToken ct)
+    {
+        var (code, _, err) = await RunAsync(Ffmpeg, new[] { "-hide_banner", "-v", "error", "-y", "-i", input, "-vn", "-map", "0:a:0",
+            "-ac", "2", "-ar", "44100", "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", output }, ct);
+        if (code != 0 || !File.Exists(output)) throw new InvalidOperationException("Không tách được âm thanh của video: " + Tail(err));
+    }
+
+    /// <summary>One clip of the joined video and the part of the reference sound it replaces.</summary>
+    public sealed record SoundPiece(double SourceStart, double SourceEnd, double ClipSeconds);
+
+    /// <summary>
+    /// filter_complex that gives every clip the reference sound of its own scene: cut [start, end], played up to 25 %
+    /// faster / slower when the clip is a little shorter / longer (voices stay natural), then padded with silence or
+    /// trimmed to the clip's exact length, and the pieces joined in clip order. Input 1 = the audio file.
+    /// </summary>
+    public static string BuildSoundFilter(IReadOnlyList<SoundPiece> pieces)
+    {
+        var f = new StringBuilder();
+        for (var i = 0; i < pieces.Count; i++)
+        {
+            var p = pieces[i];
+            var len = Math.Max(0.05, p.SourceEnd - p.SourceStart);
+            var clip = Math.Max(0.1, p.ClipSeconds);
+            var ratio = Math.Clamp(len / clip, 0.8, 1.25);
+            var tempo = Math.Abs(ratio - 1) > 0.03 ? $",atempo={ratio.ToString("0.####", Inv)}" : "";
+            f.Append(Inv, $"[1:a:0]atrim=start={p.SourceStart.ToString("0.###", Inv)}:end={p.SourceEnd.ToString("0.###", Inv)},asetpts=PTS-STARTPTS{tempo},")
+             .Append(Inv, $"apad=whole_dur={clip.ToString("0.###", Inv)},atrim=0:{clip.ToString("0.###", Inv)},asetpts=PTS-STARTPTS[a{i}];");
+        }
+        for (var i = 0; i < pieces.Count; i++) f.Append(Inv, $"[a{i}]");
+        f.Append(Inv, $"concat=n={pieces.Count}:v=0:a=1[aout]");
+        return f.ToString();
+    }
+
+    /// <summary>Adds the fitted reference sound to the joined (silent) video; the picture is copied untouched.</summary>
+    public async Task AddSoundAsync(string video, string audio, IReadOnlyList<SoundPiece> pieces, string output, CancellationToken ct)
+    {
+        var (code, _, err) = await RunAsync(Ffmpeg, new[] { "-hide_banner", "-v", "error", "-y", "-i", video, "-i", audio,
+            "-filter_complex", BuildSoundFilter(pieces), "-map", "0:v:0", "-map", "[aout]", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+            "-shortest", "-movflags", "+faststart", output }, ct);
+        if (code != 0 || !File.Exists(output)) throw new InvalidOperationException("Không ghép được lời bình gốc vào video: " + Tail(err));
+    }
+
     // ───────────── processes ─────────────
 
     public static string Tail(string s)

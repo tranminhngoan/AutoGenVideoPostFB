@@ -257,6 +257,8 @@ export interface Project extends ProjectSummary {
   transcript?: Json;
   promptMode: PromptMode;
   topic: string;
+  audioMode: 'None' | 'Original';
+  hasSourceAudio: boolean;
   variation: Variation;
   globalPrompt: string;
   negativePrompt: string;
@@ -296,6 +298,7 @@ export interface GeneratorSettings {
   aspectRatio: string;
   seed?: number | null;
   continuity: boolean;
+  audioMode?: 'None' | 'Original';
 }
 
 // ───────── calls ─────────

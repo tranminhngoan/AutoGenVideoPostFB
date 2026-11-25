@@ -170,6 +170,21 @@ public class AiStudioUnitTests
     }
 
     [Fact]
+    public void Each_clip_gets_the_original_sound_of_its_own_scene_fitted_to_its_length()
+    {
+        var f = AiStudioMedia.BuildSoundFilter(new[]
+        {
+            new AiStudioMedia.SoundPiece(0, 4.8, 5.0),   // 4 % shorter → slowed a little
+            new AiStudioMedia.SoundPiece(10, 22, 6.0),   // twice as long → at most 25 % faster, the rest cut
+            new AiStudioMedia.SoundPiece(4.8, 10, 5.2),  // same length → untouched
+        });
+        f.Should().Contain("[1:a:0]atrim=start=0:end=4.8,asetpts=PTS-STARTPTS,atempo=0.96,apad=whole_dur=5,atrim=0:5,asetpts=PTS-STARTPTS[a0];");
+        f.Should().Contain("atrim=start=10:end=22,asetpts=PTS-STARTPTS,atempo=1.25,apad=whole_dur=6,atrim=0:6");
+        f.Should().Contain("atrim=start=4.8:end=10,asetpts=PTS-STARTPTS,apad=whole_dur=5.2");
+        f.Should().EndWith("[a0][a1][a2]concat=n=3:v=0:a=1[aout]");
+    }
+
+    [Fact]
     public void Names_and_handles_never_reach_the_prompt()
     {
         var input = Input();
@@ -596,6 +611,58 @@ public class AiStudioFlowTests : IClassFixture<WebApplicationFactory<Program>>
             history.Should().HaveCountGreaterThanOrEqualTo(3);
             history.Should().OnlyContain(h => h.ProjectTitle == "Seedance thử");
 
+            await studio.DeleteProjectAsync(p.Id, CancellationToken.None);
+        }
+        finally
+        {
+            Directory.Delete(dir, true);
+        }
+    }
+
+    [Fact]
+    public async Task The_childhood_theme_keeps_the_original_narration_in_the_joined_video()
+    {
+        var dir = NewDir();
+        var gw = new FakeGateway();
+        try
+        {
+            gw.Video = await File.ReadAllBytesAsync(await MakeClipAsync(dir, 2, false, "720x1280"));
+            await using var app = WithGateway(gw);
+            using var scope = app.Services.CreateScope();
+            var studio = scope.ServiceProvider.GetRequiredService<AiStudioService>();
+            var db = scope.ServiceProvider.GetRequiredService<IApplicationDbContext>();
+            var clip = await MakeClipAsync(dir, 4, audio: true);
+
+            var silent = await studio.CreateProjectAsync(clip, "Gái xinh.mp4", null, CancellationToken.None, AiStudioTopics.AsianBeauty);
+            silent.AudioMode.Should().Be("None");
+            silent.HasSourceAudio.Should().BeTrue();
+            await studio.DeleteProjectAsync(silent.Id, CancellationToken.None);
+
+            var p = await studio.CreateProjectAsync(clip, "Ký ức.mp4", null, CancellationToken.None, AiStudioTopics.VietnamChildhood);
+            p.Topic.Should().Be(AiStudioTopics.VietnamChildhood);
+            p.AudioMode.Should().Be("Original");
+            await studio.IngestResultAsync(p.Id, await FakeResultAsync(dir, clip), CancellationToken.None);
+            var ids = (await studio.GetProjectAsync(p.Id, CancellationToken.None)).Scenes.Select(s => s.Id).ToList();
+            var cost = (await studio.EstimateAsync(p.Id, ids, CancellationToken.None)).TotalUsd;
+            await studio.GenerateAsync(p.Id, new AiStudioGenerateRequestDto { SceneIds = ids, RequestKey = Guid.NewGuid().ToString(), ConfirmedCostUsd = cost }, CancellationToken.None);
+            foreach (var g in await db.AiStudioGenerations.AsNoTracking().Where(g => g.ProjectId == p.Id).ToListAsync())
+                await studio.RunGenerationAsync(g.Id, CancellationToken.None);
+            await WaitAsync(db, async () => await db.AiStudioGenerations.AsNoTracking().CountAsync(g => g.ProjectId == p.Id && g.Status == "Done") == 2);
+
+            await studio.AssembleAsync(p.Id, CancellationToken.None);
+            await studio.RunAssembleAsync(p.Id, CancellationToken.None);
+            await WaitAsync(db, async () => (await db.AiStudioProjects.AsNoTracking().FirstAsync(x => x.Id == p.Id)).FinalStatus != "Assembling");
+            var row = await db.AiStudioProjects.AsNoTracking().FirstAsync(x => x.Id == p.Id);
+            row.FinalStatus.Should().Be("Done", row.FinalError);
+            var final = Path.Combine(dir, "final.mp4");
+            (await scope.ServiceProvider.GetRequiredService<StudioFileStore>().CopyToAsync(row.FinalBlobId!.Value, final, CancellationToken.None)).Should().BeTrue();
+            var probe = await new AiStudioMedia(new ConfigurationBuilder().Build()).ProbeAsync(final, CancellationToken.None);
+            probe.Audio.Should().ContainSingle(); // the reference narration is in
+            probe.Duration.Should().BeApproximately(4, 0.3);
+
+            // switching the theme off turns the sound off too
+            var off = await studio.SetPromptSettingsAsync(p.Id, new AiStudioPromptSettingsDto { Mode = "Faithful", Topic = "" }, CancellationToken.None);
+            off.AudioMode.Should().Be("None");
             await studio.DeleteProjectAsync(p.Id, CancellationToken.None);
         }
         finally

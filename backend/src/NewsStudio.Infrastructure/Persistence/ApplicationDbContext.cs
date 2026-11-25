@@ -686,6 +686,7 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
             entity.Property(e => e.ErrorMessage).HasMaxLength(2000);
             entity.Property(e => e.PromptMode).HasMaxLength(20);
             entity.Property(e => e.Topic).HasMaxLength(30);
+            entity.Property(e => e.AudioMode).HasMaxLength(20);
             entity.Property(e => e.VideoModel).HasMaxLength(100);
             entity.Property(e => e.Resolution).HasMaxLength(10);
             entity.Property(e => e.GenAspectRatio).HasMaxLength(10);
