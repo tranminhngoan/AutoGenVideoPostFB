@@ -49,7 +49,11 @@ public static class DependencyInjection
             {
                 QueuePollInterval = TimeSpan.FromSeconds(1),
                 PrepareSchemaIfNecessary = true,
-                InvisibilityTimeout = TimeSpan.FromMinutes(30)
+                InvisibilityTimeout = TimeSpan.FromMinutes(30),
+                // a running job keeps renewing its claim: without this, any job past 30 minutes (a long AI Studio
+                // analysis on the PC) is handed out again and the running one is aborted mid-way. A worker that
+                // dies stops renewing, so its job is still picked up again after the timeout.
+                UseSlidingInvisibilityTimeout = true
             }));
 
         // Application Services & Job Executors

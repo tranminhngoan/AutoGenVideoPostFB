@@ -129,6 +129,7 @@ public class AiStudioEngine
     public async Task<JsonObject> AnalyzeAsync(string jobJsonPath, int maxRamMb, Func<AnalyzerProgress?, Task<bool>> heartbeat, CancellationToken ct)
     {
         if (!_paths.Installed) throw new InvalidOperationException(AiStudioPaths.NotInstalled);
+        KillStrayServers(); // a model server left by an interrupted run would hold the GPU and RAM
         var psi = new ProcessStartInfo
         {
             FileName = _paths.Python,
@@ -198,9 +199,11 @@ public class AiStudioEngine
         catch (OperationCanceledException)
         {
             Kill(proc);
+            KillStrayServers();
             throw;
         }
         await proc.WaitForExitAsync(CancellationToken.None);
+        KillStrayServers();
         await Task.WhenAll(readTask, errTask);
         await heartbeat(latest);
 
@@ -235,5 +238,29 @@ public class AiStudioEngine
     private static void Kill(Process proc)
     {
         try { if (!proc.HasExited) proc.Kill(entireProcessTree: true); } catch { /* already gone */ }
+    }
+
+    /// <summary>
+    /// Stops model servers of THIS engine (llama-server under the AI Studio folder) still running when no analysis is:
+    /// a killed analyzer can leave its server behind (seen: 9 GB of RAM held after an aborted run). Only one analysis
+    /// runs at a time, so a server found here belongs to no one. Other programs' llama-server are never touched.
+    /// </summary>
+    public void KillStrayServers()
+    {
+        var root = Path.GetFullPath(_paths.Llm).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        foreach (var p in Process.GetProcessesByName("llama-server"))
+        {
+            try
+            {
+                var file = p.MainModule?.FileName;
+                if (file != null && Path.GetFullPath(file).StartsWith(root, StringComparison.OrdinalIgnoreCase))
+                {
+                    p.Kill(entireProcessTree: true);
+                    p.WaitForExit(5000);
+                }
+            }
+            catch { /* exited, or not ours to read */ }
+            finally { p.Dispose(); }
+        }
     }
 }
