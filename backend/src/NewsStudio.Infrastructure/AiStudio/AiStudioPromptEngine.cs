@@ -23,7 +23,8 @@ public sealed record ScenePromptInput(
     AiStudioVariationDto Variation,
     string GlobalPrompt,
     string NegativePrompt,
-    string Topic = "");
+    string Topic = "",
+    string? Narration = null);
 
 /// <summary>
 /// Cinematic prompt engine for Seedance (deterministic, no AI call, so a prompt can be rebuilt instantly when the user
@@ -125,6 +126,9 @@ public static class AiStudioPromptEngine
         var seq = Sequence(s);
         if (seq.Length > 0) parts.Add(Sentence($"Sequence: {seq}"));
 
+        // 5b. the story told by the narration over this scene (read separately by a voice, never shown or lip-synced)
+        if (NarrationLine(s.Narration) is { } story) parts.Add(story);
+
         // 6. body mechanics + motion quality
         var body = Obj(a, "body_movement");
         var mechanics = Join(", ", Field(body, "coordination"), Field(body, "torso"), Field(body, "legs"));
@@ -207,6 +211,21 @@ public static class AiStudioPromptEngine
     }
 
     // ───────────── pieces ─────────────
+
+    /// <summary>Longest narration quoted in a prompt (characters); the visuals stay the main part.</summary>
+    public const int MaxNarrationChars = 400;
+
+    /// <summary>
+    /// "Narration (voice-over, …): "…"." — the story of the scene as context for the picture. It is spoken off-screen
+    /// by a separate voice, so the people must not lip-sync it and no text may appear.
+    /// </summary>
+    public static string? NarrationLine(string? narration)
+    {
+        var text = Clean(narration?.Replace('"', '\''));
+        if (text == null) return null;
+        if (text.Length > MaxNarrationChars) text = text[..MaxNarrationChars].TrimEnd() + "…";
+        return $"Narration over this scene (off-screen voice-over, for the story only — nobody lip-syncs it, no text on screen): \"{text}\".";
+    }
 
     /// <summary>The bible characters of this scene (by their scene numbers).</summary>
     private static List<JsonObject> CastOf(ScenePromptInput s) =>

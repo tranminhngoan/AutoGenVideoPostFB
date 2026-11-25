@@ -39,6 +39,7 @@ public partial class AiStudioService
         {
             var mode = AudioModes.FirstOrDefault(m => string.Equals(m, input.AudioMode, StringComparison.OrdinalIgnoreCase)) ?? "None";
             if (mode == "Original" && p.SourceAudioBlobId == null) throw new ArgumentException("Video tham chiếu không có âm thanh để giữ lại.");
+            if (mode == "Narration" && !p.HasAudio) throw new ArgumentException("Video tham chiếu không có tiếng — không có lời bình để đọc lại.");
             p.AudioMode = mode;
         }
         await _db.SaveChangesAsync(ct);
@@ -389,6 +390,16 @@ public partial class AiStudioService
         var (clips, missing) = await FinalClipsAsync(id, ct);
         if (missing.Count > 0) throw new InvalidOperationException($"Cảnh {string.Join(", ", missing)} chưa có clip — tạo xong (hoặc tắt cảnh đó) rồi ghép.");
         if (clips.Count == 0) throw new InvalidOperationException("Chưa có cảnh nào bật.");
+        if (p.AudioMode == "Narration")
+        {
+            // every scene with narration needs its take, read with the current text, voice and style
+            var sceneIds = clips.Select(c => c.SceneId).ToList();
+            var stale = (await _db.AiStudioScenes.AsNoTracking().Where(s => sceneIds.Contains(s.Id)).OrderBy(s => s.Order).ToListAsync(ct))
+                .Where(s => !string.IsNullOrWhiteSpace(s.Narration) && (s.VoiceBlobId == null || s.VoiceKey != VoiceKeyOf(p, s)))
+                .Select(s => s.Order + 1).ToList();
+            if (stale.Count > 0)
+                throw new InvalidOperationException($"Cảnh {string.Join(", ", stale)} chưa đọc lời bình (hoặc đã sửa chữ / đổi giọng) — bấm \"Đọc lời bình\" trước khi ghép.");
+        }
         p.FinalStatus = "Assembling";
         p.FinalError = null;
         await _db.SaveChangesAsync(ct);
@@ -449,6 +460,32 @@ public partial class AiStudioService
                 var withSound = Path.Combine(temp, "final-sound.mp4");
                 await _media.AddSoundAsync(output, audio, pieces, withSound, ct);
                 output = withSound;
+            }
+            else if (p.AudioMode == "Narration")
+            {
+                // every clip gets the narrator's take of its own scene
+                var sceneIds = clips.Select(c => c.SceneId).ToList();
+                var scenes = await _db.AiStudioScenes.AsNoTracking().Where(s => sceneIds.Contains(s.Id)).ToDictionaryAsync(s => s.Id, ct);
+                var pieces = new List<AiStudioMedia.VoicePiece>();
+                for (var i = 0; i < clips.Count; i++)
+                {
+                    var s = scenes[clips[i].SceneId];
+                    var length = (await _media.ProbeAsync(paths[i], ct)).Duration;
+                    if (length <= 0) length = clips[i].Seconds;
+                    string? voicePath = null;
+                    if (!string.IsNullOrWhiteSpace(s.Narration) && s.VoiceBlobId is { } vid)
+                    {
+                        voicePath = Path.Combine(temp, $"v{i:00}.m4a");
+                        if (!await _files.CopyToAsync(vid, voicePath, ct)) throw new InvalidOperationException($"Giọng đọc cảnh {i + 1} đã mất khỏi kho — bấm \"Đọc lời bình\" lại.");
+                    }
+                    pieces.Add(new AiStudioMedia.VoicePiece(voicePath, s.VoiceSeconds ?? 0, length));
+                }
+                if (pieces.Any(x => x.VoicePath != null))
+                {
+                    var withVoice = Path.Combine(temp, "final-voice.mp4");
+                    await _media.AddVoicesAsync(output, pieces, withVoice, ct);
+                    output = withVoice;
+                }
             }
             var old = p.FinalBlobId;
             p.FinalBlobId = (await StoreFileAsync(output, "video/mp4", ct)).Id;

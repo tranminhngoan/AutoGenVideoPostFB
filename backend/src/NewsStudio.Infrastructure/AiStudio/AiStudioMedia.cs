@@ -256,6 +256,49 @@ public class AiStudioMedia
         if (code != 0 || !File.Exists(output)) throw new InvalidOperationException("Không ghép được lời bình gốc vào video: " + Tail(err));
     }
 
+    /// <summary>One clip of the joined video and the narrator's take for it (null = no narration in that scene).</summary>
+    public sealed record VoicePiece(string? VoicePath, double VoiceSeconds, double ClipSeconds);
+
+    /// <summary>
+    /// filter_complex that lays the narrator's take of every scene under its own clip: a take a little longer than its
+    /// clip is played up to 25 % faster (then cut), a shorter one is followed by silence, a scene without narration is
+    /// silent. Input 0 = the video; the takes are inputs 1… in clip order.
+    /// </summary>
+    public static string BuildVoiceFilter(IReadOnlyList<VoicePiece> pieces)
+    {
+        var f = new StringBuilder();
+        var input = 1;
+        for (var i = 0; i < pieces.Count; i++)
+        {
+            var p = pieces[i];
+            var clip = Math.Max(0.1, p.ClipSeconds).ToString("0.###", Inv);
+            if (p.VoicePath == null)
+            {
+                f.Append(Inv, $"anullsrc=r=48000:cl=stereo,atrim=0:{clip},asetpts=PTS-STARTPTS[a{i}];");
+                continue;
+            }
+            var room = Math.Max(0.1, p.ClipSeconds - 0.05);
+            var ratio = Math.Min(1.25, p.VoiceSeconds / room);
+            var tempo = ratio > 1.01 ? $",atempo={ratio.ToString("0.####", Inv)}" : "";
+            f.Append(Inv, $"[{input++}:a:0]aformat=sample_rates=48000:channel_layouts=stereo,asetpts=PTS-STARTPTS{tempo},")
+             .Append(Inv, $"apad=whole_dur={clip},atrim=0:{clip},asetpts=PTS-STARTPTS[a{i}];");
+        }
+        for (var i = 0; i < pieces.Count; i++) f.Append(Inv, $"[a{i}]");
+        f.Append(Inv, $"concat=n={pieces.Count}:v=0:a=1[aout]");
+        return f.ToString();
+    }
+
+    /// <summary>Adds the narrator's takes to the joined (silent) video; the picture is copied untouched.</summary>
+    public async Task AddVoicesAsync(string video, IReadOnlyList<VoicePiece> pieces, string output, CancellationToken ct)
+    {
+        var args = new List<string> { "-hide_banner", "-v", "error", "-y", "-i", video };
+        foreach (var p in pieces.Where(p => p.VoicePath != null)) { args.Add("-i"); args.Add(p.VoicePath!); }
+        args.AddRange(new[] { "-filter_complex", BuildVoiceFilter(pieces), "-map", "0:v:0", "-map", "[aout]", "-c:v", "copy", "-c:a", "aac",
+            "-b:a", "192k", "-shortest", "-movflags", "+faststart", output });
+        var (code, _, err) = await RunAsync(Ffmpeg, args, ct);
+        if (code != 0 || !File.Exists(output)) throw new InvalidOperationException("Không ghép được lời bình vào video: " + Tail(err));
+    }
+
     // ───────────── processes ─────────────
 
     public static string Tail(string s)

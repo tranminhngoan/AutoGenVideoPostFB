@@ -233,6 +233,16 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                     b.Property<int>("Height")
                         .HasColumnType("integer");
 
+                    b.Property<string>("NarratorStyle")
+                        .IsRequired()
+                        .HasMaxLength(600)
+                        .HasColumnType("character varying(600)");
+
+                    b.Property<string>("NarratorVoice")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
                     b.Property<string>("NegativePrompt")
                         .IsRequired()
                         .HasColumnType("text");
@@ -435,6 +445,17 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<string>("Narration")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<bool>("NarrationEdited")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("NarrationEn")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
                     b.Property<int>("Order")
                         .HasColumnType("integer");
 
@@ -470,6 +491,16 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
 
                     b.Property<DateTime?>("UpdatedAtUtc")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("VoiceBlobId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("VoiceKey")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<double?>("VoiceSeconds")
+                        .HasColumnType("double precision");
 
                     b.HasKey("Id");
 

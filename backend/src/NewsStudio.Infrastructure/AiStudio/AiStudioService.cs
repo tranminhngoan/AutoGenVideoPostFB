@@ -38,11 +38,12 @@ public partial class AiStudioService
     private readonly AiStudioEngine _engine;
     private readonly SeedanceVideoClient _video;
     private readonly StudioService _studio;
+    private readonly IAiStudioNarrator _voices;
     private readonly IBackgroundJobClient _jobs;
     private readonly ILogger<AiStudioService> _logger;
 
     public AiStudioService(IApplicationDbContext db, StudioFileStore files, AiStudioMedia media, AiStudioEngine engine, SeedanceVideoClient video,
-        StudioService studio, IBackgroundJobClient jobs, ILogger<AiStudioService> logger)
+        StudioService studio, IAiStudioNarrator voices, IBackgroundJobClient jobs, ILogger<AiStudioService> logger)
     {
         _db = db;
         _files = files;
@@ -50,6 +51,7 @@ public partial class AiStudioService
         _engine = engine;
         _video = video;
         _studio = studio;
+        _voices = voices;
         _jobs = jobs;
         _logger = logger;
     }
@@ -264,14 +266,15 @@ public partial class AiStudioService
         p.GenAspectRatio = AiStudioMedia.GenerationAspect(probe.Width, probe.Height);
         p.HasAudio = probe.Audio.Count > 0;
         p.AudioJson = JsonSerializer.Serialize(probe.Audio, Json);
-        if (p.SourceAudioBlobId == null) p.AudioMode = "None";
+        if (!p.HasAudio || (p.AudioMode == "Original" && p.SourceAudioBlobId == null)) p.AudioMode = "None";
     }
 
-    public static readonly string[] AudioModes = { "None", "Original" };
+    /// <summary>None = silent (music picked on Facebook); Narration = the narration read again by an AI voice; Original = the reference's own sound.</summary>
+    public static readonly string[] AudioModes = { "None", "Narration", "Original" };
 
-    /// <summary>The theme's default sound: the childhood-memories channel keeps the video's own narration, others are silent.</summary>
+    /// <summary>The theme's default sound: the childhood-memories channel re-reads the video's narration with an AI voice, others are silent.</summary>
     public static string DefaultAudioMode(AiStudioProject p) =>
-        p.Topic == AiStudioTopics.VietnamChildhood && p.SourceAudioBlobId != null ? "Original" : "None";
+        p.Topic == AiStudioTopics.VietnamChildhood && p.HasAudio ? "Narration" : "None";
 
     private async Task ClearAnalysisAsync(AiStudioProject p, CancellationToken ct)
     {
@@ -279,6 +282,7 @@ public partial class AiStudioService
         foreach (var s in scenes)
         {
             await DeleteBlobAsync(s.ThumbBlobId, ct);
+            await DeleteBlobAsync(s.VoiceBlobId, ct);
             foreach (var f in ReadFrames(s.FramesJson)) await DeleteBlobAsync(f.BlobId, ct);
         }
         _db.AiStudioScenes.RemoveRange(scenes);
@@ -447,7 +451,9 @@ public partial class AiStudioService
                 ["ffmpeg"] = _media.Ffmpeg, ["home"] = _engine.Paths.Home, ["input"] = source, ["work"] = work,
                 ["duration"] = p.DurationSeconds, ["width"] = p.Width, ["height"] = p.Height, ["model"] = p.AnalysisModel,
                 ["threads"] = threads, ["gpu"] = settings.Gpu, ["hasAudio"] = p.HasAudio, ["transcribe"] = settings.Transcribe,
-                ["maxFramesPerScene"] = settings.MaxFramesPerScene
+                ["maxFramesPerScene"] = settings.MaxFramesPerScene,
+                // the childhood channel is Vietnamese speech: no language guessing on a music intro
+                ["language"] = p.Topic == AiStudioTopics.VietnamChildhood ? "vi" : "auto"
             };
             var jobPath = Path.Combine(work, "job.json");
             await File.WriteAllTextAsync(jobPath, job.ToJsonString(), ct);
@@ -513,6 +519,7 @@ public partial class AiStudioService
 
         await ClearAnalysisAsync(p, ct);
         var order = 0;
+        var created = new List<AiStudioScene>();
         foreach (var node in scenesNode.OfType<JsonObject>())
         {
             var start = node["start"]?.GetValue<double>() ?? 0;
@@ -546,6 +553,7 @@ public partial class AiStudioService
                 Transcript = Truncate(node["transcript"]?.GetValue<string>(), 2000)
             };
             _db.AiStudioScenes.Add(scene);
+            created.Add(scene);
         }
 
         var bibles = result["bibles"] as JsonObject ?? new JsonObject();
@@ -555,6 +563,9 @@ public partial class AiStudioService
         p.StyleBibleJson = (bibles["style"] ?? new JsonObject()).ToJsonString();
         p.PaletteJson = (result["measuredPalette"] ?? new JsonArray()).ToJsonString();
         p.TranscriptJson = result["transcript"] is JsonObject tr ? tr.ToJsonString() : null;
+        // the narration of each scene (read again by the narrator) and a narrator that sounds like the reference speaker
+        FillNarration(p, created);
+        if (!AiStudioNarration.IsVoice(p.NarratorVoice) || string.IsNullOrWhiteSpace(p.NarratorStyle)) SuggestNarrator(p);
         p.AnalysisMetaJson = (result["engine"] ?? new JsonObject()).ToJsonString();
         // the global prompt follows the new style bible unless the user wrote / restored one themselves
         var userGlobal = await _db.AiStudioPromptVersions.AnyAsync(v => v.ProjectId == p.Id && v.SceneId == null && v.Source != "engine", ct);
@@ -583,7 +594,8 @@ public partial class AiStudioService
     private ScenePromptInput PromptInput(AiStudioProject p, AiStudioScene s, bool hasPrevious) => new(
         s.Index, s.StartSeconds, s.EndSeconds, s.TargetSeconds, s.IsContinuation, hasPrevious,
         ParseObj(s.AnalysisJson), ParseObj(s.MeasuredJson), ParseArr(p.CharacterBibleJson), ParseArr(p.EnvironmentBibleJson), ParseObj(p.StyleBibleJson),
-        p.PromptMode, ReadVariation(p.VariationJson), p.GlobalPrompt, p.NegativePrompt, p.Topic);
+        p.PromptMode, ReadVariation(p.VariationJson), p.GlobalPrompt, p.NegativePrompt, p.Topic,
+        AiStudioNarration.PromptText(s.Narration, s.NarrationEn, s.NarrationEdited));
 
     /// <summary>Rebuilds the prompts of the scenes (not those the user wrote by hand, unless asked) and saves a version of each change.</summary>
     private async Task RebuildPromptsAsync(AiStudioProject p, bool overwriteEdited, string source, CancellationToken ct)
@@ -628,8 +640,12 @@ public partial class AiStudioService
         p.PromptMode = mode;
         if (input.Topic != null && AiStudioTopics.Normalize(input.Topic) != p.Topic)
         {
+            var speaker = AiStudioNarration.SpeakerOf(p.TranscriptJson);
+            var oldSuggestion = AiStudioNarration.Suggest(speaker, p.Topic);
             p.Topic = AiStudioTopics.Normalize(input.Topic);
             p.AudioMode = DefaultAudioMode(p);
+            // a narrator the user did not change follows the new theme's mood
+            if (p.NarratorStyle == oldSuggestion.Style && p.NarratorVoice == oldSuggestion.Voice) SuggestNarrator(p);
         }
         p.VariationJson = JsonSerializer.Serialize(variation, Json);
         if (input.GlobalPrompt != null && input.GlobalPrompt.Trim() != p.GlobalPrompt)
@@ -803,6 +819,8 @@ public partial class AiStudioService
         dto.Topic = p.Topic;
         dto.AudioMode = p.AudioMode;
         dto.HasSourceAudio = p.SourceAudioBlobId != null;
+        (dto.NarratorVoice, dto.NarratorStyle) = NarratorOf(p);
+        dto.SpeakerProfileVi = AiStudioNarration.Describe(AiStudioNarration.SpeakerOf(p.TranscriptJson));
         dto.Variation = ReadVariation(p.VariationJson);
         dto.GlobalPrompt = p.GlobalPrompt;
         dto.NegativePrompt = p.NegativePrompt;
@@ -833,7 +851,9 @@ public partial class AiStudioService
         Id = s.Id, Index = s.Index, Order = s.Order, StartSeconds = s.StartSeconds, EndSeconds = s.EndSeconds, IsContinuation = s.IsContinuation,
         Enabled = s.Enabled, TargetSeconds = s.TargetSeconds, HasThumb = s.ThumbBlobId != null, Frames = ReadFrames(s.FramesJson),
         Measured = ParseNode(s.MeasuredJson), Analysis = ParseNode(s.AnalysisJson), Confidence = s.Confidence, SummaryVi = s.SummaryVi,
-        Transcript = s.Transcript, Prompt = s.Prompt, PromptVersion = s.PromptVersion, PromptEdited = s.PromptEdited,
+        Transcript = s.Transcript, Narration = s.Narration, NarrationEn = s.NarrationEn, NarrationEdited = s.NarrationEdited,
+        HasVoice = s.VoiceBlobId != null, VoiceSeconds = s.VoiceSeconds, VoiceCurrent = s.VoiceBlobId != null && s.VoiceKey == VoiceKeyOf(p, s),
+        Prompt = s.Prompt, PromptVersion = s.PromptVersion, PromptEdited = s.PromptEdited,
         EstimatedCostUsd = _video.EstimateCost(p.VideoModel, p.Resolution, s.TargetSeconds), Latest = latest
     };
 

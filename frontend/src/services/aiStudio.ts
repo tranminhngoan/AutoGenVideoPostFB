@@ -114,6 +114,15 @@ export interface EngineStatus {
   benchBackend: Record<string, string>;
 }
 
+export interface NarratorVoice {
+  id: string;
+  name: string;
+  gender: string;
+  description: string;
+}
+
+export type AudioMode = 'None' | 'Narration' | 'Original';
+
 export interface Overview {
   pcOnline: boolean;
   pcUpdating: boolean;
@@ -122,6 +131,7 @@ export interface Overview {
   seedanceConfigured: boolean;
   videoModels: VideoModel[];
   topics: { id: string; label: string; description: string }[];
+  voices: NarratorVoice[];
   resolutions: string[];
   minClipSeconds: number;
   maxClipSeconds: number;
@@ -212,6 +222,12 @@ export interface Scene {
   confidence: number;
   summaryVi?: string | null;
   transcript?: string | null;
+  narration?: string | null;
+  narrationEn?: string | null;
+  narrationEdited: boolean;
+  hasVoice: boolean;
+  voiceSeconds?: number | null;
+  voiceCurrent: boolean;
   prompt: string;
   promptVersion: number;
   promptEdited: boolean;
@@ -257,8 +273,11 @@ export interface Project extends ProjectSummary {
   transcript?: Json;
   promptMode: PromptMode;
   topic: string;
-  audioMode: 'None' | 'Original';
+  audioMode: AudioMode;
   hasSourceAudio: boolean;
+  narratorVoice: string;
+  narratorStyle: string;
+  speakerProfileVi?: string | null;
   variation: Variation;
   globalPrompt: string;
   negativePrompt: string;
@@ -298,7 +317,7 @@ export interface GeneratorSettings {
   aspectRatio: string;
   seed?: number | null;
   continuity: boolean;
-  audioMode?: 'None' | 'Original';
+  audioMode?: AudioMode;
 }
 
 // ───────── calls ─────────
@@ -328,6 +347,10 @@ export const aiStudio = {
   updateScene: (id: string, sceneId: string, body: { enabled?: boolean; targetSeconds?: number }) => call<Scene>('PUT', `/projects/${id}/scenes/${sceneId}`, body),
   editPrompt: (id: string, sceneId: string, text: string) => call<Scene>('PUT', `/projects/${id}/scenes/${sceneId}/prompt`, { text }),
   regeneratePrompt: (id: string, sceneId: string) => call<Scene>('POST', `/projects/${id}/scenes/${sceneId}/regenerate-prompt`),
+  narrator: (id: string, body: { voice?: string; style?: string; suggest?: boolean }) => call<Project>('PUT', `/projects/${id}/narrator`, body),
+  resetNarration: (id: string) => call<Project>('POST', `/projects/${id}/narration/reset`),
+  editNarration: (id: string, sceneId: string, text: string) => call<Scene>('PUT', `/projects/${id}/scenes/${sceneId}/narration`, { text }),
+  speak: (id: string, sceneId: string) => call<Scene>('POST', `/projects/${id}/scenes/${sceneId}/speak`),
   versions: (id: string, sceneId?: string) => call<PromptVersion[]>('GET', `/projects/${id}/versions${sceneId ? `?sceneId=${sceneId}` : ''}`),
   restore: (id: string, versionId: string) => call<Project>('POST', `/projects/${id}/versions/restore`, { versionId }),
 
@@ -348,6 +371,7 @@ export const aiStudio = {
   finalUrl: (id: string, download = false, v?: string | null) => `${BASE}/projects/${id}/final?${download ? 'download=true&' : ''}${v ? `v=${encodeURIComponent(v)}` : ''}`,
   sceneThumbUrl: (sceneId: string) => `${BASE}/scenes/${sceneId}/thumb`,
   frameUrl: (sceneId: string, blobId: string) => `${BASE}/scenes/${sceneId}/frames/${blobId}`,
+  voiceUrl: (sceneId: string, v?: number | null) => `${BASE}/scenes/${sceneId}/voice${v ? `?v=${v}` : ''}`,
   clipUrl: (genId: string, download = false) => `${BASE}/generations/${genId}/clip${download ? '?download=true' : ''}`,
 };
 

@@ -89,6 +89,10 @@ public class AiStudioProject : BaseEntity
     public string AudioMode { get; set; } = "None";
     /// <summary>The reference video's audio track (small AAC), kept after the video itself expires.</summary>
     public Guid? SourceAudioBlobId { get; set; }
+    /// <summary>Gemini TTS voice that reads the narration again ("gemini:Charon"…); chosen from the reference speaker.</summary>
+    public string NarratorVoice { get; set; } = string.Empty;
+    /// <summary>English acting direction for the narrator (pace, tone, mood like the reference speaker).</summary>
+    public string NarratorStyle { get; set; } = string.Empty;
 
     /// <summary>All finished scene clips joined in order (optional).</summary>
     public Guid? FinalBlobId { get; set; }
@@ -125,6 +129,18 @@ public class AiStudioScene : BaseEntity
     public double Confidence { get; set; }
     public string? SummaryVi { get; set; }
     public string? Transcript { get; set; }
+
+    /// <summary>What the narration says in this scene (speech recognised in the reference, editable): read again by TTS.</summary>
+    public string? Narration { get; set; }
+    /// <summary>Its English meaning (local model), used as story context in the Seedance prompt.</summary>
+    public string? NarrationEn { get; set; }
+    /// <summary>The user rewrote the narration (the English meaning is then not used: the prompt quotes their words).</summary>
+    public bool NarrationEdited { get; set; }
+    /// <summary>The narration read by the narrator voice (AAC) and its length.</summary>
+    public Guid? VoiceBlobId { get; set; }
+    public double? VoiceSeconds { get; set; }
+    /// <summary>Text + voice + style the take was read with: another key means the take is out of date.</summary>
+    public string? VoiceKey { get; set; }
 
     /// <summary>The prompt sent to Seedance (latest version).</summary>
     public string Prompt { get; set; } = string.Empty;

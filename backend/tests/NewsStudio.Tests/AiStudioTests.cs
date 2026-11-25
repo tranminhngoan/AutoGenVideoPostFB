@@ -185,6 +185,72 @@ public class AiStudioUnitTests
     }
 
     [Fact]
+    public void Each_scene_is_narrated_by_an_ai_voice_laid_under_its_own_clip()
+    {
+        var f = AiStudioMedia.BuildVoiceFilter(new[]
+        {
+            new AiStudioMedia.VoicePiece("a.m4a", 3.2, 5.0),   // shorter than the clip → silence after it
+            new AiStudioMedia.VoicePiece(null, 0, 4.0),        // no narration in this scene → silent
+            new AiStudioMedia.VoicePiece("b.m4a", 7.0, 6.0),   // a little longer → played faster, then cut
+            new AiStudioMedia.VoicePiece("c.m4a", 12.0, 6.0),  // far longer → at most 25 % faster
+        });
+        f.Should().Contain("[1:a:0]aformat=sample_rates=48000:channel_layouts=stereo,asetpts=PTS-STARTPTS,apad=whole_dur=5,atrim=0:5,asetpts=PTS-STARTPTS[a0];");
+        f.Should().Contain("anullsrc=r=48000:cl=stereo,atrim=0:4,asetpts=PTS-STARTPTS[a1];");
+        f.Should().Contain("[2:a:0]aformat=sample_rates=48000:channel_layouts=stereo,asetpts=PTS-STARTPTS,atempo=1.1765,apad=whole_dur=6");
+        f.Should().Contain("[3:a:0]aformat=sample_rates=48000:channel_layouts=stereo,asetpts=PTS-STARTPTS,atempo=1.25,");
+        f.Should().EndWith("[a0][a1][a2][a3]concat=n=4:v=0:a=1[aout]");
+    }
+
+    [Fact]
+    public void Narration_goes_to_one_scene_each_and_into_its_prompt_as_story_context()
+    {
+        var lines = AiStudioNarration.Lines("""
+        {"language":"vi","segments":[
+          {"start":0.2,"end":1.6,"text":"Hồi đó nhà tôi nghèo lắm.","en":"Back then my family was very poor."},
+          {"start":1.5,"end":2.6,"text":"Câu này vắt qua chỗ cắt.","en":"This line runs across the cut."},
+          {"start":2.8,"end":3.8,"text":"Mẹ đi chợ từ sáng sớm."}],
+         "voice":{"pitch_hz":112.4,"syllables_per_second":3.1,"loudness_std_db":5.2}}
+        """);
+        lines.Should().HaveCount(3);
+        var parts = AiStudioNarration.Assign(lines, new[] { (0.0, 2.0), (2.0, 4.0) });
+        parts[0].Text.Should().Be("Hồi đó nhà tôi nghèo lắm.");
+        parts[0].En.Should().Be("Back then my family was very poor.");
+        parts[1].Text.Should().Be("Câu này vắt qua chỗ cắt. Mẹ đi chợ từ sáng sớm."); // middle at 2.05 s → the second scene, once
+        parts[1].En.Should().BeNull();                                                 // a line without meaning → the prompt quotes the words
+        AiStudioNarration.PromptText(parts[0].Text, parts[0].En, edited: false).Should().Be("Back then my family was very poor.");
+        AiStudioNarration.PromptText(parts[0].Text, parts[0].En, edited: true).Should().Be("Hồi đó nhà tôi nghèo lắm.");
+        AiStudioNarration.PromptText(null, "x", false).Should().BeNull();
+
+        var prompt = AiStudioPromptEngine.Build(Input() with { Narration = "Back then my \"family\" was very poor." });
+        prompt.Should().Contain("Narration over this scene (off-screen voice-over, for the story only — nobody lip-syncs it, no text on screen): \"Back then my 'family' was very poor\".");
+        prompt.IndexOf("Narration over", StringComparison.Ordinal).Should().BeGreaterThan(prompt.IndexOf("Sequence:", StringComparison.Ordinal));
+        AiStudioPromptEngine.Build(Input()).Should().NotContain("Narration over");
+        AiStudioPromptEngine.NarrationLine(new string('a', 900))!.Should().Contain(new string('a', AiStudioPromptEngine.MaxNarrationChars) + "…");
+    }
+
+    [Fact]
+    public void The_narrator_sounds_like_the_reference_speaker_within_the_theme()
+    {
+        var deepSlowMan = new AiStudioNarration.Speaker(108, 3.0, 5);
+        var (voice, style) = AiStudioNarration.Suggest(deepSlowMan, AiStudioTopics.VietnamChildhood);
+        voice.Should().Be("gemini:Algenib");
+        style.Should().Contain("deep, slightly husky male storyteller").And.Contain("slowly and calmly").And.Contain("poor childhood in the Vietnamese countryside");
+        AiStudioNarration.Describe(deepSlowMan).Should().Be("Giọng nam rất trầm (~108 Hz), đọc chậm (3.0 tiếng/giây), lên xuống vừa phải");
+
+        var woman = new AiStudioNarration.Speaker(232, 5.1, 8.5);
+        var (wv, ws) = AiStudioNarration.Suggest(woman, AiStudioTopics.AsianBeauty);
+        StudioVoices.All.Single(v => v.Id == wv).Gender.Should().Be("female");
+        ws.Should().Contain("briskly").And.Contain("expressive").And.Contain("soft, sweet");
+        AiStudioNarration.GenderOf(woman).Should().Be("female");
+
+        // nothing measured: the theme decides (the childhood channel's storyteller is a man)
+        AiStudioNarration.Suggest(null, AiStudioTopics.VietnamChildhood).Voice.Should().Be("gemini:Charon");
+        AiStudioNarration.SpeakerOf("""{"segments":[],"voice":{"pitch_hz":150,"syllables_per_second":4}}""")!.PitchHz.Should().Be(150);
+        AiStudioNarration.SpeakerOf("""{"segments":[]}""").Should().BeNull();
+        AiStudioNarration.Key("Câu một", "gemini:Charon", "slow").Should().NotBe(AiStudioNarration.Key("Câu một", "gemini:Charon", "fast"));
+    }
+
+    [Fact]
     public void Names_and_handles_never_reach_the_prompt()
     {
         var input = Input();
@@ -368,7 +434,7 @@ public class AiStudioFlowTests : IClassFixture<WebApplicationFactory<Program>>
     }
 
     /// <summary>What studio_analyzer.py writes (2 scenes, keyframes as real JPEG files).</summary>
-    internal static async Task<string> FakeResultAsync(string dir, string clip)
+    internal static async Task<string> FakeResultAsync(string dir, string clip, string transcript = "null")
     {
         var media = new AiStudioMedia(new ConfigurationBuilder().Build());
         var frames = new List<string>();
@@ -394,7 +460,7 @@ public class AiStudioFlowTests : IClassFixture<WebApplicationFactory<Program>>
          "bibles":{"overview":{"summary":"A ball rolls","summary_vi":"Quả bóng lăn","scene_relations":"same room"},
                    "characters":[],"environments":[{"id":"E1","location":"bright studio room","scenes":[1,2]}],
                    "style":{"visual_style":"clean product video","realism_level":"photorealistic","color_palette":"warm beige","lighting_style":"soft daylight"}},
-         "measuredPalette":["#aa8844"],"transcript":null}
+         "measuredPalette":["#aa8844"],"transcript":{{{transcript}}}}
         """;
         var path = Path.Combine(dir, "result.json");
         await File.WriteAllTextAsync(path, result, Encoding.UTF8);
@@ -619,15 +685,46 @@ public class AiStudioFlowTests : IClassFixture<WebApplicationFactory<Program>>
         }
     }
 
+    /// <summary>Stands in for Gemini TTS: a take is a tone as long as the line needs; every call is counted (= paid).</summary>
+    internal sealed class FakeNarrator : IAiStudioNarrator
+    {
+        public int Calls;
+        public List<(string Text, string Voice, string? Style)> Takes { get; } = new();
+        public decimal PricePerSecond => 0.0003m;
+
+        public async Task<(byte[] Audio, double Seconds, bool FromCache, string? Delivery)> SpeakAsync(Guid projectId, string text, string voice, string? style,
+            string? fallbackVoice, CancellationToken ct)
+        {
+            Interlocked.Increment(ref Calls);
+            lock (Takes) Takes.Add((text, voice, style));
+            var seconds = text.Contains("nghèo") ? 1.5 : 3.0;
+            var path = Path.Combine(Path.GetTempPath(), $"take-{Guid.NewGuid():N}.m4a");
+            var media = new AiStudioMedia(new ConfigurationBuilder().Build());
+            var (code, _, err) = await AiStudioMedia.RunAsync(media.Ffmpeg, new[] { "-hide_banner", "-v", "error", "-y", "-f", "lavfi", "-i",
+                $"sine=frequency=220:duration={seconds.ToString(System.Globalization.CultureInfo.InvariantCulture)}", "-ac", "1", "-c:a", "aac", path }, ct);
+            code.Should().Be(0, err);
+            try { return (await File.ReadAllBytesAsync(path, ct), seconds, false, "diễn cảm"); }
+            finally { File.Delete(path); }
+        }
+    }
+
+    private const string ChildhoodTranscript = """
+    {"language":"vi","model":"ggml-small.bin","segments":[
+      {"start":0.2,"end":1.6,"text":"Hồi đó nhà tôi nghèo lắm.","en":"Back then my family was very poor."},
+      {"start":2.2,"end":3.6,"text":"Mẹ đi chợ từ sáng sớm.","en":"Mother went to the market at dawn."}],
+     "voice":{"pitch_hz":112.4,"syllables_per_second":3.1,"loudness_std_db":5.2}}
+    """;
+
     [Fact]
-    public async Task The_childhood_theme_keeps_the_original_narration_in_the_joined_video()
+    public async Task The_childhood_theme_reads_the_narration_again_with_an_ai_voice_in_the_joined_video()
     {
         var dir = NewDir();
         var gw = new FakeGateway();
+        var narrator = new FakeNarrator();
         try
         {
             gw.Video = await File.ReadAllBytesAsync(await MakeClipAsync(dir, 2, false, "720x1280"));
-            await using var app = WithGateway(gw);
+            await using var app = WithGateway(gw).WithWebHostBuilder(b => b.ConfigureServices(services => services.AddScoped<IAiStudioNarrator>(_ => narrator)));
             using var scope = app.Services.CreateScope();
             var studio = scope.ServiceProvider.GetRequiredService<AiStudioService>();
             var db = scope.ServiceProvider.GetRequiredService<IApplicationDbContext>();
@@ -638,32 +735,84 @@ public class AiStudioFlowTests : IClassFixture<WebApplicationFactory<Program>>
             silent.HasSourceAudio.Should().BeTrue();
             await studio.DeleteProjectAsync(silent.Id, CancellationToken.None);
 
-            var p = await studio.CreateProjectAsync(clip, "Ký ức.mp4", null, CancellationToken.None, AiStudioTopics.VietnamChildhood);
+            var title = "Ký ức " + Guid.NewGuid().ToString("N")[..8];
+            var p = await studio.CreateProjectAsync(clip, "Ký ức.mp4", title, CancellationToken.None, AiStudioTopics.VietnamChildhood);
             p.Topic.Should().Be(AiStudioTopics.VietnamChildhood);
-            p.AudioMode.Should().Be("Original");
-            await studio.IngestResultAsync(p.Id, await FakeResultAsync(dir, clip), CancellationToken.None);
-            var ids = (await studio.GetProjectAsync(p.Id, CancellationToken.None)).Scenes.Select(s => s.Id).ToList();
+            p.AudioMode.Should().Be("Narration");
+            await studio.IngestResultAsync(p.Id, await FakeResultAsync(dir, clip, ChildhoodTranscript), CancellationToken.None);
+
+            // 1. what is said in each scene, its meaning in the prompt, a narrator like the reference speaker
+            var project = await studio.GetProjectAsync(p.Id, CancellationToken.None);
+            project.Scenes[0].Narration.Should().Be("Hồi đó nhà tôi nghèo lắm.");
+            project.Scenes[1].Narration.Should().Be("Mẹ đi chợ từ sáng sớm.");
+            project.Scenes[0].Prompt.Should().Contain("\"Back then my family was very poor\"");
+            project.Scenes[1].Prompt.Should().Contain("\"Mother went to the market at dawn\"");
+            project.NarratorVoice.Should().Be("gemini:Algenib");
+            project.NarratorStyle.Should().Contain("slowly and calmly").And.Contain("Vietnamese countryside");
+            project.SpeakerProfileVi.Should().StartWith("Giọng nam");
+            project.Scenes.Should().OnlyContain(s => !s.HasVoice && !s.VoiceCurrent);
+
+            // 2. no join before the narration is read
+            var early = () => studio.AssembleAsync(p.Id, CancellationToken.None);
+            var ids = project.Scenes.Select(s => s.Id).ToList();
             var cost = (await studio.EstimateAsync(p.Id, ids, CancellationToken.None)).TotalUsd;
             await studio.GenerateAsync(p.Id, new AiStudioGenerateRequestDto { SceneIds = ids, RequestKey = Guid.NewGuid().ToString(), ConfirmedCostUsd = cost }, CancellationToken.None);
             foreach (var g in await db.AiStudioGenerations.AsNoTracking().Where(g => g.ProjectId == p.Id).ToListAsync())
                 await studio.RunGenerationAsync(g.Id, CancellationToken.None);
             await WaitAsync(db, async () => await db.AiStudioGenerations.AsNoTracking().CountAsync(g => g.ProjectId == p.Id && g.Status == "Done") == 2);
+            (await early.Should().ThrowAsync<InvalidOperationException>()).WithMessage("*Cảnh 1, 2 chưa đọc lời bình*");
 
+            // 3. read: the narrator's voice and direction, the cost recorded, the clip lengthened to its take
+            var first = await studio.SpeakSceneAsync(p.Id, ids[0], CancellationToken.None);
+            var second = await studio.SpeakSceneAsync(p.Id, ids[1], CancellationToken.None);
+            narrator.Calls.Should().Be(2);
+            narrator.Takes.Should().OnlyContain(t => t.Voice == "gemini:Algenib" && t.Style!.Contains("storyteller"));
+            first.VoiceCurrent.Should().BeTrue();
+            first.VoiceSeconds.Should().Be(1.5);
+            first.TargetSeconds.Should().Be(2);           // the take fits the 2 s clip
+            second.TargetSeconds.Should().Be(4);          // a 3 s take needs a 4 s clip
+            second.Prompt.Should().Contain("0–4s");       // the timed sequence follows the new length
+            (await db.StudioCostRecords.AsNoTracking().CountAsync(c => c.Kind == "Voice" && c.Note!.Contains(title) && c.Note.Contains("lời bình cảnh"))).Should().Be(2);
+            await studio.SpeakSceneAsync(p.Id, ids[0], CancellationToken.None);
+            narrator.Calls.Should().Be(2);                // same words, voice and style: never paid twice
+
+            // 4. the user's own words: quoted in the prompt, the take out of date until read again
+            var edited = await studio.EditNarrationAsync(p.Id, ids[0], "Hồi đó nhà tôi nghèo lắm, cơm không đủ ăn.", CancellationToken.None);
+            edited.NarrationEdited.Should().BeTrue();
+            edited.VoiceCurrent.Should().BeFalse();
+            edited.Prompt.Should().Contain("\"Hồi đó nhà tôi nghèo lắm, cơm không đủ ăn\"");
+            await studio.SpeakSceneAsync(p.Id, ids[0], CancellationToken.None);
+            narrator.Calls.Should().Be(3);
+
+            // 5. joined: the clips with the AI narration (the reference speaker's own voice is not used)
             await studio.AssembleAsync(p.Id, CancellationToken.None);
             await studio.RunAssembleAsync(p.Id, CancellationToken.None);
-            await WaitAsync(db, async () => (await db.AiStudioProjects.AsNoTracking().FirstAsync(x => x.Id == p.Id)).FinalStatus != "Assembling");
             var row = await db.AiStudioProjects.AsNoTracking().FirstAsync(x => x.Id == p.Id);
             row.FinalStatus.Should().Be("Done", row.FinalError);
             var final = Path.Combine(dir, "final.mp4");
-            (await scope.ServiceProvider.GetRequiredService<StudioFileStore>().CopyToAsync(row.FinalBlobId!.Value, final, CancellationToken.None)).Should().BeTrue();
-            var probe = await new AiStudioMedia(new ConfigurationBuilder().Build()).ProbeAsync(final, CancellationToken.None);
-            probe.Audio.Should().ContainSingle(); // the reference narration is in
+            var store = scope.ServiceProvider.GetRequiredService<StudioFileStore>();
+            (await store.CopyToAsync(row.FinalBlobId!.Value, final, CancellationToken.None)).Should().BeTrue();
+            var media = new AiStudioMedia(new ConfigurationBuilder().Build());
+            var probe = await media.ProbeAsync(final, CancellationToken.None);
+            probe.Audio.Should().ContainSingle();
             probe.Duration.Should().BeApproximately(4, 0.3);
+
+            // 6. the reference's own sound is still available on request
+            await studio.SetGeneratorAsync(p.Id, new AiStudioGeneratorSettingsDto { VideoModel = SeedanceVideoClient.FastModel, Resolution = "720p", AspectRatio = "9:16", AudioMode = "Original" }, CancellationToken.None);
+            await studio.AssembleAsync(p.Id, CancellationToken.None);
+            await studio.RunAssembleAsync(p.Id, CancellationToken.None);
+            row = await db.AiStudioProjects.AsNoTracking().FirstAsync(x => x.Id == p.Id);
+            row.FinalStatus.Should().Be("Done", row.FinalError);
+            (await store.CopyToAsync(row.FinalBlobId!.Value, final, CancellationToken.None)).Should().BeTrue();
+            (await media.ProbeAsync(final, CancellationToken.None)).Audio.Should().ContainSingle();
 
             // switching the theme off turns the sound off too
             var off = await studio.SetPromptSettingsAsync(p.Id, new AiStudioPromptSettingsDto { Mode = "Faithful", Topic = "" }, CancellationToken.None);
             off.AudioMode.Should().Be("None");
+            var voices = await db.AiStudioScenes.AsNoTracking().Where(s => s.ProjectId == p.Id && s.VoiceBlobId != null).Select(s => s.VoiceBlobId!.Value).ToListAsync();
+            voices.Should().HaveCount(2);
             await studio.DeleteProjectAsync(p.Id, CancellationToken.None);
+            (await db.StudioBlobs.AsNoTracking().CountAsync(b => voices.Contains(b.Id))).Should().Be(0);
         }
         finally
         {

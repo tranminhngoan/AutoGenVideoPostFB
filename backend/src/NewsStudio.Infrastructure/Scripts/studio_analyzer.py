@@ -30,6 +30,7 @@ import socket
 import subprocess
 import sys
 import time
+import wave
 import urllib.error
 import urllib.request
 
@@ -87,10 +88,17 @@ def model_files(home, model):
     return os.path.join(llm_dir(home), "models", w), os.path.join(llm_dir(home), "models", mm)
 
 
+# the most accurate speech model present wins (Vietnamese needs at least "small"; large-v3-turbo is far better)
+WHISPER_MODELS = ("ggml-large-v3-turbo.bin", "ggml-large-v3-turbo-q8_0.bin", "ggml-large-v3-turbo-q5_0.bin",
+                  "ggml-medium.bin", "ggml-small.bin")
+
+
 def whisper_files(home):
     exe = "whisper-cli.exe" if os.name == "nt" else "whisper-cli"
     root = os.path.join(home, "whisper")
-    return os.path.join(root, "bin", exe), os.path.join(root, "ggml-small.bin")
+    model = next((os.path.join(root, m) for m in WHISPER_MODELS if os.path.isfile(os.path.join(root, m))),
+                 os.path.join(root, "ggml-small.bin"))
+    return os.path.join(root, "bin", exe), model
 
 
 def cmd_probe(a):
@@ -108,6 +116,7 @@ def cmd_probe(a):
     out["models"] = {m: all(os.path.isfile(p) for p in model_files(a.home, m)) for m in MODELS}
     wexe, wmodel = whisper_files(a.home)
     out["whisper"] = os.path.isfile(wexe) and os.path.isfile(wmodel)
+    out["whisperModel"] = os.path.basename(wmodel) if out["whisper"] else None
     if not any(out["backends"].values()):
         out["error"] = "Chưa có llama.cpp (llama-server) — chạy scripts\\pc\\setup-ai-studio.bat."
     elif not any(out["models"].values()):
@@ -563,7 +572,8 @@ def transcribe(a, job, work):
     if r.returncode != 0:
         return None
     base = os.path.join(work, "transcript")
-    r = subprocess.run([exe, "-m", model, "-f", wav, "-l", "auto", "-t", str(job.get("threads", 8)), "-oj", "-of", base,
+    lang = job.get("language") or "auto"
+    r = subprocess.run([exe, "-m", model, "-f", wav, "-l", lang, "-t", str(job.get("threads", 8)), "-oj", "-of", base,
                         "-np"], capture_output=True, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     try:
         with open(base + ".json", encoding="utf-8", errors="replace") as f:
@@ -577,7 +587,88 @@ def transcribe(a, job, work):
         if text and not text.startswith("[") and not hallucination(text):
             segs.append({"start": off.get("from", 0) / 1000.0, "end": off.get("to", 0) / 1000.0, "text": text})
     lang = (data.get("result") or {}).get("language")
-    return {"language": lang, "segments": segs}
+    out = {"language": lang, "model": os.path.basename(model), "segments": segs}
+    try:
+        out["voice"] = voice_profile(wav, segs)
+    except Exception as e:  # noqa: BLE001 — the profile only tunes the narrator's style
+        out["voice"] = {"error": str(e)[:200]}
+    return out
+
+
+def voice_profile(wav_path, segs):
+    """
+    How the speaker sounds, measured on the speech parts (no AI): median pitch (autocorrelation, 70–400 Hz), how fast
+    they speak (Vietnamese words = syllables per second of speech) and how much their loudness moves (expressive vs
+    even). Background music makes the pitch less reliable — it is a hint for choosing the narrator voice, not a fact.
+    """
+    import numpy as np
+    with wave.open(wav_path, "rb") as w:
+        rate = w.getframerate()
+        x = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16).astype(np.float32) / 32768.0
+    speech = [(s["start"], s["end"]) for s in segs if s["end"] > s["start"]]
+    words = sum(len(s["text"].split()) for s in segs)
+    speech_sec = sum(b - a for a, b in speech)
+    if not speech or speech_sec < 1:
+        return {}
+    win, hop = int(0.04 * rate), int(0.01 * rate)
+    frames = []
+    for a, b in speech:
+        i0, i1 = int(a * rate), min(len(x), int(b * rate))
+        for i in range(i0, i1 - win, hop):
+            frames.append(x[i:i + win])
+            if len(frames) >= 9000:  # ~90 s of speech is plenty
+                break
+    if not frames:
+        return {}
+    f = np.stack(frames)
+    f = f - f.mean(axis=1, keepdims=True)
+    rms = np.sqrt((f ** 2).mean(axis=1)) + 1e-9
+    db = 20 * np.log10(rms)
+    loud = db > (np.percentile(db, 90) - 25)
+    f = f * np.hanning(win)
+    spec = np.fft.rfft(f, n=2 * win, axis=1)
+    ac = np.fft.irfft(np.abs(spec) ** 2, axis=1)[:, :win]
+    lo, hi = int(rate / 400), int(rate / 70)
+    lags = ac[:, lo:hi]
+    best = lags.argmax(axis=1)
+    peak = lags[np.arange(len(lags)), best] / (ac[:, 0] + 1e-9)
+    voiced = loud & (peak > 0.45)
+    out = {"syllables_per_second": round(words / speech_sec, 2), "speech_seconds": round(speech_sec, 1)}
+    if voiced.sum() >= 20:
+        f0 = rate / (best[voiced] + lo)
+        out["pitch_hz"] = round(float(np.median(f0)), 1)
+        out["pitch_spread_hz"] = round(float(np.percentile(f0, 90) - np.percentile(f0, 10)), 1)
+        out["voiced_share"] = round(float(voiced.mean()), 2)
+    out["loudness_std_db"] = round(float(db[loud].std()), 1) if loud.sum() >= 20 else None
+    return out
+
+
+TRANSLATE_SCHEMA = {
+    "type": "object", "additionalProperties": False, "required": ["lines"],
+    "properties": {"lines": {"type": "array", "items": {
+        "type": "object", "additionalProperties": False, "required": ["i", "en"],
+        "properties": {"i": {"type": "integer"}, "en": {"type": "string"}}}}},
+}
+
+
+def translate_pass(port, transcript):
+    """English meaning of every spoken line (local model, text only) — it goes into the Seedance prompts as context."""
+    segs = transcript.get("segments") or []
+    if not segs:
+        return
+    numbered = "\n".join(f"{i}: {s['text']}" for i, s in enumerate(segs))
+    content = [{"type": "text", "text": (
+        "Below are numbered lines of narration / speech recognised in a video (automatic speech recognition, may contain "
+        "small spelling mistakes). Translate EACH line into natural, simple English, keeping its meaning; fix obvious "
+        "recognition mistakes from context. Do not add anything. Return one item per line with its number i.\n\n" + numbered)}]
+    schema = json.loads(json.dumps(TRANSLATE_SCHEMA))
+    schema["properties"]["lines"]["minItems"] = schema["properties"]["lines"]["maxItems"] = len(segs)  # an empty list is valid JSON too
+    schema["properties"]["lines"]["items"]["properties"]["i"] = {"type": "integer", "minimum": 0, "maximum": len(segs) - 1}
+    data, _ = chat(port, content, schema, min(3000, 120 + 60 * len(segs)), temperature=0.1)
+    for item in data.get("lines", []):
+        i = item.get("i")
+        if isinstance(i, int) and 0 <= i < len(segs) and (item.get("en") or "").strip():
+            segs[i]["en"] = item["en"].strip()[:400]
 
 
 # ───────────────────────────── the scene pass ─────────────────────────────
@@ -885,6 +976,12 @@ def cmd_analyze(a):
         except Exception:  # noqa: BLE001
             bibles = fallback_bibles(scenes)
             bibles_source = "merged"
+    if transcript and transcript.get("segments"):
+        progress("bibles", "Đang dịch lời bình sang tiếng Anh cho prompt…", 0, 1, 96)
+        try:
+            translate_pass(port, transcript)
+        except Exception as e:  # noqa: BLE001 — the prompts then carry the original words
+            transcript["translateError"] = str(e)[:200]
     stop_server()
 
     palette = {}

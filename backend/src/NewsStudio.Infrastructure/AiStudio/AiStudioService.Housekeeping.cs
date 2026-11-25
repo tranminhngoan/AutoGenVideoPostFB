@@ -46,6 +46,7 @@ public partial class AiStudioService
                 Id = m.Id, Label = m.Label, Note = m.Note, PricePerSecondUsd = m.PricePerSecond.ToDictionary(k => k.Key, k => k.Value)
             }).ToList(),
             Topics = AiStudioTopics.All.Select(t => new AiStudioTopicDto { Id = t.Id, Label = t.Label, Description = t.Description }).ToList(),
+            Voices = StudioVoices.Dtos().ToList(),
             Resolutions = SeedanceVideoClient.Resolutions,
             MinClipSeconds = SeedanceVideoClient.MinSeconds,
             MaxClipSeconds = SeedanceVideoClient.MaxSeconds,
@@ -165,7 +166,7 @@ public partial class AiStudioService
         {
             await DeleteBlobAsync(p.SourceAudioBlobId, ct);
             p.SourceAudioBlobId = null;
-            p.AudioMode = "None";
+            if (p.AudioMode == "Original") p.AudioMode = "None";
         }
         foreach (var p in await _db.AiStudioProjects.Where(p => p.FinalBlobId != null && p.FinalUpdatedAtUtc < clipCut).ToListAsync(ct))
         {
@@ -204,6 +205,7 @@ public static class AiStudioRegistration
         services.AddSingleton<AiStudioPaths>();
         services.AddSingleton<AiStudioMedia>();
         services.AddSingleton<AiStudioEngine>();
+        services.AddScoped<IAiStudioNarrator, StudioVoicesNarrator>();
         services.AddScoped<AiStudioService>();
         if (string.Equals(configuration["Worker:Role"], "pc", StringComparison.OrdinalIgnoreCase))
             services.AddHostedService<AiStudioPcMonitor>();

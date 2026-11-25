@@ -75,6 +75,8 @@ public class AiStudioOverviewDto
     public bool SeedanceConfigured { get; set; }
     public List<AiStudioVideoModelDto> VideoModels { get; set; } = new();
     public List<AiStudioTopicDto> Topics { get; set; } = new();
+    /// <summary>Narrator voices (Gemini TTS) for reading the narration again.</summary>
+    public List<StudioVoiceDto> Voices { get; set; } = new();
     public string[] Resolutions { get; set; } = Array.Empty<string>();
     public int MinClipSeconds { get; set; }
     public int MaxClipSeconds { get; set; }
@@ -138,6 +140,13 @@ public class AiStudioSceneDto
     public double Confidence { get; set; }
     public string? SummaryVi { get; set; }
     public string? Transcript { get; set; }
+    public string? Narration { get; set; }
+    public string? NarrationEn { get; set; }
+    public bool NarrationEdited { get; set; }
+    public bool HasVoice { get; set; }
+    public double? VoiceSeconds { get; set; }
+    /// <summary>The take matches the current text, voice and style.</summary>
+    public bool VoiceCurrent { get; set; }
     public string Prompt { get; set; } = string.Empty;
     public int PromptVersion { get; set; }
     public bool PromptEdited { get; set; }
@@ -178,9 +187,13 @@ public class AiStudioProjectDto : AiStudioProjectSummaryDto
 
     public string PromptMode { get; set; } = "Faithful";
     public string Topic { get; set; } = string.Empty;
-    /// <summary>"None" (silent) or "Original" (the reference's own narration per scene).</summary>
+    /// <summary>"None" (silent), "Narration" (the narration read again by an AI voice) or "Original" (the reference's own sound).</summary>
     public string AudioMode { get; set; } = "None";
     public bool HasSourceAudio { get; set; }
+    public string NarratorVoice { get; set; } = string.Empty;
+    public string NarratorStyle { get; set; } = string.Empty;
+    /// <summary>How the reference speaker sounds, in Vietnamese ("giọng nam trầm, đọc chậm…"), or null.</summary>
+    public string? SpeakerProfileVi { get; set; }
     public AiStudioVariationDto Variation { get; set; } = new();
     public string GlobalPrompt { get; set; } = string.Empty;
     public string NegativePrompt { get; set; } = string.Empty;
@@ -246,6 +259,20 @@ public class AiStudioSceneUpdateDto
 {
     public bool? Enabled { get; set; }
     public int? TargetSeconds { get; set; }
+}
+
+public class AiStudioNarrationDto
+{
+    public string Text { get; set; } = string.Empty;
+}
+
+public class AiStudioNarratorDto
+{
+    /// <summary>Null = keep.</summary>
+    public string? Voice { get; set; }
+    public string? Style { get; set; }
+    /// <summary>Pick the voice and style again from the reference speaker and the theme.</summary>
+    public bool Suggest { get; set; }
 }
 
 public class AiStudioPromptVersionDto

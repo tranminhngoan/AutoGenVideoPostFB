@@ -687,6 +687,8 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
             entity.Property(e => e.PromptMode).HasMaxLength(20);
             entity.Property(e => e.Topic).HasMaxLength(30);
             entity.Property(e => e.AudioMode).HasMaxLength(20);
+            entity.Property(e => e.NarratorVoice).HasMaxLength(80);
+            entity.Property(e => e.NarratorStyle).HasMaxLength(600);
             entity.Property(e => e.VideoModel).HasMaxLength(100);
             entity.Property(e => e.Resolution).HasMaxLength(10);
             entity.Property(e => e.GenAspectRatio).HasMaxLength(10);
@@ -702,6 +704,9 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
             entity.HasKey(e => e.Id);
             entity.Property(e => e.SummaryVi).HasMaxLength(1000);
             entity.Property(e => e.Transcript).HasMaxLength(2000);
+            entity.Property(e => e.Narration).HasMaxLength(2000);
+            entity.Property(e => e.NarrationEn).HasMaxLength(2000);
+            entity.Property(e => e.VoiceKey).HasMaxLength(64);
             entity.HasIndex(e => new { e.ProjectId, e.Order });
         });
         modelBuilder.Entity<AiStudioPromptVersion>(entity =>

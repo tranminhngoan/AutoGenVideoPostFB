@@ -235,6 +235,23 @@ public class AiStudioController : ControllerBase
     public Task<IActionResult> EditPrompt(Guid id, Guid sceneId, [FromBody] AiStudioScenePromptDto input, CancellationToken ct) =>
         Run(async () => await _studio.EditScenePromptAsync(id, sceneId, input.Text, ct));
 
+    // ───────────── narration (read again by an AI narrator) ─────────────
+
+    [HttpPut("projects/{id:guid}/narrator")]
+    public Task<IActionResult> Narrator(Guid id, [FromBody] AiStudioNarratorDto input, CancellationToken ct) =>
+        Run(async () => await _studio.SetNarratorAsync(id, input, ct));
+
+    [HttpPost("projects/{id:guid}/narration/reset")]
+    public Task<IActionResult> ResetNarration(Guid id, CancellationToken ct) => Run(async () => await _studio.ResetNarrationAsync(id, ct));
+
+    [HttpPut("projects/{id:guid}/scenes/{sceneId:guid}/narration")]
+    public Task<IActionResult> EditNarration(Guid id, Guid sceneId, [FromBody] AiStudioNarrationDto input, CancellationToken ct) =>
+        Run(async () => await _studio.EditNarrationAsync(id, sceneId, input.Text, ct));
+
+    [HttpPost("projects/{id:guid}/scenes/{sceneId:guid}/speak")]
+    public Task<IActionResult> Speak(Guid id, Guid sceneId, CancellationToken ct) =>
+        Run(async () => await _studio.SpeakSceneAsync(id, sceneId, ct));
+
     [HttpPost("projects/{id:guid}/scenes/{sceneId:guid}/regenerate-prompt")]
     public Task<IActionResult> RegeneratePrompt(Guid id, Guid sceneId, CancellationToken ct) =>
         Run(async () => await _studio.RegenerateScenePromptAsync(id, sceneId, ct));
@@ -319,6 +336,9 @@ public class AiStudioController : ControllerBase
 
     [HttpGet("scenes/{sceneId:guid}/thumb")]
     public async Task<IActionResult> SceneThumb(Guid sceneId, CancellationToken ct) => await FileResult(await _studio.SceneThumbAsync(sceneId, ct), null, ct);
+
+    [HttpGet("scenes/{sceneId:guid}/voice")]
+    public async Task<IActionResult> SceneVoice(Guid sceneId, CancellationToken ct) => await FileResult(await _studio.SceneVoiceAsync(sceneId, ct), null, ct);
 
     [HttpGet("scenes/{sceneId:guid}/frames/{blobId:guid}")]
     public async Task<IActionResult> Frame(Guid sceneId, Guid blobId, CancellationToken ct) => await FileResult(await _studio.FrameBlobAsync(sceneId, blobId, ct), null, ct);

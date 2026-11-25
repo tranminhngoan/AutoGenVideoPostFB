@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ArrowDown, ArrowUp, Camera, ChevronDown, Copy, History, RotateCcw, Save, Sparkles, Wand2 } from 'lucide-react';
-import { Badge, Button, Drawer, Field, Input, Segmented, Select, Textarea, Thumb, cn } from '../../components/ui';
+import { ArrowDown, ArrowUp, Camera, ChevronDown, Copy, History, Mic, RotateCcw, Save, Sparkles, Wand2 } from 'lucide-react';
+import { Alert, Badge, Button, Drawer, Field, Input, Segmented, Select, Textarea, Thumb, cn } from '../../components/ui';
 import { useToast } from '../../components/feedback';
 import { formatDateTime } from '../../lib/format';
 import { aiStudio, type Json, type Project, type PromptMode, type PromptVersion, type Scene, type Variation } from '../../services/aiStudio';
@@ -14,6 +14,7 @@ export function Storyboard({ project: p, setProject, reload }: WorkspaceProps) {
   return (
     <div className="space-y-5">
       <PromptSettings project={p} setProject={setProject} />
+      {p.hasAudio && <NarrationPanel project={p} setProject={setProject} reload={reload} />}
 
       {/* timeline: one block per scene, width = its length in the reference */}
       <div>
@@ -204,6 +205,9 @@ function SceneCard({ project: p, scene: s, first, last, open, onToggle, onChange
             {s.isContinuation && <Chip>nối tiếp cảnh trước</Chip>}
             {!s.enabled && <Badge>Đang tắt</Badge>}
             {s.promptEdited && <Chip>prompt tự sửa</Chip>}
+            {s.narration && (s.voiceCurrent
+              ? <Chip title="Giọng AI đã đọc lời bình cảnh này"><Mic className="h-3 w-3" />lời bình {s.voiceSeconds?.toFixed(1)}s</Chip>
+              : <Chip title="Có lời bình, chưa đọc (hoặc đã sửa chữ / đổi giọng)"><Mic className="h-3 w-3" />chưa đọc lời bình</Chip>)}
             {s.latest && <GenStatusBadge status={s.latest.status} />}
           </div>
           <p className="mt-0.5 line-clamp-1 text-[13px] text-fg-muted">{s.summaryVi ?? fact(a.summary) ?? '—'}</p>
@@ -255,7 +259,7 @@ function SceneCard({ project: p, scene: s, first, last, open, onToggle, onChange
                 </div>
               )}
               {fact(a.object_interaction) && <p className="text-xs text-fg-muted"><b className="text-fg">Tương tác đồ vật:</b> {a.object_interaction}</p>}
-              {s.transcript && <p className="text-xs text-fg-muted"><b className="text-fg">Lời nói:</b> {s.transcript}</p>}
+              {p.hasAudio && <SceneNarration project={p} scene={s} onChanged={onChanged} />}
               <details className="rounded-lg border border-line">
                 <summary className="cursor-pointer px-3 py-2 text-xs font-medium text-fg">Phân tích chi tiết (15 nhóm)</summary>
                 <div className="grid gap-3 p-3 sm:grid-cols-2">
@@ -315,6 +319,134 @@ function SceneCard({ project: p, scene: s, first, last, open, onToggle, onChange
         </div>
       )}
       {versions && <VersionsDrawer project={p} scene={s} onClose={() => setVersions(false)} onRestored={(np) => { setProject(np); setVersions(false); }} />}
+    </div>
+  );
+}
+
+// ───────────────────────── narration ─────────────────────────
+
+/** Narrator for the whole video: a voice like the reference speaker, its acting direction, and reading every scene. */
+function NarrationPanel({ project: p, setProject, reload }: { project: Project; setProject: (p: Project) => void; reload: () => Promise<void> }) {
+  const toast = useToast();
+  const { overview } = useAiStudio();
+  const [voice, setVoice] = useState(p.narratorVoice);
+  const [style, setStyle] = useState(p.narratorStyle);
+  const [saving, setSaving] = useState(false);
+  const [reading, setReading] = useState<{ done: number; total: number } | null>(null);
+  useEffect(() => { setVoice(p.narratorVoice); setStyle(p.narratorStyle); }, [p.narratorVoice, p.narratorStyle]);
+
+  const withText = p.scenes.filter((s) => s.enabled && s.narration);
+  const todo = withText.filter((s) => !s.voiceCurrent);
+  const segments: Json[] = Array.isArray(p.transcript?.segments) ? p.transcript.segments : [];
+  const dirty = voice !== p.narratorVoice || style !== p.narratorStyle;
+  const voices = overview?.voices ?? [];
+
+  const save = async (body: { voice?: string; style?: string; suggest?: boolean }, ok: string) => {
+    setSaving(true);
+    try { setProject(await aiStudio.narrator(p.id, body)); toast.success(ok); }
+    catch (e) { toast.error('Chưa lưu được', (e as Error).message); }
+    finally { setSaving(false); }
+  };
+
+  const readAll = async () => {
+    setReading({ done: 0, total: todo.length });
+    let done = 0;
+    for (const s of todo) {
+      try {
+        await aiStudio.speak(p.id, s.id);
+      } catch (e) {
+        toast.error(`Cảnh ${s.order + 1} chưa đọc được`, (e as Error).message);
+        break;
+      }
+      setReading({ done: ++done, total: todo.length });
+    }
+    setReading(null);
+    await reload();
+    if (done === todo.length) toast.success('Đã đọc xong lời bình', `${done} cảnh — clip nào ngắn hơn lời bình đã được kéo dài cho vừa.`);
+  };
+
+  return (
+    <div className="rounded-xl border border-line bg-subtle p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2 text-[13px] font-semibold text-fg"><Mic className="h-4 w-4 text-accent" />Lời bình & giọng AI đọc lại</div>
+        <span className="text-xs text-fg-muted">{withText.length - todo.length}/{withText.length} cảnh đã đọc</span>
+      </div>
+      <p className="mt-1 text-xs text-fg-muted">
+        Lời bình được nghe từ video gốc (chạy trên máy), chia theo từng cảnh, đưa vào prompt làm ngữ cảnh câu chuyện, rồi một giọng AI đọc lại theo phong cách người đọc gốc. Không dùng giọng của người trong video gốc.
+      </p>
+      <p className="mt-1 text-xs"><b className="text-fg">Giọng gốc đo được:</b> <span className="text-fg-muted">{p.speakerProfileVi ?? 'chưa đo được (phân tích lại video để đo).'}</span></p>
+      {segments.length === 0 && <Alert className="mt-2" tone="warning" title="Chưa có lời bình">Bản phân tích này chưa nghe được lời nói nào. Nếu video có lời bình, bấm Phân tích lại ở bước 2.</Alert>}
+      {segments.length > 0 && withText.length === 0 && (
+        <div className="mt-2 flex items-center gap-2 text-xs text-fg-muted">
+          Đã nghe được {segments.length} câu nhưng chưa chia vào cảnh.
+          <Button size="sm" variant="secondary" loading={saving} onClick={async () => { setSaving(true); try { setProject(await aiStudio.resetNarration(p.id)); } catch (e) { toast.error('Chưa chia được', (e as Error).message); } finally { setSaving(false); } }}>Chia lời bình vào cảnh</Button>
+        </div>
+      )}
+      <div className="mt-3 grid gap-3 lg:grid-cols-[260px_1fr]">
+        <Field label="Giọng đọc">
+          <Select value={voice} onChange={(e) => setVoice(e.target.value)}>
+            {voices.map((v) => <option key={v.id} value={v.id}>{v.name} — {v.description}</option>)}
+          </Select>
+        </Field>
+        <Field label="Cách đọc (tiếng Anh — gửi riêng cho model giọng, không bị đọc thành lời)">
+          <Textarea rows={2} value={style} onChange={(e) => setStyle(e.target.value)} />
+        </Field>
+      </div>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <Button size="sm" variant="secondary" icon={<Save className="h-3.5 w-3.5" />} loading={saving} disabled={!dirty} onClick={() => save({ voice, style }, 'Đã lưu giọng đọc')}>Lưu giọng</Button>
+        <Button size="sm" variant="ghost" icon={<Wand2 className="h-3.5 w-3.5" />} disabled={saving} onClick={() => save({ suggest: true }, 'Đã chọn lại giọng theo giọng gốc')}>Gợi ý theo giọng gốc</Button>
+        {segments.length > 0 && withText.length > 0 && (
+          <Button size="sm" variant="ghost" icon={<RotateCcw className="h-3.5 w-3.5" />} disabled={saving}
+            onClick={async () => { if (!window.confirm('Chia lại lời bình từ video gốc? Chữ bạn đã sửa sẽ bị thay.')) return; setSaving(true); try { setProject(await aiStudio.resetNarration(p.id)); } catch (e) { toast.error('Chưa chia được', (e as Error).message); } finally { setSaving(false); } }}>
+            Chia lại từ video gốc
+          </Button>
+        )}
+        <Button size="sm" variant="primary" className="ml-auto" icon={<Mic className="h-3.5 w-3.5" />} loading={reading != null} disabled={dirty || todo.length === 0 || saving} onClick={readAll}>
+          {reading ? `Đang đọc ${reading.done}/${reading.total}…` : todo.length ? `Đọc lời bình ${todo.length} cảnh` : 'Đã đọc hết'}
+        </Button>
+      </div>
+      {dirty && <p className="mt-1 text-right text-[11px] text-warning">Lưu giọng trước rồi mới đọc.</p>}
+    </div>
+  );
+}
+
+/** One scene's narration: the words (editable), their English meaning in the prompt, the AI take. */
+function SceneNarration({ project: p, scene: s, onChanged }: { project: Project; scene: Scene; onChanged: () => Promise<void> }) {
+  const toast = useToast();
+  const [text, setText] = useState(s.narration ?? '');
+  const [busy, setBusy] = useState<'save' | 'speak' | null>(null);
+  useEffect(() => setText(s.narration ?? ''), [s.narration]);
+  const dirty = text.trim() !== (s.narration ?? '').trim();
+
+  const act = async (kind: 'save' | 'speak') => {
+    setBusy(kind);
+    try {
+      if (dirty) await aiStudio.editNarration(p.id, s.id, text);
+      if (kind === 'speak') await aiStudio.speak(p.id, s.id);
+      await onChanged();
+    } catch (e) {
+      toast.error(kind === 'speak' ? 'Chưa đọc được' : 'Chưa lưu được', (e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <div className="rounded-lg border border-line p-3">
+      <div className="mb-1.5 flex items-center justify-between gap-2">
+        <span className="text-[13px] font-semibold text-fg"><Mic className="mr-1 inline h-3.5 w-3.5" />Lời bình cảnh này</span>
+        {s.narrationEdited && <Chip>bạn đã sửa</Chip>}
+      </div>
+      <Textarea rows={3} value={text} placeholder="Cảnh này không có lời bình (để trống = im lặng)." onChange={(e) => setText(e.target.value)} />
+      {s.narrationEn && !s.narrationEdited && <p className="mt-1 text-[11px] text-fg-subtle"><b>Ý nghĩa trong prompt:</b> {s.narrationEn}</p>}
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <Button size="sm" variant="secondary" icon={<Save className="h-3.5 w-3.5" />} loading={busy === 'save'} disabled={!dirty || busy != null} onClick={() => act('save')}>Lưu chữ</Button>
+        <Button size="sm" variant="primary" icon={<Mic className="h-3.5 w-3.5" />} loading={busy === 'speak'} disabled={!text.trim() || busy != null || (!dirty && s.voiceCurrent)} onClick={() => act('speak')}>
+          {s.hasVoice ? 'Đọc lại' : 'Đọc'}
+        </Button>
+        {s.hasVoice && <audio controls preload="none" src={aiStudio.voiceUrl(s.id, s.voiceSeconds)} className="h-8 max-w-[240px]" />}
+        {s.hasVoice && !s.voiceCurrent && <span className="text-[11px] text-warning">chữ / giọng đã đổi — đọc lại</span>}
+      </div>
     </div>
   );
 }
