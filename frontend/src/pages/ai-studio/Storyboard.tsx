@@ -50,7 +50,9 @@ export function Storyboard({ project: p, setProject, reload }: WorkspaceProps) {
 
 function PromptSettings({ project: p, setProject }: { project: Project; setProject: (p: Project) => void }) {
   const toast = useToast();
+  const { overview } = useAiStudio();
   const [mode, setMode] = useState<PromptMode>(p.promptMode);
+  const [topic, setTopic] = useState(p.topic ?? '');
   const [v, setV] = useState<Variation>(p.variation ?? {});
   const [global, setGlobal] = useState(p.globalPrompt);
   const [negative, setNegative] = useState(p.negativePrompt);
@@ -60,17 +62,18 @@ function PromptSettings({ project: p, setProject }: { project: Project; setProje
 
   useEffect(() => {
     setMode(p.promptMode);
+    setTopic(p.topic ?? '');
     setV(p.variation ?? {});
     setGlobal(p.globalPrompt);
     setNegative(p.negativePrompt);
-  }, [p.promptMode, p.globalPrompt, p.negativePrompt, JSON.stringify(p.variation)]);
+  }, [p.promptMode, p.topic, p.globalPrompt, p.negativePrompt, JSON.stringify(p.variation)]);
 
-  const dirty = mode !== p.promptMode || global !== p.globalPrompt || negative !== p.negativePrompt || JSON.stringify(v) !== JSON.stringify(p.variation ?? {});
+  const dirty = mode !== p.promptMode || topic !== (p.topic ?? '') || global !== p.globalPrompt || negative !== p.negativePrompt || JSON.stringify(v) !== JSON.stringify(p.variation ?? {});
 
   const apply = async () => {
     setSaving(true);
     try {
-      setProject(await aiStudio.promptSettings(p.id, { mode, variation: v, globalPrompt: global, negativePrompt: negative, overwriteEdited: overwrite }));
+      setProject(await aiStudio.promptSettings(p.id, { mode, topic, variation: v, globalPrompt: global, negativePrompt: negative, overwriteEdited: overwrite }));
       toast.success('Đã áp dụng', overwrite ? 'Tất cả prompt đã được viết lại.' : 'Prompt của các cảnh (trừ cảnh bạn tự sửa) đã được viết lại.');
     } catch (e) {
       toast.error('Chưa áp dụng được', (e as Error).message);
@@ -96,6 +99,15 @@ function PromptSettings({ project: p, setProject }: { project: Project; setProje
           options={(['Faithful', 'Creative', 'Cinematic'] as PromptMode[]).map((m) => ({ value: m, label: MODE_INFO[m].label }))} />
       </div>
       <p className="mt-2 text-xs text-fg-muted">{MODE_INFO[mode].description}</p>
+      <div className="mt-3 grid gap-2 sm:grid-cols-3">
+        {[{ id: '', label: 'Không chủ đề', description: 'Theo đúng video' }, ...(overview?.topics ?? [])].map((t) => (
+          <button key={t.id} type="button" onClick={() => setTopic(t.id)}
+            className={cn('rounded-lg border px-3 py-2 text-left text-xs transition', topic === t.id ? 'border-accent bg-accent/[0.06] ring-1 ring-accent/40' : 'border-line bg-surface hover:bg-muted')}>
+            <div className="text-[13px] font-medium text-fg">{t.label}</div>
+            <div className="text-fg-muted">{t.description}</div>
+          </button>
+        ))}
+      </div>
 
       {mode === 'Creative' && (
         <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
@@ -238,7 +250,7 @@ function SceneCard({ project: p, scene: s, first, last, open, onToggle, onChange
                 <div className="text-xs">
                   <div className="mb-1 text-[13px] font-semibold text-fg">Nhân vật trong cảnh</div>
                   {characters.map((c, i) => (
-                    <p key={i} className="text-fg-muted">{[c.appearance, c.hair, c.clothing, c.posture, c.gaze].map(fact).filter(Boolean).join(' · ')}</p>
+                    <p key={i} className="text-fg-muted">{[c.label, c.age_group, c.apparent_ethnicity, c.skin_tone, c.hair, c.clothing, c.footwear, c.posture].map(fact).filter(Boolean).join(' · ')}</p>
                   ))}
                 </div>
               )}

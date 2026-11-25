@@ -7,7 +7,7 @@ import { href, navigate } from '../../lib/router';
 import { formatBytes, timeAgo } from '../../lib/format';
 import { StudioError } from '../../services/studio';
 import { aiStudio, type Overview, type ProjectSummary } from '../../services/aiStudio';
-import { AiStudioContext, ProjectStatusBadge, sec, usd, useAiStudio } from './bits';
+import { AiStudioContext, ProjectStatusBadge, TopicPicker, sec, usd, useAiStudio } from './bits';
 import { Workspace } from './Workspace';
 import { HistoryTable } from './Generator';
 import { SettingsView } from './SettingsView';
@@ -215,8 +215,9 @@ interface Picked {
 
 function UploadCard() {
   const toast = useToast();
-  const { onKeyNeeded } = useAiStudio();
+  const { onKeyNeeded, overview } = useAiStudio();
   const input = useRef<HTMLInputElement>(null);
+  const [topic, setTopic] = useState(() => localStorage.getItem('aiStudio.topic') ?? '');
   const [picked, setPicked] = useState<Picked | null>(null);
   const [title, setTitle] = useState('');
   const [progress, setProgress] = useState<number | null>(null);
@@ -238,7 +239,8 @@ function UploadCard() {
     if (!picked || picked.error) return;
     setProgress(0);
     try {
-      const p = await aiStudio.createProject(picked.file, title.trim(), setProgress);
+      localStorage.setItem('aiStudio.topic', topic);
+      const p = await aiStudio.createProject(picked.file, title.trim(), topic, setProgress);
       toast.success('Đã tải lên', 'Bấm "Phân tích video" để AI trên máy tính đọc video.');
       navigate(`/ai-studio/p/${p.id}`);
     } catch (e) {
@@ -300,6 +302,7 @@ function UploadCard() {
             <Field label="Tên dự án">
               <Input value={title} onChange={(e) => setTitle(e.target.value)} maxLength={300} />
             </Field>
+            <TopicPicker topics={overview?.topics ?? []} value={topic} onChange={setTopic} />
             {progress != null && <ProgressBar value={progress * 100} />}
             <div className="flex gap-2">
               <Button variant="ghost" onClick={() => { setPicked(null); setTitle(''); }} disabled={progress != null}>Đổi file</Button>

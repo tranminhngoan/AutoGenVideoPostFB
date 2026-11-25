@@ -121,6 +121,7 @@ export interface Overview {
   engine: EngineStatus;
   seedanceConfigured: boolean;
   videoModels: VideoModel[];
+  topics: { id: string; label: string; description: string }[];
   resolutions: string[];
   minClipSeconds: number;
   maxClipSeconds: number;
@@ -255,6 +256,7 @@ export interface Project extends ProjectSummary {
   palette: string[];
   transcript?: Json;
   promptMode: PromptMode;
+  topic: string;
   variation: Variation;
   globalPrompt: string;
   negativePrompt: string;
@@ -308,14 +310,14 @@ export const aiStudio = {
 
   projects: () => call<ProjectSummary[]>('GET', '/projects'),
   project: (id: string) => call<Project>('GET', `/projects/${id}`),
-  createProject: (file: File, title: string, onProgress?: (p: number) => void) => upload<Project>('/projects', file, { title }, onProgress),
+  createProject: (file: File, title: string, topic: string, onProgress?: (p: number) => void) => upload<Project>('/projects', file, { title, topic }, onProgress),
   replaceSource: (id: string, file: File, onProgress?: (p: number) => void) => upload<Project>(`/projects/${id}/source`, file, {}, onProgress),
   updateProject: (id: string, body: { title?: string; analysisModel?: string }) => call<Project>('PUT', `/projects/${id}`, body),
   deleteProject: (id: string) => call<void>('DELETE', `/projects/${id}`),
   analyze: (id: string, force: boolean) => call<Project>('POST', `/projects/${id}/analyze`, { force }),
   cancelAnalysis: (id: string) => call<Project>('POST', `/projects/${id}/cancel`),
 
-  promptSettings: (id: string, body: { mode: PromptMode; variation: Variation; globalPrompt?: string; negativePrompt?: string; overwriteEdited: boolean }) =>
+  promptSettings: (id: string, body: { mode: PromptMode; topic?: string; variation: Variation; globalPrompt?: string; negativePrompt?: string; overwriteEdited: boolean }) =>
     call<Project>('PUT', `/projects/${id}/prompt-settings`, body),
   bibles: (id: string, body: { characters?: Json; environments?: Json; style?: Json; overwriteEdited: boolean }) =>
     call<Project>('PUT', `/projects/${id}/bibles`, body),

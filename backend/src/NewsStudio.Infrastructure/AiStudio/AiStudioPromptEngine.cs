@@ -22,7 +22,8 @@ public sealed record ScenePromptInput(
     string Mode,
     AiStudioVariationDto Variation,
     string GlobalPrompt,
-    string NegativePrompt);
+    string NegativePrompt,
+    string Topic = "");
 
 /// <summary>
 /// Cinematic prompt engine for Seedance (deterministic, no AI call, so a prompt can be rebuilt instantly when the user
@@ -82,6 +83,7 @@ public static class AiStudioPromptEngine
         var v = s.Variation ?? new AiStudioVariationDto();
         var creative = mode == Creative;
         var cinematic = mode == Cinematic;
+        var topic = AiStudioTopics.Find(s.Topic);
         var parts = new List<string>();
 
         // 0. the user's global prompt (style lock shared by every scene)
@@ -97,18 +99,26 @@ public static class AiStudioPromptEngine
         }
         else if (cast.Count > 0)
         {
-            var descs = cast.Select(c => DescribeCharacter(c, creative ? Clean(v.Wardrobe) : null)).Where(d => d.Length > 0).ToList();
+            var descs = cast.Select(c => DescribeCharacter(c, creative ? Clean(v.Wardrobe) : null, topic)).Where(d => d.Length > 0).ToList();
             if (descs.Count > 0) parts.Add(Sentence((descs.Count == 1 ? "Subject: " : $"Subjects ({descs.Count}): ") + string.Join("; ", descs)));
         }
         else if (people.Count > 0)
         {
-            var descs = people.OfType<JsonObject>().Select(c => DescribeCharacter(c, creative ? Clean(v.Wardrobe) : null)).Where(d => d.Length > 0).ToList();
+            var descs = people.OfType<JsonObject>().Select(c => DescribeCharacter(c, creative ? Clean(v.Wardrobe) : null, topic)).Where(d => d.Length > 0).ToList();
             if (descs.Count > 0) parts.Add(Sentence((descs.Count == 1 ? "Subject: " : $"Subjects ({descs.Count}): ") + string.Join("; ", descs)));
         }
+        // the channel's theme: how the people must look, whatever the reference showed
+        var hasPeople = cast.Count > 0 || people.Count > 0 || (creative && Clean(v.Character) != null);
+        if (topic != null && hasPeople && !(creative && Clean(v.Character) != null)) parts.Add(Sentence($"Look: {topic.Look}"));
 
         // 3. environment
         if (creative && Clean(v.Setting) is { } setting) parts.Add(Sentence($"Setting: {setting}"));
-        else AddIf(parts, DescribeEnvironment(a, EnvironmentOf(s)) is { Length: > 0 } env ? Sentence($"Setting: {env}") : null);
+        else
+        {
+            var env = DescribeEnvironment(a, EnvironmentOf(s));
+            if (topic?.SettingHint != null) env = Join(", ", env, topic.SettingHint);
+            AddIf(parts, env.Length > 0 ? Sentence($"Setting: {env}") : null);
+        }
 
         // 4–5. main action + timed sequence (scaled to the clip length)
         AddIf(parts, Field(a, "summary") is { } summary ? Sentence($"Action: {StripNames(summary)}") : null);
@@ -158,6 +168,7 @@ public static class AiStudioPromptEngine
             Field(color, "contrast") is { } con ? $"{con} contrast" : null, Field(color, "grading"));
         if (cinematic) colour = Join(", ", colour, "cinematic color grade with rich filmic contrast, natural skin tones");
         if (creative && Clean(v.Style) is { } userStyle) colour = Join(", ", colour, userStyle);
+        else if (topic != null) colour = Join(", ", colour, topic.StyleHint);
         AddIf(parts, colour.Length > 0 ? Sentence($"Color: {colour}") : null);
 
         // 13. depth of field
@@ -188,6 +199,7 @@ public static class AiStudioPromptEngine
 
         // 17. constraints (Seedance has no negative prompt field)
         var negative = Clean(s.NegativePrompt) ?? DefaultNegative;
+        if (topic != null) negative = $"{negative.TrimEnd('.')}, {topic.Avoid}";
         var prompt = string.Join(" ", parts);
         var avoid = $" Avoid: {negative.TrimEnd('.')}.";
         if (prompt.Length + avoid.Length > MaxPromptChars) prompt = Shorten(parts, MaxPromptChars - avoid.Length);
@@ -206,9 +218,35 @@ public static class AiStudioPromptEngine
     private static bool InScene(JsonObject o, int index) =>
         o["scenes"] is JsonArray arr && arr.Any(x => x is JsonValue jv && jv.TryGetValue<double>(out var n) && (int)n == index);
 
-    private static string DescribeCharacter(JsonObject c, string? wardrobeOverride)
+    private static string DescribeCharacter(JsonObject c, string? wardrobeOverride, AiStudioTopic? topic = null)
     {
+        // "a Southeast Asian boy about 6 years old, light-brown skin, slim build, short black hair, wearing …, barefoot"
         var label = Field(c, "label");
+        // the channel theme decides who the people are (e.g. Vietnamese with sun-tanned skin), whatever the reference showed
+        var ethnicity = topic?.Ethnicity ?? Field(c, "apparent_ethnicity");
+        var age = Field(c, "age_group");
+        var gender = Field(c, "gender");
+        var noun = label ?? gender;
+        if (topic != null && ethnicity != null && age == null && noun == null)
+            noun = Field(c, "appearance");
+        if (ethnicity != null || age != null)
+        {
+            var who = Join(" ", ethnicity, noun ?? "person");
+            var head = age != null ? $"{who} {(age.StartsWith("about", StringComparison.OrdinalIgnoreCase) || char.IsDigit(age[0]) ? age : $"({age})")}" : who;
+            var skinText = topic?.Skin ?? Field(c, "skin_tone");
+            var skin = skinText is { } st ? (st.Contains("skin", StringComparison.OrdinalIgnoreCase) ? st : $"{st} skin") : null;
+            var hairText = Field(c, "hair");
+            if (hairText != null && !hairText.Contains("hair", StringComparison.OrdinalIgnoreCase) && !hairText.Contains("bald", StringComparison.OrdinalIgnoreCase))
+                hairText = $"{hairText.TrimEnd('.')} hair";
+            var clothes = wardrobeOverride ?? Field(c, "clothing");
+            var feet = Field(c, "footwear");
+            var accessories = Field(c, "accessories");
+            if (accessories != null && Regex.IsMatch(accessories, @"^\s*(none|no)\b", RegexOptions.IgnoreCase)) accessories = null;
+            // older / edited bibles keep age and build inside "appearance"
+            var body = Field(c, "build") ?? (age == null ? Field(c, "appearance") : null);
+            return StripNames(Join(", ", head, skin, body, hairText, clothes != null ? $"wearing {clothes}" : null,
+                wardrobeOverride == null ? feet : null, accessories != null ? $"with {accessories}" : null));
+        }
         var appearance = Field(c, "appearance");
         var hair = Field(c, "hair");
         var clothing = wardrobeOverride ?? Field(c, "clothing");

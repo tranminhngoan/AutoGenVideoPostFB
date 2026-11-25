@@ -128,6 +128,48 @@ public class AiStudioUnitTests
     }
 
     [Fact]
+    public void The_subject_says_who_the_person_looks_like_and_every_garment()
+    {
+        var input = Input();
+        input.Characters.Clear();
+        input.Characters.Add(JsonNode.Parse("""
+            {"id":"C1","label":"boy","gender":"male","age_group":"about 6 years old","apparent_ethnicity":"Southeast Asian","skin_tone":"light-brown",
+             "build":"slim","hair":"short straight black","clothing":"royal-blue cable-knit wool sweater, dark-brown trousers rolled to mid-calf",
+             "footwear":"barefoot","accessories":"none","scenes":[3]}
+            """));
+        AiStudioPromptEngine.Build(input).Should().Contain(
+            "Subject: Southeast Asian boy about 6 years old, light-brown skin, slim, short straight black hair, wearing royal-blue cable-knit wool sweater, dark-brown trousers rolled to mid-calf, barefoot.");
+        // the creative mode's new character replaces all of it
+        AiStudioPromptEngine.Build(input with { Mode = "Creative", Variation = new AiStudioVariationDto { Character = "an elderly woman" } })
+            .Should().Contain("Subject: an elderly woman.").And.NotContain("Southeast Asian");
+    }
+
+    [Fact]
+    public void The_channel_theme_decides_who_the_people_are_and_the_look()
+    {
+        // the reference showed a pale woman: the "Asian beauty" theme makes her East Asian with fair skin, bright and tasteful
+        var beauty = AiStudioPromptEngine.Build(Input() with { Topic = AiStudioTopics.AsianBeauty });
+        beauty.Should().Contain("Subject: East Asian (Korean, Japanese or Vietnamese look) woman, fair porcelain skin with a natural healthy glow, young woman, slim build, long black hair");
+        beauty.Should().Contain("Look: beautiful young East Asian appearance");
+        beauty.Should().Contain("K-drama style look");
+        beauty.Should().Contain("Western or European facial features").And.Contain("vulgar or sexualized framing");
+
+        var child = Input() with { Topic = AiStudioTopics.VietnamChildhood };
+        child.Characters.Clear();
+        child.Characters.Add(JsonNode.Parse("""{"id":"C1","label":"boy","age_group":"about 6 years old","apparent_ethnicity":"White","skin_tone":"pale","clothing":"blue sweater","scenes":[3]}"""));
+        var memory = AiStudioPromptEngine.Build(child);
+        memory.Should().Contain("Subject: Vietnamese (Southeast Asian) boy about 6 years old, sun-tanned brown skin from working outdoors, wearing blue sweater");
+        memory.Should().NotContain("White").And.NotContain("pale skin");
+        memory.Should().Contain("poor rural Vietnamese village in the 1990s");
+        memory.Should().Contain("nostalgic warm golden afternoon light");
+        memory.Should().Contain("smartphones");
+
+        AiStudioTopics.Normalize("VN-CHILDHOOD").Should().Be(AiStudioTopics.VietnamChildhood);
+        AiStudioTopics.Normalize("anything").Should().Be(AiStudioTopics.None);
+        AiStudioPromptEngine.Build(Input()).Should().NotContain("Look:"); // no theme = only what the video showed
+    }
+
+    [Fact]
     public void Names_and_handles_never_reach_the_prompt()
     {
         var input = Input();

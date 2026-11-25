@@ -51,6 +51,13 @@ public class AiStudioBudgetDto
     public decimal MonthRemainingUsd { get; set; }
 }
 
+public class AiStudioTopicDto
+{
+    public string Id { get; set; } = string.Empty;
+    public string Label { get; set; } = string.Empty;
+    public string Description { get; set; } = string.Empty;
+}
+
 public class AiStudioVideoModelDto
 {
     public string Id { get; set; } = string.Empty;
@@ -67,6 +74,7 @@ public class AiStudioOverviewDto
     public AiStudioEngineStatusDto Engine { get; set; } = new();
     public bool SeedanceConfigured { get; set; }
     public List<AiStudioVideoModelDto> VideoModels { get; set; } = new();
+    public List<AiStudioTopicDto> Topics { get; set; } = new();
     public string[] Resolutions { get; set; } = Array.Empty<string>();
     public int MinClipSeconds { get; set; }
     public int MaxClipSeconds { get; set; }
@@ -169,6 +177,7 @@ public class AiStudioProjectDto : AiStudioProjectSummaryDto
     public JsonNode? Transcript { get; set; }
 
     public string PromptMode { get; set; } = "Faithful";
+    public string Topic { get; set; } = string.Empty;
     public AiStudioVariationDto Variation { get; set; } = new();
     public string GlobalPrompt { get; set; } = string.Empty;
     public string NegativePrompt { get; set; } = string.Empty;
@@ -208,6 +217,8 @@ public class AiStudioVariationDto
 public class AiStudioPromptSettingsDto
 {
     public string Mode { get; set; } = "Faithful";
+    /// <summary>Null = keep the project's theme.</summary>
+    public string? Topic { get; set; }
     public AiStudioVariationDto Variation { get; set; } = new();
     public string? GlobalPrompt { get; set; }
     public string? NegativePrompt { get; set; }

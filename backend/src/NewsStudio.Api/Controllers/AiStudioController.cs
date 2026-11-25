@@ -54,6 +54,7 @@ public class AiStudioController : ControllerBase
         public string? FileName { get; set; }
         public string? ContentType { get; set; }
         public string? Title { get; set; }
+        public string? Topic { get; set; }
     }
 
     private static string ChunkDir(Guid uploadId) => Path.Combine(Path.GetTempPath(), "ai-studio-chunks", uploadId.ToString("N"));
@@ -187,7 +188,7 @@ public class AiStudioController : ControllerBase
     [RequestSizeLimit(MaxSourceUpload)]
     [RequestFormLimits(MultipartBodyLengthLimit = MaxSourceUpload)]
     public Task<IActionResult> CreateProject([FromForm] UploadFields form, CancellationToken ct) =>
-        WithUpload(form, AiStudioService.MaxSourceBytes, async (path, name, _) => await _studio.CreateProjectAsync(path, name, form.Title, ct), ct);
+        WithUpload(form, AiStudioService.MaxSourceBytes, async (path, name, _) => await _studio.CreateProjectAsync(path, name, form.Title, ct, form.Topic), ct);
 
     [HttpPost("projects/{id:guid}/source")]
     [RequestSizeLimit(MaxSourceUpload)]

@@ -39,7 +39,7 @@ try:
 except Exception:  # noqa: BLE001
     pass
 
-PROMPT_VERSION = 5  # bump when the scene prompt / schema changes (invalidates cached scene results)
+PROMPT_VERSION = 7  # bump when the scene prompt / schema changes (invalidates cached scene results)
 MAX_CLIP = 12.0  # longest clip the video model makes (Seedance 1.0: 2–12 s)
 SPLIT_TARGET = 10.0
 MIN_SCENE = 0.8
@@ -231,7 +231,8 @@ SIZES = ["extreme close-up", "close-up", "medium close-up", "medium shot", "medi
 
 SCENE_SCHEMA = _obj(["summary", "summary_vi", "purpose", "object_interaction"], {
     "characters": {"type": "array", "maxItems": 4, "items": _obj(
-        ["label", "appearance", "hair", "clothing", "accessories", "position", "posture", "gaze"])},
+        ["label", "gender", "age_group", "apparent_ethnicity", "skin_tone", "build", "appearance", "hair", "clothing",
+         "footwear", "accessories", "position", "posture", "gaze"])},
     "timeline": {"type": "array", "minItems": 1, "maxItems": 10, "items": {
         "type": "object", "additionalProperties": False,
         "required": ["segment", "action", "body", "confidence"],
@@ -258,7 +259,8 @@ BIBLE_SCHEMA = {
     "properties": {
         "overview": _obj(["summary", "summary_vi", "scene_relations"]),
         "characters": {"type": "array", "maxItems": 6, "items": _obj(
-            ["id", "label", "appearance", "hair", "clothing", "accessories", "posture", "distinguishing", "consistency"],
+            ["id", "label", "gender", "age_group", "apparent_ethnicity", "skin_tone", "build", "appearance", "hair",
+             "clothing", "footwear", "accessories", "posture", "distinguishing", "consistency"],
             {"scenes": {"type": "array", "items": {"type": "integer"}}})},
         "environments": {"type": "array", "maxItems": 6, "items": _obj(
             ["id", "location", "layout", "background", "important_objects", "lighting", "weather", "time_of_day"],
@@ -650,8 +652,13 @@ def scene_content(scene, frames, transcript_lines):
         "When no person is visible, describe what moves instead (camera, plants, water, light, objects) and write "
         "'no person' in body.\n"
         + seg_text + "\n"
-        "Other rules: separate camera movement from subject movement; characters = visible appearance only (age group, "
-        "build, skin tone, clothing), never a name or identity; summary = one English sentence; summary_vi = one natural "
+        "Characters (needed to recreate the same-looking person, never a name or identity): label = boy / girl / man / "
+        "woman…; gender as it appears; age_group (e.g. 'teenager', 'about 30 years old', 'elderly'); apparent_ethnicity = the visible "
+        "regional appearance (e.g. 'East Asian', 'Southeast Asian / Vietnamese-looking', 'South Asian', 'Black', 'White', "
+        "'Latino'; 'uncertain' if the face is not visible); skin_tone; build; hair = length, colour, style; clothing = EVERY "
+        "garment with exact colour, material, pattern and fit (e.g. 'mustard-yellow linen shirt with rolled sleeves, faded light-blue "
+        "slim jeans with a brown leather belt'); footwear ('barefoot' if so); accessories.\n"
+        "Other rules: separate camera movement from subject movement; summary = one English sentence; summary_vi = one natural "
         "Vietnamese sentence; confidence = 0–1 for the whole description. Keep every field short (≤ 15 words).")})
     return content, segs
 
@@ -661,7 +668,7 @@ def analyze_scene_vlm(port, scene, frames, transcript_lines):
     last = None
     for attempt in range(2):
         try:
-            data, timings = chat(port, content, scene_schema(len(segs)), 1900, temperature=0.1 if attempt == 0 else 0.0)
+            data, timings = chat(port, content, scene_schema(len(segs)), 2600, temperature=0.1 if attempt == 0 else 0.0)
             items = data.get("timeline") or []
             tl = []
             for i, (a, b, _, _) in enumerate(segs):  # the times are ours; the model only fills each segment
@@ -706,13 +713,19 @@ def bibles_pass(port, scenes, overview_hint):
         "Below are the per-scene analyses of ONE video. Merge them into production bibles used to recreate the video with "
         "a text-to-video model while keeping every scene consistent.\n"
         "- characters: one entry per distinct person (match the same person across scenes by clothing / hair / build); "
+        "keep gender, age_group, apparent_ethnicity, skin_tone, hair and the full garment-by-garment clothing with colours; "
         "id = C1, C2…; scenes = scene numbers where they appear; consistency = what must stay identical between shots.\n"
         "- environments: one entry per distinct place; id = E1, E2…; scenes = scene numbers.\n"
         "- style: the overall look, camera language and motion style.\n"
         "- overview.summary_vi: 1–2 natural Vietnamese sentences. Use only facts present in the analyses.\n\n"
         + json.dumps(compact, ensure_ascii=False))}]
-    data, timings = chat(port, content, BIBLE_SCHEMA, 1800, temperature=0.1)
-    return data, timings
+    last = None
+    for attempt in range(2):  # a cut-off answer is retried once, colder
+        try:
+            return chat(port, content, BIBLE_SCHEMA, 3000, temperature=0.1 if attempt == 0 else 0.0)
+        except (urllib.error.URLError, ValueError, KeyError, TimeoutError) as e:
+            last = e
+    raise RuntimeError(f"bible merge failed: {last}")
 
 
 def fallback_bibles(scenes):
@@ -726,7 +739,10 @@ def fallback_bibles(scenes):
             if match:
                 match["scenes"].append(s["index"])
             else:
-                chars.append({"_k": key, "id": f"C{len(chars) + 1}", "label": c.get("label", "person"), "appearance": c.get("appearance", ""),
+                chars.append({"_k": key, "id": f"C{len(chars) + 1}", "label": c.get("label", "person"),
+                              "gender": c.get("gender", ""), "age_group": c.get("age_group", ""),
+                              "apparent_ethnicity": c.get("apparent_ethnicity", ""), "skin_tone": c.get("skin_tone", ""),
+                              "build": c.get("build", ""), "footwear": c.get("footwear", ""), "appearance": c.get("appearance", ""),
                               "hair": c.get("hair", ""), "clothing": c.get("clothing", ""), "accessories": c.get("accessories", ""),
                               "posture": c.get("posture", ""), "distinguishing": "", "consistency": "same face, hair and clothing in every shot",
                               "scenes": [s["index"]]})

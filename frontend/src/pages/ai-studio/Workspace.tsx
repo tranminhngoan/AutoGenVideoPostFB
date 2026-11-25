@@ -310,7 +310,7 @@ function AnalysisStep({ project: p, setProject }: WorkspaceProps) {
 
 // ───────────────────────── bibles ─────────────────────────
 
-const CHAR_FIELDS: [string, string][] = [['label', 'Nhân vật'], ['appearance', 'Ngoại hình'], ['hair', 'Tóc'], ['clothing', 'Trang phục'], ['accessories', 'Phụ kiện'], ['posture', 'Tư thế'], ['distinguishing', 'Đặc điểm nhận biết'], ['consistency', 'Giữ nhất quán']];
+const CHAR_FIELDS: [string, string][] = [['label', 'Nhân vật'], ['gender', 'Giới tính'], ['age_group', 'Độ tuổi'], ['apparent_ethnicity', 'Người (vùng miền)'], ['skin_tone', 'Màu da'], ['build', 'Dáng người'], ['appearance', 'Ngoại hình'], ['hair', 'Tóc'], ['clothing', 'Trang phục (từng món, màu)'], ['footwear', 'Giày dép'], ['accessories', 'Phụ kiện'], ['posture', 'Tư thế'], ['distinguishing', 'Đặc điểm nhận biết'], ['consistency', 'Giữ nhất quán']];
 const ENV_FIELDS: [string, string][] = [['location', 'Địa điểm'], ['layout', 'Bố cục không gian'], ['background', 'Hậu cảnh'], ['important_objects', 'Đồ vật quan trọng'], ['lighting', 'Ánh sáng'], ['weather', 'Thời tiết'], ['time_of_day', 'Thời điểm']];
 const STYLE_FIELDS: [string, string][] = [['visual_style', 'Phong cách hình ảnh'], ['realism_level', 'Mức chân thực'], ['color_palette', 'Bảng màu'], ['lighting_style', 'Kiểu ánh sáng'], ['camera_language', 'Ngôn ngữ máy quay'], ['motion_style', 'Chuyển động'], ['depth_of_field', 'Độ sâu trường ảnh'], ['direction', 'Định hướng điện ảnh']];
 
@@ -401,7 +401,7 @@ function BibleEditor({ kind, value, fields, project, onClose, onSaved }: {
   const prefix = kind === 'characters' ? 'C' : 'E';
   return (
     <Modal open onClose={onClose} size="lg" title={kind === 'characters' ? 'Sửa Character Bible' : kind === 'environments' ? 'Sửa Environment Bible' : 'Sửa Visual Style Bible'}
-      description="Viết bằng tiếng Anh (Seedance hiểu tốt nhất). Mọi prompt dùng lại các mô tả này để giữ nhân vật / bối cảnh nhất quán giữa các cảnh."
+      description="Viết bằng tiếng Anh (Seedance hiểu tốt nhất), ví dụ “Southeast Asian / Vietnamese”, “royal-blue cable-knit sweater”. Mọi prompt dùng lại các mô tả này để giữ nhân vật / bối cảnh nhất quán giữa các cảnh."
       footer={<>
         <label className="mr-auto flex items-center gap-2 text-xs text-fg-muted"><input type="checkbox" checked={overwrite} onChange={(e) => setOverwrite(e.target.checked)} />Viết lại cả prompt tôi đã tự sửa</label>
         <Button variant="ghost" onClick={onClose}>Huỷ</Button>

@@ -155,3 +155,22 @@ export const MODE_INFO: Record<string, { label: string; short: string; descripti
     description: 'Giữ nội dung, nâng cấp ngôn ngữ máy quay, bố cục, ánh sáng, màu, độ sâu và độ chân thực.',
   },
 };
+
+/** The channel theme: added to every prompt after the analysis (who the people look like, setting, grade). */
+export function TopicPicker({ topics, value, onChange }: { topics: { id: string; label: string; description: string }[]; value: string; onChange: (v: string) => void }) {
+  const all = [{ id: '', label: 'Không chủ đề', description: 'Chỉ theo đúng những gì AI thấy trong video.' }, ...topics];
+  return (
+    <div>
+      <div className="mb-1.5 text-[13px] font-medium text-fg">Chủ đề kênh</div>
+      <div className="grid gap-2">
+        {all.map((t) => (
+          <button key={t.id} type="button" onClick={() => onChange(t.id)}
+            className={cn('rounded-lg border px-3 py-2 text-left transition', value === t.id ? 'border-accent bg-accent/[0.06] ring-1 ring-accent/40' : 'border-line hover:bg-subtle')}>
+            <div className="text-[13px] font-medium text-fg">{t.label}</div>
+            <div className="text-[11px] text-fg-muted">{t.description}</div>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}

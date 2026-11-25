@@ -162,9 +162,9 @@ public partial class AiStudioService
     }
 
     /// <summary>A new project from an uploaded reference video (already on this server's disk): checked, probed, stored.</summary>
-    public async Task<AiStudioProjectDto> CreateProjectAsync(string path, string fileName, string? title, CancellationToken ct)
+    public async Task<AiStudioProjectDto> CreateProjectAsync(string path, string fileName, string? title, CancellationToken ct, string? topic = null)
     {
-        var p = new AiStudioProject();
+        var p = new AiStudioProject { Topic = AiStudioTopics.Normalize(topic) };
         await ApplySourceAsync(p, path, fileName, ct);
         p.Title = !string.IsNullOrWhiteSpace(title) ? title.Trim() : Path.GetFileNameWithoutExtension(fileName);
         if (string.IsNullOrWhiteSpace(p.Title)) p.Title = "Video tham chiếu";
@@ -554,7 +554,7 @@ public partial class AiStudioService
     private ScenePromptInput PromptInput(AiStudioProject p, AiStudioScene s, bool hasPrevious) => new(
         s.Index, s.StartSeconds, s.EndSeconds, s.TargetSeconds, s.IsContinuation, hasPrevious,
         ParseObj(s.AnalysisJson), ParseObj(s.MeasuredJson), ParseArr(p.CharacterBibleJson), ParseArr(p.EnvironmentBibleJson), ParseObj(p.StyleBibleJson),
-        p.PromptMode, ReadVariation(p.VariationJson), p.GlobalPrompt, p.NegativePrompt);
+        p.PromptMode, ReadVariation(p.VariationJson), p.GlobalPrompt, p.NegativePrompt, p.Topic);
 
     /// <summary>Rebuilds the prompts of the scenes (not those the user wrote by hand, unless asked) and saves a version of each change.</summary>
     private async Task RebuildPromptsAsync(AiStudioProject p, bool overwriteEdited, string source, CancellationToken ct)
@@ -597,6 +597,7 @@ public partial class AiStudioService
         if (mode == AiStudioPromptEngine.Creative && !AiStudioPromptEngine.HasVariation(variation))
             throw new ArgumentException("Chế độ Biến tấu cần ít nhất một thay đổi (nhân vật, trang phục, bối cảnh, góc quay, ánh sáng hoặc phong cách).");
         p.PromptMode = mode;
+        if (input.Topic != null) p.Topic = AiStudioTopics.Normalize(input.Topic);
         p.VariationJson = JsonSerializer.Serialize(variation, Json);
         if (input.GlobalPrompt != null && input.GlobalPrompt.Trim() != p.GlobalPrompt)
         {
@@ -766,6 +767,7 @@ public partial class AiStudioService
         dto.Palette = Deserialize<List<string>>(p.PaletteJson) ?? new();
         dto.Transcript = p.TranscriptJson != null ? ParseNode(p.TranscriptJson) : null;
         dto.PromptMode = p.PromptMode;
+        dto.Topic = p.Topic;
         dto.Variation = ReadVariation(p.VariationJson);
         dto.GlobalPrompt = p.GlobalPrompt;
         dto.NegativePrompt = p.NegativePrompt;

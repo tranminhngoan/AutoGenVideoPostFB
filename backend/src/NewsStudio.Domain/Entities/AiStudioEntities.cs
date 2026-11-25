@@ -64,6 +64,8 @@ public class AiStudioProject : BaseEntity
     // ── prompt engine ──
     /// <summary>Faithful (A), Creative (B), Cinematic (C).</summary>
     public string PromptMode { get; set; } = "Faithful";
+    /// <summary>The channel theme added to every prompt after the analysis ("asian-beauty", "vn-childhood"; empty = none).</summary>
+    public string Topic { get; set; } = string.Empty;
     /// <summary>Creative-variation choices: character, wardrobe, setting, camera, lighting, style (JSON).</summary>
     public string VariationJson { get; set; } = "{}";
     public string GlobalPrompt { get; set; } = string.Empty;
