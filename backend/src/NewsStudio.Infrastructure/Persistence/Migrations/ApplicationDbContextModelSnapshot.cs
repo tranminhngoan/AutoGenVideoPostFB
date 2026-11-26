@@ -197,6 +197,9 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                         .HasMaxLength(2000)
                         .HasColumnType("character varying(2000)");
 
+                    b.Property<Guid?>("FacebookAccountId")
+                        .HasColumnType("uuid");
+
                     b.Property<Guid?>("FinalBlobId")
                         .HasColumnType("uuid");
 
@@ -365,6 +368,9 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)");
+
+                    b.Property<bool>("Watermark")
+                        .HasColumnType("boolean");
 
                     b.Property<int>("Width")
                         .HasColumnType("integer");

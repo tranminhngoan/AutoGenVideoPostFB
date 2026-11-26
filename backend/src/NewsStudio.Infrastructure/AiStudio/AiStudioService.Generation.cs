@@ -509,6 +509,16 @@ public partial class AiStudioService
                     output = withVoice;
                 }
             }
+            if (p.Watermark)
+            {
+                // the Page's name (+ brand-kit logo) moving between three corners of the Reels safe zone: hard to crop out
+                var (brand, logo) = await _studio.BrandAsync(await WatermarkPageAsync(p, ct), ct);
+                var png = Path.Combine(temp, "watermark.png");
+                await _brandMedia.CreateWatermarkAsync(brand, logo, png, ct);
+                var marked = Path.Combine(temp, "final-marked.mp4");
+                await _media.AddWatermarkAsync(output, png, clips[0].AspectRatio, brand, marked, ct);
+                output = marked;
+            }
             var old = p.FinalBlobId;
             p.FinalBlobId = (await StoreFileAsync(output, "video/mp4", ct)).Id;
             await DeleteBlobAsync(old, ct);

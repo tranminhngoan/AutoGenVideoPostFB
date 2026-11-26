@@ -980,6 +980,26 @@ public class AiStudioFlowTests : IClassFixture<WebApplicationFactory<Program>>
             (await store.CopyToAsync(row.FinalBlobId!.Value, final, CancellationToken.None)).Should().BeTrue();
             (await media.ProbeAsync(final, CancellationToken.None)).Duration.Should().BeApproximately(9 / 1.25 + AiStudioMedia.VoiceTail, 0.3);
 
+            // the anti-reupload watermark is on by default: the Page / brand name is burnt in and stamped as artist
+            project = await studio.GetProjectAsync(p.Id, CancellationToken.None);
+            project.Watermark.Should().BeTrue();
+            async Task<string> ArtistAsync()
+            {
+                var (_, outText, _) = await AiStudioMedia.RunAsync(media.Ffprobe, new[] { "-v", "error", "-show_entries", "format_tags=artist", "-of", "default=nw=1:nk=1", final }, CancellationToken.None);
+                return outText.Trim();
+            }
+            (await ArtistAsync()).Should().NotBeEmpty();
+            var unknownPage = () => studio.SetBrandAsync(p.Id, new AiStudioBrandDto { FacebookAccountId = Guid.NewGuid(), Watermark = true }, CancellationToken.None);
+            await unknownPage.Should().ThrowAsync<ArgumentException>();
+            (await studio.SetBrandAsync(p.Id, new AiStudioBrandDto { Watermark = false }, CancellationToken.None)).Watermark.Should().BeFalse();
+            await studio.AssembleAsync(p.Id, CancellationToken.None);
+            await studio.RunAssembleAsync(p.Id, CancellationToken.None);
+            row = await db.AiStudioProjects.AsNoTracking().FirstAsync(x => x.Id == p.Id);
+            row.FinalStatus.Should().Be("Done", row.FinalError);
+            (await store.CopyToAsync(row.FinalBlobId!.Value, final, CancellationToken.None)).Should().BeTrue();
+            (await ArtistAsync()).Should().BeEmpty();
+            await studio.SetBrandAsync(p.Id, new AiStudioBrandDto { Watermark = true }, CancellationToken.None);
+
             // 5b. the Facebook caption: written from the story (the narration — not the video), editable, cost recorded
             var captioned = await studio.WriteCaptionAsync(p.Id, CancellationToken.None);
             captioned.Caption.Should().StartWith("Ai còn nhớ");

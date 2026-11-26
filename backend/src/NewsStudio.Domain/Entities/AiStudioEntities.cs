@@ -102,6 +102,10 @@ public class AiStudioProject : BaseEntity
     /// <summary>Hash of the words, voice and direction the take was read with (a change makes it out of date).</summary>
     public string? NarrationKey { get; set; }
 
+    /// <summary>The Facebook Page the video is for: its name (and brand-kit logo) is the watermark of the joined video.</summary>
+    public Guid? FacebookAccountId { get; set; }
+    /// <summary>Burn the Page's moving watermark into the joined video (against re-uploads).</summary>
+    public bool Watermark { get; set; } = true;
     /// <summary>Facebook caption of the joined video (written by AI from the story, editable; the AI disclosure is added on copy).</summary>
     public string Caption { get; set; } = string.Empty;
 

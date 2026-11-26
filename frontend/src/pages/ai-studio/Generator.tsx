@@ -261,6 +261,13 @@ export function FinalPanel({ project: p, setProject }: WorkspaceProps) {
     }
   };
   const missing = enabled.filter((s) => s.latest?.status !== 'Done').length;
+  const { overview } = useAiStudio();
+  const pages = overview?.pages ?? [];
+  const page = pages.find((x) => x.id === p.facebookAccountId) ?? (pages.length === 1 ? pages[0] : undefined);
+  const setBrand = async (body: { facebookAccountId: string | null; watermark: boolean }) => {
+    try { setProject(await aiStudio.brand(p.id, body)); }
+    catch (e) { toast.error('Không lưu được', (e as Error).message); }
+  };
 
   return (
     <div className="space-y-3">
@@ -285,6 +292,24 @@ export function FinalPanel({ project: p, setProject }: WorkspaceProps) {
               })()}
               {p.audioMode === 'Original' && <span className="text-[11px] text-fg-subtle">Dùng chính tiếng của video gốc (giọng người khác + nhạc nền nếu có).</span>}
               {!p.hasAudio && <span className="text-[11px] text-fg-subtle">Video tham chiếu không có tiếng.</span>}
+            </div>
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-[13px]">
+              <label className="flex items-center gap-2">
+                <input type="checkbox" checked={p.watermark} onChange={(e) => setBrand({ facebookAccountId: p.facebookAccountId ?? null, watermark: e.target.checked })} />
+                <span className="font-medium text-fg">Gắn logo Page chống reup</span>
+              </label>
+              {p.watermark && (
+                <Select size="sm" className="w-56" value={p.facebookAccountId ?? ''} onChange={(e) => setBrand({ facebookAccountId: e.target.value || null, watermark: true })}>
+                  <option value="">{pages.length === 1 ? `${pages[0].name} (Page duy nhất)` : 'Chọn Page sẽ đăng…'}</option>
+                  {pages.map((x) => <option key={x.id} value={x.id}>{x.name}{x.hasLogo ? ' · có logo' : ''}</option>)}
+                </Select>
+              )}
+              {p.watermark && (
+                <span className="text-[11px] text-fg-subtle">
+                  {page ? `Tên “${page.name}”${page.hasLogo ? ' + logo' : ''} chạy qua 3 góc (mỗi 7 giây), trong vùng an toàn của Reels — khó cắt bỏ.` : 'Chưa chọn Page: dùng tên thương hiệu mặc định.'}
+                  {page && !page.hasLogo && ' Muốn có logo: vào Tự động đăng › cài đặt Page › Nhận diện Page để tải logo.'}
+                </span>
+              )}
             </div>
           </div>
           <Button variant="primary" icon={<Clapperboard className="h-4 w-4" />} loading={p.finalStatus === 'Assembling'} disabled={!allDone}

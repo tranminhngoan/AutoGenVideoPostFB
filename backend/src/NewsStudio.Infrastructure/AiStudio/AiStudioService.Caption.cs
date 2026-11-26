@@ -36,6 +36,36 @@ public partial class AiStudioService
 {
     public const int MaxCaptionChars = 2200;
 
+    /// <summary>The connected Pages, for the watermark.</summary>
+    private async Task<List<AiStudioPageDto>> PagesAsync(CancellationToken ct)
+    {
+        var pages = await _db.FacebookAccounts.AsNoTracking().Where(a => a.IsActive).OrderBy(a => a.PageName)
+            .Select(a => new { a.Id, a.PageName }).ToListAsync(ct);
+        var ids = pages.Select(x => x.Id).ToList();
+        var withLogo = await _db.AutoPostSettings.AsNoTracking().Where(s => s.FacebookAccountId != null && ids.Contains(s.FacebookAccountId.Value) && s.BrandLogo != null)
+            .Select(s => s.FacebookAccountId!.Value).ToListAsync(ct);
+        return pages.Select(x => new AiStudioPageDto { Id = x.Id, Name = x.PageName, HasLogo = withLogo.Contains(x.Id) }).ToList();
+    }
+
+    /// <summary>The chosen Page, or the only connected one; null = the studio's brand name.</summary>
+    private async Task<Guid?> WatermarkPageAsync(AiStudioProject p, CancellationToken ct)
+    {
+        if (p.FacebookAccountId is { } chosen && await _db.FacebookAccounts.AnyAsync(a => a.Id == chosen, ct)) return chosen;
+        var active = await _db.FacebookAccounts.AsNoTracking().Where(a => a.IsActive).Select(a => a.Id).Take(2).ToListAsync(ct);
+        return active.Count == 1 ? active[0] : null;
+    }
+
+    public async Task<AiStudioProjectDto> SetBrandAsync(Guid id, AiStudioBrandDto input, CancellationToken ct)
+    {
+        var p = await _db.AiStudioProjects.FirstOrDefaultAsync(x => x.Id == id, ct) ?? throw new KeyNotFoundException("Không tìm thấy dự án.");
+        if (input.FacebookAccountId is { } page && !await _db.FacebookAccounts.AnyAsync(a => a.Id == page, ct))
+            throw new ArgumentException("Không tìm thấy Page này.");
+        p.FacebookAccountId = input.FacebookAccountId;
+        p.Watermark = input.Watermark;
+        await _db.SaveChangesAsync(ct);
+        return await GetProjectAsync(id, ct);
+    }
+
     public async Task<AiStudioProjectDto> SetCaptionAsync(Guid id, string? text, CancellationToken ct)
     {
         var p = await _db.AiStudioProjects.FirstOrDefaultAsync(x => x.Id == id, ct) ?? throw new KeyNotFoundException("Không tìm thấy dự án.");

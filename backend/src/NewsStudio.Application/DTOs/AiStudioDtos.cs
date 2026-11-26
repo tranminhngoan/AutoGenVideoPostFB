@@ -77,6 +77,8 @@ public class AiStudioOverviewDto
     public List<AiStudioTopicDto> Topics { get; set; } = new();
     /// <summary>Narrator voices (Gemini TTS) for reading the narration again.</summary>
     public List<StudioVoiceDto> Voices { get; set; } = new();
+    /// <summary>The connected Facebook Pages (the watermark of the joined video is the Page's name / logo).</summary>
+    public List<AiStudioPageDto> Pages { get; set; } = new();
     public string[] Resolutions { get; set; } = Array.Empty<string>();
     public int MinClipSeconds { get; set; }
     public int MaxClipSeconds { get; set; }
@@ -188,6 +190,8 @@ public class AiStudioProjectDto : AiStudioProjectSummaryDto
     public bool HasSourceAudio { get; set; }
     public string NarratorVoice { get; set; } = string.Empty;
     public string NarratorStyle { get; set; } = string.Empty;
+    public Guid? FacebookAccountId { get; set; }
+    public bool Watermark { get; set; }
     /// <summary>Facebook caption (the AI disclosure line is added when it is copied).</summary>
     public string Caption { get; set; } = string.Empty;
     /// <summary>The whole narration read in one take: there is one / it matches the current words, voice and style.</summary>
@@ -266,6 +270,19 @@ public class AiStudioSceneUpdateDto
 public class AiStudioNarrationDto
 {
     public string Text { get; set; } = string.Empty;
+}
+
+public class AiStudioPageDto
+{
+    public Guid Id { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public bool HasLogo { get; set; }
+}
+
+public class AiStudioBrandDto
+{
+    public Guid? FacebookAccountId { get; set; }
+    public bool Watermark { get; set; } = true;
 }
 
 public class AiStudioNarratorDto

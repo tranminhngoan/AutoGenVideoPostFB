@@ -2680,7 +2680,7 @@ Trả về JSON:
     // ═══════════════════════════════ Helpers ═══════════════════════════════
 
     /// <summary>Page name (fallback Branding:Name, then "Trạm Tin 24/7") and the Page's brand-kit logo, if any.</summary>
-    private async Task<(string Name, byte[]? Logo)> BrandAsync(Guid? pageId, CancellationToken ct)
+    public async Task<(string Name, byte[]? Logo)> BrandAsync(Guid? pageId, CancellationToken ct)
     {
         // the name as it is on Facebook now: a renamed page must not stamp its old name on new videos
         var name = pageId == null ? null

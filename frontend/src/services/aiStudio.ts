@@ -134,6 +134,7 @@ export interface Overview {
   videoModels: VideoModel[];
   topics: { id: string; label: string; description: string }[];
   voices: NarratorVoice[];
+  pages: { id: string; name: string; hasLogo: boolean }[];
   resolutions: string[];
   minClipSeconds: number;
   maxClipSeconds: number;
@@ -276,6 +277,9 @@ export interface Project extends ProjectSummary {
   hasSourceAudio: boolean;
   narratorVoice: string;
   narratorStyle: string;
+  /** The Page the video is for: its name / logo is the moving watermark of the joined video (against re-uploads). */
+  facebookAccountId?: string | null;
+  watermark: boolean;
   /** Facebook caption (editable; the AI disclosure line is added on copy). */
   caption: string;
   /** The whole narration read in one continuous take. */
@@ -356,6 +360,7 @@ export const aiStudio = {
   resetNarration: (id: string) => call<Project>('POST', `/projects/${id}/narration/reset`),
   editNarration: (id: string, sceneId: string, text: string) => call<Scene>('PUT', `/projects/${id}/scenes/${sceneId}/narration`, { text }),
   speakNarration: (id: string) => call<Project>('POST', `/projects/${id}/narration/speak`),
+  brand: (id: string, body: { facebookAccountId: string | null; watermark: boolean }) => call<Project>('PUT', `/projects/${id}/brand`, body),
   setCaption: (id: string, text: string) => call<Project>('PUT', `/projects/${id}/caption`, { text }),
   writeCaption: (id: string) => call<Project>('POST', `/projects/${id}/caption/write`),
   versions: (id: string, sceneId?: string) => call<PromptVersion[]>('GET', `/projects/${id}/versions${sceneId ? `?sceneId=${sceneId}` : ''}`),

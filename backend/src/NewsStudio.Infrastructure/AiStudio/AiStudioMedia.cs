@@ -399,6 +399,21 @@ public class AiStudioMedia
         if (code != 0 || !File.Exists(output)) throw new InvalidOperationException("Không ghép được lời bình vào video: " + Tail(err));
     }
 
+    /// <summary>
+    /// Burns the Page watermark (the studio's moving overlay, see <see cref="StudioMedia.WatermarkFilter"/>) into the
+    /// joined video and stamps the Page as artist / copyright. The sound is copied untouched.
+    /// </summary>
+    public async Task AddWatermarkAsync(string video, string watermarkPng, string aspectRatio, string brand, string output, CancellationToken ct)
+    {
+        var filter = "[0:v]null[base];" + StudioMedia.WatermarkFilter(aspectRatio, 1, "base", 0);
+        var args = new List<string> { "-hide_banner", "-v", "error", "-y", "-i", video, "-i", watermarkPng, "-filter_complex", filter,
+            "-map", "[v]", "-map", "0:a?", "-c:v", "libx264", "-preset", "medium", "-crf", "16", "-pix_fmt", "yuv420p", "-c:a", "copy",
+            "-metadata", $"artist={brand}", "-metadata", $"copyright=© {brand}", "-metadata", $"comment=Video gốc của Page {brand} trên Facebook",
+            "-movflags", "+faststart", output };
+        var (code, _, err) = await RunAsync(Ffmpeg, args, ct);
+        if (code != 0 || !File.Exists(output)) throw new InvalidOperationException("Không gắn được logo Page vào video: " + Tail(err));
+    }
+
     // ───────────── processes ─────────────
 
     public static string Tail(string s)
