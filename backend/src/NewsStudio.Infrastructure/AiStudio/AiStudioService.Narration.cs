@@ -37,12 +37,32 @@ public partial class AiStudioService
             string.IsNullOrWhiteSpace(p.NarratorStyle) ? suggested.Style : p.NarratorStyle.Trim());
     }
 
-    private static void SuggestNarrator(AiStudioProject p)
+    /// <summary>
+    /// Voice + direction like the reference speaker. The channel's own narrator (the default designed voice of the
+    /// studio's "Giọng đọc" tab) wins over a prebuilt voice when it is of the speaker's gender.
+    /// </summary>
+    private async Task SuggestNarratorAsync(AiStudioProject p, CancellationToken ct)
     {
-        var (voice, style) = AiStudioNarration.Suggest(AiStudioNarration.SpeakerOf(p.TranscriptJson), p.Topic);
+        var speaker = AiStudioNarration.SpeakerOf(p.TranscriptJson);
+        var (voice, style) = AiStudioNarration.Suggest(speaker, p.Topic);
+        var gender = AiStudioNarration.GenderOf(speaker) ?? StudioVoices.All.FirstOrDefault(v => v.Id == voice)?.Gender;
+        var preferred = await _db.SystemSettings.AsNoTracking().Where(x => x.SettingKey == StudioService.DefaultNarratorKey)
+            .Select(x => x.SettingValue).FirstOrDefaultAsync(ct);
+        if (!string.IsNullOrWhiteSpace(preferred) && (await _studio.ReadDesignedVoicesAsync(ct)).FirstOrDefault(d => d.Id == preferred) is { } own
+            && own.Gender == gender)
+            voice = own.Id;
         p.NarratorVoice = voice;
         p.NarratorStyle = style;
     }
+
+    /// <summary>The voices offered: the channel's designed voices first, then the prebuilt ones.</summary>
+    public async Task<List<StudioVoiceDto>> NarratorVoicesAsync(CancellationToken ct) =>
+        (await _studio.ReadDesignedVoicesAsync(ct)).Select(d => new StudioVoiceDto
+            {
+                Id = d.Id, Name = d.Name, Gender = d.Gender, Designed = true,
+                Description = "Giọng thiết kế — " + (d.Description.Length > 70 ? d.Description[..70] + "…" : d.Description)
+            })
+            .Concat(StudioVoices.Dtos()).ToList();
 
     private static string? VoiceKeyOf(AiStudioProject p, AiStudioScene s)
     {
@@ -82,10 +102,10 @@ public partial class AiStudioService
     public async Task<AiStudioProjectDto> SetNarratorAsync(Guid id, AiStudioNarratorDto input, CancellationToken ct)
     {
         var p = await EditableProjectAsync(id, ct);
-        if (input.Suggest) SuggestNarrator(p);
+        if (input.Suggest) await SuggestNarratorAsync(p, ct);
         if (input.Voice != null)
         {
-            if (!AiStudioNarration.IsVoice(input.Voice)) throw new ArgumentException("Giọng đọc không có trong danh sách.");
+            if (!(await NarratorVoicesAsync(ct)).Any(v => v.Id == input.Voice)) throw new ArgumentException("Giọng đọc không có trong danh sách.");
             p.NarratorVoice = input.Voice;
         }
         if (input.Style != null)
@@ -107,24 +127,26 @@ public partial class AiStudioService
         var key = AiStudioNarration.Key(s.Narration, voice, style);
         if (s.VoiceKey == key && s.VoiceBlobId != null) return await SceneDtoAsync(p, s, ct); // already read this way
 
-        // a take of these words at most: ~2 syllables a second + the tail
-        var words = s.Narration.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Length;
-        await _studio.EnsureMonthlyBudgetAsync(Math.Round((decimal)(words / 2.0 + 2) * _voices.PricePerSecond, 5), ct);
-        var gender = StudioVoices.All.FirstOrDefault(v => v.Id == voice)?.Gender;
-        var (audio, seconds, fromCache, delivery) = await _voices.SpeakAsync(p.Id, s.Narration, voice, style, StudioVoices.FallbackFor(gender), ct);
-        if (delivery != null && delivery != "diễn cảm") _logger.LogWarning("AI Studio narration scene {Scene}: {Delivery}", s.Index, delivery);
+        // a designed voice deleted from the studio since: the voice suggested for this speaker instead
+        var designed = await _studio.ReadDesignedVoicesAsync(ct);
+        var speakVoice = voice;
+        if (StudioVoices.IsDesigned(voice) && designed.All(d => d.Id != voice))
+            speakVoice = AiStudioNarration.Suggest(AiStudioNarration.SpeakerOf(p.TranscriptJson), p.Topic).Voice;
+        var gender = designed.FirstOrDefault(d => d.Id == speakVoice)?.Gender ?? StudioVoices.All.FirstOrDefault(v => v.Id == speakVoice)?.Gender;
 
-        var cost = fromCache ? 0m : Math.Round((decimal)seconds * _voices.PricePerSecond, 5);
-        _db.StudioCostRecords.Add(new StudioCostRecord
-        {
-            Kind = "Voice", Model = voice, Seconds = seconds, CostUsd = cost,
-            Note = $"AI Video Studio · {Short(p.Title)} · lời bình cảnh {s.Order + 1}" + (fromCache ? " (dùng lại, miễn phí)" : "")
-        });
+        // a take of these words at most: ~2 syllables a second + the tail (twice when it must be read again faster)
+        var words = s.Narration.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Length;
+        await _studio.EnsureMonthlyBudgetAsync(Math.Round((decimal)(words / 2.0 + 2) * 2 * _voices.PricePerSecond, 5), ct);
+        var take = await SpeakTakeAsync(p, s, speakVoice, style, gender, null, ct);
+        if (take.Seconds > AiStudioNarration.MaxVoiceSeconds) // too long for one clip: read again 20 % faster (pitch kept)
+            take = await SpeakTakeAsync(p, s, speakVoice, style, gender, "+20%", ct);
+        var (audio, seconds) = take;
         if (seconds > AiStudioNarration.MaxVoiceSeconds)
         {
             await _db.SaveChangesAsync(ct);
             throw new InvalidOperationException(
-                $"Lời bình cảnh {s.Order + 1} đọc mất {seconds:0.0}s — dài hơn 1 clip ({SeedanceVideoClient.MaxSeconds}s). Rút gọn câu chữ rồi đọc lại.");
+                $"Lời bình cảnh {s.Order + 1} đọc nhanh vẫn mất {seconds:0.0}s — một clip chỉ dài tối đa {SeedanceVideoClient.MaxSeconds}s. " +
+                "Bớt chữ ở ô lời bình của cảnh này (hoặc chuyển bớt sang cảnh bên cạnh) rồi đọc lại.");
         }
 
         var temp = TempDir();
@@ -153,6 +175,21 @@ public partial class AiStudioService
         }
         await _db.SaveChangesAsync(ct);
         return await SceneDtoAsync(p, s, ct);
+    }
+
+    /// <summary>One paid take, recorded in the studio's costs.</summary>
+    private async Task<(byte[] Audio, double Seconds)> SpeakTakeAsync(AiStudioProject p, AiStudioScene s, string voice, string style, string? gender,
+        string? speed, CancellationToken ct)
+    {
+        var (audio, seconds, fromCache, delivery) = await _voices.SpeakAsync(p.Id, s.Narration!, voice, style, StudioVoices.FallbackFor(gender), ct, speed);
+        if (delivery != null && delivery != "diễn cảm") _logger.LogWarning("AI Studio narration scene {Scene}: {Delivery}", s.Index, delivery);
+        var cost = fromCache ? 0m : Math.Round((decimal)seconds * _voices.PricePerSecond, 5);
+        _db.StudioCostRecords.Add(new StudioCostRecord
+        {
+            Kind = "Voice", Model = voice, Seconds = seconds, CostUsd = cost,
+            Note = $"AI Video Studio · {Short(p.Title)} · lời bình cảnh {s.Order + 1}" + (speed != null ? " (đọc nhanh hơn)" : "") + (fromCache ? " (dùng lại, miễn phí)" : "")
+        });
+        return (audio, seconds);
     }
 
     public async Task<Guid?> SceneVoiceAsync(Guid sceneId, CancellationToken ct) =>

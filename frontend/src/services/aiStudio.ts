@@ -119,6 +119,8 @@ export interface NarratorVoice {
   name: string;
   gender: string;
   description: string;
+  /** Designed for the channel in the studio's "Giọng đọc" tab. */
+  designed?: boolean;
 }
 
 export type AudioMode = 'None' | 'Narration' | 'Original';

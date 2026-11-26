@@ -229,6 +229,43 @@ public class AiStudioUnitTests
     }
 
     [Fact]
+    public void A_long_spoken_stretch_is_split_between_scenes_where_each_word_was_said()
+    {
+        var scenes = new[] { (0.0, 6.0), (6.0, 12.0), (12.0, 18.0), (18.0, 20.0) };
+        string Words(int from, int count) => string.Join(" ", Enumerable.Range(from, count).Select(i => $"w{i}"));
+
+        // an older transcript: one 18 s stretch without word times → spread evenly over the three scenes it covers
+        var old = AiStudioNarration.Assign(new[] { new AiStudioNarration.Line(0, 18, Words(0, 36), "One long stretch.") }, scenes);
+        old[0].Text.Should().Be(Words(0, 12));
+        old[1].Text.Should().Be(Words(12, 12));
+        old[2].Text.Should().Be(Words(24, 12));
+        old[3].Text.Should().BeNull();
+        old[0].En.Should().Be("One long stretch."); // the meaning goes with every part
+
+        // word times: each word to the scene where it was said; a short sentence across a cut stays whole
+        var timed = new AiStudioNarration.Line(1, 13, "a b c d", null, new[]
+        {
+            new AiStudioNarration.Word(1, 4, "a"), new AiStudioNarration.Word(4, 5.5, "b"),
+            new AiStudioNarration.Word(6.5, 9, "c"), new AiStudioNarration.Word(9, 13, "d")
+        });
+        var shortLine = new AiStudioNarration.Line(17, 19.5, "Câu ngắn qua cắt.", null);
+        var parts = AiStudioNarration.Assign(new[] { timed, shortLine }, scenes);
+        parts[0].Text.Should().Be("a b");
+        parts[1].Text.Should().Be("c d");
+        parts[3].Text.Should().Be("Câu ngắn qua cắt."); // middle 18.25 s → the last scene, read in one piece
+        parts[2].Text.Should().BeNull();
+
+        // little speech: sentences are never cut
+        var whole = AiStudioNarration.Assign(new[] { new AiStudioNarration.Line(4, 9, "Một câu vừa phải.", null) }, scenes);
+        whole[1].Text.Should().Be("Một câu vừa phải.");
+        whole[0].Text.Should().BeNull();
+
+        // the transcript keeps word times from the analyzer
+        var lines = AiStudioNarration.Lines("""{"segments":[{"start":1,"end":2,"text":"Hồi đó.","words":[[1,1.4,"Hồi"],[1.4,2,"đó."]]}]}""");
+        lines.Single().Words!.Select(w => w.Text).Should().Equal("Hồi", "đó.");
+    }
+
+    [Fact]
     public void The_narrator_sounds_like_the_reference_speaker_within_the_theme()
     {
         var deepSlowMan = new AiStudioNarration.Speaker(108, 3.0, 5);
@@ -693,11 +730,11 @@ public class AiStudioFlowTests : IClassFixture<WebApplicationFactory<Program>>
         public decimal PricePerSecond => 0.0003m;
 
         public async Task<(byte[] Audio, double Seconds, bool FromCache, string? Delivery)> SpeakAsync(Guid projectId, string text, string voice, string? style,
-            string? fallbackVoice, CancellationToken ct)
+            string? fallbackVoice, CancellationToken ct, string? speed = null)
         {
             Interlocked.Increment(ref Calls);
             lock (Takes) Takes.Add((text, voice, style));
-            var seconds = text.Contains("nghèo") ? 1.5 : 3.0;
+            var seconds = text.Contains("nghèo") ? 1.5 : text.Contains("DÀI") ? (speed == "+20%" ? 13.0 : 16.0) : 3.0;
             var path = Path.Combine(Path.GetTempPath(), $"take-{Guid.NewGuid():N}.m4a");
             var media = new AiStudioMedia(new ConfigurationBuilder().Build());
             var (code, _, err) = await AiStudioMedia.RunAsync(media.Ffmpeg, new[] { "-hide_banner", "-v", "error", "-y", "-f", "lavfi", "-i",
@@ -776,13 +813,52 @@ public class AiStudioFlowTests : IClassFixture<WebApplicationFactory<Program>>
             await studio.SpeakSceneAsync(p.Id, ids[0], CancellationToken.None);
             narrator.Calls.Should().Be(2);                // same words, voice and style: never paid twice
 
+            // 3b. a take too long for one clip is read again 20 % faster (both takes recorded)
+            await studio.EditNarrationAsync(p.Id, ids[1], "Lời bình DÀI quá một clip.", CancellationToken.None);
+            var fast = await studio.SpeakSceneAsync(p.Id, ids[1], CancellationToken.None);
+            narrator.Calls.Should().Be(4);
+            fast.VoiceSeconds.Should().Be(13);
+            fast.TargetSeconds.Should().Be(SeedanceVideoClient.MaxSeconds);
+            (await db.StudioCostRecords.AsNoTracking().CountAsync(c => c.Note!.Contains(title) && c.Note.Contains("đọc nhanh hơn"))).Should().Be(1);
+            await studio.EditNarrationAsync(p.Id, ids[1], "Mẹ đi chợ từ sáng sớm.", CancellationToken.None);
+            await studio.SpeakSceneAsync(p.Id, ids[1], CancellationToken.None);
+            narrator.Calls.Should().Be(5);
+
             // 4. the user's own words: quoted in the prompt, the take out of date until read again
             var edited = await studio.EditNarrationAsync(p.Id, ids[0], "Hồi đó nhà tôi nghèo lắm, cơm không đủ ăn.", CancellationToken.None);
             edited.NarrationEdited.Should().BeTrue();
             edited.VoiceCurrent.Should().BeFalse();
             edited.Prompt.Should().Contain("\"Hồi đó nhà tôi nghèo lắm, cơm không đủ ăn\"");
             await studio.SpeakSceneAsync(p.Id, ids[0], CancellationToken.None);
-            narrator.Calls.Should().Be(3);
+            narrator.Calls.Should().Be(6);
+
+            // the channel's designed voices ("Giọng đọc" tab) are offered and usable
+            var designedKey = NewsStudio.Infrastructure.Studio.StudioService.DesignedVoicesKey;
+            var hadDesigned = await db.SystemSettings.AnyAsync(x => x.SettingKey == designedKey);
+            if (!hadDesigned)
+            {
+                db.SystemSettings.Add(new NewsStudio.Domain.Entities.SystemSetting { SettingKey = designedKey, Group = "Studio",
+                    SettingValue = """[{"id":"gemini:voice_anh3","name":"Anh 3","gender":"male","description":"Giọng miền Tây ấm"}]""" });
+                await db.SaveChangesAsync(CancellationToken.None);
+            }
+            try
+            {
+                var offered = (await studio.NarratorVoicesAsync(CancellationToken.None));
+                offered.Should().Contain(v => v.Designed).And.Contain(v => v.Id == "gemini:Charon");
+                var own = offered.First(v => v.Designed).Id;
+                (await studio.SetNarratorAsync(p.Id, new AiStudioNarratorDto { Voice = own }, CancellationToken.None)).NarratorVoice.Should().Be(own);
+                var bad = () => studio.SetNarratorAsync(p.Id, new AiStudioNarratorDto { Voice = "gemini:voice_khong_co" }, CancellationToken.None);
+                await bad.Should().ThrowAsync<ArgumentException>();
+                await studio.SetNarratorAsync(p.Id, new AiStudioNarratorDto { Voice = "gemini:Algenib" }, CancellationToken.None);
+            }
+            finally
+            {
+                if (!hadDesigned)
+                {
+                    db.SystemSettings.Remove(await db.SystemSettings.FirstAsync(x => x.SettingKey == designedKey));
+                    await db.SaveChangesAsync(CancellationToken.None);
+                }
+            }
 
             // 5. joined: the clips with the AI narration (the reference speaker's own voice is not used)
             await studio.AssembleAsync(p.Id, CancellationToken.None);

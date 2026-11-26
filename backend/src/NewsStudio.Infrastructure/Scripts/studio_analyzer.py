@@ -573,19 +573,22 @@ def transcribe(a, job, work):
         return None
     base = os.path.join(work, "transcript")
     lang = job.get("language") or "auto"
-    r = subprocess.run([exe, "-m", model, "-f", wav, "-l", lang, "-t", str(job.get("threads", 8)), "-oj", "-of", base,
-                        "-np"], capture_output=True, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    # -ml 1 -sow: one segment per word with its own time (split only before a space, so a Vietnamese syllable's bytes
+    # stay together); the words are grouped into sentences below. Recognition itself is the same.
+    r = subprocess.run([exe, "-m", model, "-f", wav, "-l", lang, "-t", str(job.get("threads", 8)), "-ml", "1", "-sow",
+                        "-oj", "-of", base, "-np"], capture_output=True, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     try:
         with open(base + ".json", encoding="utf-8", errors="replace") as f:
             data = json.load(f)
     except (OSError, ValueError):
         return None
-    segs = []
-    for s in data.get("transcription", []):
-        off = s.get("offsets", {})
-        text = (s.get("text") or "").strip()
-        if text and not text.startswith("[") and not hallucination(text):
-            segs.append({"start": off.get("from", 0) / 1000.0, "end": off.get("to", 0) / 1000.0, "text": text})
+    words = []
+    for w in data.get("transcription", []):
+        off = w.get("offsets", {})
+        text = (w.get("text") or "").strip()
+        if text and not text.startswith("[_"):
+            words.append((off.get("from", 0) / 1000.0, off.get("to", 0) / 1000.0, text))
+    segs = [l for l in sentences(words) if not l["text"].startswith("[") and not hallucination(l["text"])]
     lang = (data.get("result") or {}).get("language")
     out = {"language": lang, "model": os.path.basename(model), "segments": segs}
     try:
@@ -593,6 +596,31 @@ def transcribe(a, job, work):
     except Exception as e:  # noqa: BLE001 — the profile only tunes the narrator's style
         out["voice"] = {"error": str(e)[:200]}
     return out
+
+
+def sentences(words, max_seconds=10.0, pause=0.7):
+    """
+    Word timings → lines: a line ends after . ? ! …, at a pause of 0.7 s or more, or (past 6 s) after a comma; a line
+    never runs past 10 s. Each line keeps its words with their times, so the narration can be split between scenes
+    exactly where the speaker said each word.
+    """
+    lines, cur = [], []
+
+    def close():
+        if cur:
+            lines.append({"start": round(cur[0][0], 2), "end": round(cur[-1][1], 2), "text": " ".join(w[2] for w in cur),
+                          "words": [[round(a, 2), round(b, 2), t] for a, b, t in cur]})
+            cur.clear()
+
+    for a, b, t in words:
+        if cur and (a - cur[-1][1] >= pause or b - cur[0][0] > max_seconds):
+            close()
+        cur.append((a, b, t))
+        long_ = cur[-1][1] - cur[0][0] > 6
+        if t[-1] in ".?!…" or (long_ and t[-1] in ",;:"):
+            close()
+    close()
+    return lines
 
 
 def voice_profile(wav_path, segs):

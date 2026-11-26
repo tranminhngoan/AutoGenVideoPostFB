@@ -46,7 +46,7 @@ public partial class AiStudioService
                 Id = m.Id, Label = m.Label, Note = m.Note, PricePerSecondUsd = m.PricePerSecond.ToDictionary(k => k.Key, k => k.Value)
             }).ToList(),
             Topics = AiStudioTopics.All.Select(t => new AiStudioTopicDto { Id = t.Id, Label = t.Label, Description = t.Description }).ToList(),
-            Voices = StudioVoices.Dtos().ToList(),
+            Voices = await NarratorVoicesAsync(ct),
             Resolutions = SeedanceVideoClient.Resolutions,
             MinClipSeconds = SeedanceVideoClient.MinSeconds,
             MaxClipSeconds = SeedanceVideoClient.MaxSeconds,

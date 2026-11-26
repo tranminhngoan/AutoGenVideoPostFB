@@ -565,7 +565,7 @@ public partial class AiStudioService
         p.TranscriptJson = result["transcript"] is JsonObject tr ? tr.ToJsonString() : null;
         // the narration of each scene (read again by the narrator) and a narrator that sounds like the reference speaker
         FillNarration(p, created);
-        if (!AiStudioNarration.IsVoice(p.NarratorVoice) || string.IsNullOrWhiteSpace(p.NarratorStyle)) SuggestNarrator(p);
+        if (!AiStudioNarration.IsVoice(p.NarratorVoice) || string.IsNullOrWhiteSpace(p.NarratorStyle)) await SuggestNarratorAsync(p, ct);
         p.AnalysisMetaJson = (result["engine"] ?? new JsonObject()).ToJsonString();
         // the global prompt follows the new style bible unless the user wrote / restored one themselves
         var userGlobal = await _db.AiStudioPromptVersions.AnyAsync(v => v.ProjectId == p.Id && v.SceneId == null && v.Source != "engine", ct);
@@ -645,7 +645,7 @@ public partial class AiStudioService
             p.Topic = AiStudioTopics.Normalize(input.Topic);
             p.AudioMode = DefaultAudioMode(p);
             // a narrator the user did not change follows the new theme's mood
-            if (p.NarratorStyle == oldSuggestion.Style && p.NarratorVoice == oldSuggestion.Voice) SuggestNarrator(p);
+            if (p.NarratorStyle == oldSuggestion.Style) await SuggestNarratorAsync(p, ct);
         }
         p.VariationJson = JsonSerializer.Serialize(variation, Json);
         if (input.GlobalPrompt != null && input.GlobalPrompt.Trim() != p.GlobalPrompt)

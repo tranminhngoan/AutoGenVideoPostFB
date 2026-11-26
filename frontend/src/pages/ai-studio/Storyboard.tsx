@@ -3,6 +3,7 @@ import { ArrowDown, ArrowUp, Camera, ChevronDown, Copy, History, Mic, RotateCcw,
 import { Alert, Badge, Button, Drawer, Field, Input, Segmented, Select, Textarea, Thumb, cn } from '../../components/ui';
 import { useToast } from '../../components/feedback';
 import { formatDateTime } from '../../lib/format';
+import { studio } from '../../services/studio';
 import { aiStudio, type Json, type Project, type PromptMode, type PromptVersion, type Scene, type Variation } from '../../services/aiStudio';
 import { CAMERA_VI, Chip, ConfidenceMeter, GenStatusBadge, MODE_INFO, Swatches, fact, sec, usd, useAiStudio } from './bits';
 import type { WorkspaceProps } from './Workspace';
@@ -383,10 +384,18 @@ function NarrationPanel({ project: p, setProject, reload }: { project: Project; 
         </div>
       )}
       <div className="mt-3 grid gap-3 lg:grid-cols-[260px_1fr]">
-        <Field label="Giọng đọc">
+        <Field label="Giọng đọc" hint="Giọng thiết kế ở tab Giọng đọc của Studio (anh 3, chị ít…) nằm ở nhóm đầu.">
           <Select value={voice} onChange={(e) => setVoice(e.target.value)}>
-            {voices.map((v) => <option key={v.id} value={v.id}>{v.name} — {v.description}</option>)}
+            {voices.some((v) => v.designed) && (
+              <optgroup label="Giọng thiết kế của kênh">
+                {voices.filter((v) => v.designed).map((v) => <option key={v.id} value={v.id}>{v.name} ({v.gender === 'female' ? 'nữ' : 'nam'})</option>)}
+              </optgroup>
+            )}
+            <optgroup label="Giọng có sẵn">
+              {voices.filter((v) => !v.designed).map((v) => <option key={v.id} value={v.id}>{v.name} — {v.description}</option>)}
+            </optgroup>
           </Select>
+          {voice && <audio key={voice} controls preload="none" src={studio.voicePreviewUrl(voice)} className="mt-1.5 h-8 w-full" title="Nghe thử giọng này" />}
         </Field>
         <Field label="Cách đọc (tiếng Anh — gửi riêng cho model giọng, không bị đọc thành lời)">
           <Textarea rows={2} value={style} onChange={(e) => setStyle(e.target.value)} />
