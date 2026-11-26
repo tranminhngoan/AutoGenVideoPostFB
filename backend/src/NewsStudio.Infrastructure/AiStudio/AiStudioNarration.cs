@@ -16,8 +16,11 @@ public static class AiStudioNarration
 {
     private static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
 
-    /// <summary>The longest take that still fits one clip once played up to 25 % faster at assembly.</summary>
+    /// <summary>A take longer than this is read again 20 % faster (it would not fit one clip even played 25 % faster).</summary>
     public const double MaxVoiceSeconds = 14.5;
+
+    /// <summary>The longest take one scene may have — past one clip it runs on over the next scenes in the joined video.</summary>
+    public const double MaxTakeSeconds = 40;
 
     /// <summary>Speech one scene may hold before its sentences are split with the neighbouring scenes (a clip is at most 12 s).</summary>
     public const double MaxSceneSpeechSeconds = 10.5;

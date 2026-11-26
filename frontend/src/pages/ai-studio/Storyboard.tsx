@@ -363,7 +363,7 @@ function NarrationPanel({ project: p, setProject, reload }: { project: Project; 
     }
     setReading(null);
     await reload();
-    if (done === todo.length) toast.success('Đã đọc xong lời bình', `${done} cảnh — clip nào ngắn hơn lời bình đã được kéo dài cho vừa.`);
+    if (done === todo.length) toast.success('Đã đọc xong lời bình', `${done} cảnh — lời bình dài hơn clip sẽ đọc tràn sang cảnh sau khi ghép (như video gốc), không bị cắt chữ.`);
   };
 
   return (
@@ -455,6 +455,9 @@ function SceneNarration({ project: p, scene: s, onChanged }: { project: Project;
         </Button>
         {s.hasVoice && <audio controls preload="none" src={aiStudio.voiceUrl(s.id, s.voiceSeconds)} className="h-8 max-w-[240px]" />}
         {s.hasVoice && !s.voiceCurrent && <span className="text-[11px] text-warning">chữ / giọng đã đổi — đọc lại</span>}
+        {s.hasVoice && s.voiceCurrent && (s.voiceSeconds ?? 0) > s.targetSeconds + 0.2 && (
+          <span className="text-[11px] text-fg-muted">dài hơn clip {((s.voiceSeconds ?? 0) - s.targetSeconds).toFixed(1)}s — khi ghép sẽ đọc tràn sang cảnh sau</span>
+        )}
       </div>
     </div>
   );

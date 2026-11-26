@@ -260,41 +260,93 @@ public class AiStudioMedia
     public sealed record VoicePiece(string? VoicePath, double VoiceSeconds, double ClipSeconds);
 
     /// <summary>
-    /// filter_complex that lays the narrator's take of every scene under its own clip: a take a little longer than its
-    /// clip is played up to 25 % faster (then cut), a shorter one is followed by silence, a scene without narration is
-    /// silent. Input 0 = the video; the takes are inputs 1… in clip order.
+    /// Where every take plays in the joined video. A voice-over runs on across a cut like the reference does: each
+    /// take starts with its own clip (or just after the previous take when that one ran over), a take longer than its
+    /// clip carries on over the next scene's picture. Only when the takes would outlast the whole video are they all
+    /// read a little faster (up to 25 %, pitch kept), and past that the last picture is held so no word is cut.
     /// </summary>
-    public static string BuildVoiceFilter(IReadOnlyList<VoicePiece> pieces)
+    public sealed record VoicePlan(double Tempo, IReadOnlyList<double> Starts, double VideoSeconds, double HoldSeconds);
+
+    public const double VoiceGap = 0.3, VoiceTail = 0.4, MaxVoiceTempo = 1.25;
+
+    public static VoicePlan PlanVoices(IReadOnlyList<VoicePiece> pieces)
+    {
+        var video = pieces.Sum(p => Math.Max(0.1, p.ClipSeconds));
+        (List<double> Starts, double End) Lay(double tempo)
+        {
+            var starts = new List<double>();
+            double at = 0, end = 0;
+            var any = false;
+            foreach (var p in pieces)
+            {
+                if (p.VoicePath != null)
+                {
+                    var start = any ? Math.Max(at, end + VoiceGap) : at;
+                    starts.Add(start);
+                    end = start + Math.Max(0, p.VoiceSeconds) / tempo;
+                    any = true;
+                }
+                else starts.Add(at);
+                at += Math.Max(0.1, p.ClipSeconds);
+            }
+            return (starts, end);
+        }
+
+        var room = video - VoiceTail;
+        var plain = Lay(1.0);
+        if (plain.End <= room) return new VoicePlan(1.0, plain.Starts, video, 0);
+        var fastest = Lay(MaxVoiceTempo);
+        if (fastest.End > room) return new VoicePlan(MaxVoiceTempo, fastest.Starts, video, Math.Round(fastest.End - room, 2));
+        double lo = 1.0, hi = MaxVoiceTempo; // the gentlest speed-up that fits
+        for (var i = 0; i < 30; i++)
+        {
+            var mid = (lo + hi) / 2;
+            if (Lay(mid).End <= room) hi = mid; else lo = mid;
+        }
+        var tempo = Math.Ceiling(hi * 1000) / 1000;
+        return new VoicePlan(tempo, Lay(tempo).Starts, video, 0);
+    }
+
+    /// <summary>
+    /// filter_complex for the plan: silence the length of the (held) video, every take mixed in at its start.
+    /// Input 0 = the video; the takes are inputs 1… in clip order.
+    /// </summary>
+    public static string BuildVoiceFilter(IReadOnlyList<VoicePiece> pieces, VoicePlan plan)
     {
         var f = new StringBuilder();
+        var total = (plan.VideoSeconds + plan.HoldSeconds).ToString("0.###", Inv);
+        if (plan.HoldSeconds > 0) f.Append(Inv, $"[0:v:0]tpad=stop_mode=clone:stop_duration={plan.HoldSeconds.ToString("0.###", Inv)}[vout];");
+        f.Append(Inv, $"anullsrc=r=48000:cl=stereo,atrim=0:{total},asetpts=PTS-STARTPTS[base];");
+        var tempo = plan.Tempo > 1.001 ? $",atempo={plan.Tempo.ToString("0.###", Inv)}" : "";
         var input = 1;
+        var mixed = new StringBuilder("[base]");
         for (var i = 0; i < pieces.Count; i++)
         {
-            var p = pieces[i];
-            var clip = Math.Max(0.1, p.ClipSeconds).ToString("0.###", Inv);
-            if (p.VoicePath == null)
-            {
-                f.Append(Inv, $"anullsrc=r=48000:cl=stereo,atrim=0:{clip},asetpts=PTS-STARTPTS[a{i}];");
-                continue;
-            }
-            var room = Math.Max(0.1, p.ClipSeconds - 0.05);
-            var ratio = Math.Min(1.25, p.VoiceSeconds / room);
-            var tempo = ratio > 1.01 ? $",atempo={ratio.ToString("0.####", Inv)}" : "";
-            f.Append(Inv, $"[{input++}:a:0]aformat=sample_rates=48000:channel_layouts=stereo,asetpts=PTS-STARTPTS{tempo},")
-             .Append(Inv, $"apad=whole_dur={clip},atrim=0:{clip},asetpts=PTS-STARTPTS[a{i}];");
+            if (pieces[i].VoicePath == null) continue;
+            var ms = (long)Math.Round(plan.Starts[i] * 1000);
+            f.Append(Inv, $"[{input}:a:0]aformat=sample_rates=48000:channel_layouts=stereo,asetpts=PTS-STARTPTS{tempo},adelay={ms}:all=1[v{input}];");
+            mixed.Append(Inv, $"[v{input}]");
+            input++;
         }
-        for (var i = 0; i < pieces.Count; i++) f.Append(Inv, $"[a{i}]");
-        f.Append(Inv, $"concat=n={pieces.Count}:v=0:a=1[aout]");
+        f.Append(mixed).Append(Inv, $"amix=inputs={input}:duration=first:dropout_transition=0:normalize=0[aout]");
         return f.ToString();
     }
 
-    /// <summary>Adds the narrator's takes to the joined (silent) video; the picture is copied untouched.</summary>
+    /// <summary>
+    /// Adds the narrator's takes to the joined (silent) video. The picture is copied untouched — re-encoded only when
+    /// its last frame must be held for the end of the narration.
+    /// </summary>
     public async Task AddVoicesAsync(string video, IReadOnlyList<VoicePiece> pieces, string output, CancellationToken ct)
     {
+        var plan = PlanVoices(pieces);
         var args = new List<string> { "-hide_banner", "-v", "error", "-y", "-i", video };
         foreach (var p in pieces.Where(p => p.VoicePath != null)) { args.Add("-i"); args.Add(p.VoicePath!); }
-        args.AddRange(new[] { "-filter_complex", BuildVoiceFilter(pieces), "-map", "0:v:0", "-map", "[aout]", "-c:v", "copy", "-c:a", "aac",
-            "-b:a", "192k", "-shortest", "-movflags", "+faststart", output });
+        args.AddRange(new[] { "-filter_complex", BuildVoiceFilter(pieces, plan) });
+        if (plan.HoldSeconds > 0)
+            args.AddRange(new[] { "-map", "[vout]", "-map", "[aout]", "-c:v", "libx264", "-preset", "medium", "-crf", "16", "-pix_fmt", "yuv420p" });
+        else
+            args.AddRange(new[] { "-map", "0:v:0", "-map", "[aout]", "-c:v", "copy" });
+        args.AddRange(new[] { "-c:a", "aac", "-b:a", "192k", "-shortest", "-movflags", "+faststart", output });
         var (code, _, err) = await RunAsync(Ffmpeg, args, ct);
         if (code != 0 || !File.Exists(output)) throw new InvalidOperationException("Không ghép được lời bình vào video: " + Tail(err));
     }

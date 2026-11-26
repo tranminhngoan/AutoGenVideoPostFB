@@ -185,20 +185,46 @@ public class AiStudioUnitTests
     }
 
     [Fact]
-    public void Each_scene_is_narrated_by_an_ai_voice_laid_under_its_own_clip()
+    public void Each_scene_is_narrated_by_an_ai_voice_that_runs_on_over_the_next_scene_when_longer()
     {
-        var f = AiStudioMedia.BuildVoiceFilter(new[]
+        // clips 5 + 4 + 6 + 6 = 21 s; a take longer than its clip carries on over the following picture
+        var pieces = new[]
         {
-            new AiStudioMedia.VoicePiece("a.m4a", 3.2, 5.0),   // shorter than the clip → silence after it
-            new AiStudioMedia.VoicePiece(null, 0, 4.0),        // no narration in this scene → silent
-            new AiStudioMedia.VoicePiece("b.m4a", 7.0, 6.0),   // a little longer → played faster, then cut
-            new AiStudioMedia.VoicePiece("c.m4a", 12.0, 6.0),  // far longer → at most 25 % faster
-        });
-        f.Should().Contain("[1:a:0]aformat=sample_rates=48000:channel_layouts=stereo,asetpts=PTS-STARTPTS,apad=whole_dur=5,atrim=0:5,asetpts=PTS-STARTPTS[a0];");
-        f.Should().Contain("anullsrc=r=48000:cl=stereo,atrim=0:4,asetpts=PTS-STARTPTS[a1];");
-        f.Should().Contain("[2:a:0]aformat=sample_rates=48000:channel_layouts=stereo,asetpts=PTS-STARTPTS,atempo=1.1765,apad=whole_dur=6");
-        f.Should().Contain("[3:a:0]aformat=sample_rates=48000:channel_layouts=stereo,asetpts=PTS-STARTPTS,atempo=1.25,");
-        f.Should().EndWith("[a0][a1][a2][a3]concat=n=4:v=0:a=1[aout]");
+            new AiStudioMedia.VoicePiece("a.m4a", 3.2, 5.0),   // starts with its clip, silence after it
+            new AiStudioMedia.VoicePiece(null, 0, 4.0),        // no narration in this scene
+            new AiStudioMedia.VoicePiece("b.m4a", 9.0, 6.0),   // longer than its clip → runs into the next scene
+            new AiStudioMedia.VoicePiece("c.m4a", 2.0, 6.0),   // waits for the previous take (+0.3 s)
+        };
+        var plan = AiStudioMedia.PlanVoices(pieces);
+        plan.Tempo.Should().Be(1.0);
+        plan.HoldSeconds.Should().Be(0);
+        plan.Starts[0].Should().Be(0);
+        plan.Starts[2].Should().Be(9);
+        plan.Starts[3].Should().BeApproximately(18.3, 1e-9);
+        var f = AiStudioMedia.BuildVoiceFilter(pieces, plan);
+        f.Should().StartWith("anullsrc=r=48000:cl=stereo,atrim=0:21,asetpts=PTS-STARTPTS[base];");
+        f.Should().Contain("[1:a:0]aformat=sample_rates=48000:channel_layouts=stereo,asetpts=PTS-STARTPTS,adelay=0:all=1[v1];");
+        f.Should().Contain("[2:a:0]aformat=sample_rates=48000:channel_layouts=stereo,asetpts=PTS-STARTPTS,adelay=9000:all=1[v2];");
+        f.Should().Contain("[3:a:0]aformat=sample_rates=48000:channel_layouts=stereo,asetpts=PTS-STARTPTS,adelay=18300:all=1[v3];");
+        f.Should().EndWith("[base][v1][v2][v3]amix=inputs=4:duration=first:dropout_transition=0:normalize=0[aout]");
+        f.Should().NotContain("tpad");
+
+        // the takes would outlast the video: all read a little faster, just enough
+        var tight = new[] { new AiStudioMedia.VoicePiece("a.m4a", 6.0, 5.0), new AiStudioMedia.VoicePiece("b.m4a", 5.0, 5.0) };
+        var fit = AiStudioMedia.PlanVoices(tight);
+        fit.Tempo.Should().BeInRange(1.1, 1.25);
+        fit.HoldSeconds.Should().Be(0);
+        (fit.Starts[1] + 5.0 / fit.Tempo).Should().BeLessThanOrEqualTo(10 - AiStudioMedia.VoiceTail + 0.01);
+        AiStudioMedia.BuildVoiceFilter(tight, fit).Should().Contain(",atempo=1.");
+
+        // even 25 % faster it does not fit: the last picture is held, no word cut
+        var over = new[] { new AiStudioMedia.VoicePiece("a.m4a", 20.0, 6.0) };
+        var held = AiStudioMedia.PlanVoices(over);
+        held.Tempo.Should().Be(AiStudioMedia.MaxVoiceTempo);
+        held.HoldSeconds.Should().BeApproximately(16 + AiStudioMedia.VoiceTail - 6, 0.01);
+        var hf = AiStudioMedia.BuildVoiceFilter(over, held);
+        hf.Should().StartWith("[0:v:0]tpad=stop_mode=clone:stop_duration=10.4[vout];");
+        hf.Should().Contain("atrim=0:16.4,");
     }
 
     [Fact]
@@ -734,7 +760,10 @@ public class AiStudioFlowTests : IClassFixture<WebApplicationFactory<Program>>
         {
             Interlocked.Increment(ref Calls);
             lock (Takes) Takes.Add((text, voice, style));
-            var seconds = text.Contains("nghèo") ? 1.5 : text.Contains("DÀI") ? (speed == "+20%" ? 13.0 : 16.0) : 3.0;
+            var seconds = text.Contains("nghèo") ? 1.5
+                : text.Contains("QUÁ DÀI") ? 50.0
+                : text.Contains("RẤT DÀI") ? (speed == "+20%" ? 21.0 : 25.0)
+                : text.Contains("DÀI") ? (speed == "+20%" ? 13.0 : 16.0) : 3.0;
             var path = Path.Combine(Path.GetTempPath(), $"take-{Guid.NewGuid():N}.m4a");
             var media = new AiStudioMedia(new ConfigurationBuilder().Build());
             var (code, _, err) = await AiStudioMedia.RunAsync(media.Ffmpeg, new[] { "-hide_banner", "-v", "error", "-y", "-f", "lavfi", "-i",
@@ -820,9 +849,18 @@ public class AiStudioFlowTests : IClassFixture<WebApplicationFactory<Program>>
             fast.VoiceSeconds.Should().Be(13);
             fast.TargetSeconds.Should().Be(SeedanceVideoClient.MaxSeconds);
             (await db.StudioCostRecords.AsNoTracking().CountAsync(c => c.Note!.Contains(title) && c.Note.Contains("đọc nhanh hơn"))).Should().Be(1);
+            // longer than a clip even read faster: kept (it runs on over the next scene when joined)
+            await studio.EditNarrationAsync(p.Id, ids[1], "Lời bình RẤT DÀI, hơn hẳn một clip.", CancellationToken.None);
+            (await studio.SpeakSceneAsync(p.Id, ids[1], CancellationToken.None)).VoiceSeconds.Should().Be(21);
+            narrator.Calls.Should().Be(6);
+            // far too long for one scene: refused with a way out
+            await studio.EditNarrationAsync(p.Id, ids[1], "Lời bình QUÁ DÀI.", CancellationToken.None);
+            var tooLong = () => studio.SpeakSceneAsync(p.Id, ids[1], CancellationToken.None);
+            (await tooLong.Should().ThrowAsync<InvalidOperationException>()).WithMessage("*Chuyển bớt chữ sang cảnh bên cạnh*");
+            narrator.Calls.Should().Be(8);
             await studio.EditNarrationAsync(p.Id, ids[1], "Mẹ đi chợ từ sáng sớm.", CancellationToken.None);
             await studio.SpeakSceneAsync(p.Id, ids[1], CancellationToken.None);
-            narrator.Calls.Should().Be(5);
+            narrator.Calls.Should().Be(9);
 
             // 4. the user's own words: quoted in the prompt, the take out of date until read again
             var edited = await studio.EditNarrationAsync(p.Id, ids[0], "Hồi đó nhà tôi nghèo lắm, cơm không đủ ăn.", CancellationToken.None);
@@ -830,7 +868,7 @@ public class AiStudioFlowTests : IClassFixture<WebApplicationFactory<Program>>
             edited.VoiceCurrent.Should().BeFalse();
             edited.Prompt.Should().Contain("\"Hồi đó nhà tôi nghèo lắm, cơm không đủ ăn\"");
             await studio.SpeakSceneAsync(p.Id, ids[0], CancellationToken.None);
-            narrator.Calls.Should().Be(6);
+            narrator.Calls.Should().Be(10);
 
             // the channel's designed voices ("Giọng đọc" tab) are offered and usable
             var designedKey = NewsStudio.Infrastructure.Studio.StudioService.DesignedVoicesKey;
@@ -871,7 +909,8 @@ public class AiStudioFlowTests : IClassFixture<WebApplicationFactory<Program>>
             var media = new AiStudioMedia(new ConfigurationBuilder().Build());
             var probe = await media.ProbeAsync(final, CancellationToken.None);
             probe.Audio.Should().ContainSingle();
-            probe.Duration.Should().BeApproximately(4, 0.3);
+            // 2 + 2 s of clips, takes of 1.5 + 3 s: the second runs on, read 25 % faster, the last picture held ~0.8 s — no word cut
+            probe.Duration.Should().BeApproximately(4.8, 0.3);
 
             // 6. the reference's own sound is still available on request
             await studio.SetGeneratorAsync(p.Id, new AiStudioGeneratorSettingsDto { VideoModel = SeedanceVideoClient.FastModel, Resolution = "720p", AspectRatio = "9:16", AudioMode = "Original" }, CancellationToken.None);

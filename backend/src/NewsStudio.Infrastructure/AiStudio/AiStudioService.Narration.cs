@@ -141,12 +141,13 @@ public partial class AiStudioService
         if (take.Seconds > AiStudioNarration.MaxVoiceSeconds) // too long for one clip: read again 20 % faster (pitch kept)
             take = await SpeakTakeAsync(p, s, speakVoice, style, gender, "+20%", ct);
         var (audio, seconds) = take;
-        if (seconds > AiStudioNarration.MaxVoiceSeconds)
+        // still longer than one clip: fine — in the joined video it runs on over the next scene, like a voice-over does
+        if (seconds > AiStudioNarration.MaxTakeSeconds)
         {
             await _db.SaveChangesAsync(ct);
             throw new InvalidOperationException(
-                $"Lời bình cảnh {s.Order + 1} đọc nhanh vẫn mất {seconds:0.0}s — một clip chỉ dài tối đa {SeedanceVideoClient.MaxSeconds}s. " +
-                "Bớt chữ ở ô lời bình của cảnh này (hoặc chuyển bớt sang cảnh bên cạnh) rồi đọc lại.");
+                $"Lời bình cảnh {s.Order + 1} đọc mất {seconds:0.0}s — quá dài cho một cảnh (tối đa {AiStudioNarration.MaxTakeSeconds:0}s). " +
+                "Chuyển bớt chữ sang cảnh bên cạnh rồi đọc lại.");
         }
 
         var temp = TempDir();
