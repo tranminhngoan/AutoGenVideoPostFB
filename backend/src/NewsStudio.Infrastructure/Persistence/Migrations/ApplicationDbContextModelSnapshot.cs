@@ -2110,6 +2110,9 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                         .HasPrecision(18, 6)
                         .HasColumnType("numeric(18,6)");
 
+                    b.Property<bool>("AlsoInstagram")
+                        .HasColumnType("boolean");
+
                     b.Property<string>("ApprovalMode")
                         .IsRequired()
                         .HasMaxLength(20)
@@ -2595,6 +2598,18 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)");
+
+                    b.Property<string>("InstagramError")
+                        .HasMaxLength(1500)
+                        .HasColumnType("character varying(1500)");
+
+                    b.Property<string>("InstagramMediaId")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("InstagramPermalink")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
 
                     b.Property<string>("Kind")
                         .IsRequired()

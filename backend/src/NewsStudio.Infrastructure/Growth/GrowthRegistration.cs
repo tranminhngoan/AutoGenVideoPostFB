@@ -67,6 +67,13 @@ public class GrowthCapabilityService
         Add("photo_story", "Story ảnh", "POST /{page}/photo_stories", "pages_manage_posts", tokenError != null ? "Unknown" : Has("pages_manage_posts") ? "Unknown" : "No",
             Missing("pages_manage_posts") ?? "Có quyền; Meta chỉ xác nhận khi đăng thử. Nếu bị từ chối, nội dung chuyển sang hướng dẫn đăng thủ công.");
 
+        var ig = await _db.FacebookAccounts.AsNoTracking().Where(a => a.Id == facebookAccountId).Select(a => new { a.InstagramAccountId, a.InstagramUsername }).FirstAsync(ct);
+        var igLinked = !string.IsNullOrWhiteSpace(ig.InstagramAccountId);
+        Add("instagram", "Đăng Instagram (ảnh, nhiều ảnh, Reels, Tin)", "POST /{ig-user}/media + /media_publish", "instagram_basic, instagram_content_publish",
+            !igLinked ? "No" : ByPerm("instagram_basic", "instagram_content_publish"),
+            !igLinked ? "Page chưa liên kết tài khoản Instagram chuyên nghiệp — liên kết trong Cài đặt Page, rồi \"Làm mới Instagram\" ở Cài đặt → Facebook."
+                : Missing("instagram_basic", "instagram_content_publish") ?? $"@{ig.InstagramUsername}. Bài chỉ có chữ không đăng được lên Instagram.");
+
         var (followers, followersError) = await _graph.FollowersAsync(facebookAccountId, ct);
         Add("followers", "Đọc số follower", "GET /{page}?fields=followers_count", "pages_read_engagement", followers != null ? "Yes" : "No",
             followers != null ? $"Hiện tại: {followers:N0}" : followersError);

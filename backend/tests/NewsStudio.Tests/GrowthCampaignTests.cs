@@ -86,6 +86,16 @@ public class GrowthLogicTests
     }
 
     [Fact]
+    public void InstagramCaptionsKeepAtMost30HashtagsAnd2200Characters()
+    {
+        var many = "Chiều quê " + string.Join(" ", Enumerable.Range(1, 40).Select(i => "#tag" + i));
+        var ig = GrowthGraphClient.InstagramCaption(many);
+        System.Text.RegularExpressions.Regex.Matches(ig, "#tag").Count.Should().Be(30);
+        ig.Should().StartWith("Chiều quê #tag1");
+        GrowthGraphClient.InstagramCaption(new string('a', 3000)).Length.Should().Be(2200);
+    }
+
+    [Fact]
     public void TokensAreNeverKeptInErrorMessages()
     {
         // Meta echoes a malformed token back in its error text
@@ -608,12 +618,15 @@ public class GrowthApiTests : IClassFixture<WebApplicationFactory<Program>>
         public readonly System.Collections.Concurrent.ConcurrentQueue<Guid> Ids = new();
         public int CallsFor(Guid id) => Ids.Count(x => x == id);
         public Func<GrowthScheduledContent, Exception?> Fail = _ => null;
+        public string? InstagramError;
         public async Task<GrowthPublishResult> PublishAsync(GrowthCampaign campaign, GrowthScheduledContent item, CancellationToken ct)
         {
             Ids.Enqueue(item.Id);
             await Task.Delay(30, ct);
             if (Fail(item) is { } ex) throw ex;
-            return new GrowthPublishResult("123_" + item.Id.ToString("N")[..8], null, "https://www.facebook.com/123", null);
+            return InstagramError != null
+                ? new GrowthPublishResult("123_" + item.Id.ToString("N")[..8], null, "https://www.facebook.com/123", null) { InstagramError = InstagramError }
+                : new GrowthPublishResult("123_" + item.Id.ToString("N")[..8], null, "https://www.facebook.com/123", null) { InstagramMediaId = "1789", InstagramPermalink = "https://www.instagram.com/p/abc/" };
         }
     }
 
@@ -664,6 +677,25 @@ public class GrowthApiTests : IClassFixture<WebApplicationFactory<Program>>
         // asking again never posts it a second time
         using (var scope = _factory.Services.CreateScope()) await Publisher(scope, gateway).PublishOneAsync(id, CancellationToken.None);
         gateway.CallsFor(id).Should().Be(1);
+    }
+
+    [Fact]
+    public async Task TheInstagramCopyIsRecordedAndItsFailureNeverUndoesFacebook()
+    {
+        var page = await NewPageAsync();
+        var c = await WithKeyResult(() => NewCampaignAsync(page.Id));
+        c.AlsoInstagram.Should().BeTrue("posting on Facebook also posts on Instagram by default");
+        var ok = await DueItemAsync(c.Id);
+        var failing = await DueItemAsync(c.Id);
+        using (var scope = _factory.Services.CreateScope()) await Publisher(scope, new FakeGateway()).PublishOneAsync(ok, CancellationToken.None);
+        using (var scope = _factory.Services.CreateScope())
+            await Publisher(scope, new FakeGateway { InstagramError = "Page chưa liên kết tài khoản Instagram" }).PublishOneAsync(failing, CancellationToken.None);
+        var a = await ItemAsync(ok);
+        a.InstagramMediaId.Should().Be("1789");
+        a.InstagramPermalink.Should().Contain("instagram.com");
+        var b = await ItemAsync(failing);
+        b.Status.Should().Be("Published", "Facebook went out; Instagram failing is only noted");
+        b.InstagramError.Should().Contain("Instagram");
     }
 
     [Fact]

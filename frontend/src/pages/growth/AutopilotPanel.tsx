@@ -97,7 +97,7 @@ export function AutopilotPanel({ ctx, onChanged }: { ctx: GrowthCtx; onChanged?:
               {data && (data.enabled ? <Badge tone="success" dot pulse>Đang bật</Badge> : <Badge>Đang tắt</Badge>)}
             </div>
             <p className="mt-0.5 text-[13px] text-fg-muted">
-              Mỗi ngày: 1 bài viết từ kịch bản (ảnh AI + bài viết), 1 video Reels có sẵn, {data?.storiesPerDay ?? 2} Tin cắt từ video. Bạn chỉ cần xem — khi cần bạn, thông báo hiện ở đây.
+              Mỗi ngày: 1 bài viết từ kịch bản (ảnh AI + bài viết), 1 video Reels có sẵn, {data?.storiesPerDay ?? 2} Tin cắt từ video. Đăng lên Facebook{ctx.page?.instagramUsername ? ` và Instagram @${ctx.page.instagramUsername}` : ''}. Bạn chỉ cần xem — khi cần bạn, thông báo hiện ở đây.
             </p>
           </div>
         </div>
@@ -173,6 +173,7 @@ export function AutopilotPanel({ ctx, onChanged }: { ctx: GrowthCtx; onChanged?:
                           {KIND_LABEL[c.kind]}
                           {c.clipStartSeconds != null && ` · đoạn ${Math.round(c.clipStartSeconds)}s–${Math.round(c.clipStartSeconds + (c.clipSeconds ?? 0))}s`}
                           {c.status === 'Failed' && c.lastError ? ` · ${c.lastError.slice(0, 80)}` : ''}
+                          {c.status === 'Published' && (c.instagramMediaId ? ' · cả Instagram' : c.instagramError ? ' · Instagram: chưa đăng được' : '')}
                         </span>
                       </span>
                       {c.status === 'Published' ? <CheckCircle2 className="h-4 w-4 text-success" aria-label={STATUS_LABEL[c.status]} /> : <ContentBadge status={c.status} />}

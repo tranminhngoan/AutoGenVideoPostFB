@@ -249,6 +249,12 @@ export function ContentEditor({
                 Xem trên Facebook <ExternalLink className="h-3 w-3" />
               </a>
             )}
+            {item.instagramPermalink?.startsWith('http') && (
+              <a className="inline-flex items-center gap-1 text-accent hover:underline" href={item.instagramPermalink} target="_blank" rel="noreferrer noopener">
+                Xem trên Instagram <ExternalLink className="h-3 w-3" />
+              </a>
+            )}
+            {item.instagramMediaId && !item.instagramPermalink?.startsWith('http') && <Badge tone="success">Đã đăng Instagram</Badge>}
             {item.attempts > 0 && item.status !== 'Published' && <span className="text-fg-subtle">Đã thử {item.attempts}/{item.maxAttempts} lần</span>}
           </div>
         )}
@@ -257,6 +263,9 @@ export function ContentEditor({
             {item.lastError}
             {item.nextAttemptAtUtc && <div className="mt-1 text-xs">Lần thử tiếp theo: {vnShort(item.nextAttemptAtUtc)}</div>}
           </Alert>
+        )}
+        {item?.status === 'Published' && item.instagramError && (
+          <Alert tone="warning" title="Facebook đã đăng — Instagram chưa đăng được">{item.instagramError}</Alert>
         )}
         {error && <Alert tone="danger">{error}</Alert>}
 

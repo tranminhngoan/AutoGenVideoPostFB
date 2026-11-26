@@ -153,6 +153,8 @@ export interface Campaign {
   aiBudgetUsd: number;
   aiSpentUsd: number;
   approvalMode: 'Auto' | 'Review';
+  alsoInstagram: boolean;
+  instagramUsername?: string | null;
   startingFollowers?: number | null;
   startingFollowersAtUtc?: string | null;
   endingFollowers?: number | null;
@@ -183,6 +185,7 @@ export interface CampaignInput {
   timeSlots?: string[];
   aiBudgetUsd?: number;
   approvalMode?: 'Auto' | 'Review';
+  alsoInstagram?: boolean;
   metaOneCost?: number | null;
   metaOneCurrency?: 'VND' | 'USD';
   notes?: string;
@@ -247,6 +250,9 @@ export interface Content {
   clipStartSeconds?: number | null;
   clipSeconds?: number | null;
   scriptId?: string | null;
+  instagramMediaId?: string | null;
+  instagramPermalink?: string | null;
+  instagramError?: string | null;
   latestMetric?: PostMetric | null;
   createdAtUtc: string;
   updatedAtUtc?: string | null;

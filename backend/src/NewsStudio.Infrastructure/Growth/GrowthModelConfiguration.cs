@@ -47,6 +47,9 @@ public static class GrowthModelConfiguration
             e.Property(x => x.ExternalPostId).HasMaxLength(100);
             e.Property(x => x.ExternalVideoId).HasMaxLength(100);
             e.Property(x => x.PermalinkUrl).HasMaxLength(500);
+            e.Property(x => x.InstagramMediaId).HasMaxLength(100);
+            e.Property(x => x.InstagramPermalink).HasMaxLength(500);
+            e.Property(x => x.InstagramError).HasMaxLength(1500);
             e.HasIndex(x => x.ScriptId);
             e.HasOne(x => x.Campaign).WithMany(c => c.Contents).HasForeignKey(x => x.CampaignId).OnDelete(DeleteBehavior.Cascade);
             e.HasIndex(x => x.IdempotencyKey).IsUnique();

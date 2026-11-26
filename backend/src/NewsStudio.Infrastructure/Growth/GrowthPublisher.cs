@@ -10,7 +10,13 @@ using NewsStudio.Infrastructure.Studio;
 
 namespace NewsStudio.Infrastructure.Growth;
 
-public sealed record GrowthPublishResult(string PostId, string? VideoId, string? PermalinkUrl, Guid? FacebookPostRecordId);
+public sealed record GrowthPublishResult(string PostId, string? VideoId, string? PermalinkUrl, Guid? FacebookPostRecordId)
+{
+    public string? InstagramMediaId { get; init; }
+    public string? InstagramPermalink { get; init; }
+    /// <summary>Why the Instagram copy is missing (Facebook is posted either way).</summary>
+    public string? InstagramError { get; init; }
+}
 
 /// <summary>Posts one calendar item on Facebook. Separate from the scheduler so the scheduling rules can be tested without Meta.</summary>
 public interface IGrowthPublishGateway
@@ -62,6 +68,94 @@ public class GrowthPublishGateway : IGrowthPublishGateway
     public static string PostUrl(string postId) => $"https://www.facebook.com/{postId}";
 
     public async Task<GrowthPublishResult> PublishAsync(GrowthCampaign campaign, GrowthScheduledContent item, CancellationToken ct)
+    {
+        try
+        {
+            var result = await PublishFacebookAsync(campaign, item, ct);
+            if (!campaign.AlsoInstagram || campaign.FacebookAccountId is not { } page) return result;
+            // Facebook is live: the Instagram copy is extra — its failure is recorded, never thrown
+            try
+            {
+                var ig = await PublishInstagramAsync(page, item, result, ct);
+                return ig == null ? result : result with
+                {
+                    InstagramMediaId = ig.Value.MediaId, InstagramPermalink = ig.Value.MediaId != null ? ig.Value.Permalink ?? "posted" : null, InstagramError = ig.Value.Error
+                };
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+            {
+                return result with { InstagramError = Cut(GrowthGraphClient.Redact(ex.Message), 1500) };
+            }
+        }
+        finally
+        {
+            if (_storyTempDir != null) StudioMedia.TryDelete(_storyTempDir);
+            _storyTempDir = null;
+            _lastStoryVideo = null;
+        }
+    }
+
+    private static string Cut(string s, int max) => s.Length > max ? s[..max] : s;
+
+    /// <summary>
+    /// The same content on the Page's linked Instagram. Reels of Studio Video AI and news videos are already posted there
+    /// by their own publish functions (their result is passed on); text-only posts can't go on Instagram.
+    /// </summary>
+    private async Task<(string? MediaId, string? Permalink, string? Error)?> PublishInstagramAsync(Guid pageId, GrowthScheduledContent item, GrowthPublishResult fb, CancellationToken ct)
+    {
+        if (fb.InstagramMediaId != null || fb.InstagramError != null) return (fb.InstagramMediaId, fb.InstagramPermalink, fb.InstagramError);
+        var message = ComposeMessage(item.Caption, item.Hashtags);
+        var assetIds = GrowthContentService.AssetIds(item.AssetIdsJson);
+        switch (item.Kind)
+        {
+            case GrowthKinds.Reel when item.SourceType == GrowthSources.AiStudioProject && item.SourceId is { } sid:
+            {
+                var blob = await _db.AiStudioProjects.AsNoTracking().Where(p => p.Id == sid).Select(p => p.FinalBlobId).FirstOrDefaultAsync(ct);
+                var file = await _aiStudio.FileAsync(blob, ct) ?? throw new InvalidOperationException("Mất file video để đăng Instagram.");
+                var (mediaId, permalink) = await _facebook.PublishInstagramVideoFileAsync(pageId, file.Path, StudioService.CaptionWithDisclosure(message), null, ct);
+                if (fb.FacebookPostRecordId is { } rec)
+                {
+                    // the existing stats read the Instagram numbers of this record
+                    var record = await _db.FacebookPosts.FirstOrDefaultAsync(p => p.Id == rec, ct);
+                    if (record != null) { record.InstagramMediaId = mediaId; record.InstagramPermalink = permalink; await _db.SaveChangesAsync(ct); }
+                }
+                return (mediaId, permalink, null);
+            }
+            case GrowthKinds.Reel:
+                return null; // Studio / news publish already handled Instagram (see PublishFacebookAsync)
+            case GrowthKinds.Photo or GrowthKinds.Album or GrowthKinds.Interactive:
+            {
+                if (assetIds.Count == 0) return (null, null, "Instagram không đăng bài chỉ có chữ — bài này chỉ lên Facebook.");
+                var urls = new List<string>();
+                foreach (var id in assetIds)
+                    urls.Add(await _content.PublicAssetUrlAsync(id, ct)
+                             ?? throw new InvalidOperationException("Instagram cần đường dẫn công khai tới ảnh — đặt App:PublicBaseUrl hoặc dùng bucket R2."));
+                var (mediaId, permalink) = await _graph.PublishInstagramImagesAsync(pageId, urls, message, ct);
+                return (mediaId, permalink, null);
+            }
+            case GrowthKinds.Story:
+            {
+                if (assetIds.Count == 1 && await _db.GrowthContentAssets.AsNoTracking().AnyAsync(a => a.Id == assetIds[0] && a.Kind == "Image", ct))
+                {
+                    var url = await _content.PublicAssetUrlAsync(assetIds[0], ct)
+                              ?? throw new InvalidOperationException("Instagram cần đường dẫn công khai tới ảnh Tin.");
+                    var (mediaId, permalink) = await _graph.PublishInstagramStoryAsync(pageId, url, null, ct);
+                    return (mediaId, permalink, null);
+                }
+                if (_lastStoryVideo == null || !File.Exists(_lastStoryVideo)) return (null, null, "Không còn file video Tin để đăng Instagram.");
+                var (vid, vlink) = await _graph.PublishInstagramStoryAsync(pageId, null, _lastStoryVideo, ct);
+                return (vid, vlink, null);
+            }
+            default:
+                return null;
+        }
+    }
+
+    /// <summary>The video file just posted as a Facebook Story (kept until the Instagram copy is done).</summary>
+    private string? _lastStoryVideo;
+    private string? _storyTempDir;
+
+    private async Task<GrowthPublishResult> PublishFacebookAsync(GrowthCampaign campaign, GrowthScheduledContent item, CancellationToken ct)
     {
         var pageId = campaign.FacebookAccountId ?? throw new GrowthPublishException(GrowthErrorKind.Token, "Page của chiến dịch đã bị xoá khỏi ứng dụng.");
         var message = ComposeMessage(item.Caption, item.Hashtags);
@@ -130,7 +224,13 @@ public class GrowthPublishGateway : IGrowthPublishGateway
                     throw new InvalidOperationException(after.ErrorMessage ?? "Studio không đăng được video.");
                 var record = await _db.FacebookPosts.AsNoTracking().Where(p => p.StudioVideoId == v.Id).OrderByDescending(p => p.CreatedAtUtc)
                     .Select(p => new { p.Id, p.FacebookVideoId }).FirstOrDefaultAsync(ct);
-                return new GrowthPublishResult(after.PublishedPostId, record?.FacebookVideoId, PostUrl(after.PublishedPostId), record?.Id);
+                return new GrowthPublishResult(after.PublishedPostId, record?.FacebookVideoId, PostUrl(after.PublishedPostId), record?.Id)
+                {
+                    // the studio's publish also posts on the linked Instagram: report what happened there
+                    InstagramMediaId = after.InstagramPermalink != null ? "studio" : null,
+                    InstagramPermalink = after.InstagramPermalink is { } ip && ip != "posted" ? ip : null,
+                    InstagramError = after.InstagramPermalink == null ? after.InstagramError : null
+                };
             }
             case GrowthSources.AiStudioProject:
             {
@@ -154,10 +254,15 @@ public class GrowthPublishGateway : IGrowthPublishGateway
             case GrowthSources.VideoProject:
             {
                 // the news publish keeps its own rules: editorial approval required, never posted twice
-                var result = await _facebook.PublishReelAsync(sourceId, new PublishReelRequestDto { FacebookAccountId = pageId, CustomCaption = message }, ct);
+                var result = await _facebook.PublishReelAsync(sourceId, new PublishReelRequestDto { FacebookAccountId = pageId, CustomCaption = message, PostToInstagram = campaign.AlsoInstagram }, ct);
                 if (!string.Equals(result.UploadStatus, "Published", StringComparison.OrdinalIgnoreCase) || string.IsNullOrWhiteSpace(result.FacebookPostId))
                     throw new InvalidOperationException(result.ErrorMessage ?? "Đăng video tin tức thất bại.");
-                return new GrowthPublishResult(result.FacebookPostId, result.FacebookVideoId, result.PostUrl, result.FacebookPostRecordId);
+                return new GrowthPublishResult(result.FacebookPostId, result.FacebookVideoId, result.PostUrl, result.FacebookPostRecordId)
+                {
+                    InstagramMediaId = result.InstagramMediaId,
+                    InstagramPermalink = result.InstagramPermalink,
+                    InstagramError = campaign.AlsoInstagram && result.InstagramMediaId == null ? result.InstagramError ?? "Không đăng được lên Instagram." : null
+                };
             }
             default:
                 throw new GrowthPublishException(GrowthErrorKind.Content, "Nguồn video không hợp lệ.");
@@ -184,23 +289,16 @@ public class GrowthPublishGateway : IGrowthPublishGateway
             videoPath = (await _aiStudio.FileAsync(blob, ct))?.Path;
         }
         if (videoPath == null) throw new GrowthPublishException(GrowthErrorKind.Content, "Không tìm thấy ảnh / video cho Story.");
-        string? cutDir = null;
-        try
+        if (item.ClipStartSeconds is { } start && item.ClipSeconds is { } length)
         {
-            if (item.ClipStartSeconds is { } start && item.ClipSeconds is { } length)
-            {
-                // a highlight of a longer video (autopilot): cut it just before posting
-                cutDir = StudioMedia.TempDir();
-                var cut = Path.Combine(cutDir, "story.mp4");
-                await _growthMedia.CutAsync(videoPath, start, length, cut, ct);
-                videoPath = cut;
-            }
-            return await PublishVideoStoryFileAsync(pageId, videoPath, ct);
+            // a highlight of a longer video (autopilot): cut it just before posting (the folder is removed after Instagram)
+            _storyTempDir = StudioMedia.TempDir();
+            var cut = Path.Combine(_storyTempDir, "story.mp4");
+            await _growthMedia.CutAsync(videoPath, start, length, cut, ct);
+            videoPath = cut;
         }
-        finally
-        {
-            if (cutDir != null) StudioMedia.TryDelete(cutDir);
-        }
+        _lastStoryVideo = videoPath;
+        return await PublishVideoStoryFileAsync(pageId, videoPath, ct);
     }
 
     private async Task<GrowthPublishResult> PublishVideoStoryFileAsync(Guid pageId, string videoPath, CancellationToken ct)
@@ -338,11 +436,15 @@ public class GrowthPublisher
         item.ExternalVideoId = result.VideoId == null ? null : Trim(result.VideoId, 100);
         item.PermalinkUrl = result.PermalinkUrl == null ? null : Trim(result.PermalinkUrl, 500);
         item.FacebookPostRecordId = result.FacebookPostRecordId;
+        item.InstagramMediaId = result.InstagramMediaId is { } im ? Trim(im, 100) : null;
+        item.InstagramPermalink = result.InstagramPermalink is { } ipl ? Trim(ipl, 500) : null;
+        item.InstagramError = result.InstagramError is { } ie ? Trim(GrowthGraphClient.Redact(ie), 1500) : null;
         item.LastError = null;
         item.ErrorKind = null;
         item.NextAttemptAtUtc = null;
         Log(item.CampaignId, item.Id, "Info", "Published",
-            $"Đã đăng {GrowthContentService.KindLabel(item.Kind)} \"{GrowthContentService.Short(item.Title, item.Caption)}\" (lần thử {item.Attempts}).", "scheduler");
+            $"Đã đăng {GrowthContentService.KindLabel(item.Kind)} \"{GrowthContentService.Short(item.Title, item.Caption)}\" (lần thử {item.Attempts})"
+            + (item.InstagramMediaId != null ? " · cả Instagram." : item.InstagramError != null ? $" · Instagram chưa đăng được: {item.InstagramError}" : "."), "scheduler");
         // the post is live: this save must not be lost to a cancelled request
         await _db.SaveChangesAsync(CancellationToken.None);
     }

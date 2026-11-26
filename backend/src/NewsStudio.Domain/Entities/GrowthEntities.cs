@@ -39,6 +39,8 @@ public class GrowthCampaign : BaseEntity
     public decimal AiSpentUsd { get; set; }
     /// <summary>Auto (scheduled content is posted at its time) or Review (each item needs approval first).</summary>
     public string ApprovalMode { get; set; } = "Review";
+    /// <summary>Everything posted on the Facebook Page is also posted on its linked Instagram account.</summary>
+    public bool AlsoInstagram { get; set; } = true;
 
     /// <summary>Followers read from Meta when the campaign started / ended (null = Meta didn't give the number).</summary>
     public long? StartingFollowers { get; set; }
@@ -115,6 +117,11 @@ public class GrowthScheduledContent : BaseEntity
 
     /// <summary>The <see cref="FacebookPost"/> record (Reels) the existing stats already follow.</summary>
     public Guid? FacebookPostRecordId { get; set; }
+    /// <summary>The same content on the Page's linked Instagram (a failure there never undoes the Facebook post).</summary>
+    public string? InstagramMediaId { get; set; }
+    public string? InstagramPermalink { get; set; }
+    public string? InstagramError { get; set; }
+
     /// <summary>Posted by hand (marked by the owner) instead of by the app.</summary>
     public bool PublishedManually { get; set; }
 

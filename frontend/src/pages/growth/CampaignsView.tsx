@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Plus, Trash2, Rocket } from 'lucide-react';
-import { Alert, Button, Field, Input, Modal, Segmented, Textarea } from '../../components/ui';
+import { Alert, Button, Checkbox, Field, Input, Modal, Segmented, Textarea } from '../../components/ui';
 import { useConfirm, useToast } from '../../components/feedback';
 import { navigate } from '../../lib/router';
 import { growth, type Campaign, type CampaignInput, type PlanDay } from '../../services/growth';
@@ -98,6 +98,7 @@ export function CampaignForm({ ctx, campaign, onDone }: { ctx: GrowthCtx; campai
     timeSlots: (campaign?.timeSlots ?? ['07:30', '11:30', '20:00']).join(', '),
     aiBudgetUsd: campaign?.aiBudgetUsd ?? 1,
     approvalMode: campaign?.approvalMode ?? ('Review' as 'Auto' | 'Review'),
+    alsoInstagram: campaign?.alsoInstagram ?? true,
     metaOneCost: campaign?.metaOneCost?.toString() ?? '',
     metaOneCurrency: campaign?.metaOneCurrency ?? ('VND' as 'VND' | 'USD'),
     notes: campaign?.notes ?? '',
@@ -124,6 +125,7 @@ export function CampaignForm({ ctx, campaign, onDone }: { ctx: GrowthCtx; campai
       timeSlots: f.timeSlots.split(/[,\s]+/).filter(Boolean),
       aiBudgetUsd: Number(f.aiBudgetUsd),
       approvalMode: f.approvalMode,
+      alsoInstagram: f.alsoInstagram,
       metaOneCost: numOrNull(f.metaOneCost) ?? undefined,
       metaOneCurrency: f.metaOneCurrency,
       notes: f.notes,
@@ -183,6 +185,16 @@ export function CampaignForm({ ctx, campaign, onDone }: { ctx: GrowthCtx; campai
             <Input type="number" min={0} max={50} step={0.1} value={f.aiBudgetUsd} onChange={(e) => set('aiBudgetUsd', Number(e.target.value))} />
           </Field>
         </div>
+        <Checkbox
+          checked={f.alsoInstagram}
+          onChange={(v) => set('alsoInstagram', v)}
+          label="Đăng cả lên Instagram"
+          description={
+            ctx.page?.instagramUsername || campaign?.instagramUsername
+              ? `Mọi bài đăng Facebook cũng đăng lên @${ctx.page?.instagramUsername ?? campaign?.instagramUsername} (bài chỉ có chữ thì không — Instagram không nhận).`
+              : 'Page chưa liên kết Instagram — liên kết trong Cài đặt Page trên Facebook rồi bấm "Làm mới Instagram" ở Cài đặt → Facebook.'
+          }
+        />
         <div className="grid gap-4 sm:grid-cols-[1fr_120px]">
           <Field label="Chi phí Meta One (để tính chi phí / follower)" optional>
             <Input inputMode="numeric" value={f.metaOneCost} onChange={(e) => set('metaOneCost', e.target.value)} placeholder="Giá thực trả cho kỳ này" />

@@ -55,9 +55,14 @@ public partial class GrowthContentService
     private readonly StudioFileStore _files;
     private readonly AiStudioMedia _media;
     private readonly IBackgroundJobClient _jobs;
+    private readonly GrowthMedia _growthMedia;
+    private readonly Microsoft.Extensions.Configuration.IConfiguration _configuration;
 
-    public GrowthContentService(IApplicationDbContext db, GrowthCampaignService campaigns, StudioFileStore files, AiStudioMedia media, IBackgroundJobClient jobs)
+    public GrowthContentService(IApplicationDbContext db, GrowthCampaignService campaigns, StudioFileStore files, AiStudioMedia media, IBackgroundJobClient jobs,
+        GrowthMedia growthMedia, Microsoft.Extensions.Configuration.IConfiguration configuration)
     {
+        _growthMedia = growthMedia;
+        _configuration = configuration;
         _db = db;
         _campaigns = campaigns;
         _files = files;
@@ -109,6 +114,7 @@ public partial class GrowthContentService
             NextAttemptAtUtc = i.NextAttemptAtUtc, LastError = i.LastError, ErrorKind = i.ErrorKind, PublishedAtUtc = i.PublishedAtUtc,
             ExternalPostId = i.ExternalPostId, PermalinkUrl = i.PermalinkUrl, PublishedManually = i.PublishedManually,
             ClipStartSeconds = i.ClipStartSeconds, ClipSeconds = i.ClipSeconds, ScriptId = i.ScriptId,
+            InstagramMediaId = i.InstagramMediaId, InstagramPermalink = i.InstagramPermalink, InstagramError = i.InstagramError,
             LatestMetric = metrics.FirstOrDefault(m => m.ContentId == i.Id) is { } m ? MetricDto(m) : null,
             CreatedAtUtc = i.CreatedAtUtc, UpdatedAtUtc = i.UpdatedAtUtc
         }).ToList();
@@ -583,6 +589,21 @@ public partial class GrowthContentService
         {
             if (info.Length > MaxImageBytes) throw new ArgumentException($"Ảnh tối đa {MaxImageBytes / 1048576} MB.");
             var bytes = await File.ReadAllBytesAsync(tempPath, ct);
+            if (sniff.Mime == "image/png")
+            {
+                // Instagram only takes JPEG (and Facebook uploads are sent as JPEG): convert once here
+                var jpg = tempPath + ".jpg";
+                try
+                {
+                    await _growthMedia.ToJpegAsync(tempPath, jpg, ct);
+                    bytes = await File.ReadAllBytesAsync(jpg, ct);
+                    asset.MimeType = "image/jpeg";
+                    asset.FileName = Path.ChangeExtension(asset.FileName, ".jpg");
+                    asset.SizeBytes = bytes.Length;
+                }
+                catch (InvalidOperationException) { /* keep the PNG: Facebook still takes it */ }
+                finally { try { File.Delete(jpg); } catch { /* best effort */ } }
+            }
             (asset.Width, asset.Height) = ImageSize(bytes);
             if (asset.Width <= 0 || asset.Height <= 0) throw new ArgumentException("Không đọc được ảnh (tệp hỏng?).");
             if (asset.Width > 10000 || asset.Height > 10000) throw new ArgumentException("Ảnh quá lớn (tối đa 10000 px mỗi cạnh).");
@@ -632,6 +653,23 @@ public partial class GrowthContentService
         if (a == null) return null;
         var path = await _files.LocalPathAsync(a.FileId, ct);
         return path == null ? null : (path, a.MimeType);
+    }
+
+    /// <summary>
+    /// A link Instagram can fetch the file from: a 1-hour link to the shared bucket, else the app's public address
+    /// (App:PublicBaseUrl or the Railway domain). Null when the app has neither.
+    /// </summary>
+    public async Task<string?> PublicAssetUrlAsync(Guid assetId, CancellationToken ct)
+    {
+        var a = await _db.GrowthContentAssets.AsNoTracking().FirstOrDefaultAsync(x => x.Id == assetId, ct);
+        if (a == null) return null;
+        var presigned = await _files.PresignedUrlAsync(a.FileId, a.MimeType, null, ct);
+        if (presigned != null) return presigned;
+        var configured = _configuration["App:PublicBaseUrl"];
+        var domain = Environment.GetEnvironmentVariable("RAILWAY_PUBLIC_DOMAIN");
+        var baseUrl = !string.IsNullOrWhiteSpace(configured) ? configured.TrimEnd('/')
+            : !string.IsNullOrWhiteSpace(domain) ? $"https://{domain.Trim().TrimEnd('/')}" : null;
+        return baseUrl == null ? null : $"{baseUrl}/api/growth/assets/{a.Id}/file";
     }
 
     private static string SafeName(string name, string mime)

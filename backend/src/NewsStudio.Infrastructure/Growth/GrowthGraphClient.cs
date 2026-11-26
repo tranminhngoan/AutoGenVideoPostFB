@@ -217,6 +217,123 @@ public class GrowthGraphClient
             : story.TryGetProperty("id", out var id) ? id.GetString()! : photoId;
     }
 
+    // ───────────────────────── Instagram (the Page's linked professional account) ─────────────────────────
+
+    private static readonly System.Text.RegularExpressions.Regex HashtagRx = new(@"#[\p{L}\p{N}_]+", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>The linked Instagram account id (kept up to date by the existing Page connection) and the Page token.</summary>
+    public async Task<(string IgUserId, string Token)> InstagramAsync(Guid facebookAccountId, CancellationToken ct)
+    {
+        var (_, token) = await PageTokenAsync(facebookAccountId, ct);
+        var ig = await _db.FacebookAccounts.AsNoTracking().Where(a => a.Id == facebookAccountId).Select(a => a.InstagramAccountId).FirstOrDefaultAsync(ct);
+        if (string.IsNullOrWhiteSpace(ig))
+            throw new GrowthPublishException(GrowthErrorKind.Unsupported, "Page chưa liên kết tài khoản Instagram chuyên nghiệp (Cài đặt Page → Tài khoản được liên kết → Instagram, rồi bấm \"Làm mới Instagram\" ở Cài đặt → Facebook).");
+        return (ig, token);
+    }
+
+    /// <summary>Instagram caption: at most 2 200 characters and 30 hashtags (Instagram refuses more).</summary>
+    public static string InstagramCaption(string text)
+    {
+        text = (text ?? "").Trim();
+        var tags = 0;
+        text = HashtagRx.Replace(text, m => ++tags > 30 ? "" : m.Value);
+        text = System.Text.RegularExpressions.Regex.Replace(text, "[ \t]{2,}", " ").Trim();
+        return text.Length > 2200 ? text[..2200] : text;
+    }
+
+    private async Task<string> IgContainerAsync(string igUserId, string token, Dictionary<string, string> fields, string what, CancellationToken ct) =>
+        (await PostFormAsync($"{igUserId}/media", token, fields, what, ct)).GetProperty("id").GetString()!;
+
+    /// <summary>Waits until Instagram has processed a container (pictures: seconds; videos: up to a few minutes).</summary>
+    private async Task WaitReadyAsync(string containerId, string token, TimeSpan max, CancellationToken ct)
+    {
+        var deadline = DateTime.UtcNow + max;
+        while (true)
+        {
+            var body = await GetAsync($"{containerId}?fields=status_code,status", token, "Kiểm tra Instagram xử lý", ct);
+            var status = body.TryGetProperty("status_code", out var sc) ? sc.GetString() : null;
+            if (status is "FINISHED" or "PUBLISHED") return;
+            if (status is "ERROR" or "EXPIRED")
+                throw new GrowthPublishException(GrowthErrorKind.Content, "Instagram xử lý nội dung lỗi: " + (body.TryGetProperty("status", out var st) ? st.GetString() : status));
+            if (DateTime.UtcNow > deadline) throw new GrowthPublishException(GrowthErrorKind.Transient, $"Instagram xử lý quá lâu (trạng thái: {status ?? "không rõ"}).");
+            await Task.Delay(TimeSpan.FromSeconds(4), ct);
+        }
+    }
+
+    private async Task<(string MediaId, string? Permalink)> IgPublishAsync(string igUserId, string token, string containerId, CancellationToken ct)
+    {
+        var published = await PostFormAsync($"{igUserId}/media_publish", token, new[] { new KeyValuePair<string, string>("creation_id", containerId) }, "Đăng lên Instagram", ct);
+        var mediaId = published.GetProperty("id").GetString()!;
+        string? permalink = null;
+        try
+        {
+            var link = await GetAsync($"{mediaId}?fields=permalink", token, "Đọc liên kết Instagram", ct);
+            permalink = link.TryGetProperty("permalink", out var pl) ? pl.GetString() : null;
+        }
+        catch (GrowthPublishException) { /* the post is live; the link is optional */ }
+        return (mediaId, permalink);
+    }
+
+    /// <summary>
+    /// One picture, or a carousel of 2–10, on Instagram. Instagram fetches each picture from its public JPEG link (it has no
+    /// upload for pictures).
+    /// </summary>
+    public async Task<(string MediaId, string? Permalink)> PublishInstagramImagesAsync(Guid facebookAccountId, IReadOnlyList<string> imageUrls, string caption, CancellationToken ct)
+    {
+        if (imageUrls.Count == 0) throw new GrowthPublishException(GrowthErrorKind.Content, "Instagram cần ít nhất 1 ảnh.");
+        var (ig, token) = await InstagramAsync(facebookAccountId, ct);
+        string container;
+        if (imageUrls.Count == 1)
+        {
+            container = await IgContainerAsync(ig, token, new() { ["image_url"] = imageUrls[0], ["caption"] = InstagramCaption(caption) }, "Instagram nhận ảnh", ct);
+        }
+        else
+        {
+            var children = new List<string>();
+            foreach (var url in imageUrls.Take(10))
+                children.Add(await IgContainerAsync(ig, token, new() { ["image_url"] = url, ["is_carousel_item"] = "true" }, $"Instagram nhận ảnh {children.Count + 1}", ct));
+            foreach (var child in children) await WaitReadyAsync(child, token, TimeSpan.FromMinutes(1), ct);
+            container = await IgContainerAsync(ig, token, new()
+            {
+                ["media_type"] = "CAROUSEL", ["children"] = string.Join(',', children), ["caption"] = InstagramCaption(caption)
+            }, "Instagram tạo bài nhiều ảnh", ct);
+        }
+        await WaitReadyAsync(container, token, TimeSpan.FromMinutes(1), ct);
+        return await IgPublishAsync(ig, token, container, ct);
+    }
+
+    /// <summary>An Instagram Story: a picture (from its public link) or a video (uploaded from the file, or fetched from its link).</summary>
+    public async Task<(string MediaId, string? Permalink)> PublishInstagramStoryAsync(Guid facebookAccountId, string? imageUrl, string? videoPath, CancellationToken ct)
+    {
+        var (ig, token) = await InstagramAsync(facebookAccountId, ct);
+        string container;
+        if (imageUrl != null)
+        {
+            container = await IgContainerAsync(ig, token, new() { ["media_type"] = "STORIES", ["image_url"] = imageUrl }, "Instagram nhận ảnh Tin", ct);
+            await WaitReadyAsync(container, token, TimeSpan.FromMinutes(1), ct);
+        }
+        else
+        {
+            if (videoPath == null || !File.Exists(videoPath)) throw new GrowthPublishException(GrowthErrorKind.Content, "Không tìm thấy video Tin.");
+            var created = await PostFormAsync($"{ig}/media", token, new Dictionary<string, string> { ["media_type"] = "STORIES", ["upload_type"] = "resumable" }, "Instagram nhận video Tin", ct);
+            container = created.GetProperty("id").GetString()!;
+            var uploadUri = created.TryGetProperty("uri", out var u) ? u.GetString() : null;
+            if (string.IsNullOrWhiteSpace(uploadUri)) throw new GrowthPublishException(GrowthErrorKind.Unknown, "Instagram không trả về địa chỉ tải video lên.");
+            var size = new FileInfo(videoPath).Length;
+            await using (var stream = File.OpenRead(videoPath))
+            {
+                var upload = new HttpRequestMessage(HttpMethod.Post, uploadUri) { Content = new StreamContent(stream) };
+                upload.Headers.Authorization = new AuthenticationHeaderValue("OAuth", token);
+                upload.Headers.TryAddWithoutValidation("offset", "0");
+                upload.Headers.TryAddWithoutValidation("file_size", size.ToString(CultureInfo.InvariantCulture));
+                upload.Content.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
+                await SendAsync(upload, "Tải video Tin lên Instagram", ct);
+            }
+            await WaitReadyAsync(container, token, TimeSpan.FromMinutes(5), ct);
+        }
+        return await IgPublishAsync(ig, token, container, ct);
+    }
+
     // ───────────────────────── reading ─────────────────────────
 
     /// <summary>Permissions granted to the Page token (debug_token), or the reason they can't be read.</summary>

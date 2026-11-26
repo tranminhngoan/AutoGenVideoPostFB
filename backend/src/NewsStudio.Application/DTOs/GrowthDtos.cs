@@ -96,6 +96,8 @@ public class GrowthCampaignDto
     public decimal AiBudgetUsd { get; set; }
     public decimal AiSpentUsd { get; set; }
     public string ApprovalMode { get; set; } = "Review";
+    public bool AlsoInstagram { get; set; }
+    public string? InstagramUsername { get; set; }
     public long? StartingFollowers { get; set; }
     public DateTime? StartingFollowersAtUtc { get; set; }
     public long? EndingFollowers { get; set; }
@@ -128,6 +130,7 @@ public class GrowthCampaignInputDto
     public List<string>? TimeSlots { get; set; }
     public decimal? AiBudgetUsd { get; set; }
     public string? ApprovalMode { get; set; }
+    public bool? AlsoInstagram { get; set; }
     public decimal? MetaOneCost { get; set; }
     public string? MetaOneCurrency { get; set; }
     public string? Notes { get; set; }
@@ -215,6 +218,9 @@ public class GrowthContentDto
     public double? ClipStartSeconds { get; set; }
     public double? ClipSeconds { get; set; }
     public Guid? ScriptId { get; set; }
+    public string? InstagramMediaId { get; set; }
+    public string? InstagramPermalink { get; set; }
+    public string? InstagramError { get; set; }
     public GrowthPostMetricDto? LatestMetric { get; set; }
     public DateTime CreatedAtUtc { get; set; }
     public DateTime? UpdatedAtUtc { get; set; }

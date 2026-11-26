@@ -154,3 +154,22 @@ Một công tắc trên **Tổng quan chiến dịch**. Job `growth-autopilot-ti
 - Giờ: bài viết 11:30, Reels 19:30, Tin 07:30 / 21:00 — Reels tự dời sang giờ có lượt xem cao nhất khi đủ dữ liệu thật.
 - Chi phí ước tính: ~0,05 USD/ngày (ảnh + chữ) ≈ 1,5 USD/tháng.
 - Test: 330/330 backend PASS (11 test autopilot, gồm cắt clip thật bằng FFmpeg).
+
+---
+
+# Đăng cả Instagram — bổ sung 2026-11-26
+
+Chiến dịch có công tắc **"Đăng cả lên Instagram"** (mặc định bật, kể cả chiến dịch đã có). Sau khi bài lên Facebook, bản Instagram được đăng lên tài khoản Instagram chuyên nghiệp liên kết với Page; nếu Instagram lỗi thì chỉ ghi lại lý do, bài Facebook giữ nguyên, không đăng lại Facebook.
+
+| Loại | Instagram |
+|---|---|
+| Reels Studio Video AI / video tin tức | Do chính chức năng đăng cũ đưa lên Instagram (như trước) — module ghi lại kết quả |
+| Reels AI Video Studio | `PublishInstagramVideoFileAsync` có sẵn (tải file lên) + gắn vào bản ghi thống kê cũ |
+| Ảnh / nhiều ảnh / bài tương tác có ảnh | Ảnh đơn hoặc carousel (≤ 10) — Instagram lấy ảnh qua link công khai 1 giờ của bucket R2 (hoặc App:PublicBaseUrl) |
+| Bài chỉ có chữ | Không đăng (Instagram không nhận) — ghi chú lý do |
+| Tin ảnh / Tin video (đoạn cắt) | `media_type=STORIES` (ảnh qua link, video tải file lên) |
+
+- Ảnh PNG tải lên được chuyển sang JPEG (Instagram chỉ nhận JPEG). Caption Instagram tối đa 2 200 ký tự, 30 hashtag.
+- Giới hạn: công tắc tắt Instagram không ngăn được Reels của Studio Video AI lên Instagram, vì chức năng đăng cũ của Studio luôn đăng cả hai.
+- Bảng "Kiểm tra quyền" có dòng Instagram (đã liên kết chưa, đủ quyền `instagram_content_publish` chưa).
+- Test: 332/332 backend PASS.

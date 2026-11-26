@@ -158,7 +158,7 @@ public class GrowthCampaignService
             TargetFollowers = c.TargetFollowers, TargetViews = c.TargetViews,
             ReelsPerDay = c.ReelsPerDay, PhotosPerDay = c.PhotosPerDay, StoriesPerDay = c.StoriesPerDay,
             TimeSlots = GrowthTime.ParseSlots(c.TimeSlots), AiBudgetUsd = c.AiBudgetUsd, AiSpentUsd = c.AiSpentUsd,
-            ApprovalMode = c.ApprovalMode, StartingFollowers = c.StartingFollowers, StartingFollowersAtUtc = c.StartingFollowersAtUtc,
+            ApprovalMode = c.ApprovalMode, AlsoInstagram = c.AlsoInstagram, InstagramUsername = page?.InstagramUsername, StartingFollowers = c.StartingFollowers, StartingFollowersAtUtc = c.StartingFollowersAtUtc,
             EndingFollowers = c.EndingFollowers, EndingFollowersAtUtc = c.EndingFollowersAtUtc,
             MetaOneCost = c.MetaOneCost, MetaOneCurrency = c.MetaOneCurrency,
             Checklist = Checklist(c), Plan = Plan(c), MetricAvailability = Availability(c),
@@ -313,6 +313,7 @@ public class GrowthCampaignService
         if (input.AiBudgetUsd is { } b) c.AiBudgetUsd = b < 0 || b > 50 ? throw new ArgumentException("Ngân sách AI từ 0 đến 50 USD.") : Math.Round(b, 2);
         if (input.ApprovalMode != null)
             c.ApprovalMode = input.ApprovalMode is "Auto" or "Review" ? input.ApprovalMode : throw new ArgumentException("Chế độ đăng là Auto (tự động) hoặc Review (duyệt trước).");
+        if (input.AlsoInstagram is { } ig) c.AlsoInstagram = ig;
         if (input.MetaOneCost is { } mc) c.MetaOneCost = mc < 0 ? throw new ArgumentException("Chi phí Meta One không hợp lệ.") : mc;
         if (input.MetaOneCurrency != null) c.MetaOneCurrency = input.MetaOneCurrency is "VND" or "USD" ? input.MetaOneCurrency : throw new ArgumentException("Tiền tệ là VND hoặc USD.");
         if (input.Notes != null) c.Notes = Clean(input.Notes, 4000);
