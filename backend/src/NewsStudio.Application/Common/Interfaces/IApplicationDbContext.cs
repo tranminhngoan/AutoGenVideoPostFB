@@ -55,5 +55,16 @@ public interface IApplicationDbContext
     DbSet<AiStudioPromptVersion> AiStudioPromptVersions { get; }
     DbSet<AiStudioGeneration> AiStudioGenerations { get; }
 
+    // Chiến dịch tăng trưởng (Meta Growth Campaign)
+    DbSet<GrowthCampaign> GrowthCampaigns { get; }
+    DbSet<GrowthScheduledContent> GrowthScheduledContents { get; }
+    DbSet<GrowthContentAsset> GrowthContentAssets { get; }
+    DbSet<GrowthDailyMetric> GrowthDailyMetrics { get; }
+    DbSet<GrowthPostMetric> GrowthPostMetrics { get; }
+    DbSet<GrowthCompetitor> GrowthCompetitors { get; }
+    DbSet<GrowthCompetitorSnapshot> GrowthCompetitorSnapshots { get; }
+    DbSet<GrowthCampaignReport> GrowthCampaignReports { get; }
+    DbSet<GrowthActivityLog> GrowthActivityLogs { get; }
+
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

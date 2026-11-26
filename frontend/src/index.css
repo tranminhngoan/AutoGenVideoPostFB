@@ -127,3 +127,13 @@
 audio {
   color-scheme: light dark;
 }
+
+/* Chiến dịch tăng trưởng — chart series colours (validated reference palette, slots 1–2; dark steps for the dark surface) */
+:root[data-theme='light'] {
+  --viz-1: #257de0;
+  --viz-2: #f47230;
+}
+:root[data-theme='dark'] {
+  --viz-1: #338ced;
+  --viz-2: #e76624;
+}

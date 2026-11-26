@@ -17,6 +17,13 @@ import {
   Monitor,
   MessageCircle,
   Wand2,
+  TrendingUp,
+  CalendarDays,
+  PenTool,
+  Target,
+  LineChart,
+  Swords,
+  SlidersHorizontal,
 } from 'lucide-react';
 import { cn, Dot } from './ui';
 import { href } from '../lib/router';
@@ -97,6 +104,15 @@ function SidebarContent({
     { id: 'comments', path: '/comments', label: 'Bình luận', icon: MessageCircle },
   ];
   const local: NavItem[] = [{ id: 'ai-studio', path: '/ai-studio', label: 'AI Video Studio', icon: Wand2 }];
+  const growthNav: NavItem[] = [
+    { id: 'growth:overview', path: '/growth/overview', label: 'Tổng quan chiến dịch', icon: TrendingUp },
+    { id: 'growth:calendar', path: '/growth/calendar', label: 'Lịch đăng nội dung', icon: CalendarDays },
+    { id: 'growth:studio', path: '/growth/studio', label: 'Studio nội dung', icon: PenTool },
+    { id: 'growth:campaigns', path: '/growth/campaigns', label: 'Quản lý chiến dịch', icon: Target },
+    { id: 'growth:analytics', path: '/growth/analytics', label: 'Phân tích tăng trưởng', icon: LineChart },
+    { id: 'growth:competitors', path: '/growth/competitors', label: 'Phân tích đối thủ', icon: Swords },
+    { id: 'growth:settings', path: '/growth/settings', label: 'Cài đặt chiến dịch', icon: SlidersHorizontal },
+  ];
   const secondary: NavItem[] = [{ id: 'settings', path: '/settings', label: 'Cài đặt', icon: Settings }];
 
   const renderItem = (item: NavItem) => {
@@ -156,6 +172,10 @@ function SidebarContent({
           Video từ video tham chiếu
         </div>
         {local.map(renderItem)}
+        <div className="!mt-5 mb-1.5 flex items-center gap-1.5 px-2.5 text-xs font-semibold uppercase tracking-wider text-emerald-500">
+          <TrendingUp className="h-3.5 w-3.5" /> Chiến dịch tăng trưởng
+        </div>
+        {growthNav.map(renderItem)}
         <div className="!mt-5 mb-1.5 px-2.5 text-xs font-medium text-fg-subtle">Hệ thống</div>
         {secondary.map(renderItem)}
       </nav>
@@ -247,7 +267,7 @@ export function Layout({
             onClick={() => setMobileOpen(true)}
             className={cn(
               'flex h-full flex-col items-center justify-center gap-0.5 text-[11px] transition-colors',
-              ['auto-post', 'articles', 'activity', 'settings', 'studio'].includes(active) ? 'font-medium text-fg' : 'text-fg-muted'
+              (['auto-post', 'articles', 'activity', 'settings', 'studio'].includes(active) || active.startsWith('growth:')) ? 'font-medium text-fg' : 'text-fg-muted'
             )}
           >
             <MenuIcon className="h-5 w-5" />

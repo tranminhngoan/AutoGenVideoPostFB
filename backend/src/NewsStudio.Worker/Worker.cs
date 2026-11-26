@@ -119,6 +119,16 @@ public class Worker : BackgroundService
                 "daily-digest",
                 service => service.TickAsync(CancellationToken.None),
                 "*/5 * * * *");
+
+            // Chiến dịch tăng trưởng: due content every minute, Meta numbers hourly
+            recurring.AddOrUpdate<NewsStudio.Infrastructure.Growth.GrowthPublisher>(
+                "growth-publish-tick",
+                service => service.TickAsync(CancellationToken.None),
+                "* * * * *");
+            recurring.AddOrUpdate<NewsStudio.Infrastructure.Growth.GrowthInsightsService>(
+                "growth-insights-sync",
+                service => service.SyncAllAsync(CancellationToken.None),
+                "41 * * * *");
         }
         catch (Exception ex)
         {

@@ -145,6 +145,8 @@ public static class DependencyInjection
         // AI Video Studio: reference-video analysis on the owner's PC (local Qwen3-VL + OpenCV + FFmpeg; queue "pc_local"),
         // new clips through the Seedance client above
         services.AddAiStudioServices(configuration);
+        // Chiến dịch tăng trưởng (Meta Growth Campaign) — separate module reusing the Page connection & video publishing
+        NewsStudio.Infrastructure.Growth.GrowthRegistration.AddGrowthCampaignServices(services);
 
         return services;
     }

@@ -34,6 +34,15 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
     public DbSet<AiStudioScene> AiStudioScenes => Set<AiStudioScene>();
     public DbSet<AiStudioPromptVersion> AiStudioPromptVersions => Set<AiStudioPromptVersion>();
     public DbSet<AiStudioGeneration> AiStudioGenerations => Set<AiStudioGeneration>();
+    public DbSet<GrowthCampaign> GrowthCampaigns => Set<GrowthCampaign>();
+    public DbSet<GrowthScheduledContent> GrowthScheduledContents => Set<GrowthScheduledContent>();
+    public DbSet<GrowthContentAsset> GrowthContentAssets => Set<GrowthContentAsset>();
+    public DbSet<GrowthDailyMetric> GrowthDailyMetrics => Set<GrowthDailyMetric>();
+    public DbSet<GrowthPostMetric> GrowthPostMetrics => Set<GrowthPostMetric>();
+    public DbSet<GrowthCompetitor> GrowthCompetitors => Set<GrowthCompetitor>();
+    public DbSet<GrowthCompetitorSnapshot> GrowthCompetitorSnapshots => Set<GrowthCompetitorSnapshot>();
+    public DbSet<GrowthCampaignReport> GrowthCampaignReports => Set<GrowthCampaignReport>();
+    public DbSet<GrowthActivityLog> GrowthActivityLogs => Set<GrowthActivityLog>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
     public DbSet<TrendingArticle> TrendingArticles => Set<TrendingArticle>();
     public DbSet<AutoPostSettings> AutoPostSettings => Set<AutoPostSettings>();
@@ -738,6 +747,8 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
             entity.HasIndex(e => e.RequestKey);
             entity.HasIndex(e => e.Status);
         });
+
+        NewsStudio.Infrastructure.Growth.GrowthModelConfiguration.Configure(modelBuilder);
     }
 
     public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)

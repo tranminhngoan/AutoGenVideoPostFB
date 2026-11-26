@@ -303,6 +303,15 @@ try
                 "daily-digest",
                 s => s.TickAsync(CancellationToken.None),
                 "*/5 * * * *");
+            // Chiến dịch tăng trưởng: due content every minute, Meta numbers hourly
+            recurring.AddOrUpdate<NewsStudio.Infrastructure.Growth.GrowthPublisher>(
+                "growth-publish-tick",
+                s => s.TickAsync(CancellationToken.None),
+                "* * * * *");
+            recurring.AddOrUpdate<NewsStudio.Infrastructure.Growth.GrowthInsightsService>(
+                "growth-insights-sync",
+                s => s.SyncAllAsync(CancellationToken.None),
+                "41 * * * *");
 
             var jobs = app.Services.GetRequiredService<IBackgroundJobClient>();
             jobs.Enqueue<NewsStudio.Application.Interfaces.IJobRecoveryService>(s => s.RecoverDanglingJobsAsync(CancellationToken.None));
