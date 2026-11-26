@@ -43,6 +43,9 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
     public DbSet<GrowthCompetitorSnapshot> GrowthCompetitorSnapshots => Set<GrowthCompetitorSnapshot>();
     public DbSet<GrowthCampaignReport> GrowthCampaignReports => Set<GrowthCampaignReport>();
     public DbSet<GrowthActivityLog> GrowthActivityLogs => Set<GrowthActivityLog>();
+    public DbSet<GrowthAutopilot> GrowthAutopilots => Set<GrowthAutopilot>();
+    public DbSet<GrowthScript> GrowthScripts => Set<GrowthScript>();
+    public DbSet<GrowthScriptUsage> GrowthScriptUsages => Set<GrowthScriptUsage>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
     public DbSet<TrendingArticle> TrendingArticles => Set<TrendingArticle>();
     public DbSet<AutoPostSettings> AutoPostSettings => Set<AutoPostSettings>();

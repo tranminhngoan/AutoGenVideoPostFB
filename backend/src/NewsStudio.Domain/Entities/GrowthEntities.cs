@@ -107,6 +107,12 @@ public class GrowthScheduledContent : BaseEntity
     public string? ExternalPostId { get; set; }
     public string? ExternalVideoId { get; set; }
     public string? PermalinkUrl { get; set; }
+    /// <summary>Story cut from a longer video: where the highlight starts and how long it is (seconds).</summary>
+    public double? ClipStartSeconds { get; set; }
+    public double? ClipSeconds { get; set; }
+    /// <summary>The drama script the post was made from (autopilot), so it is never used twice on the Page.</summary>
+    public Guid? ScriptId { get; set; }
+
     /// <summary>The <see cref="FacebookPost"/> record (Reels) the existing stats already follow.</summary>
     public Guid? FacebookPostRecordId { get; set; }
     /// <summary>Posted by hand (marked by the owner) instead of by the app.</summary>
@@ -228,4 +234,52 @@ public class GrowthActivityLog : BaseEntity
     public string Action { get; set; } = string.Empty;
     public string Message { get; set; } = string.Empty;
     public string Actor { get; set; } = "user"; // user, scheduler, system
+}
+
+/// <summary>
+/// "Chế độ tự động" of a Page: every day the app makes and posts the content by itself — one photo post from an unused
+/// drama script (AI picture + AI text), the day's finished video as a Reel, and Stories cut from the Page's videos.
+/// The owner only watches; problems (no scripts left, no finished video, Story refused…) are shown as notices.
+/// </summary>
+public class GrowthAutopilot : BaseEntity
+{
+    public Guid FacebookAccountId { get; set; }
+    public bool Enabled { get; set; }
+    public bool ScriptPost { get; set; } = true;
+    public bool DailyVideo { get; set; } = true;
+    public int StoriesPerDay { get; set; } = 2;
+    public DateTime? LastRunAtUtc { get; set; }
+    /// <summary>Current notices: [{level, code, message, atUtc}] (JSON).</summary>
+    public string NoticesJson { get; set; } = "[]";
+    /// <summary>Today's attempts per slot and slots skipped for the day (JSON).</summary>
+    public string StateJson { get; set; } = "{}";
+}
+
+/// <summary>A drama script available for daily posts (imported from the "Lên kịch bản" library or the owner's own scripts).</summary>
+public class GrowthScript : BaseEntity
+{
+    /// <summary>The script's own code / id in the library (unique).</summary>
+    public string Code { get; set; } = string.Empty;
+    public string Title { get; set; } = string.Empty;
+    public string? Category { get; set; }
+    public string? CategoryName { get; set; }
+    public string? Mood { get; set; }
+    public string? Era { get; set; }
+    public string? Region { get; set; }
+    public string Synopsis { get; set; } = string.Empty;
+    public string Hook { get; set; } = string.Empty;
+    public string EndingNote { get; set; } = string.Empty;
+    /// <summary>[{title, visualVi, aiPromptEn, voiceover}] (JSON).</summary>
+    public string ScenesJson { get; set; } = "[]";
+    /// <summary>library, custom, ai.</summary>
+    public string Source { get; set; } = "library";
+}
+
+/// <summary>A script used on a Page (one row per Page and script — the unique key is what stops a script being posted twice).</summary>
+public class GrowthScriptUsage : BaseEntity
+{
+    public Guid FacebookAccountId { get; set; }
+    public Guid ScriptId { get; set; }
+    public GrowthScript? Script { get; set; }
+    public Guid? ContentId { get; set; }
 }

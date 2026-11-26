@@ -134,3 +134,23 @@ Dừng ngay: pause/complete/cancel → bài Scheduled không được claim; com
 - Page Insights theo ngày phụ thuộc metric Meta còn hỗ trợ cho từng Page (dò lúc chạy, lưu lý do từ chối).
 - Excel = SpreadsheetML (.xls), PDF = In/Lưu PDF của trình duyệt (dự án không có thư viện xlsx/pdf).
 - Đăng Reels từ Studio Video AI dùng nguyên chức năng đăng của Studio, nên cũng đăng lên Instagram liên kết (giống nút "Đăng" của Studio).
+
+---
+
+# Chế độ tự động (Autopilot) — bổ sung 2026-11-26
+
+Một công tắc trên **Tổng quan chiến dịch**. Job `growth-autopilot-tick` (10 phút/lần, từ 05:00 giờ VN) với mỗi Page bật tự động:
+
+| Việc | Cách làm | Chống trùng |
+|---|---|---|
+| Bài viết (1/ngày) | Kịch bản chưa dùng (xoay vòng chủ đề) → Gemini vẽ 1 ảnh 4:5 từ cảnh giữa kịch bản (không chữ) → watermark Page (watermark có sẵn của Studio) → AI viết bài 120–220 chữ + câu hỏi + dòng "Ảnh minh hoạ được tạo bằng AI" → đăng ảnh lên tường | `GrowthScriptUsages` unique (Page, kịch bản); huỷ bài chưa đăng → trả kịch bản lại |
+| Reels (1/ngày) | Video đã dựng xong mới nhất, chưa đăng (Studio Video AI, rồi AI Video Studio) — **không tự tạo video** (~2 USD/video) | Video đã có Reels trong lịch không bị chọn lại |
+| Tin (mặc định 2/ngày) | Tin 1: đoạn ~45 s ồn/sôi động nhất của video Page (FFmpeg ebur128), cắt ngay trước khi đăng; Tin 2: ảnh kịch bản của ngày | Đoạn đã dùng của mỗi video không cắt lại |
+| Hết kịch bản | Thông báo đỏ trên bảng điều khiển, dừng bài viết hằng ngày; cảnh báo khi còn ≤ 7 | — |
+
+- Kịch bản: trang tự gửi 300 kịch bản của "Lên kịch bản" (và kịch bản bạn tự lưu trong trình duyệt) lên server khi mở Chiến dịch tăng trưởng (chỉ gửi kịch bản mới).
+- Nội dung vào chiến dịch đang chạy của Page; nếu không có, tự tạo chiến dịch "Tự động dd/MM–dd/MM" 7 ngày (chế độ đăng tự động, ngân sách AI 2 USD/tuần) → mỗi tuần có báo cáo riêng. Tạm dừng chiến dịch = tạm dừng tự động.
+- Khoá idempotency cố định theo (Page, ngày, ô) → hai worker không bao giờ tạo trùng; mỗi bước tối đa 3 lần thử/ngày.
+- Giờ: bài viết 11:30, Reels 19:30, Tin 07:30 / 21:00 — Reels tự dời sang giờ có lượt xem cao nhất khi đủ dữ liệu thật.
+- Chi phí ước tính: ~0,05 USD/ngày (ảnh + chữ) ≈ 1,5 USD/tháng.
+- Test: 330/330 backend PASS (11 test autopilot, gồm cắt clip thật bằng FFmpeg).

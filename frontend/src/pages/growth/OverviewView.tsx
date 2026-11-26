@@ -8,6 +8,7 @@ import { dm, KIND_LABEL, num, vnShort, vnTime } from '../../lib/growthMath';
 import { BarList, LineChart, PairBars } from './charts';
 import { CampaignBadge, ContentBadge, KindIcon, LoadError, LoadingBlock, NoCampaign, PageAvatar, Section, contentTitle, useLoad, type GrowthCtx } from './shared';
 import { ContentEditor } from './ContentEditor';
+import { AutopilotPanel } from './AutopilotPanel';
 
 const HEADLINE = ['new_followers', 'views', 'engagement', 'growth_rate'];
 
@@ -18,13 +19,21 @@ export function OverviewView({ ctx }: { ctx: GrowthCtx }) {
   const { data, error, loading, reload } = useLoad(() => (campaign ? growth.overview(campaign.id) : Promise.resolve(null)), [campaign?.id], ctx.onNeedKey);
   const [editing, setEditing] = useState<Content | null>(null);
 
-  if (!campaign) return <NoCampaign ctx={ctx} action={ctx.page && <Button variant="primary" onClick={() => navigate('/growth/campaigns')}>Tạo chiến dịch</Button>} />;
-  if (loading && !data) return <LoadingBlock rows={4} />;
-  if (error && !data) return <LoadError message={error} onRetry={reload} />;
+  const autopilot = <AutopilotPanel ctx={ctx} onChanged={reload} />;
+  if (!campaign)
+    return (
+      <div className="space-y-5">
+        {autopilot}
+        <NoCampaign ctx={ctx} action={ctx.page && <Button variant="primary" onClick={() => navigate('/growth/campaigns')}>Tạo chiến dịch</Button>} />
+      </div>
+    );
+  if (loading && !data) return <div className="space-y-5">{autopilot}<LoadingBlock rows={4} /></div>;
+  if (error && !data) return <div className="space-y-5">{autopilot}<LoadError message={error} onRetry={reload} /></div>;
   if (!data) return null;
 
   return (
     <div className="space-y-5">
+      {autopilot}
       <CampaignHeader ctx={ctx} o={data} reload={reload} />
       <KpiGrid kpis={data.kpis} />
       <Charts o={data} />

@@ -129,6 +129,10 @@ public class Worker : BackgroundService
                 "growth-insights-sync",
                 service => service.SyncAllAsync(CancellationToken.None),
                 "41 * * * *");
+            recurring.AddOrUpdate<NewsStudio.Infrastructure.Growth.GrowthAutopilotService>(
+                "growth-autopilot-tick",
+                service => service.TickAsync(CancellationToken.None),
+                "*/10 * * * *");
         }
         catch (Exception ex)
         {

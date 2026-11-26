@@ -30,6 +30,26 @@ public sealed class GeminiGrowthTextAi : IGrowthTextAi
     }
 }
 
+/// <summary>Picture AI (the app's existing Gemini image model) — used only for the autopilot's daily script picture.</summary>
+public interface IGrowthImageAi
+{
+    decimal EstimatedCostUsd { get; }
+    Task<(byte[] Bytes, string MimeType, decimal CostUsd, string Model)> ImageAsync(string prompt, string aspectRatio, CancellationToken ct);
+}
+
+public sealed class GeminiGrowthImageAi : IGrowthImageAi
+{
+    private readonly FilmGeminiClient _gemini;
+    public GeminiGrowthImageAi(FilmGeminiClient gemini) => _gemini = gemini;
+    public decimal EstimatedCostUsd => _gemini.EstimatedImageCostUsd;
+
+    public async Task<(byte[] Bytes, string MimeType, decimal CostUsd, string Model)> ImageAsync(string prompt, string aspectRatio, CancellationToken ct)
+    {
+        var r = await _gemini.GenerateImageAsync(prompt, aspectRatio, Array.Empty<FilmGeminiClient.ReferenceImage>(), ct);
+        return (r.Bytes, r.MimeType, r.CostUsd, _gemini.ImageModel);
+    }
+}
+
 /// <summary>
 /// Writing help for the campaign: captions in several styles, turning one video into photo posts / Stories / captions /
 /// titles, and suggestions from the campaign's real numbers. Only text is generated (no AI images). Every call is
@@ -53,14 +73,16 @@ public class GrowthAiService
 
     private readonly IApplicationDbContext _db;
     private readonly IGrowthTextAi _ai;
+    private readonly IGrowthImageAi _images;
     private readonly StudioService _studio;
     private readonly GrowthCampaignService _campaigns;
     private readonly GrowthInsightsService _insights;
 
-    public GrowthAiService(IApplicationDbContext db, IGrowthTextAi ai, StudioService studio, GrowthCampaignService campaigns, GrowthInsightsService insights)
+    public GrowthAiService(IApplicationDbContext db, IGrowthTextAi ai, IGrowthImageAi images, StudioService studio, GrowthCampaignService campaigns, GrowthInsightsService insights)
     {
         _db = db;
         _ai = ai;
+        _images = images;
         _studio = studio;
         _campaigns = campaigns;
         _insights = insights;
@@ -320,6 +342,101 @@ public class GrowthAiService
             return (notes, LastCost);
         }
         catch (Exception ex) when (ex is JsonException or InvalidOperationException) { return (new(), LastCost); }
+    }
+
+    // ───────────────────────── autopilot: the daily script post ─────────────────────────
+
+    /// <summary>One English prompt for a single still picture of the script (from its middle scene), no text in the picture.</summary>
+    public static string BuildScriptImagePrompt(GrowthScript script)
+    {
+        var scenes = ScriptScenes(script);
+        var key = scenes.Count == 0 ? null : scenes[Math.Min(scenes.Count - 1, scenes.Count / 2)];
+        var scene = key?.AiPromptEn is { Length: > 10 } en ? en : (key?.VisualVi ?? script.Synopsis);
+        return "A single cinematic still photograph, vertical 4:5 composition. " + Cap(scene, 1200) +
+               $" Setting: rural Vietnam in the {(script.Era == "8x" ? "1980s" : "1990s")}{(string.IsNullOrWhiteSpace(script.Region) || script.Region == "Chung" ? "" : ", " + script.Region)}. " +
+               "Warm nostalgic film photography, soft natural light, gentle grain, authentic everyday details, dignified and tender mood. " +
+               "Absolutely no text, letters, captions, watermarks or logos in the image. No celebrities, no real people's likeness.";
+    }
+
+    public static (string System, string User) BuildScriptPostPrompt(string pageName, GrowthScript script)
+    {
+        var scenes = ScriptScenes(script);
+        var story = string.Join("\n", scenes.Take(6).Select(x => "- " + Cap(x.Voiceover ?? x.VisualVi ?? x.Title ?? "", 300)));
+        var system = "Bạn viết bài đăng Facebook cho một Page hoài niệm tuổi thơ 8x 9x Việt Nam. Văn kể chuyện, chân thành, gần gũi. Chỉ trả về JSON hợp lệ.";
+        var user =
+            $"Page: {pageName}\nKịch bản: {script.Title}\nChủ đề: {script.CategoryName}\nCảm xúc: {script.Mood}\nThế hệ: {script.Era} · Vùng: {script.Region}\n" +
+            $"Tóm tắt: {Cap(script.Synopsis, 1200)}\nMở đầu: {Cap(script.Hook, 500)}\nKết: {Cap(script.EndingNote, 500)}\nDiễn biến:\n{story}\n\n" +
+            "Viết 1 bài đăng kèm một bức ảnh minh hoạ khoảnh khắc trong kịch bản:\n" +
+            "- 120–220 chữ, câu đầu là khoảnh khắc gợi nhớ khiến người đọc dừng lại; kể như một ký ức của thế hệ 8x 9x, giàu hình ảnh, không sến.\n" +
+            "- Chỉ dùng chi tiết có trong kịch bản; không bịa tên người thật, địa danh cụ thể, số liệu.\n" +
+            "- Kết bằng 1 câu hỏi nhẹ nhàng mời mọi người kể kỷ niệm của họ (không câu kéo kiểu 'comment 1').\n" +
+            "- 1–3 emoji; 3–5 hashtag tiếng Việt; không nhắc tới AI.\n" +
+            "JSON: {\"caption\":\"...\",\"question\":\"...\",\"hashtags\":[\"#...\"]}";
+        return (system, user);
+    }
+
+    public const string ImageDisclosure = "📷 Ảnh minh hoạ được tạo bằng AI.";
+
+    public static (string Caption, string Hashtags)? ParseScriptPost(string json)
+    {
+        try
+        {
+            var root = JsonNode.Parse(json);
+            var caption = root?["caption"]?.GetValue<string>()?.Trim();
+            if (string.IsNullOrWhiteSpace(caption)) return null;
+            var question = root?["question"]?.GetValue<string>()?.Trim();
+            var text = caption + (string.IsNullOrWhiteSpace(question) || caption.Contains(question) ? "" : "\n\n" + question) + "\n\n" + ImageDisclosure;
+            return (text.Length > GrowthContentService.MaxCaption ? text[..GrowthContentService.MaxCaption] : text, string.Join(" ", Tags(root?["hashtags"])));
+        }
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException) { return null; }
+    }
+
+    public async Task<(string Caption, string Hashtags)> ScriptPostAsync(GrowthCampaign c, GrowthScript script, CancellationToken ct)
+    {
+        var (system, user) = BuildScriptPostPrompt(c.PageName, script);
+        var json = await CallAsync(c, $"bài viết từ kịch bản {script.Code}", system, user, 3000, 0.85, ct);
+        return ParseScriptPost(json) ?? throw new InvalidOperationException("AI không trả về bài viết hợp lệ.");
+    }
+
+    /// <summary>The script's picture (4:5; 1:1 when the model refuses that ratio). Budget-checked and recorded like every AI call.</summary>
+    public async Task<(byte[] Bytes, string MimeType)> ScriptImageAsync(GrowthCampaign c, GrowthScript script, CancellationToken ct)
+    {
+        var estimate = Math.Max(0.02m, _images.EstimatedCostUsd);
+        EnsureCampaignBudget(c, estimate);
+        await _studio.EnsureMonthlyBudgetAsync(estimate, ct);
+        var prompt = BuildScriptImagePrompt(script);
+        (byte[] Bytes, string MimeType, decimal CostUsd, string Model) r;
+        try { r = await _images.ImageAsync(prompt, "4:5", ct); }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("aspect", StringComparison.OrdinalIgnoreCase)) { r = await _images.ImageAsync(prompt, "1:1", ct); }
+        c.AiSpentUsd += r.CostUsd;
+        _db.StudioCostRecords.Add(new StudioCostRecord { Kind = "Plan", Model = r.Model, CostUsd = r.CostUsd, Note = $"Chiến dịch tăng trưởng · ảnh kịch bản {script.Code}" });
+        _db.GrowthActivityLogs.Add(new GrowthActivityLog { CampaignId = c.Id, Action = "AiImage", Message = $"AI vẽ ảnh cho kịch bản \"{Cap(script.Title, 60)}\" ({r.CostUsd:0.0000} USD).", Actor = "scheduler" });
+        await _db.SaveChangesAsync(ct);
+        return (r.Bytes, r.MimeType);
+    }
+
+    /// <summary>A short Reel caption from the video's own text (used when the video has no caption yet).</summary>
+    public async Task<(string Caption, string Hashtags)> ReelCaptionAsync(GrowthCampaign c, string type, Guid id, CancellationToken ct)
+    {
+        var (_, text) = await SourceTextAsync(c, type, id, ct);
+        var (system, user) = BuildCaptionPrompt(c.PageName, text, new[] { "Nostalgic" }, 1, "Reels");
+        var json = await CallAsync(c, "caption Reels tự động", system, user, 1500, 0.8, ct);
+        var v = ParseVariants(json).FirstOrDefault() ?? throw new InvalidOperationException("AI không trả về caption hợp lệ.");
+        return (v.Caption + (v.Question is { Length: > 0 } q ? "\n\n" + q : ""), string.Join(" ", v.Hashtags));
+    }
+
+    public sealed class ScriptScene
+    {
+        public string? Title { get; set; }
+        public string? VisualVi { get; set; }
+        public string? AiPromptEn { get; set; }
+        public string? Voiceover { get; set; }
+    }
+
+    public static List<ScriptScene> ScriptScenes(GrowthScript script)
+    {
+        try { return JsonSerializer.Deserialize<List<ScriptScene>>(script.ScenesJson, new JsonSerializerOptions(JsonSerializerDefaults.Web)) ?? new(); }
+        catch (JsonException) { return new(); }
     }
 
     private static string Cap(string? s, int max) => s == null ? "" : s.Length <= max ? s : s[..max] + "…";

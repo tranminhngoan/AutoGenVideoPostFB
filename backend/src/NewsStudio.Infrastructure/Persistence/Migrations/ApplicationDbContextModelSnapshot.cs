@@ -2050,6 +2050,52 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                     b.ToTable("GrowthActivityLogs", (string)null);
                 });
 
+            modelBuilder.Entity("NewsStudio.Domain.Entities.GrowthAutopilot", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("DailyVideo")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("Enabled")
+                        .HasColumnType("boolean");
+
+                    b.Property<Guid>("FacebookAccountId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("LastRunAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("NoticesJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<bool>("ScriptPost")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("StateJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("StoriesPerDay")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("FacebookAccountId")
+                        .IsUnique();
+
+                    b.ToTable("GrowthAutopilots", (string)null);
+                });
+
             modelBuilder.Entity("NewsStudio.Domain.Entities.GrowthCampaign", b =>
                 {
                     b.Property<Guid>("Id")
@@ -2512,6 +2558,12 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                         .HasMaxLength(5000)
                         .HasColumnType("character varying(5000)");
 
+                    b.Property<double?>("ClipSeconds")
+                        .HasColumnType("double precision");
+
+                    b.Property<double?>("ClipStartSeconds")
+                        .HasColumnType("double precision");
+
                     b.Property<DateTime>("CreatedAtUtc")
                         .HasColumnType("timestamp with time zone");
 
@@ -2578,6 +2630,9 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                     b.Property<DateTime?>("ScheduledAtUtc")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<Guid?>("ScriptId")
+                        .HasColumnType("uuid");
+
                     b.Property<Guid?>("SourceId")
                         .HasColumnType("uuid");
 
@@ -2611,11 +2666,118 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                     b.HasIndex("IdempotencyKey")
                         .IsUnique();
 
+                    b.HasIndex("ScriptId");
+
                     b.HasIndex("CampaignId", "ScheduledAtUtc");
 
                     b.HasIndex("Status", "ScheduledAtUtc");
 
                     b.ToTable("GrowthScheduledContents", (string)null);
+                });
+
+            modelBuilder.Entity("NewsStudio.Domain.Entities.GrowthScript", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Category")
+                        .HasMaxLength(60)
+                        .HasColumnType("character varying(60)");
+
+                    b.Property<string>("CategoryName")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("Code")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("EndingNote")
+                        .IsRequired()
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<string>("Era")
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)");
+
+                    b.Property<string>("Hook")
+                        .IsRequired()
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<string>("Mood")
+                        .HasMaxLength(60)
+                        .HasColumnType("character varying(60)");
+
+                    b.Property<string>("Region")
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<string>("ScenesJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<string>("Synopsis")
+                        .IsRequired()
+                        .HasMaxLength(4000)
+                        .HasColumnType("character varying(4000)");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)");
+
+                    b.Property<DateTime?>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Code")
+                        .IsUnique();
+
+                    b.ToTable("GrowthScripts", (string)null);
+                });
+
+            modelBuilder.Entity("NewsStudio.Domain.Entities.GrowthScriptUsage", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("ContentId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("FacebookAccountId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ScriptId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ScriptId");
+
+                    b.HasIndex("FacebookAccountId", "ScriptId")
+                        .IsUnique();
+
+                    b.ToTable("GrowthScriptUsages", (string)null);
                 });
 
             modelBuilder.Entity("NewsStudio.Domain.Entities.InstagramMetric", b =>
@@ -4003,6 +4165,15 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Cascade);
                 });
 
+            modelBuilder.Entity("NewsStudio.Domain.Entities.GrowthAutopilot", b =>
+                {
+                    b.HasOne("NewsStudio.Domain.Entities.FacebookAccount", null)
+                        .WithMany()
+                        .HasForeignKey("FacebookAccountId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("NewsStudio.Domain.Entities.GrowthCampaign", b =>
                 {
                     b.HasOne("NewsStudio.Domain.Entities.FacebookAccount", "FacebookAccount")
@@ -4084,6 +4255,23 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                         .IsRequired();
 
                     b.Navigation("Campaign");
+                });
+
+            modelBuilder.Entity("NewsStudio.Domain.Entities.GrowthScriptUsage", b =>
+                {
+                    b.HasOne("NewsStudio.Domain.Entities.FacebookAccount", null)
+                        .WithMany()
+                        .HasForeignKey("FacebookAccountId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("NewsStudio.Domain.Entities.GrowthScript", "Script")
+                        .WithMany()
+                        .HasForeignKey("ScriptId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Script");
                 });
 
             modelBuilder.Entity("NewsStudio.Domain.Entities.InstagramMetric", b =>

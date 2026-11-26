@@ -212,6 +212,9 @@ public class GrowthContentDto
     public string? ExternalPostId { get; set; }
     public string? PermalinkUrl { get; set; }
     public bool PublishedManually { get; set; }
+    public double? ClipStartSeconds { get; set; }
+    public double? ClipSeconds { get; set; }
+    public Guid? ScriptId { get; set; }
     public GrowthPostMetricDto? LatestMetric { get; set; }
     public DateTime CreatedAtUtc { get; set; }
     public DateTime? UpdatedAtUtc { get; set; }
@@ -652,4 +655,73 @@ public class GrowthSyncResultDto
     public int PostsRead { get; set; }
     public int PostErrors { get; set; }
     public List<string> Errors { get; set; } = new();
+}
+
+// ───────────────────────── Autopilot & scripts ─────────────────────────
+
+public class GrowthScriptSceneDto
+{
+    public string? Title { get; set; }
+    public string? VisualVi { get; set; }
+    public string? AiPromptEn { get; set; }
+    public string? Voiceover { get; set; }
+}
+
+/// <summary>A script sent by the page from the "Lên kịch bản" library (or the owner's own saved scripts).</summary>
+public class GrowthScriptImportDto
+{
+    public string Code { get; set; } = string.Empty;
+    public string Title { get; set; } = string.Empty;
+    public string? Category { get; set; }
+    public string? CategoryName { get; set; }
+    public string? Mood { get; set; }
+    public string? Era { get; set; }
+    public string? Region { get; set; }
+    public string? Synopsis { get; set; }
+    public string? Hook { get; set; }
+    public string? EndingNote { get; set; }
+    public List<GrowthScriptSceneDto>? Scenes { get; set; }
+    public string? Source { get; set; }
+}
+
+public class GrowthScriptStatsDto
+{
+    public int Total { get; set; }
+    public int Used { get; set; }
+    public int Remaining { get; set; }
+    public List<string> Codes { get; set; } = new();
+    public List<GrowthCountDto> RemainingByCategory { get; set; } = new();
+}
+
+public class GrowthNoticeDto
+{
+    /// <summary>info, warning, error.</summary>
+    public string Level { get; set; } = "info";
+    public string Code { get; set; } = string.Empty;
+    public string Message { get; set; } = string.Empty;
+    public DateTime AtUtc { get; set; }
+}
+
+public class GrowthAutopilotDto
+{
+    public Guid FacebookAccountId { get; set; }
+    public bool Enabled { get; set; }
+    public bool ScriptPost { get; set; }
+    public bool DailyVideo { get; set; }
+    public int StoriesPerDay { get; set; }
+    public DateTime? LastRunAtUtc { get; set; }
+    public List<GrowthNoticeDto> Notices { get; set; } = new();
+    public GrowthScriptStatsDto Scripts { get; set; } = new();
+    public Guid? CampaignId { get; set; }
+    public List<GrowthContentDto> Today { get; set; } = new();
+    public Dictionary<string, string> Slots { get; set; } = new();
+}
+
+public class GrowthAutopilotInputDto
+{
+    public Guid FacebookAccountId { get; set; }
+    public bool? Enabled { get; set; }
+    public bool? ScriptPost { get; set; }
+    public bool? DailyVideo { get; set; }
+    public int? StoriesPerDay { get; set; }
 }

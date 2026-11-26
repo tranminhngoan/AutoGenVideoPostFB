@@ -47,6 +47,7 @@ public static class GrowthModelConfiguration
             e.Property(x => x.ExternalPostId).HasMaxLength(100);
             e.Property(x => x.ExternalVideoId).HasMaxLength(100);
             e.Property(x => x.PermalinkUrl).HasMaxLength(500);
+            e.HasIndex(x => x.ScriptId);
             e.HasOne(x => x.Campaign).WithMany(c => c.Contents).HasForeignKey(x => x.CampaignId).OnDelete(DeleteBehavior.Cascade);
             e.HasIndex(x => x.IdempotencyKey).IsUnique();
             e.HasIndex(x => new { x.Status, x.ScheduledAtUtc });
@@ -128,6 +129,41 @@ public static class GrowthModelConfiguration
             e.Property(x => x.Actor).HasMaxLength(20);
             e.HasOne<GrowthCampaign>().WithMany().HasForeignKey(x => x.CampaignId).OnDelete(DeleteBehavior.Cascade);
             e.HasIndex(x => new { x.CampaignId, x.CreatedAtUtc });
+        });
+
+        modelBuilder.Entity<GrowthAutopilot>(e =>
+        {
+            e.ToTable("GrowthAutopilots");
+            e.HasKey(x => x.Id);
+            e.HasOne<FacebookAccount>().WithMany().HasForeignKey(x => x.FacebookAccountId).OnDelete(DeleteBehavior.Cascade);
+            e.HasIndex(x => x.FacebookAccountId).IsUnique();
+        });
+
+        modelBuilder.Entity<GrowthScript>(e =>
+        {
+            e.ToTable("GrowthScripts");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Code).HasMaxLength(100);
+            e.Property(x => x.Title).HasMaxLength(300);
+            e.Property(x => x.Category).HasMaxLength(60);
+            e.Property(x => x.CategoryName).HasMaxLength(200);
+            e.Property(x => x.Mood).HasMaxLength(60);
+            e.Property(x => x.Era).HasMaxLength(10);
+            e.Property(x => x.Region).HasMaxLength(40);
+            e.Property(x => x.Synopsis).HasMaxLength(4000);
+            e.Property(x => x.Hook).HasMaxLength(2000);
+            e.Property(x => x.EndingNote).HasMaxLength(2000);
+            e.Property(x => x.Source).HasMaxLength(20);
+            e.HasIndex(x => x.Code).IsUnique();
+        });
+
+        modelBuilder.Entity<GrowthScriptUsage>(e =>
+        {
+            e.ToTable("GrowthScriptUsages");
+            e.HasKey(x => x.Id);
+            e.HasOne<FacebookAccount>().WithMany().HasForeignKey(x => x.FacebookAccountId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(x => x.Script).WithMany().HasForeignKey(x => x.ScriptId).OnDelete(DeleteBehavior.Cascade);
+            e.HasIndex(x => new { x.FacebookAccountId, x.ScriptId }).IsUnique();
         });
     }
 }

@@ -312,6 +312,10 @@ try
                 "growth-insights-sync",
                 s => s.SyncAllAsync(CancellationToken.None),
                 "41 * * * *");
+            recurring.AddOrUpdate<NewsStudio.Infrastructure.Growth.GrowthAutopilotService>(
+                "growth-autopilot-tick",
+                s => s.TickAsync(CancellationToken.None),
+                "*/10 * * * *");
 
             var jobs = app.Services.GetRequiredService<IBackgroundJobClient>();
             jobs.Enqueue<NewsStudio.Application.Interfaces.IJobRecoveryService>(s => s.RecoverDanglingJobsAsync(CancellationToken.None));

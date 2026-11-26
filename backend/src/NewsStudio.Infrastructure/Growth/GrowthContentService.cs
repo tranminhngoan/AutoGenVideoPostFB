@@ -108,6 +108,7 @@ public partial class GrowthContentService
             ScheduledAtUtc = i.ScheduledAtUtc, ManualPublish = i.ManualPublish, Attempts = i.Attempts, MaxAttempts = i.MaxAttempts,
             NextAttemptAtUtc = i.NextAttemptAtUtc, LastError = i.LastError, ErrorKind = i.ErrorKind, PublishedAtUtc = i.PublishedAtUtc,
             ExternalPostId = i.ExternalPostId, PermalinkUrl = i.PermalinkUrl, PublishedManually = i.PublishedManually,
+            ClipStartSeconds = i.ClipStartSeconds, ClipSeconds = i.ClipSeconds, ScriptId = i.ScriptId,
             LatestMetric = metrics.FirstOrDefault(m => m.ContentId == i.Id) is { } m ? MetricDto(m) : null,
             CreatedAtUtc = i.CreatedAtUtc, UpdatedAtUtc = i.UpdatedAtUtc
         }).ToList();
@@ -255,7 +256,7 @@ public partial class GrowthContentService
             else
             {
                 if (!GrowthSources.All.Contains(input.SourceType)) throw new ArgumentException("Nguồn video không hợp lệ.");
-                await EnsureSourceAsync(c, input.SourceType, input.SourceId.Value, ct);
+                await EnsureSourceAsync(c, input.SourceType, input.SourceId.Value, item.Kind, ct);
                 item.SourceType = input.SourceType;
                 item.SourceId = input.SourceId;
             }
@@ -325,7 +326,7 @@ public partial class GrowthContentService
     }
 
     /// <summary>The video must be finished and belong to this Page (or to no Page). A Studio video already posted can't be posted again.</summary>
-    private async Task EnsureSourceAsync(GrowthCampaign c, string type, Guid id, CancellationToken ct)
+    private async Task EnsureSourceAsync(GrowthCampaign c, string type, Guid id, string kind, CancellationToken ct)
     {
         switch (type)
         {
@@ -333,7 +334,8 @@ public partial class GrowthContentService
                 var v = await _db.StudioVideos.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id, ct) ?? throw new ArgumentException("Không tìm thấy video Studio.");
                 if (v.FacebookAccountId != null && v.FacebookAccountId != c.FacebookAccountId) throw new ArgumentException("Video này thuộc Page khác.");
                 if (v.FinalBlobId == null) throw new ArgumentException("Video Studio chưa ghép xong.");
-                if (v.Status == "Published" || v.PublishedPostId != null) throw new ArgumentException("Video này đã được đăng từ Studio — chọn video khác.");
+                // a Story may reuse a posted video (a highlight of it); a Reel may not be posted twice
+                if (kind == GrowthKinds.Reel && (v.Status == "Published" || v.PublishedPostId != null)) throw new ArgumentException("Video này đã được đăng từ Studio — chọn video khác.");
                 break;
             case GrowthSources.AiStudioProject:
                 var p = await _db.AiStudioProjects.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id, ct) ?? throw new ArgumentException("Không tìm thấy dự án AI Video Studio.");
@@ -575,7 +577,7 @@ public partial class GrowthContentService
         var asset = new GrowthContentAsset
         {
             CampaignId = c.Id, Kind = sniff.Kind, MimeType = sniff.Mime, SizeBytes = info.Length, FileId = Guid.NewGuid(),
-            FileName = SafeName(fileName, sniff.Mime), Source = source is "Template" ? "Template" : "Upload"
+            FileName = SafeName(fileName, sniff.Mime), Source = source is "Template" or "Ai" ? source : "Upload"
         };
         if (sniff.Kind == "Image")
         {

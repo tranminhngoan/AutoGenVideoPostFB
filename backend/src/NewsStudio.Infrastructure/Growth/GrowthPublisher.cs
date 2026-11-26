@@ -33,10 +33,12 @@ public class GrowthPublishGateway : IGrowthPublishGateway
     private readonly AiStudioMedia _media;
     private readonly GrowthGraphClient _graph;
     private readonly GrowthContentService _content;
+    private readonly GrowthMedia _growthMedia;
 
     public GrowthPublishGateway(IApplicationDbContext db, IFacebookPublishingService facebook, StudioService studio, AiStudioService aiStudio,
-        AiStudioMedia media, GrowthGraphClient graph, GrowthContentService content)
+        AiStudioMedia media, GrowthGraphClient graph, GrowthContentService content, GrowthMedia growthMedia)
     {
+        _growthMedia = growthMedia;
         _db = db;
         _facebook = facebook;
         _studio = studio;
@@ -182,6 +184,27 @@ public class GrowthPublishGateway : IGrowthPublishGateway
             videoPath = (await _aiStudio.FileAsync(blob, ct))?.Path;
         }
         if (videoPath == null) throw new GrowthPublishException(GrowthErrorKind.Content, "Không tìm thấy ảnh / video cho Story.");
+        string? cutDir = null;
+        try
+        {
+            if (item.ClipStartSeconds is { } start && item.ClipSeconds is { } length)
+            {
+                // a highlight of a longer video (autopilot): cut it just before posting
+                cutDir = StudioMedia.TempDir();
+                var cut = Path.Combine(cutDir, "story.mp4");
+                await _growthMedia.CutAsync(videoPath, start, length, cut, ct);
+                videoPath = cut;
+            }
+            return await PublishVideoStoryFileAsync(pageId, videoPath, ct);
+        }
+        finally
+        {
+            if (cutDir != null) StudioMedia.TryDelete(cutDir);
+        }
+    }
+
+    private async Task<GrowthPublishResult> PublishVideoStoryFileAsync(Guid pageId, string videoPath, CancellationToken ct)
+    {
         var probe = await _media.ProbeAsync(videoPath, ct);
         if (probe.Duration > GrowthContentService.MaxStorySeconds)
             throw new GrowthPublishException(GrowthErrorKind.Content, $"Video Story dài {probe.Duration:0.#} giây — Facebook chỉ nhận tối đa 60 giây.");

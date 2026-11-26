@@ -24,11 +24,14 @@ public class GrowthController : ControllerBase
     private readonly GrowthReportService _reports;
     private readonly GrowthCompetitorService _competitors;
     private readonly GrowthCapabilityService _capabilities;
+    private readonly GrowthAutopilotService _autopilot;
     private readonly IConfiguration _configuration;
 
     public GrowthController(GrowthCampaignService campaigns, GrowthContentService content, GrowthInsightsService insights, GrowthAiService ai,
-        GrowthReportService reports, GrowthCompetitorService competitors, GrowthCapabilityService capabilities, IConfiguration configuration)
+        GrowthReportService reports, GrowthCompetitorService competitors, GrowthCapabilityService capabilities, GrowthAutopilotService autopilot,
+        IConfiguration configuration)
     {
+        _autopilot = autopilot;
         _campaigns = campaigns;
         _content = content;
         _insights = insights;
@@ -248,6 +251,26 @@ public class GrowthController : ControllerBase
         }
         catch (KeyNotFoundException ex) { return NotFound(new { message = ex.Message }); }
     }
+
+    // ───────────── autopilot & scripts ─────────────
+
+    [HttpGet("autopilot")]
+    public Task<IActionResult> Autopilot([FromQuery] Guid pageId, CancellationToken ct) => Run(async () => await _autopilot.GetAsync(pageId, ct));
+
+    [HttpPut("autopilot")]
+    public Task<IActionResult> SetAutopilot([FromBody] GrowthAutopilotInputDto input, CancellationToken ct) => Run(async () => await _autopilot.SetAsync(input, ct));
+
+    /// <summary>Plans today's items now (also when the autopilot is off, as a one-off run).</summary>
+    [HttpPost("autopilot/run")]
+    public Task<IActionResult> RunAutopilot([FromQuery] Guid pageId, CancellationToken ct) => Run(async () => await _autopilot.RunAsync(pageId, force: true, ct));
+
+    [HttpGet("scripts/stats")]
+    public Task<IActionResult> ScriptStats([FromQuery] Guid? pageId, CancellationToken ct) => Run(async () => await _autopilot.ScriptStatsAsync(pageId, ct));
+
+    [HttpPost("scripts/import")]
+    [RequestSizeLimit(8 * 1024 * 1024)]
+    public Task<IActionResult> ImportScripts([FromBody] List<GrowthScriptImportDto> items, CancellationToken ct) =>
+        Run(async () => new { added = await _autopilot.ImportScriptsAsync(items, ct) });
 
     // ───────────── competitors ─────────────
 

@@ -244,6 +244,9 @@ export interface Content {
   externalPostId?: string | null;
   permalinkUrl?: string | null;
   publishedManually: boolean;
+  clipStartSeconds?: number | null;
+  clipSeconds?: number | null;
+  scriptId?: string | null;
   latestMetric?: PostMetric | null;
   createdAtUtc: string;
   updatedAtUtc?: string | null;
@@ -635,4 +638,59 @@ export const growth = {
   deleteSnapshot: (id: string, pageId: string, snapshotId: string) => call<void>('DELETE', `/competitors/${id}/snapshots/${snapshotId}?pageId=${pageId}`),
   analyzeCompetitors: (pageId: string, campaignId: string | undefined, ai: boolean) =>
     call<CompetitorAnalysis>('POST', `/competitors/analyze?pageId=${pageId}${campaignId ? `&campaignId=${campaignId}` : ''}&ai=${ai}`),
+};
+
+// ───────── autopilot ─────────
+
+export interface ScriptImport {
+  code: string;
+  title: string;
+  category?: string;
+  categoryName?: string;
+  mood?: string;
+  era?: string;
+  region?: string;
+  synopsis?: string;
+  hook?: string;
+  endingNote?: string;
+  scenes?: { title?: string; visualVi?: string; aiPromptEn?: string; voiceover?: string }[];
+  source?: 'library' | 'custom' | 'ai';
+}
+
+export interface ScriptStats {
+  total: number;
+  used: number;
+  remaining: number;
+  codes: string[];
+  remainingByCategory: { label: string; value: number }[];
+}
+
+export interface Notice {
+  level: 'info' | 'warning' | 'error';
+  code: string;
+  message: string;
+  atUtc: string;
+}
+
+export interface Autopilot {
+  facebookAccountId: string;
+  enabled: boolean;
+  scriptPost: boolean;
+  dailyVideo: boolean;
+  storiesPerDay: number;
+  lastRunAtUtc?: string | null;
+  notices: Notice[];
+  scripts: ScriptStats;
+  campaignId?: string | null;
+  today: Content[];
+  slots: Record<string, string>;
+}
+
+export const autopilotApi = {
+  get: (pageId: string) => call<Autopilot>('GET', `/autopilot?pageId=${pageId}`),
+  set: (input: { facebookAccountId: string; enabled?: boolean; scriptPost?: boolean; dailyVideo?: boolean; storiesPerDay?: number }) =>
+    call<Autopilot>('PUT', '/autopilot', input),
+  run: (pageId: string) => call<Autopilot>('POST', `/autopilot/run?pageId=${pageId}`),
+  scriptStats: (pageId?: string) => call<ScriptStats>('GET', `/scripts/stats${pageId ? `?pageId=${pageId}` : ''}`),
+  importScripts: (items: ScriptImport[]) => call<{ added: number }>('POST', '/scripts/import', items),
 };
