@@ -256,8 +256,12 @@ public class AiStudioMedia
         if (code != 0 || !File.Exists(output)) throw new InvalidOperationException("Không ghép được lời bình gốc vào video: " + Tail(err));
     }
 
-    /// <summary>One clip of the joined video and the narrator's take for it (null = no narration in that scene).</summary>
-    public sealed record VoicePiece(string? VoicePath, double VoiceSeconds, double ClipSeconds);
+    /// <summary>
+    /// One clip of the joined video and the narrator's take for it (null = no narration in that scene). With
+    /// <paramref name="From"/>, only <paramref name="VoiceSeconds"/> of the take starting there is played (a scene's
+    /// part of the one continuous reading).
+    /// </summary>
+    public sealed record VoicePiece(string? VoicePath, double VoiceSeconds, double ClipSeconds, double? From = null);
 
     /// <summary>
     /// Where every take plays in the joined video. A voice-over runs on across a cut like the reference does: each
@@ -324,12 +328,56 @@ public class AiStudioMedia
         {
             if (pieces[i].VoicePath == null) continue;
             var ms = (long)Math.Round(plan.Starts[i] * 1000);
-            f.Append(Inv, $"[{input}:a:0]aformat=sample_rates=48000:channel_layouts=stereo,asetpts=PTS-STARTPTS{tempo},adelay={ms}:all=1[v{input}];");
+            var part = pieces[i].From is { } from
+                ? $"atrim=start={from.ToString("0.###", Inv)}:end={(from + pieces[i].VoiceSeconds).ToString("0.###", Inv)},asetpts=PTS-STARTPTS,"
+                : "";
+            f.Append(Inv, $"[{input}:a:0]{part}aformat=sample_rates=48000:channel_layouts=stereo,asetpts=PTS-STARTPTS{tempo},adelay={ms}:all=1[v{input}];");
             mixed.Append(Inv, $"[v{input}]");
             input++;
         }
         f.Append(mixed).Append(Inv, $"amix=inputs={input}:duration=first:dropout_transition=0:normalize=0[aout]");
         return f.ToString();
+    }
+
+    /// <summary>The pauses in a take (start, end) — where the narrator breathes between sentences.</summary>
+    public async Task<List<(double Start, double End)>> SilencesAsync(string audio, CancellationToken ct)
+    {
+        var (code, _, err) = await RunAsync(Ffmpeg, new[] { "-hide_banner", "-nostats", "-v", "info", "-i", audio,
+            "-af", "silencedetect=noise=-35dB:d=0.22", "-f", "null", "-" }, ct);
+        if (code != 0) throw new InvalidOperationException("Không đọc được bản lời bình: " + Tail(err));
+        var found = new List<(double, double)>();
+        double? open = null;
+        foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(err, @"silence_(start|end): (-?[0-9.]+)"))
+        {
+            var t = double.Parse(m.Groups[2].Value, Inv);
+            if (m.Groups[1].Value == "start") open = Math.Max(0, t);
+            else if (open is { } o) { found.Add((o, t)); open = null; }
+        }
+        return found;
+    }
+
+    /// <summary>
+    /// Where to cut one continuous reading of several scenes' words so that each scene's part plays with its own clip:
+    /// for every border between two parts, the pause nearest to where that border should fall (by the share of words
+    /// still to be read), or null when no pause is near (the parts then stay together — never cut inside a word).
+    /// </summary>
+    public static List<double?> ChooseCuts(double takeSeconds, IReadOnlyList<int> words, IReadOnlyList<(double Start, double End)> pauses)
+    {
+        var cuts = new List<double?>();
+        double from = 0;
+        for (var j = 0; j < words.Count - 1; j++)
+        {
+            var left = words.Skip(j).Sum(w => Math.Max(1, w));
+            var expected = from + (takeSeconds - from) * Math.Max(1, words[j]) / left;
+            var tolerance = Math.Max(1.5, (takeSeconds - from) * 0.15);
+            var best = pauses.Select(x => (Mid: (x.Start + x.End) / 2, x.Start, x.End))
+                .Where(x => x.Mid > from + 0.3 && x.Mid < takeSeconds - 0.3 && Math.Abs(x.Mid - expected) <= tolerance)
+                .OrderBy(x => Math.Abs(x.Mid - expected) - Math.Min(0.6, x.End - x.Start)) // nearest, a longer breath preferred
+                .Select(x => (double?)x.Mid).FirstOrDefault();
+            cuts.Add(best);
+            if (best is { } c) from = c;
+        }
+        return cuts;
     }
 
     /// <summary>
@@ -340,7 +388,7 @@ public class AiStudioMedia
     {
         var plan = PlanVoices(pieces);
         var args = new List<string> { "-hide_banner", "-v", "error", "-y", "-i", video };
-        foreach (var p in pieces.Where(p => p.VoicePath != null)) { args.Add("-i"); args.Add(p.VoicePath!); }
+        foreach (var p in pieces.Where(p => p.VoicePath != null)) { args.Add("-i"); args.Add(p.VoicePath!); } // a part of one take: the same file again
         args.AddRange(new[] { "-filter_complex", BuildVoiceFilter(pieces, plan) });
         if (plan.HoldSeconds > 0)
             args.AddRange(new[] { "-map", "[vout]", "-map", "[aout]", "-c:v", "libx264", "-preset", "medium", "-crf", "16", "-pix_fmt", "yuv420p" });

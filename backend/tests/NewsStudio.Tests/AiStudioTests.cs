@@ -228,6 +228,61 @@ public class AiStudioUnitTests
     }
 
     [Fact]
+    public void One_continuous_reading_is_cut_at_the_pauses_nearest_to_each_scene_border()
+    {
+        // 3 scenes of 10, 10 and 20 words read in 20 s; breaths at 4.9, 7.0, 10.2 and 15 s
+        var pauses = new List<(double, double)> { (4.7, 5.1), (6.9, 7.1), (10.0, 10.4), (14.8, 15.2) };
+        AiStudioMedia.ChooseCuts(20, new[] { 10, 10, 20 }, pauses).Should().Equal(4.9, 10.2);
+        // no pause near a border: those two parts stay together (never cut inside a word)
+        AiStudioMedia.ChooseCuts(20, new[] { 10, 30 }, new List<(double, double)> { (15.0, 15.4) }).Should().Equal(new double?[] { null });
+        AiStudioMedia.ChooseCuts(8, new[] { 5 }, pauses).Should().BeEmpty();
+        // a part of the take is trimmed out of the same file
+        var f = AiStudioMedia.BuildVoiceFilter(new[] { new AiStudioMedia.VoicePiece("t.m4a", 2.3, 5, 0), new AiStudioMedia.VoicePiece("t.m4a", 2.3, 5, 2.3) },
+            new AiStudioMedia.VoicePlan(1.0, new[] { 0.0, 5.0 }, 10, 0));
+        f.Should().Contain("[2:a:0]atrim=start=2.3:end=4.6,asetpts=PTS-STARTPTS,aformat=").And.Contain("adelay=5000:all=1[v2]");
+    }
+
+    [Fact]
+    public async Task Each_scene_s_part_of_the_reading_starts_with_its_own_clip()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "ais-align-" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var media = new AiStudioMedia(new ConfigurationBuilder().Build());
+            async Task Ffmpeg(params string[] args)
+            {
+                var (code, _, err) = await AiStudioMedia.RunAsync(media.Ffmpeg, new[] { "-hide_banner", "-v", "error", "-y" }.Concat(args), CancellationToken.None);
+                code.Should().Be(0, err);
+            }
+            // two 5 s clips; one reading: sentence (2 s) · breath (0.6 s) · sentence (2 s)
+            var video = Path.Combine(dir, "v.mp4");
+            await Ffmpeg("-f", "lavfi", "-i", "testsrc2=s=320x240:r=24:d=10", "-c:v", "libx264", "-pix_fmt", "yuv420p", video);
+            var take = Path.Combine(dir, "take.m4a");
+            await Ffmpeg("-f", "lavfi", "-i", "sine=f=300:d=2", "-f", "lavfi", "-i", "anullsrc=r=44100:cl=mono:d=0.6", "-f", "lavfi", "-i", "sine=f=500:d=2",
+                "-filter_complex", "[0:a]aformat=sample_rates=44100:channel_layouts=mono[a];[1:a]aformat=sample_rates=44100:channel_layouts=mono[b];[2:a]aformat=sample_rates=44100:channel_layouts=mono[c];[a][b][c]concat=n=3:v=0:a=1[o]",
+                "-map", "[o]", "-c:a", "aac", take);
+
+            var pauses = await media.SilencesAsync(take, CancellationToken.None);
+            pauses.Should().ContainSingle(x => x.Start > 1.8 && x.End < 2.8);
+            var cut = AiStudioMedia.ChooseCuts(4.6, new[] { 6, 6 }, pauses).Single()!.Value;
+            cut.Should().BeApproximately(2.3, 0.1);
+
+            var output = Path.Combine(dir, "out.mp4");
+            await media.AddVoicesAsync(video, new[]
+            {
+                new AiStudioMedia.VoicePiece(take, cut, 5, 0),
+                new AiStudioMedia.VoicePiece(take, 4.6 - cut, 5, cut)
+            }, output, CancellationToken.None);
+            (await media.ProbeAsync(output, CancellationToken.None)).Duration.Should().BeApproximately(10, 0.2);
+            var quiet = await media.SilencesAsync(output, CancellationToken.None);
+            // the first sentence 0–2 s, quiet until the second clip, the second sentence from ~5.3 s (its breath first)
+            quiet.Should().Contain(x => x.Start < 2.2 && x.End > 5.1 && x.End < 5.6);
+        }
+        finally { Directory.Delete(dir, true); }
+    }
+
+    [Fact]
     public void Narration_goes_to_one_scene_each_and_into_its_prompt_as_story_context()
     {
         var lines = AiStudioNarration.Lines("""

@@ -163,7 +163,7 @@ export function GeneratorPanel({ project: p, setProject, reload }: WorkspaceProp
               {p.audioMode === 'Narration' && (() => {
                 const need = enabled.some((s) => s.narration) && !p.narrationCurrent;
                 return <span className={cn('text-[11px]', need ? 'text-warning' : 'text-fg-subtle')}>
-                  {need ? 'Lời bình chưa đọc (hoặc đã sửa chữ / đổi giọng) — vào tab Storyboard bấm “Đọc lời bình”.' : 'Giọng AI đọc liền một mạch cả video, chạy qua các chỗ chuyển cảnh, không cắt chữ.'}
+                  {need ? 'Lời bình chưa đọc (hoặc đã sửa chữ / đổi giọng) — vào tab Storyboard bấm “Đọc lời bình”.' : 'Giọng AI đọc liền một mạch; khi ghép, lời của mỗi cảnh bắt đầu cùng clip của cảnh đó (cắt ở chỗ ngừng thở giữa câu), không cắt chữ.'}
                 </span>;
               })()}
               {p.audioMode === 'Original' && <span className="text-[11px] text-fg-subtle">Dùng chính tiếng của video gốc (giọng người khác + nhạc nền nếu có).</span>}

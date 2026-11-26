@@ -463,7 +463,8 @@ public partial class AiStudioService
             }
             else if (p.AudioMode == "Narration")
             {
-                // the one continuous take, from the first scene that has narration, flowing over the cuts
+                // the one continuous reading, cut at the narrator's pauses so that every scene's words play with its own clip
+                // (the clips are longer than the reference scenes: laid end to end, the reading ran ahead of the picture)
                 var sceneIds = clips.Select(c => c.SceneId).ToList();
                 var scenes = await _db.AiStudioScenes.AsNoTracking().Where(s => sceneIds.Contains(s.Id)).ToDictionaryAsync(s => s.Id, ct);
                 string? voicePath = null;
@@ -472,17 +473,35 @@ public partial class AiStudioService
                     voicePath = Path.Combine(temp, "narration.m4a");
                     if (!await _files.CopyToAsync(nid, voicePath, ct)) throw new InvalidOperationException("Bản đọc lời bình đã mất khỏi kho — bấm \"Đọc lời bình\" lại.");
                 }
-                var pieces = new List<AiStudioMedia.VoicePiece>();
-                var placed = false;
+                var lengths = new List<double>();
                 for (var i = 0; i < clips.Count; i++)
                 {
-                    var s = scenes[clips[i].SceneId];
                     var length = (await _media.ProbeAsync(paths[i], ct)).Duration;
-                    if (length <= 0) length = clips[i].Seconds;
-                    var here = voicePath != null && !placed && !string.IsNullOrWhiteSpace(s.Narration);
-                    placed |= here;
-                    pieces.Add(new AiStudioMedia.VoicePiece(here ? voicePath : null, here ? p.NarrationSeconds ?? 0 : 0, length));
+                    lengths.Add(length > 0 ? length : clips[i].Seconds);
                 }
+                var spoken = Enumerable.Range(0, clips.Count).Where(i => !string.IsNullOrWhiteSpace(scenes[clips[i].SceneId].Narration)).ToList();
+                var parts = new Dictionary<int, (double From, double Seconds)>();
+                if (voicePath != null && spoken.Count > 0)
+                {
+                    var take = (await _media.ProbeAsync(voicePath, ct)).Duration is > 0 and var d ? d : p.NarrationSeconds ?? 0;
+                    var words = spoken.Select(i => scenes[clips[i].SceneId].Narration!.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Length).ToList();
+                    var cuts = spoken.Count > 1 ? AiStudioMedia.ChooseCuts(take, words, await _media.SilencesAsync(voicePath, ct)) : new List<double?>();
+                    double from = 0;
+                    var owner = spoken[0];
+                    for (var j = 0; j < spoken.Count; j++)
+                    {
+                        var end = j < cuts.Count ? cuts[j] : take;
+                        if (end == null) continue; // no pause at this border: this scene's words go on with the next one's
+                        parts[owner] = (from, end.Value - from);
+                        from = end.Value;
+                        if (j + 1 < spoken.Count) owner = spoken[j + 1];
+                    }
+                }
+                var pieces = new List<AiStudioMedia.VoicePiece>();
+                for (var i = 0; i < clips.Count; i++)
+                    pieces.Add(parts.TryGetValue(i, out var part)
+                        ? new AiStudioMedia.VoicePiece(voicePath, part.Seconds, lengths[i], part.From)
+                        : new AiStudioMedia.VoicePiece(null, 0, lengths[i]));
                 if (pieces.Any(x => x.VoicePath != null))
                 {
                     var withVoice = Path.Combine(temp, "final-voice.mp4");
