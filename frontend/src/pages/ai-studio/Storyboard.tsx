@@ -15,7 +15,6 @@ export function Storyboard({ project: p, setProject, reload }: WorkspaceProps) {
   return (
     <div className="space-y-5">
       <PromptSettings project={p} setProject={setProject} />
-      {p.hasAudio && <NarrationPanel project={p} setProject={setProject} reload={reload} />}
 
       {/* timeline: one block per scene, width = its length in the reference */}
       <div>
@@ -61,6 +60,7 @@ function PromptSettings({ project: p, setProject }: { project: Project; setProje
   const [overwrite, setOverwrite] = useState(false);
   const [saving, setSaving] = useState(false);
   const [versions, setVersions] = useState(false);
+  const [open, setOpen] = useState(false);
 
   useEffect(() => {
     setMode(p.promptMode);
@@ -96,10 +96,17 @@ function PromptSettings({ project: p, setProject }: { project: Project; setProje
   return (
     <div className="rounded-xl border border-line bg-subtle p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2 text-[13px] font-semibold text-fg"><Wand2 className="h-4 w-4 text-accent" />Cinematic Prompt Engine</div>
-        <Segmented<PromptMode> size="sm" value={mode} onChange={setMode}
-          options={(['Faithful', 'Creative', 'Cinematic'] as PromptMode[]).map((m) => ({ value: m, label: MODE_INFO[m].label }))} />
+        <div className="flex flex-wrap items-center gap-2 text-[13px] font-semibold text-fg"><Wand2 className="h-4 w-4 text-accent" />Prompt chung
+          <Chip>{MODE_INFO[p.promptMode].label}</Chip>
+          <Chip>{(overview?.topics ?? []).find((t) => t.id === p.topic)?.label ?? 'Không chủ đề'}</Chip>
+        </div>
+        <Button size="sm" variant={open ? 'ghost' : 'secondary'} icon={<ChevronDown className={cn('h-4 w-4 transition', open && 'rotate-180')} />} onClick={() => setOpen(!open)}>
+          {open ? 'Thu gọn' : 'Chỉnh chủ đề / kiểu prompt'}
+        </Button>
       </div>
+      {open && (<>
+      <div className="mt-3"><Segmented<PromptMode> size="sm" value={mode} onChange={setMode}
+        options={(['Faithful', 'Creative', 'Cinematic'] as PromptMode[]).map((m) => ({ value: m, label: MODE_INFO[m].label }))} /></div>
       <p className="mt-2 text-xs text-fg-muted">{MODE_INFO[mode].description}</p>
       <div className="mt-3 grid gap-2 sm:grid-cols-3">
         {[{ id: '', label: 'Không chủ đề', description: 'Theo đúng video' }, ...(overview?.topics ?? [])].map((t) => (
@@ -136,6 +143,7 @@ function PromptSettings({ project: p, setProject }: { project: Project; setProje
           Áp dụng & viết lại prompt
         </Button>
       </div>
+      </>)}
       {versions && <VersionsDrawer project={p} onClose={() => setVersions(false)} onRestored={(np) => { setProject(np); setVersions(false); }} />}
     </div>
   );
@@ -258,7 +266,7 @@ function SceneCard({ project: p, scene: s, first, last, open, onToggle, onChange
                 </div>
               )}
               {fact(a.object_interaction) && <p className="text-xs text-fg-muted"><b className="text-fg">Tương tác đồ vật:</b> {a.object_interaction}</p>}
-              {p.hasAudio && <SceneNarration project={p} scene={s} onChanged={onChanged} />}
+              {s.narration && <p className="text-xs text-fg-muted"><Mic className="mr-1 inline h-3 w-3" /><b className="text-fg">Lời bình:</b> {s.narration} <span className="text-fg-subtle">(sửa ở tab Lời bình)</span></p>}
               <details className="rounded-lg border border-line">
                 <summary className="cursor-pointer px-3 py-2 text-xs font-medium text-fg">Phân tích chi tiết (15 nhóm)</summary>
                 <div className="grid gap-3 p-3 sm:grid-cols-2">
@@ -323,6 +331,31 @@ function SceneCard({ project: p, scene: s, first, last, open, onToggle, onChange
 }
 
 // ───────────────────────── narration ─────────────────────────
+
+/** Step "Lời bình": the narrator (voice, direction, the one reading) and every scene's words, editable in one list. */
+export function NarrationTab({ project: p, setProject, reload }: WorkspaceProps) {
+  const withText = p.scenes.filter((s) => s.narration);
+  return (
+    <div className="space-y-4">
+      <NarrationPanel project={p} setProject={setProject} reload={reload} />
+      <div>
+        <div className="mb-2 text-[13px] font-semibold text-fg">Lời bình từng cảnh <span className="font-normal text-fg-subtle">({withText.length}/{p.scenes.length} cảnh có lời)</span></div>
+        <div className="space-y-2">
+          {p.scenes.map((s) => (
+            <div key={s.id} className={cn('flex gap-3', !s.enabled && 'opacity-50')}>
+              <div className="w-12 shrink-0 text-center">
+                <Thumb src={s.hasThumb ? aiStudio.sceneThumbUrl(s.id) : null} className="h-16 w-12 rounded-md" />
+                <div className="mt-1 text-[11px] font-semibold text-fg">Cảnh {s.order + 1}</div>
+                <div className="text-[10px] text-fg-subtle">{sec(s.startSeconds)}</div>
+              </div>
+              <div className="min-w-0 flex-1"><SceneNarration project={p} scene={s} onChanged={reload} /></div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 /** Narrator for the whole video: a voice like the reference speaker, its acting direction, and reading every scene. */
 function NarrationPanel({ project: p, setProject, reload }: { project: Project; setProject: (p: Project) => void; reload: () => Promise<void> }) {
@@ -447,16 +480,13 @@ function SceneNarration({ project: p, scene: s, onChanged }: { project: Project;
   };
 
   return (
-    <div className="rounded-lg border border-line p-3">
-      <div className="mb-1.5 flex items-center justify-between gap-2">
-        <span className="text-[13px] font-semibold text-fg"><Mic className="mr-1 inline h-3.5 w-3.5" />Lời bình cảnh này</span>
-        {s.narrationEdited && <Chip>bạn đã sửa</Chip>}
-      </div>
-      <Textarea rows={3} value={text} placeholder="Cảnh này không có lời bình (để trống = im lặng)." onChange={(e) => setText(e.target.value)} />
+    <div className="rounded-lg border border-line p-2.5">
+      <Textarea rows={2} value={text} placeholder="Cảnh này không có lời bình (để trống = im lặng)." onChange={(e) => setText(e.target.value)} />
       {s.narrationEn && !s.narrationEdited && <p className="mt-1 text-[11px] text-fg-subtle"><b>Ý nghĩa trong prompt:</b> {s.narrationEn}</p>}
       <div className="mt-2 flex flex-wrap items-center gap-2">
         <Button size="sm" variant="secondary" icon={<Save className="h-3.5 w-3.5" />} loading={busy} disabled={!dirty || busy} onClick={save}>Lưu chữ</Button>
-        <span className="text-[11px] text-fg-subtle">Sửa xong bấm “Đọc lại lời bình” ở khung trên — cả video được đọc liền một mạch.</span>
+        {s.narrationEdited && <Chip>bạn đã sửa</Chip>}
+        {dirty && <span className="text-[11px] text-fg-subtle">Lưu xong bấm “Đọc lại lời bình” ở khung trên.</span>}
       </div>
     </div>
   );

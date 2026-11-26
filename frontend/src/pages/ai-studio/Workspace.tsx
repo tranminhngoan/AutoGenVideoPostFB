@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { AlertTriangle, ArrowLeft, Brain, Clapperboard, FileVideo, Pencil, Play, RefreshCw, Replace, Square, Trash2, Users, Palette, MapPin } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, ArrowRight, Brain, Check, Clapperboard, FileVideo, Pencil, Play, RefreshCw, Replace, Square, Trash2, Users, Palette, MapPin } from 'lucide-react';
 import { Alert, Button, ButtonLink, Field, Input, Modal, ProgressBar, Segmented, Skeleton, Textarea, cn } from '../../components/ui';
 import { useConfirm, useToast } from '../../components/feedback';
 import { href, navigate } from '../../lib/router';
@@ -7,8 +7,20 @@ import { formatBytes, formatDateTime } from '../../lib/format';
 import { StudioError } from '../../services/studio';
 import { aiStudio, isAnalyzing, isGenActive, type Json, type Project } from '../../services/aiStudio';
 import { Chip, ProjectStatusBadge, Step, Swatches, fact, sec, useAiStudio } from './bits';
-import { Storyboard } from './Storyboard';
-import { GeneratorPanel, HistoryTable } from './Generator';
+import { NarrationTab, Storyboard } from './Storyboard';
+import { FinalPanel, GeneratorPanel, HistoryTable } from './Generator';
+
+type TabId = 'video' | 'storyboard' | 'narration' | 'generator' | 'final' | 'history';
+
+/** The step the project is at: where the page opens. */
+function currentStep(p: Project): TabId {
+  if (p.status !== 'Analyzed') return 'video';
+  const enabled = p.scenes.filter((s) => s.enabled);
+  const done = enabled.filter((s) => s.latest?.status === 'Done').length;
+  if (enabled.length > 0 && done === enabled.length) return 'final';
+  if (enabled.some((s) => s.latest)) return 'generator';
+  return 'storyboard';
+}
 
 export interface WorkspaceProps {
   project: Project;
@@ -51,47 +63,104 @@ export function Workspace({ projectId }: { projectId: string }) {
   if (error && !project) return <Alert tone="danger" title="Không mở được dự án">{error}</Alert>;
   if (!project) return <Skeleton className="h-96 w-full" />;
 
+  return <WorkspaceTabs project={project} setProject={setProject} reload={reload} />;
+}
+
+function WorkspaceTabs({ project, setProject, reload }: { project: Project; setProject: (p: Project) => void; reload: () => Promise<void> }) {
+  const storageKey = `ai-studio-tab-${project.id}`;
+  const [tab, setTabState] = useState<TabId>(() => (sessionStorage.getItem(storageKey) as TabId | null) ?? currentStep(project));
+  const setTab = (t: TabId) => {
+    setTabState(t);
+    sessionStorage.setItem(storageKey, t);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
   const analyzed = project.status === 'Analyzed';
   const props: WorkspaceProps = { project, setProject, reload, busy: isAnalyzing(project.status) };
-  const steps = [
-    { id: 'reference', label: 'Video' },
-    { id: 'analysis', label: 'Phân tích' },
-    { id: 'storyboard', label: 'Storyboard & Prompt' },
-    { id: 'generator', label: 'Seedance' },
+  const enabled = project.scenes.filter((s) => s.enabled);
+  const clipsDone = enabled.filter((s) => s.latest?.status === 'Done').length;
+  const clipsRunning = enabled.some((s) => isGenActive(s.latest?.status));
+  const narrated = project.scenes.some((s) => s.narration);
+
+  const tabs: { id: TabId; label: string; badge?: string; ok?: boolean; busy?: boolean; locked?: boolean; hidden?: boolean }[] = [
+    { id: 'video', label: 'Video & phân tích', ok: analyzed, busy: isAnalyzing(project.status),
+      badge: isAnalyzing(project.status) ? `${project.progressPercent}%` : undefined },
+    { id: 'storyboard', label: 'Cảnh & prompt', badge: analyzed ? `${project.scenes.length} cảnh` : undefined, locked: !analyzed },
+    { id: 'narration', label: 'Lời bình', ok: project.narrationCurrent, locked: !analyzed, hidden: !project.hasAudio,
+      badge: analyzed && narrated && !project.narrationCurrent ? 'chưa đọc' : undefined },
+    { id: 'generator', label: 'Tạo clip', locked: !analyzed, ok: enabled.length > 0 && clipsDone === enabled.length, busy: clipsRunning,
+      badge: analyzed ? `${clipsDone}/${enabled.length}` : undefined },
+    { id: 'final', label: 'Ghép & đăng', locked: !analyzed, ok: project.hasFinal && project.finalStatus === 'Done', busy: project.finalStatus === 'Assembling' },
     { id: 'history', label: 'Lịch sử' },
   ];
+  const visible = tabs.filter((t) => !t.hidden);
+  // a remembered tab that is not available (any more): the step the project is at
+  const shown: TabId = visible.some((t) => t.id === tab && !t.locked) ? tab : currentStep(project);
+  const at = visible.findIndex((t) => t.id === shown);
+  const next = visible.slice(at + 1).find((t) => !t.locked && t.id !== 'history');
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-3">
-          <ButtonLink href={href('/ai-studio')} variant="ghost" size="sm" icon={<ArrowLeft className="h-4 w-4" />}>Dự án</ButtonLink>
-          <h2 className="truncate text-lg font-semibold text-fg">{project.title}</h2>
-          <ProjectStatusBadge status={project.status} />
-        </div>
+    <div className="space-y-3">
+      <div className="flex min-w-0 items-center gap-3">
+        <ButtonLink href={href('/ai-studio')} variant="ghost" size="sm" icon={<ArrowLeft className="h-4 w-4" />}>Dự án</ButtonLink>
+        <h2 className="truncate text-lg font-semibold text-fg">{project.title}</h2>
+        <ProjectStatusBadge status={project.status} />
       </div>
-      <nav className="sticky top-0 z-20 -mx-1 flex gap-1 overflow-x-auto rounded-xl border border-line bg-surface/90 p-1 shadow-card backdrop-blur">
-        {steps.map((s, i) => (
-          <a key={s.id} href={`#${s.id}`} onClick={(e) => { e.preventDefault(); document.getElementById(s.id)?.scrollIntoView({ behavior: 'smooth' }); }}
-            className="inline-flex h-8 shrink-0 items-center gap-2 rounded-lg px-3 text-[13px] text-fg-muted hover:bg-muted hover:text-fg">
-            <span className="grid h-5 w-5 place-items-center rounded-full bg-muted text-[11px] font-semibold text-fg">{i + 1}</span>{s.label}
-          </a>
+      <nav className="sticky top-0 z-20 -mx-1 flex gap-1 overflow-x-auto rounded-xl border border-line bg-surface/95 p-1 shadow-card backdrop-blur">
+        {visible.map((t, i) => (
+          <button key={t.id} type="button" disabled={t.locked} onClick={() => setTab(t.id)}
+            className={cn('inline-flex h-9 shrink-0 items-center gap-2 rounded-lg px-3 text-[13px] transition disabled:cursor-not-allowed disabled:opacity-40',
+              shown === t.id ? 'bg-fg font-medium text-canvas' : 'text-fg-muted hover:bg-muted hover:text-fg')}>
+            <span className={cn('grid h-5 w-5 place-items-center rounded-full text-[11px] font-semibold',
+              t.ok ? 'bg-success text-white' : shown === t.id ? 'bg-canvas/20 text-canvas' : 'bg-muted text-fg')}>
+              {t.ok ? <Check className="h-3 w-3" /> : i + 1}
+            </span>
+            {t.label}
+            {t.badge && <span className={cn('rounded-full px-1.5 text-[11px]', shown === t.id ? 'bg-canvas/20' : 'bg-muted', t.busy && 'animate-pulse')}>{t.badge}</span>}
+            {t.busy && !t.badge && <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-accent" />}
+          </button>
         ))}
       </nav>
 
-      <ReferenceStep {...props} />
-      <AnalysisStep {...props} />
-      <Step id="storyboard" n={3} title="Storyboard & Prompt" dim={!analyzed}
-        description="Từng cảnh: khung hình chính, hành động theo thời gian, máy quay đo được, prompt cho Seedance (sửa được, có lịch sử phiên bản).">
-        {analyzed ? <Storyboard {...props} /> : <p className="text-sm text-fg-muted">Phân tích video xong thì storyboard hiện ở đây.</p>}
-      </Step>
-      <Step id="generator" n={4} title="Seedance Generator" dim={!analyzed}
-        description="Tạo video mới từ prompt ngay tại đây — chọn model, độ phân giải, xem chi phí trước khi xác nhận.">
-        {analyzed ? <GeneratorPanel {...props} /> : <p className="text-sm text-fg-muted">Cần phân tích xong và có prompt trước.</p>}
-      </Step>
-      <Step id="history" n={5} title="Lịch sử tạo video" description="Mọi lần tạo của dự án: prompt đã dùng, model, thông số, chi phí, video.">
-        <HistoryTable projectId={project.id} refreshKey={project.scenes.map((s) => s.latest?.status ?? '').join(',')} />
-      </Step>
+      {shown === 'video' && (
+        <div className="space-y-3">
+          <ReferenceStep {...props} />
+          <AnalysisStep {...props} />
+        </div>
+      )}
+      {shown === 'storyboard' && (
+        <Step id="storyboard" n={2} title="Cảnh & prompt"
+          description="Bấm một cảnh để xem hành động, máy quay và sửa prompt gửi cho Seedance.">
+          <Storyboard {...props} />
+        </Step>
+      )}
+      {shown === 'narration' && (
+        <Step id="narration" n={3} title="Lời bình & giọng AI đọc lại" description="Chọn giọng, sửa chữ từng cảnh, đọc một lần cho cả video.">
+          <NarrationTab {...props} />
+        </Step>
+      )}
+      {shown === 'generator' && (
+        <Step id="generator" n={visible.findIndex((t) => t.id === 'generator') + 1} title="Tạo clip bằng Seedance"
+          description="Chọn model, độ phân giải, xem chi phí trước khi xác nhận.">
+          <GeneratorPanel {...props} />
+        </Step>
+      )}
+      {shown === 'final' && (
+        <Step id="final" n={visible.findIndex((t) => t.id === 'final') + 1} title="Ghép video & đăng Facebook" description="Nối clip các cảnh, thêm tiếng, copy chú thích để đăng.">
+          <FinalPanel {...props} />
+        </Step>
+      )}
+      {shown === 'history' && (
+        <Step id="history" n={visible.length} title="Lịch sử tạo video" description="Mọi lần tạo của dự án: prompt đã dùng, model, thông số, chi phí, video.">
+          <HistoryTable projectId={project.id} refreshKey={project.scenes.map((s) => s.latest?.status ?? '').join(',')} />
+        </Step>
+      )}
+
+      {next && (
+        <div className="flex justify-end">
+          <Button variant="secondary" icon={<ArrowRight className="h-4 w-4" />} onClick={() => setTab(next.id)}>Bước tiếp: {next.label}</Button>
+        </div>
+      )}
     </div>
   );
 }
@@ -159,13 +228,13 @@ function ReferenceStep({ project: p, setProject, busy }: WorkspaceProps) {
         <Button size="sm" variant="danger-soft" icon={<Trash2 className="h-4 w-4" />} disabled={busy} onClick={remove}>Xoá dự án</Button>
       </>}>
       <input ref={input} type="file" accept=".mp4,.mov,.webm,video/mp4,video/quicktime,video/webm" hidden onChange={(e) => { replace(e.target.files?.[0]); e.target.value = ''; }} />
-      <div className="grid gap-5 md:grid-cols-[minmax(0,320px)_1fr]">
+      <div className="grid gap-5 md:grid-cols-[minmax(0,200px)_1fr]">
         <div>
           {p.hasSource ? (
             <video key={p.sourceFileName + p.sourceSizeBytes} src={aiStudio.sourceUrl(p.id)} controls playsInline preload="metadata"
-              poster={p.hasThumb ? aiStudio.thumbUrl(p.id) : undefined} className="max-h-[420px] w-full rounded-xl bg-black" />
+              poster={p.hasThumb ? aiStudio.thumbUrl(p.id) : undefined} className="max-h-[300px] w-full rounded-xl bg-black" />
           ) : (
-            <div className="grid aspect-[9/16] max-h-[420px] w-full place-items-center rounded-xl bg-muted p-4 text-center text-xs text-fg-muted">
+            <div className="grid aspect-[9/16] max-h-[300px] w-full place-items-center rounded-xl bg-muted p-4 text-center text-xs text-fg-muted">
               <div><FileVideo className="mx-auto mb-2 h-6 w-6" />Video tham chiếu đã hết hạn lưu và được xoá khỏi kho (phân tích vẫn giữ). Tải lại nếu muốn phân tích lại.</div>
             </div>
           )}
@@ -230,7 +299,7 @@ function AnalysisStep({ project: p, setProject }: WorkspaceProps) {
 
   const meta = p.analysisMeta ?? {};
   return (
-    <Step id="analysis" n={2} title="Phân tích video (trên máy tính của bạn)"
+    <Step id="analysis" n={1} title="Phân tích video (trên máy tính của bạn)"
       description="FFmpeg + OpenCV đo cắt cảnh, chuyển động máy quay, màu; model Qwen3-VL chạy trên máy đọc hành động, nhân vật, bối cảnh, ánh sáng. Không tốn tiền, không gửi video ra ngoài."
       actions={p.status === 'Analyzed' && !running ? <Button size="sm" variant="ghost" icon={<RefreshCw className="h-4 w-4" />} loading={working} disabled={!p.hasSource} onClick={() => start(true)}>Phân tích lại</Button> : undefined}>
       <div className="space-y-4">
@@ -300,7 +369,12 @@ function AnalysisStep({ project: p, setProject }: WorkspaceProps) {
                 {p.analysisFinishedAtUtc && <div className="mt-3 text-fg-subtle">Xong lúc {formatDateTime(p.analysisFinishedAtUtc)}</div>}
               </div>
             </div>
-            <Bibles {...{ project: p, setProject }} />
+            <details className="rounded-xl border border-line">
+              <summary className="cursor-pointer select-none px-4 py-2.5 text-[13px] font-medium text-fg">
+                Hồ sơ nhân vật, bối cảnh, phong cách <span className="font-normal text-fg-muted">— mở để xem / sửa (prompt mọi cảnh dùng chung)</span>
+              </summary>
+              <div className="p-3 pt-0"><Bibles {...{ project: p, setProject }} /></div>
+            </details>
           </>
         )}
       </div>

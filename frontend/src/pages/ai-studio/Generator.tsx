@@ -75,7 +75,8 @@ export function GeneratorPanel({ project: p, setProject, reload }: WorkspaceProp
       )}
 
       {/* settings */}
-      <div className="grid gap-4 rounded-xl border border-line bg-subtle p-4 lg:grid-cols-2">
+      <div className="rounded-xl border border-line bg-subtle p-4">
+      <div className="grid gap-4 lg:grid-cols-2">
         <Field label="Model Seedance" hint={model?.note}>
           <Select value={p.videoModel} onChange={(e) => save({ videoModel: e.target.value })}>
             {models.map((m) => <option key={m.id} value={m.id}>{m.label} — {usd(m.pricePerSecondUsd[p.resolution] ?? 0, 4)}/giây ở {p.resolution}</option>)}
@@ -89,6 +90,11 @@ export function GeneratorPanel({ project: p, setProject, reload }: WorkspaceProp
             <Segmented size="sm" value={p.genAspectRatio} onChange={(v) => save({ aspectRatio: v })} options={[{ value: '9:16', label: '9:16 dọc' }, { value: '16:9', label: '16:9 ngang' }]} />
           </Field>
         </div>
+      </div>
+      <details className="mt-3 rounded-lg border border-line bg-surface">
+        <summary className="cursor-pointer select-none px-3 py-2 text-xs font-medium text-fg">Nâng cao: seed, nối cảnh liền mạch, ảnh khung đầu
+          {(p.seed != null || p.continuity || p.hasReferenceImage) && <span className="ml-1 text-accent">· đang bật</span>}</summary>
+        <div className="grid gap-4 p-3 lg:grid-cols-2">
         <Field label="Seed" optional hint="Cùng seed cho mọi clip giúp nhân vật / màu giống nhau hơn. Để trống = ngẫu nhiên.">
           <div className="flex gap-2">
             <Input inputMode="numeric" value={seed} onChange={(e) => setSeed(e.target.value.replace(/\D/g, '').slice(0, 9))}
@@ -119,6 +125,8 @@ export function GeneratorPanel({ project: p, setProject, reload }: WorkspaceProp
             }} />
           </div>
         </div>
+        </div>
+      </details>
       </div>
 
       {/* scenes */}
@@ -143,47 +151,6 @@ export function GeneratorPanel({ project: p, setProject, reload }: WorkspaceProp
         {failedIds.length > 0 && (
           <div className="mt-3 flex justify-end">
             <Button size="sm" variant="secondary" icon={<RefreshCw className="h-4 w-4" />} onClick={() => ask(failedIds)}>Tạo lại {failedIds.length} cảnh lỗi</Button>
-          </div>
-        )}
-      </div>
-
-      {/* joined video */}
-      <div className="rounded-xl border border-line bg-subtle p-4">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <div className="flex items-center gap-2 text-[13px] font-semibold text-fg"><Layers className="h-4 w-4 text-accent" />Ghép thành một video</div>
-            <p className="text-xs text-fg-muted">Nối clip mới nhất của từng cảnh đang bật theo thứ tự storyboard.</p>
-            <div className="mt-2 flex flex-wrap items-center gap-2">
-              <Segmented<AudioMode> size="sm" value={p.audioMode} onChange={(v) => save({ audioMode: v })}
-                options={[
-                  { value: 'None', label: 'Không tiếng (chọn nhạc trên Facebook)' },
-                  ...(p.hasAudio ? [{ value: 'Narration' as const, label: 'Giọng AI đọc lời bình' }] : []),
-                  ...(p.hasSourceAudio ? [{ value: 'Original' as const, label: 'Giữ tiếng gốc' }] : []),
-                ]} />
-              {p.audioMode === 'Narration' && (() => {
-                const need = enabled.some((s) => s.narration) && !p.narrationCurrent;
-                return <span className={cn('text-[11px]', need ? 'text-warning' : 'text-fg-subtle')}>
-                  {need ? 'Lời bình chưa đọc (hoặc đã sửa chữ / đổi giọng) — vào tab Storyboard bấm “Đọc lời bình”.' : 'Giọng AI đọc liền một mạch; khi ghép, lời của mỗi cảnh bắt đầu cùng clip của cảnh đó (cắt ở chỗ ngừng thở giữa câu), không cắt chữ.'}
-                </span>;
-              })()}
-              {p.audioMode === 'Original' && <span className="text-[11px] text-fg-subtle">Dùng chính tiếng của video gốc (giọng người khác + nhạc nền nếu có).</span>}
-              {!p.hasAudio && <span className="text-[11px] text-fg-subtle">Video tham chiếu không có tiếng.</span>}
-            </div>
-          </div>
-          <Button variant="primary" icon={<Clapperboard className="h-4 w-4" />} loading={p.finalStatus === 'Assembling'} disabled={!allDone}
-            onClick={async () => { try { setProject(await aiStudio.assemble(p.id)); } catch (e) { toast.error('Chưa ghép được', (e as Error).message); } }}>
-            {p.hasFinal ? 'Ghép lại' : 'Ghép video'}
-          </Button>
-        </div>
-        {p.finalStatus === 'Failed' && p.finalError && <Alert className="mt-3" tone="danger" title="Ghép lỗi">{p.finalError}</Alert>}
-        {p.hasFinal && p.finalStatus === 'Done' && (
-          <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-end">
-            <video key={p.finalUpdatedAtUtc ?? ''} src={aiStudio.finalUrl(p.id, false, p.finalUpdatedAtUtc)} controls playsInline className="max-h-[480px] rounded-xl bg-black sm:w-72" />
-            <div className="min-w-0 flex-1 space-y-2">
-              <a href={aiStudio.finalUrl(p.id, true, p.finalUpdatedAtUtc)} className="inline-flex h-9 items-center gap-2 rounded-md bg-fg px-3.5 text-sm font-medium text-canvas hover:bg-fg/90"><Download className="h-4 w-4" />Tải video MP4</a>
-              <p className="text-xs text-fg-muted">Ghép lúc {formatDateTime(p.finalUpdatedAtUtc)}.</p>
-              <FacebookCaption project={p} setProject={setProject} />
-            </div>
           </div>
         )}
       </div>
@@ -278,6 +245,69 @@ function SceneOutput({ project: p, scene: s, checked, onCheck, onRetry, onChange
 }
 
 // ───────────────────────── history ─────────────────────────
+
+/** Step 5: the clips joined in storyboard order, with the chosen sound, and the caption for Facebook. */
+export function FinalPanel({ project: p, setProject }: WorkspaceProps) {
+  const toast = useToast();
+  const enabled = p.scenes.filter((s) => s.enabled);
+  const allDone = enabled.length > 0 && enabled.every((s) => s.latest?.status === 'Done');
+  const save = async (patch: { audioMode: AudioMode }) => {
+    try {
+      setProject(await aiStudio.generator(p.id, {
+        videoModel: p.videoModel, resolution: p.resolution, aspectRatio: p.genAspectRatio, seed: p.seed ?? null, continuity: p.continuity, audioMode: patch.audioMode,
+      }));
+    } catch (e) {
+      toast.error('Không lưu được', (e as Error).message);
+    }
+  };
+  const missing = enabled.filter((s) => s.latest?.status !== 'Done').length;
+
+  return (
+    <div className="space-y-3">
+      {!allDone && <Alert tone="info" title={`Còn ${missing} cảnh chưa có clip`}>Tạo xong clip của mọi cảnh đang bật (tab “Tạo clip”) rồi mới ghép được.</Alert>}
+      <div className="rounded-xl border border-line bg-subtle p-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <div className="flex items-center gap-2 text-[13px] font-semibold text-fg"><Layers className="h-4 w-4 text-accent" />Ghép thành một video</div>
+            <p className="text-xs text-fg-muted">Nối clip mới nhất của từng cảnh đang bật theo thứ tự storyboard.</p>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <Segmented<AudioMode> size="sm" value={p.audioMode} onChange={(v) => save({ audioMode: v })}
+                options={[
+                  { value: 'None', label: 'Không tiếng (chọn nhạc trên Facebook)' },
+                  ...(p.hasAudio ? [{ value: 'Narration' as const, label: 'Giọng AI đọc lời bình' }] : []),
+                  ...(p.hasSourceAudio ? [{ value: 'Original' as const, label: 'Giữ tiếng gốc' }] : []),
+                ]} />
+              {p.audioMode === 'Narration' && (() => {
+                const need = enabled.some((s) => s.narration) && !p.narrationCurrent;
+                return <span className={cn('text-[11px]', need ? 'text-warning' : 'text-fg-subtle')}>
+                  {need ? 'Lời bình chưa đọc (hoặc đã sửa chữ / đổi giọng) — vào tab Storyboard bấm “Đọc lời bình”.' : 'Giọng AI đọc liền một mạch; khi ghép, lời của mỗi cảnh bắt đầu cùng clip của cảnh đó (cắt ở chỗ ngừng thở giữa câu), không cắt chữ.'}
+                </span>;
+              })()}
+              {p.audioMode === 'Original' && <span className="text-[11px] text-fg-subtle">Dùng chính tiếng của video gốc (giọng người khác + nhạc nền nếu có).</span>}
+              {!p.hasAudio && <span className="text-[11px] text-fg-subtle">Video tham chiếu không có tiếng.</span>}
+            </div>
+          </div>
+          <Button variant="primary" icon={<Clapperboard className="h-4 w-4" />} loading={p.finalStatus === 'Assembling'} disabled={!allDone}
+            onClick={async () => { try { setProject(await aiStudio.assemble(p.id)); } catch (e) { toast.error('Chưa ghép được', (e as Error).message); } }}>
+            {p.hasFinal ? 'Ghép lại' : 'Ghép video'}
+          </Button>
+        </div>
+        {p.finalStatus === 'Failed' && p.finalError && <Alert className="mt-3" tone="danger" title="Ghép lỗi">{p.finalError}</Alert>}
+        {p.hasFinal && p.finalStatus === 'Done' && (
+          <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-end">
+            <video key={p.finalUpdatedAtUtc ?? ''} src={aiStudio.finalUrl(p.id, false, p.finalUpdatedAtUtc)} controls playsInline className="max-h-[480px] rounded-xl bg-black sm:w-72" />
+            <div className="min-w-0 flex-1 space-y-2">
+              <a href={aiStudio.finalUrl(p.id, true, p.finalUpdatedAtUtc)} className="inline-flex h-9 items-center gap-2 rounded-md bg-fg px-3.5 text-sm font-medium text-canvas hover:bg-fg/90"><Download className="h-4 w-4" />Tải video MP4</a>
+              <p className="text-xs text-fg-muted">Ghép lúc {formatDateTime(p.finalUpdatedAtUtc)}.</p>
+              <FacebookCaption project={p} setProject={setProject} />
+            </div>
+          </div>
+        )}
+      </div>
+
+    </div>
+  );
+}
 
 export function HistoryTable({ projectId, refreshKey }: { projectId?: string; refreshKey?: string }) {
   const [rows, setRows] = useState<Generation[] | null>(null);
