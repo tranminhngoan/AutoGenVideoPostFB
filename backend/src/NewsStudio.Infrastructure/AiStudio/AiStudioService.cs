@@ -108,6 +108,7 @@ public partial class AiStudioService
             "thumb" => p.SourceThumbBlobId,
             "reference" => p.ReferenceImageBlobId,
             "final" => p.FinalBlobId,
+            "narration" => p.NarrationBlobId,
             _ => null
         };
     }
@@ -282,11 +283,13 @@ public partial class AiStudioService
         foreach (var s in scenes)
         {
             await DeleteBlobAsync(s.ThumbBlobId, ct);
-            await DeleteBlobAsync(s.VoiceBlobId, ct);
+            await DeleteBlobAsync(s.VoiceBlobId, ct); // per-scene takes of earlier versions
             foreach (var f in ReadFrames(s.FramesJson)) await DeleteBlobAsync(f.BlobId, ct);
         }
         _db.AiStudioScenes.RemoveRange(scenes);
         _db.AiStudioPromptVersions.RemoveRange(await _db.AiStudioPromptVersions.Where(v => v.ProjectId == p.Id && v.SceneId != null).ToListAsync(ct));
+        await DeleteBlobAsync(p.NarrationBlobId, ct);
+        (p.NarrationBlobId, p.NarrationSeconds, p.NarrationKey) = (null, null, null);
         p.Status = "Draft";
         p.Stage = null;
         p.ProgressText = null;
@@ -336,7 +339,7 @@ public partial class AiStudioService
             _db.AiStudioGenerations.Remove(g);
         }
         _db.AiStudioPromptVersions.RemoveRange(await _db.AiStudioPromptVersions.Where(v => v.ProjectId == id).ToListAsync(ct));
-        foreach (var b in new[] { p.SourceBlobId, p.SourceThumbBlobId, p.ReferenceImageBlobId, p.FinalBlobId, p.SourceAudioBlobId }) await DeleteBlobAsync(b, ct);
+        foreach (var b in new[] { p.SourceBlobId, p.SourceThumbBlobId, p.ReferenceImageBlobId, p.FinalBlobId, p.SourceAudioBlobId, p.NarrationBlobId }) await DeleteBlobAsync(b, ct);
         _db.AiStudioProjects.Remove(p);
         await _db.SaveChangesAsync(ct);
     }
@@ -645,7 +648,7 @@ public partial class AiStudioService
             p.Topic = AiStudioTopics.Normalize(input.Topic);
             p.AudioMode = DefaultAudioMode(p);
             // a narrator the user did not change follows the new theme's mood
-            if (p.NarratorStyle == oldSuggestion.Style) await SuggestNarratorAsync(p, ct);
+            if (p.NarratorStyle == oldSuggestion.Style || AiStudioNarration.IsOldSuggestion(p.NarratorStyle)) await SuggestNarratorAsync(p, ct);
         }
         p.VariationJson = JsonSerializer.Serialize(variation, Json);
         if (input.GlobalPrompt != null && input.GlobalPrompt.Trim() != p.GlobalPrompt)
@@ -836,6 +839,9 @@ public partial class AiStudioService
         dto.FinalUpdatedAtUtc = p.FinalUpdatedAtUtc;
         var latest = gens.GroupBy(g => g.SceneId).ToDictionary(g => g.Key, g => g.First());
         var orders = scenes.ToDictionary(s => s.Id, s => s.Order);
+        dto.HasNarrationTake = p.NarrationBlobId != null;
+        dto.NarrationSeconds = p.NarrationSeconds;
+        dto.NarrationCurrent = p.NarrationBlobId != null && p.NarrationKey == NarrationKeyOf(p, scenes);
         dto.Scenes = scenes.Select(s => SceneDto(p, s, latest.TryGetValue(s.Id, out var g) ? GenDto(g, p.Title, orders) : null)).ToList();
         return dto;
     }
@@ -852,7 +858,6 @@ public partial class AiStudioService
         Enabled = s.Enabled, TargetSeconds = s.TargetSeconds, HasThumb = s.ThumbBlobId != null, Frames = ReadFrames(s.FramesJson),
         Measured = ParseNode(s.MeasuredJson), Analysis = ParseNode(s.AnalysisJson), Confidence = s.Confidence, SummaryVi = s.SummaryVi,
         Transcript = s.Transcript, Narration = s.Narration, NarrationEn = s.NarrationEn, NarrationEdited = s.NarrationEdited,
-        HasVoice = s.VoiceBlobId != null, VoiceSeconds = s.VoiceSeconds, VoiceCurrent = s.VoiceBlobId != null && s.VoiceKey == VoiceKeyOf(p, s),
         Prompt = s.Prompt, PromptVersion = s.PromptVersion, PromptEdited = s.PromptEdited,
         EstimatedCostUsd = _video.EstimateCost(p.VideoModel, p.Resolution, s.TargetSeconds), Latest = latest
     };

@@ -16,11 +16,8 @@ public static class AiStudioNarration
 {
     private static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
 
-    /// <summary>A take longer than this is read again 20 % faster (it would not fit one clip even played 25 % faster).</summary>
-    public const double MaxVoiceSeconds = 14.5;
-
-    /// <summary>The longest take one scene may have — past one clip it runs on over the next scenes in the joined video.</summary>
-    public const double MaxTakeSeconds = 40;
+    /// <summary>The whole narration is read in one take: about two minutes of speech at most (a video is ≤ 1:45).</summary>
+    public const int MaxNarrationChars = 3000;
 
     /// <summary>Speech one scene may hold before its sentences are split with the neighbouring scenes (a clip is at most 12 s).</summary>
     public const double MaxSceneSpeechSeconds = 10.5;
@@ -157,8 +154,8 @@ public static class AiStudioNarration
     private static string Pace(Speaker? s) => s?.SyllablesPerSecond switch
     {
         null => "unhurried",
-        < 2.6 => "slowly, with long pauses",
-        < 3.6 => "slowly and calmly",
+        < 2.6 => "slowly and calmly, yet flowing",
+        < 3.6 => "calmly, at an easy pace",
         < 4.8 => "at a natural pace",
         _ => "briskly"
     };
@@ -205,20 +202,27 @@ public static class AiStudioNarration
             : pitch is < 200 ? "a mature, warm female storyteller" : "a soft, gentle young female voice";
         var lively = s?.LoudnessStdDb switch
         {
-            > 7 => "expressive and emotional, letting the voice rise and fall",
-            < 4 => "even and restrained",
-            _ => "quietly expressive"
+            > 7 => "lively, the voice rising and falling naturally as in conversation",
+            < 4 => "even and steady",
+            _ => "warmly expressive"
         };
         var mood = childhood
-            ? "nostalgic, tender and a little sad, as if remembering a poor childhood in the Vietnamese countryside"
+            ? "telling a friend fond memories of a childhood in the Vietnamese countryside — warm, heartfelt and sincere, a gentle smile in the voice"
             : topic == AiStudioTopics.AsianBeauty ? "soft, sweet and intimate" : "natural and sincere";
-        var style = $"Speak Vietnamese like {who}, {Pace(s)}, {lively}; {mood}; natural pauses between sentences, never like an announcer.";
+        var style = $"Speak Vietnamese like {who}, {Pace(s)}, {lively}; {mood}. " +
+                    "A normal speaking voice, not sad: never cry, sob, sigh or let the voice tremble or break, no drama. " +
+                    "Read in one smooth flow, linking the phrases; pause briefly only at the end of a sentence, never in the middle of one; never like an announcer.";
         return (voice, style);
     }
 
     /// <summary>The voice options shown on the page: the studio's prebuilt Gemini voices.</summary>
     /// <summary>A prebuilt voice or one designed in the studio's "Giọng đọc" tab ("gemini:voice_…").</summary>
     public static bool IsVoice(string? voice) => StudioVoices.IsKnown(voice);
+
+    /// <summary>The direction suggested by earlier versions ("a little sad…") — it made the voice sound tearful.</summary>
+    public static bool IsOldSuggestion(string? style) =>
+        style != null && (style.Contains("a little sad, as if remembering", StringComparison.Ordinal) || style.Contains("with long pauses", StringComparison.Ordinal))
+        && style.StartsWith("Speak Vietnamese like ", StringComparison.Ordinal);
 
     private static string Cap(string s, int max) => s.Length > max ? s[..max] : s;
 }

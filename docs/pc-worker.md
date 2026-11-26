@@ -72,7 +72,8 @@ ngân sách tháng với Studio Video AI) — máy nào nhận việc cũng đư
 **Lời bình** (chủ đề Ký ức tuổi thơ mặc định bật): whisper nghe lời nói (chủ đề này ép tiếng Việt), đo giọng người đọc gốc
 (cao độ, tốc độ đọc, độ lên xuống — không AI), model 4B dịch từng câu sang tiếng Anh (~10 giây). Mỗi câu thuộc đúng một cảnh,
 được đưa vào prompt cảnh đó làm ngữ cảnh câu chuyện. Ở Storyboard, Gemini TTS (cùng khoá / bảng chi phí với Studio) đọc lại
-bằng giọng gần giống người đọc gốc; clip được kéo dài cho vừa lời bình; khi ghép, mỗi cảnh có giọng AI của cảnh đó.
+bằng giọng gần giống người đọc gốc, **liền một mạch cho cả video** (một lần đọc, không ngắt ở chỗ chuyển cảnh; cách đọc ấm,
+bình thường, không bi lụy); khi ghép, bản đọc chạy từ cảnh đầu có lời, nhanh lên tối đa 25 % nếu dài hơn video, còn dư thì giữ khung hình cuối.
 Muốn nghe chuẩn hơn ggml-small: đặt `ggml-large-v3-turbo*.bin` hoặc `ggml-medium.bin` vào `D:\TramTinAI\whisper` — bộ phân tích tự dùng model tốt nhất có sẵn.
 
 Video tham chiếu trên R2 tự xoá sau 7 ngày (phân tích, prompt, khung hình chính được giữ), clip Seedance sau 14 ngày (đổi trong Cài đặt).

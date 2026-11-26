@@ -143,10 +143,6 @@ public class AiStudioSceneDto
     public string? Narration { get; set; }
     public string? NarrationEn { get; set; }
     public bool NarrationEdited { get; set; }
-    public bool HasVoice { get; set; }
-    public double? VoiceSeconds { get; set; }
-    /// <summary>The take matches the current text, voice and style.</summary>
-    public bool VoiceCurrent { get; set; }
     public string Prompt { get; set; } = string.Empty;
     public int PromptVersion { get; set; }
     public bool PromptEdited { get; set; }
@@ -192,6 +188,10 @@ public class AiStudioProjectDto : AiStudioProjectSummaryDto
     public bool HasSourceAudio { get; set; }
     public string NarratorVoice { get; set; } = string.Empty;
     public string NarratorStyle { get; set; } = string.Empty;
+    /// <summary>The whole narration read in one take: there is one / it matches the current words, voice and style.</summary>
+    public bool HasNarrationTake { get; set; }
+    public bool NarrationCurrent { get; set; }
+    public double? NarrationSeconds { get; set; }
     /// <summary>How the reference speaker sounds, in Vietnamese ("giọng nam trầm, đọc chậm…"), or null.</summary>
     public string? SpeakerProfileVi { get; set; }
     public AiStudioVariationDto Variation { get; set; } = new();

@@ -297,13 +297,18 @@ public class AiStudioUnitTests
         var deepSlowMan = new AiStudioNarration.Speaker(108, 3.0, 5);
         var (voice, style) = AiStudioNarration.Suggest(deepSlowMan, AiStudioTopics.VietnamChildhood);
         voice.Should().Be("gemini:Algenib");
-        style.Should().Contain("deep, slightly husky male storyteller").And.Contain("slowly and calmly").And.Contain("poor childhood in the Vietnamese countryside");
+        style.Should().Contain("deep, slightly husky male storyteller").And.Contain("calmly, at an easy pace").And.Contain("childhood in the Vietnamese countryside");
+        // a normal, warm voice in one flow — the earlier "a little sad" direction made it tearful and halting
+        style.Should().Contain("not sad").And.Contain("never cry").And.Contain("one smooth flow").And.NotContain("a little sad").And.NotContain("long pauses");
+        AiStudioNarration.IsOldSuggestion("Speak Vietnamese like a warm, low male storyteller, slowly and calmly, quietly expressive; nostalgic, tender and a little sad, as if remembering a poor childhood in the Vietnamese countryside; natural pauses between sentences, never like an announcer.").Should().BeTrue();
+        AiStudioNarration.IsOldSuggestion(style).Should().BeFalse();
+        AiStudioNarration.IsOldSuggestion("Đọc vui vẻ").Should().BeFalse();
         AiStudioNarration.Describe(deepSlowMan).Should().Be("Giọng nam rất trầm (~108 Hz), đọc chậm (3.0 tiếng/giây), lên xuống vừa phải");
 
         var woman = new AiStudioNarration.Speaker(232, 5.1, 8.5);
         var (wv, ws) = AiStudioNarration.Suggest(woman, AiStudioTopics.AsianBeauty);
         StudioVoices.All.Single(v => v.Id == wv).Gender.Should().Be("female");
-        ws.Should().Contain("briskly").And.Contain("expressive").And.Contain("soft, sweet");
+        ws.Should().Contain("briskly").And.Contain("lively").And.Contain("soft, sweet");
         AiStudioNarration.GenderOf(woman).Should().Be("female");
 
         // nothing measured: the theme decides (the childhood channel's storyteller is a man)
@@ -760,10 +765,7 @@ public class AiStudioFlowTests : IClassFixture<WebApplicationFactory<Program>>
         {
             Interlocked.Increment(ref Calls);
             lock (Takes) Takes.Add((text, voice, style));
-            var seconds = text.Contains("nghèo") ? 1.5
-                : text.Contains("QUÁ DÀI") ? 50.0
-                : text.Contains("RẤT DÀI") ? (speed == "+20%" ? 21.0 : 25.0)
-                : text.Contains("DÀI") ? (speed == "+20%" ? 13.0 : 16.0) : 3.0;
+            var seconds = text.Contains("DÀI") ? 9.0 : 4.5;
             var path = Path.Combine(Path.GetTempPath(), $"take-{Guid.NewGuid():N}.m4a");
             var media = new AiStudioMedia(new ConfigurationBuilder().Build());
             var (code, _, err) = await AiStudioMedia.RunAsync(media.Ffmpeg, new[] { "-hide_banner", "-v", "error", "-y", "-f", "lavfi", "-i",
@@ -814,9 +816,10 @@ public class AiStudioFlowTests : IClassFixture<WebApplicationFactory<Program>>
             project.Scenes[0].Prompt.Should().Contain("\"Back then my family was very poor\"");
             project.Scenes[1].Prompt.Should().Contain("\"Mother went to the market at dawn\"");
             project.NarratorVoice.Should().Be("gemini:Algenib");
-            project.NarratorStyle.Should().Contain("slowly and calmly").And.Contain("Vietnamese countryside");
+            project.NarratorStyle.Should().Contain("calmly, at an easy pace").And.Contain("Vietnamese countryside").And.Contain("not sad");
             project.SpeakerProfileVi.Should().StartWith("Giọng nam");
-            project.Scenes.Should().OnlyContain(s => !s.HasVoice && !s.VoiceCurrent);
+            project.HasNarrationTake.Should().BeFalse();
+            project.NarrationCurrent.Should().BeFalse();
 
             // 2. no join before the narration is read
             var early = () => studio.AssembleAsync(p.Id, CancellationToken.None);
@@ -826,49 +829,33 @@ public class AiStudioFlowTests : IClassFixture<WebApplicationFactory<Program>>
             foreach (var g in await db.AiStudioGenerations.AsNoTracking().Where(g => g.ProjectId == p.Id).ToListAsync())
                 await studio.RunGenerationAsync(g.Id, CancellationToken.None);
             await WaitAsync(db, async () => await db.AiStudioGenerations.AsNoTracking().CountAsync(g => g.ProjectId == p.Id && g.Status == "Done") == 2);
-            (await early.Should().ThrowAsync<InvalidOperationException>()).WithMessage("*Cảnh 1, 2 chưa đọc lời bình*");
+            (await early.Should().ThrowAsync<InvalidOperationException>()).WithMessage("*Chưa đọc lời bình*");
 
-            // 3. read: the narrator's voice and direction, the cost recorded, the clip lengthened to its take
-            var first = await studio.SpeakSceneAsync(p.Id, ids[0], CancellationToken.None);
-            var second = await studio.SpeakSceneAsync(p.Id, ids[1], CancellationToken.None);
-            narrator.Calls.Should().Be(2);
+            // 3. read: the WHOLE narration in one take (no stop at the cut), the narrator's voice and direction, the cost recorded
+            var read = await studio.SpeakNarrationAsync(p.Id, CancellationToken.None);
+            narrator.Calls.Should().Be(1);
+            narrator.Takes.Single().Text.Should().Be("Hồi đó nhà tôi nghèo lắm. Mẹ đi chợ từ sáng sớm.");
             narrator.Takes.Should().OnlyContain(t => t.Voice == "gemini:Algenib" && t.Style!.Contains("storyteller"));
-            first.VoiceCurrent.Should().BeTrue();
-            first.VoiceSeconds.Should().Be(1.5);
-            first.TargetSeconds.Should().Be(2);           // the take fits the 2 s clip
-            second.TargetSeconds.Should().Be(4);          // a 3 s take needs a 4 s clip
-            second.Prompt.Should().Contain("0–4s");       // the timed sequence follows the new length
-            (await db.StudioCostRecords.AsNoTracking().CountAsync(c => c.Kind == "Voice" && c.Note!.Contains(title) && c.Note.Contains("lời bình cảnh"))).Should().Be(2);
-            await studio.SpeakSceneAsync(p.Id, ids[0], CancellationToken.None);
-            narrator.Calls.Should().Be(2);                // same words, voice and style: never paid twice
-
-            // 3b. a take too long for one clip is read again 20 % faster (both takes recorded)
-            await studio.EditNarrationAsync(p.Id, ids[1], "Lời bình DÀI quá một clip.", CancellationToken.None);
-            var fast = await studio.SpeakSceneAsync(p.Id, ids[1], CancellationToken.None);
-            narrator.Calls.Should().Be(4);
-            fast.VoiceSeconds.Should().Be(13);
-            fast.TargetSeconds.Should().Be(SeedanceVideoClient.MaxSeconds);
-            (await db.StudioCostRecords.AsNoTracking().CountAsync(c => c.Note!.Contains(title) && c.Note.Contains("đọc nhanh hơn"))).Should().Be(1);
-            // longer than a clip even read faster: kept (it runs on over the next scene when joined)
-            await studio.EditNarrationAsync(p.Id, ids[1], "Lời bình RẤT DÀI, hơn hẳn một clip.", CancellationToken.None);
-            (await studio.SpeakSceneAsync(p.Id, ids[1], CancellationToken.None)).VoiceSeconds.Should().Be(21);
-            narrator.Calls.Should().Be(6);
-            // far too long for one scene: refused with a way out
-            await studio.EditNarrationAsync(p.Id, ids[1], "Lời bình QUÁ DÀI.", CancellationToken.None);
-            var tooLong = () => studio.SpeakSceneAsync(p.Id, ids[1], CancellationToken.None);
-            (await tooLong.Should().ThrowAsync<InvalidOperationException>()).WithMessage("*Chuyển bớt chữ sang cảnh bên cạnh*");
-            narrator.Calls.Should().Be(8);
-            await studio.EditNarrationAsync(p.Id, ids[1], "Mẹ đi chợ từ sáng sớm.", CancellationToken.None);
-            await studio.SpeakSceneAsync(p.Id, ids[1], CancellationToken.None);
-            narrator.Calls.Should().Be(9);
+            read.NarrationCurrent.Should().BeTrue();
+            read.NarrationSeconds.Should().Be(4.5);
+            read.Scenes.Select(x => x.TargetSeconds).Should().Equal(2, 2); // the clips are not touched
+            (await db.StudioCostRecords.AsNoTracking().CountAsync(c => c.Kind == "Voice" && c.Note!.Contains(title) && c.Note.Contains("lời bình cả video"))).Should().Be(1);
+            await studio.SpeakNarrationAsync(p.Id, CancellationToken.None);
+            narrator.Calls.Should().Be(1);                // same words, voice and style: never paid twice
 
             // 4. the user's own words: quoted in the prompt, the take out of date until read again
             var edited = await studio.EditNarrationAsync(p.Id, ids[0], "Hồi đó nhà tôi nghèo lắm, cơm không đủ ăn.", CancellationToken.None);
             edited.NarrationEdited.Should().BeTrue();
-            edited.VoiceCurrent.Should().BeFalse();
             edited.Prompt.Should().Contain("\"Hồi đó nhà tôi nghèo lắm, cơm không đủ ăn\"");
-            await studio.SpeakSceneAsync(p.Id, ids[0], CancellationToken.None);
-            narrator.Calls.Should().Be(10);
+            (await studio.GetProjectAsync(p.Id, CancellationToken.None)).NarrationCurrent.Should().BeFalse();
+            (await early.Should().ThrowAsync<InvalidOperationException>()).WithMessage("*đã sửa chữ / đổi giọng*");
+            // a changed direction also needs a new take; the old suggested "a little sad" direction is replaced by the new one
+            await studio.SetNarratorAsync(p.Id, new AiStudioNarratorDto { Style = "Speak Vietnamese like a warm, low male storyteller, slowly and calmly, quietly expressive; nostalgic, tender and a little sad, as if remembering a poor childhood in the Vietnamese countryside; natural pauses between sentences, never like an announcer." }, CancellationToken.None);
+            (await studio.GetProjectAsync(p.Id, CancellationToken.None)).NarratorStyle.Should().Contain("not sad");
+            await studio.SpeakNarrationAsync(p.Id, CancellationToken.None);
+            narrator.Calls.Should().Be(2);
+            narrator.Takes[^1].Text.Should().Be("Hồi đó nhà tôi nghèo lắm, cơm không đủ ăn. Mẹ đi chợ từ sáng sớm.");
+            narrator.Takes[^1].Style.Should().Contain("not sad");
 
             // the channel's designed voices ("Giọng đọc" tab) are offered and usable
             var designedKey = NewsStudio.Infrastructure.Studio.StudioService.DesignedVoicesKey;
@@ -903,14 +890,24 @@ public class AiStudioFlowTests : IClassFixture<WebApplicationFactory<Program>>
             await studio.RunAssembleAsync(p.Id, CancellationToken.None);
             var row = await db.AiStudioProjects.AsNoTracking().FirstAsync(x => x.Id == p.Id);
             row.FinalStatus.Should().Be("Done", row.FinalError);
+            var narrationBlob = row.NarrationBlobId!.Value;
             var final = Path.Combine(dir, "final.mp4");
             var store = scope.ServiceProvider.GetRequiredService<StudioFileStore>();
             (await store.CopyToAsync(row.FinalBlobId!.Value, final, CancellationToken.None)).Should().BeTrue();
             var media = new AiStudioMedia(new ConfigurationBuilder().Build());
             var probe = await media.ProbeAsync(final, CancellationToken.None);
             probe.Audio.Should().ContainSingle();
-            // 2 + 2 s of clips, takes of 1.5 + 3 s: the second runs on, read 25 % faster, the last picture held ~0.8 s — no word cut
-            probe.Duration.Should().BeApproximately(4.8, 0.3);
+            // 2 + 2 s of clips, one 4.5 s take from the start: read a little faster to fit (4.5 / 1.25 = 3.6 s), no picture held
+            probe.Duration.Should().BeApproximately(4, 0.3);
+            // a take far longer than the video: 25 % faster, then the last picture held — no word cut
+            await studio.EditNarrationAsync(p.Id, ids[1], "Mẹ đi chợ từ sáng sớm, đường DÀI lắm.", CancellationToken.None);
+            await studio.SpeakNarrationAsync(p.Id, CancellationToken.None);
+            await studio.AssembleAsync(p.Id, CancellationToken.None);
+            await studio.RunAssembleAsync(p.Id, CancellationToken.None);
+            row = await db.AiStudioProjects.AsNoTracking().FirstAsync(x => x.Id == p.Id);
+            row.FinalStatus.Should().Be("Done", row.FinalError);
+            (await store.CopyToAsync(row.FinalBlobId!.Value, final, CancellationToken.None)).Should().BeTrue();
+            (await media.ProbeAsync(final, CancellationToken.None)).Duration.Should().BeApproximately(9 / 1.25 + AiStudioMedia.VoiceTail, 0.3);
 
             // 6. the reference's own sound is still available on request
             await studio.SetGeneratorAsync(p.Id, new AiStudioGeneratorSettingsDto { VideoModel = SeedanceVideoClient.FastModel, Resolution = "720p", AspectRatio = "9:16", AudioMode = "Original" }, CancellationToken.None);
@@ -924,10 +921,11 @@ public class AiStudioFlowTests : IClassFixture<WebApplicationFactory<Program>>
             // switching the theme off turns the sound off too
             var off = await studio.SetPromptSettingsAsync(p.Id, new AiStudioPromptSettingsDto { Mode = "Faithful", Topic = "" }, CancellationToken.None);
             off.AudioMode.Should().Be("None");
-            var voices = await db.AiStudioScenes.AsNoTracking().Where(s => s.ProjectId == p.Id && s.VoiceBlobId != null).Select(s => s.VoiceBlobId!.Value).ToListAsync();
-            voices.Should().HaveCount(2);
+            var take = (await db.AiStudioProjects.AsNoTracking().FirstAsync(x => x.Id == p.Id)).NarrationBlobId!.Value;
+            take.Should().NotBe(narrationBlob); // the earlier take was replaced, not kept
+            (await db.StudioBlobs.AsNoTracking().CountAsync(b => b.Id == narrationBlob)).Should().Be(0);
             await studio.DeleteProjectAsync(p.Id, CancellationToken.None);
-            (await db.StudioBlobs.AsNoTracking().CountAsync(b => voices.Contains(b.Id))).Should().Be(0);
+            (await db.StudioBlobs.AsNoTracking().CountAsync(b => b.Id == take)).Should().Be(0);
         }
         finally
         {

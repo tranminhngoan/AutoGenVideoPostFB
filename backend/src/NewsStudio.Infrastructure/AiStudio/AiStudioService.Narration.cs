@@ -8,10 +8,10 @@ namespace NewsStudio.Infrastructure.AiStudio;
 
 /// <summary>
 /// Narration: what the reference says in each scene (recognised on the PC) goes into that scene's prompt as story
-/// context and is read again by a Gemini TTS narrator chosen to sound like the reference speaker. A take fits its
-/// clip: the clip is lengthened to the take (up to one clip), the take is played a little faster when the clip is
-/// shorter. Each take is a small paid call written to the studio's cost records under the same monthly budget; the
-/// same text, voice and style are never paid for twice.
+/// context, and the whole narration is read again IN ONE TAKE by a Gemini TTS narrator chosen to sound like the
+/// reference speaker — one continuous reading flows across the cuts like the reference's voice-over (scene-by-scene
+/// takes stopped at every cut and broke sentences). The take is a small paid call written to the studio's cost
+/// records under the same monthly budget; the same words, voice and style are never paid for twice.
 /// </summary>
 public partial class AiStudioService
 {
@@ -34,7 +34,7 @@ public partial class AiStudioService
     {
         var suggested = AiStudioNarration.Suggest(AiStudioNarration.SpeakerOf(p.TranscriptJson), p.Topic);
         return (AiStudioNarration.IsVoice(p.NarratorVoice) ? p.NarratorVoice : suggested.Voice,
-            string.IsNullOrWhiteSpace(p.NarratorStyle) ? suggested.Style : p.NarratorStyle.Trim());
+            string.IsNullOrWhiteSpace(p.NarratorStyle) || AiStudioNarration.IsOldSuggestion(p.NarratorStyle) ? suggested.Style : p.NarratorStyle.Trim());
     }
 
     /// <summary>
@@ -64,11 +64,20 @@ public partial class AiStudioService
             })
             .Concat(StudioVoices.Dtos()).ToList();
 
-    private static string? VoiceKeyOf(AiStudioProject p, AiStudioScene s)
+    /// <summary>Every enabled scene's words in order, as one text (a sentence split over a cut is whole again).</summary>
+    internal static string? FullNarration(IEnumerable<AiStudioScene> scenes)
     {
-        if (string.IsNullOrWhiteSpace(s.Narration)) return null;
+        var parts = scenes.Where(s => s.Enabled && !string.IsNullOrWhiteSpace(s.Narration)).OrderBy(s => s.Order)
+            .Select(s => s.Narration!.Trim()).ToList();
+        return parts.Count == 0 ? null : string.Join(" ", parts);
+    }
+
+    private static string? NarrationKeyOf(AiStudioProject p, IEnumerable<AiStudioScene> scenes)
+    {
+        var text = FullNarration(scenes);
+        if (text == null) return null;
         var (voice, style) = NarratorOf(p);
-        return AiStudioNarration.Key(s.Narration, voice, style);
+        return AiStudioNarration.Key(text, voice, style);
     }
 
     public async Task<AiStudioProjectDto> ResetNarrationAsync(Guid id, CancellationToken ct)
@@ -118,14 +127,17 @@ public partial class AiStudioService
         return await GetProjectAsync(id, ct);
     }
 
-    /// <summary>Reads the scene's narration with the narrator voice (paid, tiny) and fits the clip length to it.</summary>
-    public async Task<AiStudioSceneDto> SpeakSceneAsync(Guid projectId, Guid sceneId, CancellationToken ct)
+    /// <summary>Reads the whole narration with the narrator voice in one continuous take (paid, tiny).</summary>
+    public async Task<AiStudioProjectDto> SpeakNarrationAsync(Guid id, CancellationToken ct)
     {
-        var (p, s) = await SceneAsync(projectId, sceneId, ct);
-        if (string.IsNullOrWhiteSpace(s.Narration)) throw new ArgumentException("Cảnh này không có lời bình.");
+        var p = await EditableProjectAsync(id, ct);
+        var scenes = await _db.AiStudioScenes.AsNoTracking().Where(s => s.ProjectId == id).ToListAsync(ct);
+        var text = FullNarration(scenes) ?? throw new ArgumentException("Chưa có lời bình nào (các cảnh đang bật đều trống).");
+        if (text.Length > AiStudioNarration.MaxNarrationChars)
+            throw new ArgumentException($"Lời bình quá dài ({text.Length} ký tự, tối đa {AiStudioNarration.MaxNarrationChars}) — bớt chữ ở vài cảnh rồi đọc lại.");
         var (voice, style) = NarratorOf(p);
-        var key = AiStudioNarration.Key(s.Narration, voice, style);
-        if (s.VoiceKey == key && s.VoiceBlobId != null) return await SceneDtoAsync(p, s, ct); // already read this way
+        var key = AiStudioNarration.Key(text, voice, style);
+        if (p.NarrationKey == key && p.NarrationBlobId != null) return await GetProjectAsync(id, ct); // already read this way
 
         // a designed voice deleted from the studio since: the voice suggested for this speaker instead
         var designed = await _studio.ReadDesignedVoicesAsync(ct);
@@ -134,65 +146,30 @@ public partial class AiStudioService
             speakVoice = AiStudioNarration.Suggest(AiStudioNarration.SpeakerOf(p.TranscriptJson), p.Topic).Voice;
         var gender = designed.FirstOrDefault(d => d.Id == speakVoice)?.Gender ?? StudioVoices.All.FirstOrDefault(v => v.Id == speakVoice)?.Gender;
 
-        // a take of these words at most: ~2 syllables a second + the tail (twice when it must be read again faster)
-        var words = s.Narration.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Length;
-        await _studio.EnsureMonthlyBudgetAsync(Math.Round((decimal)(words / 2.0 + 2) * 2 * _voices.PricePerSecond, 5), ct);
-        var take = await SpeakTakeAsync(p, s, speakVoice, style, gender, null, ct);
-        if (take.Seconds > AiStudioNarration.MaxVoiceSeconds) // too long for one clip: read again 20 % faster (pitch kept)
-            take = await SpeakTakeAsync(p, s, speakVoice, style, gender, "+20%", ct);
-        var (audio, seconds) = take;
-        // still longer than one clip: fine — in the joined video it runs on over the next scene, like a voice-over does
-        if (seconds > AiStudioNarration.MaxTakeSeconds)
+        // a take of these words at most: ~2 syllables a second + the tail
+        var words = text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Length;
+        await _studio.EnsureMonthlyBudgetAsync(Math.Round((decimal)(words / 2.0 + 2) * _voices.PricePerSecond, 5), ct);
+        var (audio, seconds, fromCache, delivery) = await _voices.SpeakAsync(p.Id, text, speakVoice, style, StudioVoices.FallbackFor(gender), ct);
+        if (delivery != null && delivery != "diễn cảm") _logger.LogWarning("AI Studio narration {Project}: {Delivery}", p.Id, delivery);
+        _db.StudioCostRecords.Add(new StudioCostRecord
         {
-            await _db.SaveChangesAsync(ct);
-            throw new InvalidOperationException(
-                $"Lời bình cảnh {s.Order + 1} đọc mất {seconds:0.0}s — quá dài cho một cảnh (tối đa {AiStudioNarration.MaxTakeSeconds:0}s). " +
-                "Chuyển bớt chữ sang cảnh bên cạnh rồi đọc lại.");
-        }
+            Kind = "Voice", Model = speakVoice, Seconds = seconds, CostUsd = fromCache ? 0m : Math.Round((decimal)seconds * _voices.PricePerSecond, 5),
+            Note = $"AI Video Studio · {Short(p.Title)} · lời bình cả video" + (fromCache ? " (dùng lại, miễn phí)" : "")
+        });
 
         var temp = TempDir();
         try
         {
-            var path = Path.Combine(temp, "voice.m4a");
+            var path = Path.Combine(temp, "narration.m4a");
             await File.WriteAllBytesAsync(path, audio, ct);
-            var old = s.VoiceBlobId;
-            s.VoiceBlobId = (await StoreFileAsync(path, "audio/mp4", ct)).Id;
+            var old = p.NarrationBlobId;
+            p.NarrationBlobId = (await StoreFileAsync(path, "audio/mp4", ct)).Id;
             await DeleteBlobAsync(old, ct);
         }
         finally { DeleteDir(temp); }
-        s.VoiceSeconds = seconds;
-        s.VoiceKey = key;
-
-        // the clip must outlast its narration (a longer take is sped up at assembly, up to 25 %)
-        var need = SeedanceVideoClient.ClampSeconds((int)Math.Ceiling(seconds + 0.3));
-        if (need > s.TargetSeconds)
-        {
-            s.TargetSeconds = need;
-            if (!s.PromptEdited)
-            {
-                var earlier = await _db.AiStudioScenes.AnyAsync(x => x.ProjectId == projectId && x.Enabled && x.Order < s.Order, ct);
-                await SetScenePromptAsync(p, s, AiStudioPromptEngine.Build(PromptInput(p, s, earlier)), "engine", edited: false, ct);
-            }
-        }
+        p.NarrationSeconds = seconds;
+        p.NarrationKey = key;
         await _db.SaveChangesAsync(ct);
-        return await SceneDtoAsync(p, s, ct);
+        return await GetProjectAsync(id, ct);
     }
-
-    /// <summary>One paid take, recorded in the studio's costs.</summary>
-    private async Task<(byte[] Audio, double Seconds)> SpeakTakeAsync(AiStudioProject p, AiStudioScene s, string voice, string style, string? gender,
-        string? speed, CancellationToken ct)
-    {
-        var (audio, seconds, fromCache, delivery) = await _voices.SpeakAsync(p.Id, s.Narration!, voice, style, StudioVoices.FallbackFor(gender), ct, speed);
-        if (delivery != null && delivery != "diễn cảm") _logger.LogWarning("AI Studio narration scene {Scene}: {Delivery}", s.Index, delivery);
-        var cost = fromCache ? 0m : Math.Round((decimal)seconds * _voices.PricePerSecond, 5);
-        _db.StudioCostRecords.Add(new StudioCostRecord
-        {
-            Kind = "Voice", Model = voice, Seconds = seconds, CostUsd = cost,
-            Note = $"AI Video Studio · {Short(p.Title)} · lời bình cảnh {s.Order + 1}" + (speed != null ? " (đọc nhanh hơn)" : "") + (fromCache ? " (dùng lại, miễn phí)" : "")
-        });
-        return (audio, seconds);
-    }
-
-    public async Task<Guid?> SceneVoiceAsync(Guid sceneId, CancellationToken ct) =>
-        await _db.AiStudioScenes.AsNoTracking().Where(s => s.Id == sceneId).Select(s => s.VoiceBlobId).FirstOrDefaultAsync(ct);
 }

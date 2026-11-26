@@ -233,6 +233,16 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                     b.Property<int>("Height")
                         .HasColumnType("integer");
 
+                    b.Property<Guid?>("NarrationBlobId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("NarrationKey")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<double?>("NarrationSeconds")
+                        .HasColumnType("double precision");
+
                     b.Property<string>("NarratorStyle")
                         .IsRequired()
                         .HasMaxLength(600)

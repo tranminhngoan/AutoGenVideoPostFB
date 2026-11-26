@@ -93,6 +93,14 @@ public class AiStudioProject : BaseEntity
     public string NarratorVoice { get; set; } = string.Empty;
     /// <summary>English acting direction for the narrator (pace, tone, mood like the reference speaker).</summary>
     public string NarratorStyle { get; set; } = string.Empty;
+    /// <summary>
+    /// The whole narration (every enabled scene's words, in order) read in ONE continuous take — natural phrasing
+    /// across the cuts; laid over the joined video from the first narrated scene.
+    /// </summary>
+    public Guid? NarrationBlobId { get; set; }
+    public double? NarrationSeconds { get; set; }
+    /// <summary>Hash of the words, voice and direction the take was read with (a change makes it out of date).</summary>
+    public string? NarrationKey { get; set; }
 
     /// <summary>All finished scene clips joined in order (optional).</summary>
     public Guid? FinalBlobId { get; set; }

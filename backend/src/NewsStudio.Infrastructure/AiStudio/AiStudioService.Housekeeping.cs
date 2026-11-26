@@ -168,6 +168,17 @@ public partial class AiStudioService
             p.SourceAudioBlobId = null;
             if (p.AudioMode == "Original") p.AudioMode = "None";
         }
+        foreach (var p in await _db.AiStudioProjects.Where(p => p.NarrationBlobId != null && p.CreatedAtUtc < clipCut).ToListAsync(ct))
+        {
+            await DeleteBlobAsync(p.NarrationBlobId, ct);
+            (p.NarrationBlobId, p.NarrationSeconds, p.NarrationKey) = (null, null, null);
+        }
+        // per-scene takes of earlier versions: no longer used (the narration is read in one take)
+        foreach (var sc in await _db.AiStudioScenes.Where(x => x.VoiceBlobId != null).ToListAsync(ct))
+        {
+            await DeleteBlobAsync(sc.VoiceBlobId, ct);
+            (sc.VoiceBlobId, sc.VoiceSeconds, sc.VoiceKey) = (null, null, null);
+        }
         foreach (var p in await _db.AiStudioProjects.Where(p => p.FinalBlobId != null && p.FinalUpdatedAtUtc < clipCut).ToListAsync(ct))
         {
             await DeleteBlobAsync(p.FinalBlobId, ct);

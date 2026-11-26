@@ -206,9 +206,7 @@ function SceneCard({ project: p, scene: s, first, last, open, onToggle, onChange
             {s.isContinuation && <Chip>nối tiếp cảnh trước</Chip>}
             {!s.enabled && <Badge>Đang tắt</Badge>}
             {s.promptEdited && <Chip>prompt tự sửa</Chip>}
-            {s.narration && (s.voiceCurrent
-              ? <Chip title="Giọng AI đã đọc lời bình cảnh này"><Mic className="h-3 w-3" />lời bình {s.voiceSeconds?.toFixed(1)}s</Chip>
-              : <Chip title="Có lời bình, chưa đọc (hoặc đã sửa chữ / đổi giọng)"><Mic className="h-3 w-3" />chưa đọc lời bình</Chip>)}
+            {s.narration && <Chip title="Cảnh này có lời bình (đọc liền một mạch cùng cả video)"><Mic className="h-3 w-3" />có lời bình</Chip>}
             {s.latest && <GenStatusBadge status={s.latest.status} />}
           </div>
           <p className="mt-0.5 line-clamp-1 text-[13px] text-fg-muted">{s.summaryVi ?? fact(a.summary) ?? '—'}</p>
@@ -333,11 +331,11 @@ function NarrationPanel({ project: p, setProject, reload }: { project: Project; 
   const [voice, setVoice] = useState(p.narratorVoice);
   const [style, setStyle] = useState(p.narratorStyle);
   const [saving, setSaving] = useState(false);
-  const [reading, setReading] = useState<{ done: number; total: number } | null>(null);
+  const [reading, setReading] = useState(false);
   useEffect(() => { setVoice(p.narratorVoice); setStyle(p.narratorStyle); }, [p.narratorVoice, p.narratorStyle]);
 
   const withText = p.scenes.filter((s) => s.enabled && s.narration);
-  const todo = withText.filter((s) => !s.voiceCurrent);
+  const videoSeconds = p.scenes.filter((s) => s.enabled).reduce((t, s) => t + (s.latest?.status === 'Done' ? s.latest.seconds : s.targetSeconds), 0);
   const segments: Json[] = Array.isArray(p.transcript?.segments) ? p.transcript.segments : [];
   const dirty = voice !== p.narratorVoice || style !== p.narratorStyle;
   const voices = overview?.voices ?? [];
@@ -350,30 +348,29 @@ function NarrationPanel({ project: p, setProject, reload }: { project: Project; 
   };
 
   const readAll = async () => {
-    setReading({ done: 0, total: todo.length });
-    let done = 0;
-    for (const s of todo) {
-      try {
-        await aiStudio.speak(p.id, s.id);
-      } catch (e) {
-        toast.error(`Cảnh ${s.order + 1} chưa đọc được`, (e as Error).message);
-        break;
-      }
-      setReading({ done: ++done, total: todo.length });
+    setReading(true);
+    try {
+      const next = await aiStudio.speakNarration(p.id);
+      setProject(next);
+      toast.success('Đã đọc xong lời bình', `Đọc liền một mạch ${next.narrationSeconds?.toFixed(1) ?? '?'}s cho cả video.`);
+    } catch (e) {
+      toast.error('Chưa đọc được lời bình', (e as Error).message);
+      await reload();
+    } finally {
+      setReading(false);
     }
-    setReading(null);
-    await reload();
-    if (done === todo.length) toast.success('Đã đọc xong lời bình', `${done} cảnh — lời bình dài hơn clip sẽ đọc tràn sang cảnh sau khi ghép (như video gốc), không bị cắt chữ.`);
   };
 
   return (
     <div className="rounded-xl border border-line bg-subtle p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2 text-[13px] font-semibold text-fg"><Mic className="h-4 w-4 text-accent" />Lời bình & giọng AI đọc lại</div>
-        <span className="text-xs text-fg-muted">{withText.length - todo.length}/{withText.length} cảnh đã đọc</span>
+        <span className={cn('text-xs', p.narrationCurrent ? 'text-fg-muted' : 'text-warning')}>
+          {p.narrationCurrent ? `Đã đọc ${p.narrationSeconds?.toFixed(1)}s` : p.hasNarrationTake ? 'Chữ / giọng đã đổi — cần đọc lại' : 'Chưa đọc'}
+        </span>
       </div>
       <p className="mt-1 text-xs text-fg-muted">
-        Lời bình được nghe từ video gốc (chạy trên máy), chia theo từng cảnh, đưa vào prompt làm ngữ cảnh câu chuyện, rồi một giọng AI đọc lại theo phong cách người đọc gốc. Không dùng giọng của người trong video gốc.
+        Lời bình được nghe từ video gốc (chạy trên máy), chia theo từng cảnh, đưa vào prompt làm ngữ cảnh câu chuyện, rồi một giọng AI đọc lại <b>liền một mạch cho cả video</b> (không ngắt theo từng cảnh) theo phong cách người đọc gốc. Không dùng giọng của người trong video gốc.
       </p>
       <p className="mt-1 text-xs"><b className="text-fg">Giọng gốc đo được:</b> <span className="text-fg-muted">{p.speakerProfileVi ?? 'chưa đo được (phân tích lại video để đo).'}</span></p>
       {segments.length === 0 && <Alert className="mt-2" tone="warning" title="Chưa có lời bình">Bản phân tích này chưa nghe được lời nói nào. Nếu video có lời bình, bấm Phân tích lại ở bước 2.</Alert>}
@@ -410,33 +407,42 @@ function NarrationPanel({ project: p, setProject, reload }: { project: Project; 
             Chia lại từ video gốc
           </Button>
         )}
-        <Button size="sm" variant="primary" className="ml-auto" icon={<Mic className="h-3.5 w-3.5" />} loading={reading != null} disabled={dirty || todo.length === 0 || saving} onClick={readAll}>
-          {reading ? `Đang đọc ${reading.done}/${reading.total}…` : todo.length ? `Đọc lời bình ${todo.length} cảnh` : 'Đã đọc hết'}
+        <Button size="sm" variant="primary" className="ml-auto" icon={<Mic className="h-3.5 w-3.5" />} loading={reading} disabled={dirty || withText.length === 0 || saving || p.narrationCurrent} onClick={readAll}>
+          {reading ? 'Đang đọc…' : p.narrationCurrent ? 'Đã đọc' : p.hasNarrationTake ? 'Đọc lại lời bình' : 'Đọc lời bình'}
         </Button>
       </div>
       {dirty && <p className="mt-1 text-right text-[11px] text-warning">Lưu giọng trước rồi mới đọc.</p>}
+      {p.hasNarrationTake && (
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <audio controls preload="none" src={aiStudio.narrationUrl(p.id, p.narrationSeconds)} className="h-8 w-full max-w-md" />
+          {p.narrationCurrent && (p.narrationSeconds ?? 0) > videoSeconds && (
+            <span className="text-[11px] text-fg-muted">
+              Bản đọc dài hơn video (~{videoSeconds}s) — khi ghép sẽ đọc nhanh lên chút (tối đa 25%), còn dư thì giữ khung hình cuối cho đọc hết.
+            </span>
+          )}
+        </div>
+      )}
     </div>
   );
 }
 
-/** One scene's narration: the words (editable), their English meaning in the prompt, the AI take. */
+/** One scene's narration: the words (editable) and their English meaning in the prompt (read with the whole video). */
 function SceneNarration({ project: p, scene: s, onChanged }: { project: Project; scene: Scene; onChanged: () => Promise<void> }) {
   const toast = useToast();
   const [text, setText] = useState(s.narration ?? '');
-  const [busy, setBusy] = useState<'save' | 'speak' | null>(null);
+  const [busy, setBusy] = useState(false);
   useEffect(() => setText(s.narration ?? ''), [s.narration]);
   const dirty = text.trim() !== (s.narration ?? '').trim();
 
-  const act = async (kind: 'save' | 'speak') => {
-    setBusy(kind);
+  const save = async () => {
+    setBusy(true);
     try {
-      if (dirty) await aiStudio.editNarration(p.id, s.id, text);
-      if (kind === 'speak') await aiStudio.speak(p.id, s.id);
+      await aiStudio.editNarration(p.id, s.id, text);
       await onChanged();
     } catch (e) {
-      toast.error(kind === 'speak' ? 'Chưa đọc được' : 'Chưa lưu được', (e as Error).message);
+      toast.error('Chưa lưu được', (e as Error).message);
     } finally {
-      setBusy(null);
+      setBusy(false);
     }
   };
 
@@ -449,15 +455,8 @@ function SceneNarration({ project: p, scene: s, onChanged }: { project: Project;
       <Textarea rows={3} value={text} placeholder="Cảnh này không có lời bình (để trống = im lặng)." onChange={(e) => setText(e.target.value)} />
       {s.narrationEn && !s.narrationEdited && <p className="mt-1 text-[11px] text-fg-subtle"><b>Ý nghĩa trong prompt:</b> {s.narrationEn}</p>}
       <div className="mt-2 flex flex-wrap items-center gap-2">
-        <Button size="sm" variant="secondary" icon={<Save className="h-3.5 w-3.5" />} loading={busy === 'save'} disabled={!dirty || busy != null} onClick={() => act('save')}>Lưu chữ</Button>
-        <Button size="sm" variant="primary" icon={<Mic className="h-3.5 w-3.5" />} loading={busy === 'speak'} disabled={!text.trim() || busy != null || (!dirty && s.voiceCurrent)} onClick={() => act('speak')}>
-          {s.hasVoice ? 'Đọc lại' : 'Đọc'}
-        </Button>
-        {s.hasVoice && <audio controls preload="none" src={aiStudio.voiceUrl(s.id, s.voiceSeconds)} className="h-8 max-w-[240px]" />}
-        {s.hasVoice && !s.voiceCurrent && <span className="text-[11px] text-warning">chữ / giọng đã đổi — đọc lại</span>}
-        {s.hasVoice && s.voiceCurrent && (s.voiceSeconds ?? 0) > s.targetSeconds + 0.2 && (
-          <span className="text-[11px] text-fg-muted">dài hơn clip {((s.voiceSeconds ?? 0) - s.targetSeconds).toFixed(1)}s — khi ghép sẽ đọc tràn sang cảnh sau</span>
-        )}
+        <Button size="sm" variant="secondary" icon={<Save className="h-3.5 w-3.5" />} loading={busy} disabled={!dirty || busy} onClick={save}>Lưu chữ</Button>
+        <span className="text-[11px] text-fg-subtle">Sửa xong bấm “Đọc lại lời bình” ở khung trên — cả video được đọc liền một mạch.</span>
       </div>
     </div>
   );

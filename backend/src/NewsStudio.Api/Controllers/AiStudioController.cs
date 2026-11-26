@@ -248,9 +248,8 @@ public class AiStudioController : ControllerBase
     public Task<IActionResult> EditNarration(Guid id, Guid sceneId, [FromBody] AiStudioNarrationDto input, CancellationToken ct) =>
         Run(async () => await _studio.EditNarrationAsync(id, sceneId, input.Text, ct));
 
-    [HttpPost("projects/{id:guid}/scenes/{sceneId:guid}/speak")]
-    public Task<IActionResult> Speak(Guid id, Guid sceneId, CancellationToken ct) =>
-        Run(async () => await _studio.SpeakSceneAsync(id, sceneId, ct));
+    [HttpPost("projects/{id:guid}/narration/speak")]
+    public Task<IActionResult> SpeakNarration(Guid id, CancellationToken ct) => Run(async () => await _studio.SpeakNarrationAsync(id, ct));
 
     [HttpPost("projects/{id:guid}/scenes/{sceneId:guid}/regenerate-prompt")]
     public Task<IActionResult> RegeneratePrompt(Guid id, Guid sceneId, CancellationToken ct) =>
@@ -337,8 +336,8 @@ public class AiStudioController : ControllerBase
     [HttpGet("scenes/{sceneId:guid}/thumb")]
     public async Task<IActionResult> SceneThumb(Guid sceneId, CancellationToken ct) => await FileResult(await _studio.SceneThumbAsync(sceneId, ct), null, ct);
 
-    [HttpGet("scenes/{sceneId:guid}/voice")]
-    public async Task<IActionResult> SceneVoice(Guid sceneId, CancellationToken ct) => await FileResult(await _studio.SceneVoiceAsync(sceneId, ct), null, ct);
+    [HttpGet("projects/{id:guid}/narration")]
+    public async Task<IActionResult> NarrationTake(Guid id, CancellationToken ct) => await FileResult(await _studio.ProjectBlobAsync(id, "narration", ct), null, ct);
 
     [HttpGet("scenes/{sceneId:guid}/frames/{blobId:guid}")]
     public async Task<IActionResult> Frame(Guid sceneId, Guid blobId, CancellationToken ct) => await FileResult(await _studio.FrameBlobAsync(sceneId, blobId, ct), null, ct);

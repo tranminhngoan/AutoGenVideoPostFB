@@ -227,9 +227,6 @@ export interface Scene {
   narration?: string | null;
   narrationEn?: string | null;
   narrationEdited: boolean;
-  hasVoice: boolean;
-  voiceSeconds?: number | null;
-  voiceCurrent: boolean;
   prompt: string;
   promptVersion: number;
   promptEdited: boolean;
@@ -279,6 +276,10 @@ export interface Project extends ProjectSummary {
   hasSourceAudio: boolean;
   narratorVoice: string;
   narratorStyle: string;
+  /** The whole narration read in one continuous take. */
+  hasNarrationTake: boolean;
+  narrationCurrent: boolean;
+  narrationSeconds?: number | null;
   speakerProfileVi?: string | null;
   variation: Variation;
   globalPrompt: string;
@@ -352,7 +353,7 @@ export const aiStudio = {
   narrator: (id: string, body: { voice?: string; style?: string; suggest?: boolean }) => call<Project>('PUT', `/projects/${id}/narrator`, body),
   resetNarration: (id: string) => call<Project>('POST', `/projects/${id}/narration/reset`),
   editNarration: (id: string, sceneId: string, text: string) => call<Scene>('PUT', `/projects/${id}/scenes/${sceneId}/narration`, { text }),
-  speak: (id: string, sceneId: string) => call<Scene>('POST', `/projects/${id}/scenes/${sceneId}/speak`),
+  speakNarration: (id: string) => call<Project>('POST', `/projects/${id}/narration/speak`),
   versions: (id: string, sceneId?: string) => call<PromptVersion[]>('GET', `/projects/${id}/versions${sceneId ? `?sceneId=${sceneId}` : ''}`),
   restore: (id: string, versionId: string) => call<Project>('POST', `/projects/${id}/versions/restore`, { versionId }),
 
@@ -373,7 +374,7 @@ export const aiStudio = {
   finalUrl: (id: string, download = false, v?: string | null) => `${BASE}/projects/${id}/final?${download ? 'download=true&' : ''}${v ? `v=${encodeURIComponent(v)}` : ''}`,
   sceneThumbUrl: (sceneId: string) => `${BASE}/scenes/${sceneId}/thumb`,
   frameUrl: (sceneId: string, blobId: string) => `${BASE}/scenes/${sceneId}/frames/${blobId}`,
-  voiceUrl: (sceneId: string, v?: number | null) => `${BASE}/scenes/${sceneId}/voice${v ? `?v=${v}` : ''}`,
+  narrationUrl: (id: string, v?: number | null) => `${BASE}/projects/${id}/narration${v ? `?v=${v}` : ''}`,
   clipUrl: (genId: string, download = false) => `${BASE}/generations/${genId}/clip${download ? '?download=true' : ''}`,
 };
 

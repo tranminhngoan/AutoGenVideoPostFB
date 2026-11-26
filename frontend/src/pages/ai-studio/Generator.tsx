@@ -161,9 +161,9 @@ export function GeneratorPanel({ project: p, setProject, reload }: WorkspaceProp
                   ...(p.hasSourceAudio ? [{ value: 'Original' as const, label: 'Giữ tiếng gốc' }] : []),
                 ]} />
               {p.audioMode === 'Narration' && (() => {
-                const need = enabled.filter((s) => s.narration && !s.voiceCurrent).length;
+                const need = enabled.some((s) => s.narration) && !p.narrationCurrent;
                 return <span className={cn('text-[11px]', need ? 'text-warning' : 'text-fg-subtle')}>
-                  {need ? `${need} cảnh chưa đọc lời bình — vào tab Storyboard bấm “Đọc lời bình”.` : 'Mỗi cảnh có giọng AI đọc lời bình của cảnh đó; lời dài hơn clip đọc tràn sang cảnh sau, không cắt chữ.'}
+                  {need ? 'Lời bình chưa đọc (hoặc đã sửa chữ / đổi giọng) — vào tab Storyboard bấm “Đọc lời bình”.' : 'Giọng AI đọc liền một mạch cả video, chạy qua các chỗ chuyển cảnh, không cắt chữ.'}
                 </span>;
               })()}
               {p.audioMode === 'Original' && <span className="text-[11px] text-fg-subtle">Dùng chính tiếng của video gốc (giọng người khác + nhạc nền nếu có).</span>}
