@@ -39,11 +39,12 @@ public partial class AiStudioService
     private readonly SeedanceVideoClient _video;
     private readonly StudioService _studio;
     private readonly IAiStudioNarrator _voices;
+    private readonly IAiStudioCaptionWriter _captions;
     private readonly IBackgroundJobClient _jobs;
     private readonly ILogger<AiStudioService> _logger;
 
     public AiStudioService(IApplicationDbContext db, StudioFileStore files, AiStudioMedia media, AiStudioEngine engine, SeedanceVideoClient video,
-        StudioService studio, IAiStudioNarrator voices, IBackgroundJobClient jobs, ILogger<AiStudioService> logger)
+        StudioService studio, IAiStudioNarrator voices, IAiStudioCaptionWriter captions, IBackgroundJobClient jobs, ILogger<AiStudioService> logger)
     {
         _db = db;
         _files = files;
@@ -52,6 +53,7 @@ public partial class AiStudioService
         _video = video;
         _studio = studio;
         _voices = voices;
+        _captions = captions;
         _jobs = jobs;
         _logger = logger;
     }
@@ -839,6 +841,7 @@ public partial class AiStudioService
         dto.FinalUpdatedAtUtc = p.FinalUpdatedAtUtc;
         var latest = gens.GroupBy(g => g.SceneId).ToDictionary(g => g.Key, g => g.First());
         var orders = scenes.ToDictionary(s => s.Id, s => s.Order);
+        dto.Caption = p.Caption;
         dto.HasNarrationTake = p.NarrationBlobId != null;
         dto.NarrationSeconds = p.NarrationSeconds;
         dto.NarrationCurrent = p.NarrationBlobId != null && p.NarrationKey == NarrationKeyOf(p, scenes);

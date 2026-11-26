@@ -217,6 +217,7 @@ public static class AiStudioRegistration
         services.AddSingleton<AiStudioMedia>();
         services.AddSingleton<AiStudioEngine>();
         services.AddScoped<IAiStudioNarrator, StudioVoicesNarrator>();
+        services.AddScoped<IAiStudioCaptionWriter, GeminiCaptionWriter>();
         services.AddScoped<AiStudioService>();
         if (string.Equals(configuration["Worker:Role"], "pc", StringComparison.OrdinalIgnoreCase))
             services.AddHostedService<AiStudioPcMonitor>();

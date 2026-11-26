@@ -188,6 +188,8 @@ public class AiStudioProjectDto : AiStudioProjectSummaryDto
     public bool HasSourceAudio { get; set; }
     public string NarratorVoice { get; set; } = string.Empty;
     public string NarratorStyle { get; set; } = string.Empty;
+    /// <summary>Facebook caption (the AI disclosure line is added when it is copied).</summary>
+    public string Caption { get; set; } = string.Empty;
     /// <summary>The whole narration read in one take: there is one / it matches the current words, voice and style.</summary>
     public bool HasNarrationTake { get; set; }
     public bool NarrationCurrent { get; set; }

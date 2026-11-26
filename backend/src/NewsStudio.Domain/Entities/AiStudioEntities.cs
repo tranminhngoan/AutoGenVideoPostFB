@@ -102,6 +102,9 @@ public class AiStudioProject : BaseEntity
     /// <summary>Hash of the words, voice and direction the take was read with (a change makes it out of date).</summary>
     public string? NarrationKey { get; set; }
 
+    /// <summary>Facebook caption of the joined video (written by AI from the story, editable; the AI disclosure is added on copy).</summary>
+    public string Caption { get; set; } = string.Empty;
+
     /// <summary>All finished scene clips joined in order (optional).</summary>
     public Guid? FinalBlobId { get; set; }
     public string? FinalStatus { get; set; } // null, Assembling, Done, Failed

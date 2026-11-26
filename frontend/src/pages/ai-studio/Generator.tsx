@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
-import { Clapperboard, Dice5, Download, ImagePlus, Layers, Link2, Play, RefreshCw, Square, Wand2, X } from 'lucide-react';
-import { Alert, Button, EmptyState, Field, Input, Modal, Segmented, Select, Spinner, Thumb, cn } from '../../components/ui';
+import { Clapperboard, Copy, Dice5, Download, ImagePlus, Layers, Link2, Play, RefreshCw, Save, Square, Wand2, X } from 'lucide-react';
+import { Alert, Button, EmptyState, Field, Input, Modal, Segmented, Select, Spinner, Textarea, Thumb, cn } from '../../components/ui';
 import { useToast } from '../../components/feedback';
 import { formatDateTime, timeAgo } from '../../lib/format';
 import { StudioError } from '../../services/studio';
@@ -179,9 +179,10 @@ export function GeneratorPanel({ project: p, setProject, reload }: WorkspaceProp
         {p.hasFinal && p.finalStatus === 'Done' && (
           <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-end">
             <video key={p.finalUpdatedAtUtc ?? ''} src={aiStudio.finalUrl(p.id, false, p.finalUpdatedAtUtc)} controls playsInline className="max-h-[480px] rounded-xl bg-black sm:w-72" />
-            <div className="space-y-2">
+            <div className="min-w-0 flex-1 space-y-2">
               <a href={aiStudio.finalUrl(p.id, true, p.finalUpdatedAtUtc)} className="inline-flex h-9 items-center gap-2 rounded-md bg-fg px-3.5 text-sm font-medium text-canvas hover:bg-fg/90"><Download className="h-4 w-4" />Tải video MP4</a>
-              <p className="text-xs text-fg-muted">Ghép lúc {formatDateTime(p.finalUpdatedAtUtc)}. Nhớ gắn nhãn “Nội dung do AI tạo” khi đăng.</p>
+              <p className="text-xs text-fg-muted">Ghép lúc {formatDateTime(p.finalUpdatedAtUtc)}.</p>
+              <FacebookCaption project={p} setProject={setProject} />
             </div>
           </div>
         )}
@@ -345,6 +346,61 @@ export function HistoryTable({ projectId, refreshKey }: { projectId?: string; re
         </tbody>
       </table>
       <div className="flex justify-end px-3 py-2 text-xs text-fg-muted">Tổng chi trong danh sách: <b className="ml-1 text-fg">{usd(total)}</b></div>
+    </div>
+  );
+}
+
+/** Caption for posting the joined video on Facebook: written by AI from the story, editable, copied with the AI note. */
+function FacebookCaption({ project: p, setProject }: { project: Project; setProject: (p: Project) => void }) {
+  const toast = useToast();
+  const [text, setText] = useState(p.caption);
+  const [busy, setBusy] = useState<'write' | 'save' | null>(null);
+  const tried = useRef(false);
+  useEffect(() => setText(p.caption), [p.caption]);
+  const dirty = text.trim() !== p.caption.trim();
+
+  const write = async () => {
+    setBusy('write');
+    try { setProject(await aiStudio.writeCaption(p.id)); }
+    catch (e) { toast.error('Chưa viết được chú thích', (e as Error).message); }
+    finally { setBusy(null); }
+  };
+  // the first time the joined video is there: a caption is written once (a fraction of a cent)
+  useEffect(() => {
+    if (!p.caption && !tried.current) { tried.current = true; void write(); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [p.id]);
+
+  const save = async () => {
+    setBusy('save');
+    try { setProject(await aiStudio.setCaption(p.id, text)); toast.success('Đã lưu chú thích'); }
+    catch (e) { toast.error('Chưa lưu được', (e as Error).message); }
+    finally { setBusy(null); }
+  };
+  const copy = async () => {
+    const body = text.trim();
+    const post = body.includes('tạo bằng AI') ? body : `${body}\n\n🤖 Video được tạo bằng AI.`;
+    try {
+      await navigator.clipboard.writeText(post);
+      toast.success('Đã copy chú thích', 'Dán vào ô mô tả khi đăng Facebook.');
+    } catch {
+      toast.error('Trình duyệt không cho copy tự động', 'Bôi đen chú thích rồi copy bằng tay.');
+    }
+  };
+
+  return (
+    <div className="rounded-lg border border-line bg-canvas p-3">
+      <div className="mb-1.5 text-[13px] font-semibold text-fg">Đăng Facebook</div>
+      <Textarea rows={5} value={text} placeholder={busy === 'write' ? 'Đang viết chú thích…' : 'Chú thích khi đăng (bấm “Viết bằng AI” hoặc tự gõ).'}
+        onChange={(e) => setText(e.target.value)} disabled={busy === 'write'} />
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <Button size="sm" variant="primary" icon={<Copy className="h-3.5 w-3.5" />} disabled={!text.trim() || busy != null} onClick={copy}>Copy chú thích</Button>
+        <Button size="sm" variant="secondary" icon={<Save className="h-3.5 w-3.5" />} loading={busy === 'save'} disabled={!dirty || busy != null} onClick={save}>Lưu</Button>
+        <Button size="sm" variant="ghost" icon={<Wand2 className="h-3.5 w-3.5" />} loading={busy === 'write'} disabled={busy != null} onClick={write}>{p.caption ? 'Viết lại bằng AI' : 'Viết bằng AI'}</Button>
+      </div>
+      <p className="mt-1.5 text-[11px] text-fg-subtle">
+        Khi copy, dòng “🤖 Video được tạo bằng AI.” được thêm ở cuối. Lúc đăng nhớ bật nhãn <b>“Thông tin AI”</b> (Meta yêu cầu với video AI trông như thật).
+      </p>
     </div>
   );
 }

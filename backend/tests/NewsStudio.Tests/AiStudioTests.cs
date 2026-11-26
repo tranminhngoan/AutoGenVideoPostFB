@@ -831,6 +831,17 @@ public class AiStudioFlowTests : IClassFixture<WebApplicationFactory<Program>>
         }
     }
 
+    /// <summary>Stands in for Gemini: remembers what it was asked, answers a fixed caption.</summary>
+    internal sealed class FakeCaptionWriter : IAiStudioCaptionWriter
+    {
+        public List<(string System, string User)> Asked { get; } = new();
+        public Task<(string Caption, decimal CostUsd, long Tokens, string Model)> WriteAsync(string system, string user, CancellationToken ct)
+        {
+            Asked.Add((system, user));
+            return Task.FromResult(("Ai còn nhớ những buổi sáng mẹ đi chợ sớm? 🌾 #kyuctuoitho #tuoithơ", 0.0004m, 900L, "gemini-test"));
+        }
+    }
+
     private const string ChildhoodTranscript = """
     {"language":"vi","model":"ggml-small.bin","segments":[
       {"start":0.2,"end":1.6,"text":"Hồi đó nhà tôi nghèo lắm.","en":"Back then my family was very poor."},
@@ -844,10 +855,15 @@ public class AiStudioFlowTests : IClassFixture<WebApplicationFactory<Program>>
         var dir = NewDir();
         var gw = new FakeGateway();
         var narrator = new FakeNarrator();
+        var captions = new FakeCaptionWriter();
         try
         {
             gw.Video = await File.ReadAllBytesAsync(await MakeClipAsync(dir, 2, false, "720x1280"));
-            await using var app = WithGateway(gw).WithWebHostBuilder(b => b.ConfigureServices(services => services.AddScoped<IAiStudioNarrator>(_ => narrator)));
+            await using var app = WithGateway(gw).WithWebHostBuilder(b => b.ConfigureServices(services =>
+            {
+                services.AddScoped<IAiStudioNarrator>(_ => narrator);
+                services.AddScoped<IAiStudioCaptionWriter>(_ => captions);
+            }));
             using var scope = app.Services.CreateScope();
             var studio = scope.ServiceProvider.GetRequiredService<AiStudioService>();
             var db = scope.ServiceProvider.GetRequiredService<IApplicationDbContext>();
@@ -963,6 +979,18 @@ public class AiStudioFlowTests : IClassFixture<WebApplicationFactory<Program>>
             row.FinalStatus.Should().Be("Done", row.FinalError);
             (await store.CopyToAsync(row.FinalBlobId!.Value, final, CancellationToken.None)).Should().BeTrue();
             (await media.ProbeAsync(final, CancellationToken.None)).Duration.Should().BeApproximately(9 / 1.25 + AiStudioMedia.VoiceTail, 0.3);
+
+            // 5b. the Facebook caption: written from the story (the narration — not the video), editable, cost recorded
+            var captioned = await studio.WriteCaptionAsync(p.Id, CancellationToken.None);
+            captioned.Caption.Should().StartWith("Ai còn nhớ");
+            captions.Asked.Single().User.Should().Contain("Mẹ đi chợ từ sáng sớm").And.Contain("Ký ức tuổi thơ Việt Nam").And.Contain("không nhắc tới AI");
+            (await db.StudioCostRecords.AsNoTracking().CountAsync(c => c.Note!.Contains(title) && c.Note.Contains("chú thích Facebook"))).Should().Be(1);
+            (await studio.SetCaptionAsync(p.Id, "  Tuổi thơ tôi đó 🌾  ", CancellationToken.None)).Caption.Should().Be("Tuổi thơ tôi đó 🌾");
+            var huge = () => studio.SetCaptionAsync(p.Id, new string('a', AiStudioService.MaxCaptionChars + 1), CancellationToken.None);
+            await huge.Should().ThrowAsync<ArgumentException>();
+            AiStudioService.ParseCaption("""{"caption":" Chào 🌾 "}""").Should().Be("Chào 🌾");
+            AiStudioService.ParseCaption("không phải json").Should().BeNull();
+            AiStudioService.ParseCaption("""{"caption":""}""").Should().BeNull();
 
             // 6. the reference's own sound is still available on request
             await studio.SetGeneratorAsync(p.Id, new AiStudioGeneratorSettingsDto { VideoModel = SeedanceVideoClient.FastModel, Resolution = "720p", AspectRatio = "9:16", AudioMode = "Original" }, CancellationToken.None);

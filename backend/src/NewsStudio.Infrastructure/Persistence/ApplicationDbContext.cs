@@ -690,6 +690,7 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
             entity.Property(e => e.NarratorVoice).HasMaxLength(80);
             entity.Property(e => e.NarratorStyle).HasMaxLength(600);
             entity.Property(e => e.NarrationKey).HasMaxLength(64);
+            entity.Property(e => e.Caption).HasMaxLength(2200);
             entity.Property(e => e.VideoModel).HasMaxLength(100);
             entity.Property(e => e.Resolution).HasMaxLength(10);
             entity.Property(e => e.GenAspectRatio).HasMaxLength(10);

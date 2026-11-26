@@ -276,6 +276,8 @@ export interface Project extends ProjectSummary {
   hasSourceAudio: boolean;
   narratorVoice: string;
   narratorStyle: string;
+  /** Facebook caption (editable; the AI disclosure line is added on copy). */
+  caption: string;
   /** The whole narration read in one continuous take. */
   hasNarrationTake: boolean;
   narrationCurrent: boolean;
@@ -354,6 +356,8 @@ export const aiStudio = {
   resetNarration: (id: string) => call<Project>('POST', `/projects/${id}/narration/reset`),
   editNarration: (id: string, sceneId: string, text: string) => call<Scene>('PUT', `/projects/${id}/scenes/${sceneId}/narration`, { text }),
   speakNarration: (id: string) => call<Project>('POST', `/projects/${id}/narration/speak`),
+  setCaption: (id: string, text: string) => call<Project>('PUT', `/projects/${id}/caption`, { text }),
+  writeCaption: (id: string) => call<Project>('POST', `/projects/${id}/caption/write`),
   versions: (id: string, sceneId?: string) => call<PromptVersion[]>('GET', `/projects/${id}/versions${sceneId ? `?sceneId=${sceneId}` : ''}`),
   restore: (id: string, versionId: string) => call<Project>('POST', `/projects/${id}/versions/restore`, { versionId }),
 

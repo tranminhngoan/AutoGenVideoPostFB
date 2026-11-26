@@ -171,6 +171,11 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                     b.Property<bool>("CancelRequested")
                         .HasColumnType("boolean");
 
+                    b.Property<string>("Caption")
+                        .IsRequired()
+                        .HasMaxLength(2200)
+                        .HasColumnType("character varying(2200)");
+
                     b.Property<string>("CharacterBibleJson")
                         .IsRequired()
                         .HasColumnType("text");

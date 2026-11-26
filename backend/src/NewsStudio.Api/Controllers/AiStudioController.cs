@@ -248,6 +248,13 @@ public class AiStudioController : ControllerBase
     public Task<IActionResult> EditNarration(Guid id, Guid sceneId, [FromBody] AiStudioNarrationDto input, CancellationToken ct) =>
         Run(async () => await _studio.EditNarrationAsync(id, sceneId, input.Text, ct));
 
+    [HttpPut("projects/{id:guid}/caption")]
+    public Task<IActionResult> Caption(Guid id, [FromBody] AiStudioNarrationDto input, CancellationToken ct) =>
+        Run(async () => await _studio.SetCaptionAsync(id, input.Text, ct));
+
+    [HttpPost("projects/{id:guid}/caption/write")]
+    public Task<IActionResult> WriteCaption(Guid id, CancellationToken ct) => Run(async () => await _studio.WriteCaptionAsync(id, ct));
+
     [HttpPost("projects/{id:guid}/narration/speak")]
     public Task<IActionResult> SpeakNarration(Guid id, CancellationToken ct) => Run(async () => await _studio.SpeakNarrationAsync(id, ct));
 
