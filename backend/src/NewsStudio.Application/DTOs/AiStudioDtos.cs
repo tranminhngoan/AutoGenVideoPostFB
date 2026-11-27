@@ -192,6 +192,11 @@ public class AiStudioProjectDto : AiStudioProjectSummaryDto
     public string NarratorStyle { get; set; } = string.Empty;
     public Guid? FacebookAccountId { get; set; }
     public bool Watermark { get; set; }
+    /// <summary>Length of the video that will be made (enabled scenes), the cap (a longer reference is condensed to it).</summary>
+    public int VideoSeconds { get; set; }
+    public int MaxVideoSeconds { get; set; }
+    /// <summary>About how long the narrator needs for the narration of the enabled scenes.</summary>
+    public double NarrationEstimateSeconds { get; set; }
     /// <summary>Facebook caption (the AI disclosure line is added when it is copied).</summary>
     public string Caption { get; set; } = string.Empty;
     /// <summary>The whole narration read in one take: there is one / it matches the current words, voice and style.</summary>

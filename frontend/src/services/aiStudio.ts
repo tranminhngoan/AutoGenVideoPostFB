@@ -280,6 +280,11 @@ export interface Project extends ProjectSummary {
   /** The Page the video is for: its name / logo is the moving watermark of the joined video (against re-uploads). */
   facebookAccountId?: string | null;
   watermark: boolean;
+  /** Length of the video that will be made (enabled scenes) and the cap a longer reference is condensed to. */
+  videoSeconds: number;
+  maxVideoSeconds: number;
+  /** About how long the narrator needs for the narration of the enabled scenes. */
+  narrationEstimateSeconds: number;
   /** Facebook caption (editable; the AI disclosure line is added on copy). */
   caption: string;
   /** The whole narration read in one continuous take. */
@@ -360,6 +365,8 @@ export const aiStudio = {
   resetNarration: (id: string) => call<Project>('POST', `/projects/${id}/narration/reset`),
   editNarration: (id: string, sceneId: string, text: string) => call<Scene>('PUT', `/projects/${id}/scenes/${sceneId}/narration`, { text }),
   speakNarration: (id: string) => call<Project>('POST', `/projects/${id}/narration/speak`),
+  fitDuration: (id: string) => call<Project>('POST', `/projects/${id}/fit`),
+  condenseNarration: (id: string) => call<Project>('POST', `/projects/${id}/narration/condense`),
   brand: (id: string, body: { facebookAccountId: string | null; watermark: boolean }) => call<Project>('PUT', `/projects/${id}/brand`, body),
   setCaption: (id: string, text: string) => call<Project>('PUT', `/projects/${id}/caption`, { text }),
   writeCaption: (id: string) => call<Project>('POST', `/projects/${id}/caption/write`),

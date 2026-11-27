@@ -101,8 +101,7 @@ public partial class AiStudioService
         s.NarrationEdited = true;
         if (!s.PromptEdited)
         {
-            var earlier = await _db.AiStudioScenes.AnyAsync(x => x.ProjectId == projectId && x.Enabled && x.Order < s.Order, ct);
-            await SetScenePromptAsync(p, s, AiStudioPromptEngine.Build(PromptInput(p, s, earlier)), "engine", edited: false, ct);
+            await SetScenePromptAsync(p, s, await EnginePromptAsync(p, s, ct), "engine", edited: false, ct);
         }
         await _db.SaveChangesAsync(ct);
         return await SceneDtoAsync(p, s, ct);

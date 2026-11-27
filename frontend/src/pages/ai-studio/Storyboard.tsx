@@ -14,6 +14,7 @@ export function Storyboard({ project: p, setProject, reload }: WorkspaceProps) {
 
   return (
     <div className="space-y-5">
+      <DurationBar project={p} setProject={setProject} />
       <PromptSettings project={p} setProject={setProject} />
 
       {/* timeline: one block per scene, width = its length in the reference */}
@@ -43,6 +44,41 @@ export function Storyboard({ project: p, setProject, reload }: WorkspaceProps) {
             onChanged={reload} setProject={setProject} />
         ))}
       </div>
+    </div>
+  );
+}
+
+// ───────────────────────── length of the made video ─────────────────────────
+
+/** "Video gốc 2:30 → video tạo ra 60s": a reference over a minute is condensed to one (main actions, shorter narration). */
+function DurationBar({ project: p, setProject }: { project: Project; setProject: (p: Project) => void }) {
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  const enabled = p.scenes.filter((s) => s.enabled).length;
+  const over = p.videoSeconds > p.maxVideoSeconds;
+  const condensed = p.durationSeconds > p.maxVideoSeconds + 1 && !over;
+  const fit = async () => {
+    setBusy(true);
+    try {
+      const np = await aiStudio.fitDuration(p.id);
+      setProject(np);
+      toast.success('Đã rút gọn', `Video tạo ra ~${np.videoSeconds}s, ${np.scenes.filter((s) => s.enabled).length} cảnh. Prompt giữ hành động chính, lời bình đã rút gọn cho vừa.`);
+    } catch (e) {
+      toast.error('Chưa rút gọn xong', (e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className={cn('flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border px-4 py-3 text-[13px]', over ? 'border-warning/40 bg-warning/[0.06]' : 'border-line bg-subtle')}>
+      <span>Video gốc <b>{sec(p.durationSeconds)}</b> → video tạo ra <b>~{p.videoSeconds}s</b> · {enabled}/{p.scenes.length} cảnh</span>
+      {condensed && <span className="text-xs text-fg-muted">Đã rút gọn còn tối đa {p.maxVideoSeconds}s: cảnh ngắn / ít quan trọng được tắt, mỗi cảnh giữ hành động chính.</span>}
+      {over && <span className="text-xs text-warning">Dài hơn {p.maxVideoSeconds}s — tốn thêm tiền Seedance.</span>}
+      {over && (
+        <Button size="sm" variant="primary" className="ml-auto" icon={<Sparkles className="h-3.5 w-3.5" />} loading={busy} onClick={fit}>
+          Rút gọn còn {p.maxVideoSeconds / 60 === 1 ? '1 phút' : `${p.maxVideoSeconds}s`}
+        </Button>
+      )}
     </div>
   );
 }
@@ -139,7 +175,7 @@ function PromptSettings({ project: p, setProject }: { project: Project; setProje
       <div className="mt-3 flex flex-wrap items-center gap-3">
         <label className="flex items-center gap-2 text-xs text-fg-muted"><input type="checkbox" checked={overwrite} onChange={(e) => setOverwrite(e.target.checked)} />Viết lại cả prompt tôi đã tự sửa</label>
         <Button size="sm" variant="ghost" icon={<History className="h-4 w-4" />} onClick={() => setVersions(true)}>Phiên bản global prompt</Button>
-        <Button size="sm" variant="primary" className="ml-auto" icon={<Sparkles className="h-4 w-4" />} loading={saving} disabled={!dirty && !overwrite} onClick={apply}>
+        <Button size="sm" variant="primary" className="ml-auto" icon={<Sparkles className="h-4 w-4" />} loading={saving} onClick={apply}>
           Áp dụng & viết lại prompt
         </Button>
       </div>
@@ -334,9 +370,36 @@ function SceneCard({ project: p, scene: s, first, last, open, onToggle, onChange
 
 /** Step "Lời bình": the narrator (voice, direction, the one reading) and every scene's words, editable in one list. */
 export function NarrationTab({ project: p, setProject, reload }: WorkspaceProps) {
+  const toast = useToast();
+  const [condensing, setCondensing] = useState(false);
   const withText = p.scenes.filter((s) => s.narration);
+  const tooLong = withText.some((s) => s.enabled) && p.narrationEstimateSeconds > p.videoSeconds * 1.02;
+  const condense = async () => {
+    setCondensing(true);
+    try {
+      setProject(await aiStudio.condenseNarration(p.id));
+      toast.success('Đã rút gọn lời bình', 'Bấm “Đọc lại lời bình” để đọc bản mới.');
+    } catch (e) {
+      toast.error('Chưa rút gọn được', (e as Error).message);
+    } finally {
+      setCondensing(false);
+    }
+  };
   return (
     <div className="space-y-4">
+      {withText.length > 0 && (
+        <div className={cn('flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border px-4 py-3 text-[13px]', tooLong ? 'border-warning/40 bg-warning/[0.06]' : 'border-line bg-subtle')}>
+          <span>Lời bình đọc mất khoảng <b>{Math.round(p.narrationEstimateSeconds)}s</b> · video dài <b>~{p.videoSeconds}s</b></span>
+          {tooLong
+            ? <span className="text-xs text-warning">Lời dài hơn video — giọng sẽ phải đọc nhanh hoặc giữ hình cuối. Nên rút gọn.</span>
+            : <span className="text-xs text-fg-muted">Vừa với video.</span>}
+          {tooLong && (
+            <Button size="sm" variant="primary" className="ml-auto" icon={<Sparkles className="h-3.5 w-3.5" />} loading={condensing} onClick={condense}>
+              Rút gọn lời bình cho vừa (AI)
+            </Button>
+          )}
+        </div>
+      )}
       <NarrationPanel project={p} setProject={setProject} reload={reload} />
       <div>
         <div className="mb-2 text-[13px] font-semibold text-fg">Lời bình từng cảnh <span className="font-normal text-fg-subtle">({withText.length}/{p.scenes.length} cảnh có lời)</span></div>

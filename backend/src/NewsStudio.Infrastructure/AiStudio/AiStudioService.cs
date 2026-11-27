@@ -41,11 +41,12 @@ public partial class AiStudioService
     private readonly IAiStudioNarrator _voices;
     private readonly IAiStudioCaptionWriter _captions;
     private readonly StudioMedia _brandMedia;
+    private readonly IAiStudioTextWriter _writer;
     private readonly IBackgroundJobClient _jobs;
     private readonly ILogger<AiStudioService> _logger;
 
     public AiStudioService(IApplicationDbContext db, StudioFileStore files, AiStudioMedia media, AiStudioEngine engine, SeedanceVideoClient video,
-        StudioService studio, IAiStudioNarrator voices, IAiStudioCaptionWriter captions, StudioMedia brandMedia, IBackgroundJobClient jobs, ILogger<AiStudioService> logger)
+        StudioService studio, IAiStudioNarrator voices, IAiStudioCaptionWriter captions, StudioMedia brandMedia, IAiStudioTextWriter writer, IBackgroundJobClient jobs, ILogger<AiStudioService> logger)
     {
         _db = db;
         _files = files;
@@ -56,6 +57,7 @@ public partial class AiStudioService
         _voices = voices;
         _captions = captions;
         _brandMedia = brandMedia;
+        _writer = writer;
         _jobs = jobs;
         _logger = logger;
     }
@@ -593,28 +595,41 @@ public partial class AiStudioService
         p.ProgressText = $"Xong: {scenesNode.Count} cảnh.";
         p.ErrorMessage = null;
         await _db.SaveChangesAsync(ct);
+        await FitNewAnalysisAsync(p, created, ct); // over a minute → condensed to one
         await RebuildPromptsAsync(p, overwriteEdited: true, source: "engine", ct);
     }
 
     // ═══════════════════════════════ prompts ═══════════════════════════════
 
-    private ScenePromptInput PromptInput(AiStudioProject p, AiStudioScene s, bool hasPrevious) => new(
-        s.Index, s.StartSeconds, s.EndSeconds, s.TargetSeconds, s.IsContinuation, hasPrevious,
+    /// <summary><paramref name="previousEnabled"/>: the scene just before is in the video (else a "continues the previous shot" scene starts fresh).</summary>
+    private ScenePromptInput PromptInput(AiStudioProject p, AiStudioScene s, bool hasPrevious, bool previousEnabled = true) => new(
+        s.Index, s.StartSeconds, s.EndSeconds, s.TargetSeconds, s.IsContinuation && previousEnabled, hasPrevious,
         ParseObj(s.AnalysisJson), ParseObj(s.MeasuredJson), ParseArr(p.CharacterBibleJson), ParseArr(p.EnvironmentBibleJson), ParseObj(p.StyleBibleJson),
         p.PromptMode, ReadVariation(p.VariationJson), p.GlobalPrompt, p.NegativePrompt, p.Topic,
         AiStudioNarration.PromptText(s.Narration, s.NarrationEn, s.NarrationEdited));
+
+    /// <summary>The engine's prompt for one scene, with its neighbours as they are now.</summary>
+    private async Task<string> EnginePromptAsync(AiStudioProject p, AiStudioScene s, CancellationToken ct)
+    {
+        var earlier = await _db.AiStudioScenes.AnyAsync(x => x.ProjectId == p.Id && x.Enabled && x.Order < s.Order, ct);
+        var previousEnabled = await _db.AiStudioScenes.AnyAsync(x => x.ProjectId == p.Id && x.Enabled && x.Order == s.Order - 1, ct);
+        return AiStudioPromptEngine.Build(PromptInput(p, s, earlier, previousEnabled));
+    }
 
     /// <summary>Rebuilds the prompts of the scenes (not those the user wrote by hand, unless asked) and saves a version of each change.</summary>
     private async Task RebuildPromptsAsync(AiStudioProject p, bool overwriteEdited, string source, CancellationToken ct)
     {
         var scenes = await _db.AiStudioScenes.Where(s => s.ProjectId == p.Id).OrderBy(s => s.Order).ToListAsync(ct);
         var first = true;
+        var previousEnabled = false;
         foreach (var s in scenes)
         {
             var hasPrevious = !first;
+            var before = previousEnabled;
             if (s.Enabled) first = false;
+            previousEnabled = s.Enabled;
             if (s.PromptEdited && !overwriteEdited) continue;
-            await SetScenePromptAsync(p, s, AiStudioPromptEngine.Build(PromptInput(p, s, hasPrevious)), source, edited: false, ct);
+            await SetScenePromptAsync(p, s, AiStudioPromptEngine.Build(PromptInput(p, s, hasPrevious, before)), source, edited: false, ct);
         }
         await _db.SaveChangesAsync(ct);
     }
@@ -709,8 +724,7 @@ public partial class AiStudioService
     public async Task<AiStudioSceneDto> RegenerateScenePromptAsync(Guid projectId, Guid sceneId, CancellationToken ct)
     {
         var (p, s) = await SceneAsync(projectId, sceneId, ct);
-        var earlier = await _db.AiStudioScenes.AnyAsync(x => x.ProjectId == projectId && x.Enabled && x.Order < s.Order, ct);
-        await SetScenePromptAsync(p, s, AiStudioPromptEngine.Build(PromptInput(p, s, earlier)), "engine", edited: false, ct);
+        await SetScenePromptAsync(p, s, await EnginePromptAsync(p, s, ct), "engine", edited: false, ct);
         await _db.SaveChangesAsync(ct);
         return await SceneDtoAsync(p, s, ct);
     }
@@ -751,8 +765,7 @@ public partial class AiStudioService
             s.TargetSeconds = SeedanceVideoClient.ClampSeconds(input.TargetSeconds.Value);
             if (!s.PromptEdited) // the timed sequence follows the new length
             {
-                var earlier = await _db.AiStudioScenes.AnyAsync(x => x.ProjectId == projectId && x.Enabled && x.Order < s.Order, ct);
-                await SetScenePromptAsync(p, s, AiStudioPromptEngine.Build(PromptInput(p, s, earlier)), "engine", edited: false, ct);
+                await SetScenePromptAsync(p, s, await EnginePromptAsync(p, s, ct), "engine", edited: false, ct);
             }
         }
         await _db.SaveChangesAsync(ct);
@@ -846,6 +859,10 @@ public partial class AiStudioService
         dto.FacebookAccountId = p.FacebookAccountId;
         dto.Watermark = p.Watermark;
         dto.Caption = p.Caption;
+        var enabledScenes = scenes.Where(s => s.Enabled).ToList();
+        dto.VideoSeconds = enabledScenes.Sum(s => s.TargetSeconds);
+        dto.MaxVideoSeconds = AiStudioDuration.MaxVideoSeconds;
+        dto.NarrationEstimateSeconds = Math.Round(AiStudioDuration.SpeechSeconds(FullNarration(scenes), AiStudioNarration.SpeakerOf(p.TranscriptJson)?.SyllablesPerSecond), 1);
         dto.HasNarrationTake = p.NarrationBlobId != null;
         dto.NarrationSeconds = p.NarrationSeconds;
         dto.NarrationCurrent = p.NarrationBlobId != null && p.NarrationKey == NarrationKeyOf(p, scenes);

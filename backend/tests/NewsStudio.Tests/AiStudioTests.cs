@@ -109,6 +109,40 @@ public class AiStudioUnitTests
     }
 
     [Fact]
+    public void A_reference_up_to_a_minute_keeps_its_length_a_longer_one_is_condensed_to_a_minute()
+    {
+        AiStudioDuration.Slot Slot(double seconds, bool narrated = false, double confidence = 0.8) => new(Guid.NewGuid(), seconds, narrated, confidence);
+
+        // 50 s: every scene its own length
+        var short_ = new[] { Slot(10), Slot(15.4), Slot(24.6) };
+        var keep = AiStudioDuration.Fit(short_);
+        keep.Condensed.Should().BeFalse();
+        keep.Targets.Values.Should().Equal(10, 12, 12); // (a clip is at most 12 s)
+
+        // 2 minutes in 6 scenes of 20 s: each scene halved → 60 s, none left out
+        var two = Enumerable.Range(0, 6).Select(_ => Slot(20)).ToList();
+        var half = AiStudioDuration.Fit(two);
+        half.Condensed.Should().BeTrue();
+        half.Dropped.Should().BeEmpty();
+        half.Targets.Values.Sum().Should().Be(60);
+
+        // 3 minutes in 36 short scenes: at least 3 s each → the least important are left out, the first and the narrated stay
+        var many = Enumerable.Range(0, 36).Select(i => Slot(5, narrated: i % 3 == 0, confidence: i == 7 ? 0.1 : 0.8)).ToList();
+        var cut = AiStudioDuration.Fit(many);
+        cut.Targets.Values.Sum().Should().BeLessThanOrEqualTo(60);
+        cut.Targets.Values.Should().OnlyContain(t => t >= AiStudioDuration.MinCondensedSeconds);
+        cut.Targets.Should().ContainKey(many[0].Id);
+        cut.Dropped.Should().Contain(many[7].Id);
+        many.Where((x, i) => i % 3 == 0).Should().OnlyContain(x => cut.Targets.ContainsKey(x.Id));
+
+        // reading time: ~3.1 syllables a second for a 3.4 / s speaker, plus a breath per sentence
+        AiStudioDuration.SpeechSeconds("Hồi đó nhà tôi nghèo lắm. Mẹ đi chợ từ sáng sớm.", 3.4).Should().BeApproximately(12 / (3.4 * 0.92) + 0.7, 0.01);
+        AiStudioDuration.SpeechSeconds(null, 3.4).Should().Be(0);
+        AiStudioService.ParseCondensed("""{"scenes":[{"scene":2,"vi":"Mẹ đi chợ.","en":"Mum goes to market."}]}""")[2].Vi.Should().Be("Mẹ đi chợ.");
+        AiStudioService.ParseCondensed("rác").Should().BeEmpty();
+    }
+
+    [Fact]
     public void Creative_mode_changes_only_what_the_user_chose()
     {
         AiStudioPromptEngine.HasVariation(new AiStudioVariationDto()).Should().BeFalse();
@@ -871,6 +905,17 @@ public class AiStudioFlowTests : IClassFixture<WebApplicationFactory<Program>>
         }
     }
 
+    /// <summary>Stands in for Gemini's narration editor: every scene shortened to a few words.</summary>
+    internal sealed class FakeTextWriter : IAiStudioTextWriter
+    {
+        public List<string> Asked { get; } = new();
+        public Task<(string Json, decimal CostUsd, long Tokens, string Model)> JsonAsync(string system, string user, CancellationToken ct)
+        {
+            Asked.Add(user);
+            return Task.FromResult(("""{"scenes":[{"scene":1,"vi":"Nhà tôi nghèo lắm.","en":"My family was very poor."},{"scene":2,"vi":"Mẹ đi chợ sớm.","en":"Mum left for the market early."}]}""", 0.0003m, 700L, "gemini-test"));
+        }
+    }
+
     private const string ChildhoodTranscript = """
     {"language":"vi","model":"ggml-small.bin","segments":[
       {"start":0.2,"end":1.6,"text":"Hồi đó nhà tôi nghèo lắm.","en":"Back then my family was very poor."},
@@ -885,6 +930,7 @@ public class AiStudioFlowTests : IClassFixture<WebApplicationFactory<Program>>
         var gw = new FakeGateway();
         var narrator = new FakeNarrator();
         var captions = new FakeCaptionWriter();
+        var editor = new FakeTextWriter();
         try
         {
             gw.Video = await File.ReadAllBytesAsync(await MakeClipAsync(dir, 2, false, "720x1280"));
@@ -892,6 +938,7 @@ public class AiStudioFlowTests : IClassFixture<WebApplicationFactory<Program>>
             {
                 services.AddScoped<IAiStudioNarrator>(_ => narrator);
                 services.AddScoped<IAiStudioCaptionWriter>(_ => captions);
+                services.AddScoped<IAiStudioTextWriter>(_ => editor);
             }));
             using var scope = app.Services.CreateScope();
             var studio = scope.ServiceProvider.GetRequiredService<AiStudioService>();
@@ -1053,6 +1100,23 @@ public class AiStudioFlowTests : IClassFixture<WebApplicationFactory<Program>>
             // switching the theme off turns the sound off too
             var off = await studio.SetPromptSettingsAsync(p.Id, new AiStudioPromptSettingsDto { Mode = "Faithful", Topic = "" }, CancellationToken.None);
             off.AudioMode.Should().Be("None");
+            // a short reference keeps its length; the narration (~7 s of speech for 4 s of video) is shortened to fit (text only)
+            var fitted = await studio.FitDurationAsync(p.Id, CancellationToken.None);
+            fitted.VideoSeconds.Should().Be(4);
+            fitted.Scenes.Select(x => x.Narration).Should().Equal("Nhà tôi nghèo lắm.", "Mẹ đi chợ sớm.");
+            editor.Asked.Clear();
+            var fits = () => studio.CondenseNarrationAsync(p.Id, CancellationToken.None);
+            (await fits.Should().ThrowAsync<InvalidOperationException>()).WithMessage("*không cần rút gọn*");
+            await studio.EditNarrationAsync(p.Id, ids[0], string.Join(" ", Enumerable.Repeat("Hồi đó nhà tôi nghèo lắm.", 6)), CancellationToken.None);
+            var longOne = await studio.GetProjectAsync(p.Id, CancellationToken.None);
+            longOne.NarrationEstimateSeconds.Should().BeGreaterThan(longOne.VideoSeconds);
+            var shortened = await studio.CondenseNarrationAsync(p.Id, CancellationToken.None);
+            editor.Asked.Single().Should().Contain("Cảnh 1 (tối đa").And.Contain("Hồi đó nhà tôi nghèo lắm");
+            shortened.Scenes[0].Narration.Should().Be("Nhà tôi nghèo lắm.");
+            shortened.Scenes[0].Prompt.Should().Contain("\"My family was very poor\"");
+            shortened.NarrationCurrent.Should().BeFalse(); // to be read again
+            (await db.StudioCostRecords.AsNoTracking().CountAsync(c => c.Note!.Contains(title) && c.Note.Contains("rút gọn lời bình"))).Should().Be(2);
+
             var take = (await db.AiStudioProjects.AsNoTracking().FirstAsync(x => x.Id == p.Id)).NarrationBlobId!.Value;
             take.Should().NotBe(narrationBlob); // the earlier take was replaced, not kept
             (await db.StudioBlobs.AsNoTracking().CountAsync(b => b.Id == narrationBlob)).Should().Be(0);
