@@ -65,18 +65,47 @@ public class AiStudioUnitTests
         prompt.Should().Contain("Lighting: natural daylight, from front");
         prompt.Should().Contain("Depth of field: focus on woman");
         prompt.Should().NotContainEquivalentOf("uncertain");
-        prompt.Should().EndWith($"Avoid: {AiStudioPromptEngine.DefaultNegative}.");
-        // sections in the order of the brief: subject → setting → action → sequence → … → quality → constraints
-        var order = new[] { "Subject:", "Setting:", "Action:", "Sequence:", "Body mechanics:", "Expression:", "Camera:", "Composition:", "Lighting:", "Color:", "Depth of field:", "Realism:", "Continuity:", "Quality:", "Avoid:" };
+        prompt.Should().Contain($"Avoid: {AiStudioPromptEngine.DefaultNegative}, extra fingers, extra or missing limbs").And.Contain("unsafe or illogical actions");
+        // sections in the order of the brief: subject → setting → action → sequence → … → behaviour → quality → constraints
+        var order = new[] { "Subject:", "Setting:", "Action:", "Sequence:", "Body mechanics:", "Expression:", "Camera:", "Composition:", "Lighting:", "Color:", "Depth of field:", "Anatomy:", "Motion:", "Walking:", "Continuity:", "Quality:", "Avoid:" };
         order.Select(o => prompt.IndexOf(o, StringComparison.Ordinal)).Should().BeInAscendingOrder().And.NotContain(-1);
     }
 
     [Fact]
     public void The_timed_sequence_is_mapped_onto_the_clip_length()
     {
-        // a 6 s scene made as a 3 s clip: 0–2 s becomes 0–1 s
-        AiStudioPromptEngine.Sequence(Input(target: 3)).Should().StartWith("0–1s walks forward slowly");
+        AiStudioPromptEngine.Sequence(Input(target: 6)).Should().Be("0–2s walks forward slowly, right foot steps, arms swing gently; 2–4s turns her torso to the left, weight shifts to the left foot");
         AiStudioPromptEngine.Sequence(Input(target: 12)).Should().StartWith("0–4s walks forward slowly");
+        // a 6 s scene squeezed into 3 s (a long video condensed to a minute): the main action only, over the whole clip, calmly
+        AiStudioPromptEngine.Sequence(Input(target: 3)).Should().Be("0–3s walks forward slowly, right foot steps, arms swing gently — at a calm, natural pace");
+    }
+
+    [Fact]
+    public void The_childhood_theme_shows_a_rich_village_wide_and_keeps_actions_safe_and_bodies_correct()
+    {
+        var input = Input() with { Topic = AiStudioTopics.VietnamChildhood };
+        input.Analysis["summary"] = "A little girl warms herself by the kitchen fire, then eats rice from a bowl";
+        input.Analysis["camera"]!["shot_size"] = "close-up";
+        var prompt = AiStudioPromptEngine.Build(input);
+        // wider than the reference's close-up, the place sharp
+        prompt.Should().Contain("Camera: medium shot showing the person and the surroundings");
+        var plain = input with { Analysis = JsonNode.Parse("""{"summary":"A girl walks home","camera":{"shot_size":"close-up"},"environment":{"location":"village path"}}""")!.AsObject() };
+        AiStudioPromptEngine.Build(plain).Should().Contain("deep focus, the person and the surroundings both sharp").And.Contain("Look: Vietnamese countryside people").And.Contain("Children: gentle, safe").And.Contain("Walking:");
+        // the fire and the meal get their safety / plausibility rules; bodies and motion always
+        prompt.Should().Contain("nobody touches the fire, coals or a hot pot").And.Contain("Eating: small slow bites")
+            .And.Contain("Anatomy: each person has one head, two arms");
+        // rich countryside, the same details for every scene of one place
+        var details = AiStudioPromptEngine.RichDetails(AiStudioTopics.Find(AiStudioTopics.VietnamChildhood), input.Analysis, input.Environments[0]!.AsObject(), 3);
+        details.Split(", ").Length.Should().BeGreaterThanOrEqualTo(5);
+        AiStudioPromptEngine.RichDetails(AiStudioTopics.Find(AiStudioTopics.VietnamChildhood), input.Analysis, input.Environments[0]!.AsObject(), 9).Should().Be(details);
+        prompt.Should().Contain(details.Split(", ")[0]);
+        var kitchen = JsonNode.Parse("""{"id":"E2","location":"inside a rural kitchen"}""")!.AsObject();
+        AiStudioPromptEngine.RichDetails(AiStudioTopics.Find(AiStudioTopics.VietnamChildhood), input.Analysis, kitchen, 1)
+            .Should().NotContain("rice paddies"); // indoors: thatched roof, clay stove, firewood…
+        prompt.Length.Should().BeLessThanOrEqualTo(AiStudioPromptEngine.MaxPromptChars);
+        // the beauty theme keeps its own framing
+        AiStudioPromptEngine.Build(Input() with { Topic = AiStudioTopics.AsianBeauty }).Should().Contain("Camera: medium shot, eye-level angle");
+        AiStudioPromptEngine.Wider("wide establishing shot").Should().Be("wide establishing shot");
     }
 
     [Fact]
