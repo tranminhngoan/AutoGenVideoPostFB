@@ -151,6 +151,12 @@ public class AiStudioScene : BaseEntity
     public string? NarrationEn { get; set; }
     /// <summary>The user rewrote the narration (the English meaning is then not used: the prompt quotes their words).</summary>
     public bool NarrationEdited { get; set; }
+    /// <summary>
+    /// The logic review (AI, text only): what this clip must show — concrete, physically possible, safe — and the
+    /// constraints against the video model's failures for this action. Replaces the raw action in the prompt.
+    /// </summary>
+    public string? ReviewedAction { get; set; }
+    public string? ReviewedRules { get; set; }
     /// <summary>The narration read by the narrator voice (AAC) and its length.</summary>
     public Guid? VoiceBlobId { get; set; }
     public double? VoiceSeconds { get; set; }

@@ -596,6 +596,7 @@ public partial class AiStudioService
         p.ErrorMessage = null;
         await _db.SaveChangesAsync(ct);
         await FitNewAnalysisAsync(p, created, ct); // over a minute → condensed to one
+        await TryReviewLogicAsync(p, created, ct); // every action made concrete, possible and safe before the prompts
         await RebuildPromptsAsync(p, overwriteEdited: true, source: "engine", ct);
     }
 
@@ -606,7 +607,7 @@ public partial class AiStudioService
         s.Index, s.StartSeconds, s.EndSeconds, s.TargetSeconds, s.IsContinuation && previousEnabled, hasPrevious,
         ParseObj(s.AnalysisJson), ParseObj(s.MeasuredJson), ParseArr(p.CharacterBibleJson), ParseArr(p.EnvironmentBibleJson), ParseObj(p.StyleBibleJson),
         p.PromptMode, ReadVariation(p.VariationJson), p.GlobalPrompt, p.NegativePrompt, p.Topic,
-        AiStudioNarration.PromptText(s.Narration, s.NarrationEn, s.NarrationEdited));
+        AiStudioNarration.PromptText(s.Narration, s.NarrationEn, s.NarrationEdited), s.ReviewedAction, s.ReviewedRules);
 
     /// <summary>The engine's prompt for one scene, with its neighbours as they are now.</summary>
     private async Task<string> EnginePromptAsync(AiStudioProject p, AiStudioScene s, CancellationToken ct)
@@ -882,6 +883,7 @@ public partial class AiStudioService
         Enabled = s.Enabled, TargetSeconds = s.TargetSeconds, HasThumb = s.ThumbBlobId != null, Frames = ReadFrames(s.FramesJson),
         Measured = ParseNode(s.MeasuredJson), Analysis = ParseNode(s.AnalysisJson), Confidence = s.Confidence, SummaryVi = s.SummaryVi,
         Transcript = s.Transcript, Narration = s.Narration, NarrationEn = s.NarrationEn, NarrationEdited = s.NarrationEdited,
+        ReviewedAction = s.ReviewedAction, ReviewedRules = s.ReviewedRules,
         Prompt = s.Prompt, PromptVersion = s.PromptVersion, PromptEdited = s.PromptEdited,
         EstimatedCostUsd = _video.EstimateCost(p.VideoModel, p.Resolution, s.TargetSeconds), Latest = latest
     };

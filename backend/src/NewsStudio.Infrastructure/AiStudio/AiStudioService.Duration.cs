@@ -81,7 +81,8 @@ public sealed class GeminiTextWriter : IAiStudioTextWriter
     public async Task<(string Json, decimal CostUsd, long Tokens, string Model)> JsonAsync(string system, string user, CancellationToken ct)
     {
         var model = _gemini.TextModel;
-        var result = await _gemini.GenerateJsonAsync(system, user, 8192, 0.4, ct, model, lightThinking: true);
+        // full thinking: judging what can really and safely happen in a clip is reasoning, not formatting
+        var result = await _gemini.GenerateJsonAsync(system, user, 32768, 0.4, ct, model, lightThinking: false);
         return (result.Text, result.CostUsd, result.Tokens, model);
     }
 }
@@ -114,6 +115,8 @@ public partial class AiStudioService
         await _db.SaveChangesAsync(ct);
         await RebuildPromptsAsync(p, false, "engine", ct);
         await CondenseNarrationAsync(p, scenes, ct);
+        await TryReviewLogicAsync(p, scenes, ct); // the shorter clips: the actions are reviewed again for their new length
+        await RebuildPromptsAsync(p, false, "engine", ct);
         return await GetProjectAsync(id, ct);
     }
 

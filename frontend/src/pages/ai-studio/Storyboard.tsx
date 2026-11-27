@@ -54,8 +54,21 @@ export function Storyboard({ project: p, setProject, reload }: WorkspaceProps) {
 function DurationBar({ project: p, setProject }: { project: Project; setProject: (p: Project) => void }) {
   const toast = useToast();
   const [busy, setBusy] = useState(false);
+  const [reviewing, setReviewing] = useState(false);
   const enabled = p.scenes.filter((s) => s.enabled).length;
+  const reviewed = p.scenes.filter((s) => s.enabled && s.reviewedAction).length;
   const over = p.videoSeconds > p.maxVideoSeconds;
+  const review = async () => {
+    setReviewing(true);
+    try {
+      setProject(await aiStudio.reviewLogic(p.id));
+      toast.success('Đã rà soát logic', 'Mỗi cảnh có hành động cụ thể, hợp lý, an toàn và ràng buộc riêng — prompt đã cập nhật (trừ prompt bạn tự sửa).');
+    } catch (e) {
+      toast.error('Chưa rà soát được', (e as Error).message);
+    } finally {
+      setReviewing(false);
+    }
+  };
   const condensed = p.durationSeconds > p.maxVideoSeconds + 1 && !over;
   const fit = async () => {
     setBusy(true);
@@ -74,11 +87,20 @@ function DurationBar({ project: p, setProject }: { project: Project; setProject:
       <span>Video gốc <b>{sec(p.durationSeconds)}</b> → video tạo ra <b>~{p.videoSeconds}s</b> · {enabled}/{p.scenes.length} cảnh</span>
       {condensed && <span className="text-xs text-fg-muted">Đã rút gọn còn tối đa {p.maxVideoSeconds}s: cảnh ngắn / ít quan trọng được tắt, mỗi cảnh giữ hành động chính.</span>}
       {over && <span className="text-xs text-warning">Dài hơn {p.maxVideoSeconds}s — tốn thêm tiền Seedance.</span>}
-      {over && (
-        <Button size="sm" variant="primary" className="ml-auto" icon={<Sparkles className="h-3.5 w-3.5" />} loading={busy} onClick={fit}>
-          Rút gọn còn {p.maxVideoSeconds / 60 === 1 ? '1 phút' : `${p.maxVideoSeconds}s`}
+      <span className={cn('text-xs', reviewed < enabled ? 'text-warning' : 'text-fg-muted')}>
+        Rà soát logic: {reviewed}/{enabled} cảnh
+      </span>
+      <span className="ml-auto flex flex-wrap gap-2">
+        <Button size="sm" variant={reviewed < enabled ? 'primary' : 'ghost'} icon={<Sparkles className="h-3.5 w-3.5" />} loading={reviewing} disabled={busy} onClick={review}
+          title="AI đọc hành động từng cảnh và viết lại cho cụ thể, hợp lý, an toàn — chống video phi logic">
+          {reviewed ? 'Rà soát logic lại' : 'Rà soát logic (AI)'}
         </Button>
-      )}
+        {over && (
+          <Button size="sm" variant="primary" icon={<Sparkles className="h-3.5 w-3.5" />} loading={busy} disabled={reviewing} onClick={fit}>
+            Rút gọn còn {p.maxVideoSeconds / 60 === 1 ? '1 phút' : `${p.maxVideoSeconds}s`}
+          </Button>
+        )}
+      </span>
     </div>
   );
 }
@@ -302,6 +324,15 @@ function SceneCard({ project: p, scene: s, first, last, open, onToggle, onChange
                 </div>
               )}
               {fact(a.object_interaction) && <p className="text-xs text-fg-muted"><b className="text-fg">Tương tác đồ vật:</b> {a.object_interaction}</p>}
+              {s.reviewedAction ? (
+                <div className="rounded-lg border border-success/30 bg-success/[0.05] px-3 py-2 text-xs">
+                  <div className="mb-0.5 font-semibold text-fg">Đã rà soát logic — clip sẽ diễn ra thế này</div>
+                  <p className="text-fg">{s.reviewedAction}</p>
+                  {s.reviewedRules && <p className="mt-1 text-fg-muted"><b>Ràng buộc:</b> {s.reviewedRules}</p>}
+                </div>
+              ) : s.enabled && (
+                <p className="text-xs text-warning">Cảnh này chưa được rà soát logic — bấm “Rà soát logic (AI)” ở đầu tab.</p>
+              )}
               {s.narration && <p className="text-xs text-fg-muted"><Mic className="mr-1 inline h-3 w-3" /><b className="text-fg">Lời bình:</b> {s.narration} <span className="text-fg-subtle">(sửa ở tab Lời bình)</span></p>}
               <details className="rounded-lg border border-line">
                 <summary className="cursor-pointer px-3 py-2 text-xs font-medium text-fg">Phân tích chi tiết (15 nhóm)</summary>

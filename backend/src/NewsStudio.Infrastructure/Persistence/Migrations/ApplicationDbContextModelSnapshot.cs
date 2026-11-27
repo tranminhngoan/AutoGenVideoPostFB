@@ -493,6 +493,14 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                     b.Property<int>("PromptVersion")
                         .HasColumnType("integer");
 
+                    b.Property<string>("ReviewedAction")
+                        .HasMaxLength(900)
+                        .HasColumnType("character varying(900)");
+
+                    b.Property<string>("ReviewedRules")
+                        .HasMaxLength(900)
+                        .HasColumnType("character varying(900)");
+
                     b.Property<double>("StartSeconds")
                         .HasColumnType("double precision");
 

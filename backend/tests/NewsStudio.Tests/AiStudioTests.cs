@@ -143,6 +143,22 @@ public class AiStudioUnitTests
     }
 
     [Fact]
+    public void The_logic_review_replaces_the_raw_action_and_its_rules_replace_the_word_rules()
+    {
+        var reviewed = AiStudioPromptEngine.Build(Input() with
+        {
+            ReviewedAction = "She walks slowly along the path, then turns her shoulders toward the camera.",
+            ReviewedRules = "feet stay on the path; her bag stays on her shoulder"
+        });
+        reviewed.Should().Contain("Action: She walks slowly along the path").And.NotContain("Sequence:");
+        reviewed.Should().Contain("Logic: feet stay on the path; her bag stays on her shoulder.").And.NotContain("Walking:");
+        reviewed.Should().Contain(AiStudioPromptEngine.CommonSense);
+        AiStudioPromptEngine.Build(Input()).Should().Contain("Sequence:").And.Contain("Walking:").And.Contain("Common sense:");
+        AiStudioService.ParseLogic("""{"scenes":[{"scene":3,"action":"A","rules":["x.","y"]}]}""")[3].Rules.Should().Be("x; y");
+        AiStudioService.ParseLogic("không phải json").Should().BeEmpty();
+    }
+
+    [Fact]
     public void Creative_mode_changes_only_what_the_user_chose()
     {
         AiStudioPromptEngine.HasVariation(new AiStudioVariationDto()).Should().BeFalse();
@@ -505,7 +521,20 @@ public class AiStudioFlowTests : IClassFixture<WebApplicationFactory<Program>>
 {
     private readonly WebApplicationFactory<Program> _factory;
 
-    public AiStudioFlowTests(WebApplicationFactory<Program> factory) => _factory = factory;
+    // no test may reach a paid AI: the text writers refuse (the review / condensing after an analysis is best effort)
+    public AiStudioFlowTests(WebApplicationFactory<Program> factory) => _factory = factory.WithWebHostBuilder(b => b.ConfigureServices(services =>
+    {
+        services.AddScoped<IAiStudioTextWriter, NoAiWriter>();
+        services.AddScoped<IAiStudioCaptionWriter, NoAiWriter>();
+    }));
+
+    internal sealed class NoAiWriter : IAiStudioTextWriter, IAiStudioCaptionWriter
+    {
+        public Task<(string Json, decimal CostUsd, long Tokens, string Model)> JsonAsync(string system, string user, CancellationToken ct) =>
+            throw new InvalidOperationException("no AI in tests");
+        public Task<(string Caption, decimal CostUsd, long Tokens, string Model)> WriteAsync(string system, string user, CancellationToken ct) =>
+            throw new InvalidOperationException("no AI in tests");
+    }
 
     internal static async Task<string> MakeClipAsync(string dir, double seconds, bool audio, string size = "360x640")
     {
@@ -905,12 +934,18 @@ public class AiStudioFlowTests : IClassFixture<WebApplicationFactory<Program>>
         }
     }
 
-    /// <summary>Stands in for Gemini's narration editor: every scene shortened to a few words.</summary>
+    /// <summary>Stands in for Gemini: the narration editor (every scene shortened) and the logic reviewer.</summary>
     internal sealed class FakeTextWriter : IAiStudioTextWriter
     {
         public List<string> Asked { get; } = new();
+        public List<string> Reviews { get; } = new();
         public Task<(string Json, decimal CostUsd, long Tokens, string Model)> JsonAsync(string system, string user, CancellationToken ct)
         {
+            if (system.Contains("plausibility"))
+            {
+                Reviews.Add(user);
+                return Task.FromResult(("""{"scenes":[{"scene":1,"action":"The boy sits on a low stool an arm's length from the clay stove, palms held toward the warmth.","rules":["his hands never go into the fire","the stool stays under him"]},{"scene":2,"action":"Mother walks out of the gate with a basket on her arm.","rules":"feet stay on the ground; the basket keeps its shape"}]}""", 0.0005m, 900L, "gemini-test"));
+            }
             Asked.Add(user);
             return Task.FromResult(("""{"scenes":[{"scene":1,"vi":"Nhà tôi nghèo lắm.","en":"My family was very poor."},{"scene":2,"vi":"Mẹ đi chợ sớm.","en":"Mum left for the market early."}]}""", 0.0003m, 700L, "gemini-test"));
         }
@@ -965,6 +1000,13 @@ public class AiStudioFlowTests : IClassFixture<WebApplicationFactory<Program>>
             project.NarratorVoice.Should().Be("gemini:Algenib");
             project.NarratorStyle.Should().Contain("calmly, at an easy pace").And.Contain("Vietnamese countryside").And.Contain("not sad");
             project.SpeakerProfileVi.Should().StartWith("Giọng nam");
+            // the logic review ran on the analysis (text only) and the prompts show its concrete, safe action and its rules
+            editor.Reviews.Single().Should().Contain("Scene 1 (").And.Contain("Scene 2 (");
+            project.Scenes[0].ReviewedAction.Should().StartWith("The boy sits on a low stool");
+            project.Scenes[0].Prompt.Should().Contain("Action: The boy sits on a low stool an arm's length from the clay stove")
+                .And.Contain("Logic: his hands never go into the fire; the stool stays under him.").And.Contain("Common sense:");
+            project.Scenes[1].ReviewedRules.Should().Be("feet stay on the ground; the basket keeps its shape");
+            (await db.StudioCostRecords.AsNoTracking().CountAsync(c => c.Note!.Contains(title) && c.Note.Contains("rà soát logic"))).Should().Be(1);
             project.HasNarrationTake.Should().BeFalse();
             project.NarrationCurrent.Should().BeFalse();
 

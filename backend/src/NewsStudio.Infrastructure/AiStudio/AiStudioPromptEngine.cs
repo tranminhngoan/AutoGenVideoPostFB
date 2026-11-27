@@ -24,7 +24,9 @@ public sealed record ScenePromptInput(
     string GlobalPrompt,
     string NegativePrompt,
     string Topic = "",
-    string? Narration = null);
+    string? Narration = null,
+    string? ReviewedAction = null,
+    string? ReviewedRules = null);
 
 /// <summary>
 /// Cinematic prompt engine for Seedance (deterministic, no AI call, so a prompt can be rebuilt instantly when the user
@@ -136,10 +138,15 @@ public static class AiStudioPromptEngine
             AddIf(parts, env.Length > 0 ? Sentence($"Setting: {env}") : null);
         }
 
-        // 4–5. main action + timed sequence (scaled to the clip length, one action per ~2.5 s at most)
-        AddIf(parts, Field(a, "summary") is { } summary ? Sentence($"Action: {StripNames(summary)}") : null);
-        var seq = Sequence(s);
-        if (seq.Length > 0) parts.Add(Sentence($"Sequence: {seq}"));
+        // 4–5. main action: the logic review's concrete, possible, safe version when there is one; else the analysis'
+        //      summary + timed sequence (scaled to the clip length, one action per ~2.5 s at most)
+        if (Clean(s.ReviewedAction) is { } reviewed) parts.Add(Sentence($"Action: {StripNames(reviewed)}"));
+        else
+        {
+            AddIf(parts, Field(a, "summary") is { } summary ? Sentence($"Action: {StripNames(summary)}") : null);
+            var seq = Sequence(s);
+            if (seq.Length > 0) parts.Add(Sentence($"Sequence: {seq}"));
+        }
 
         // 5b. the story told by the narration over this scene (read separately by a voice, never shown or lip-synced)
         if (NarrationLine(s.Narration) is { } story) parts.Add(story);
@@ -193,7 +200,7 @@ public static class AiStudioPromptEngine
         AddIf(parts, depth.Length > 0 ? Sentence($"Depth of field: {depth}") : null);
 
         // 14. behaviour: correct bodies, slow plausible motion, safe and logical actions for what happens here
-        foreach (var rule in Behaviour(a, hasPeople)) parts.Add(rule);
+        foreach (var rule in Behaviour(a, hasPeople, Clean(s.ReviewedRules))) parts.Add(rule);
 
         // 15. continuity
         var continuity = s.IsContinuation
@@ -393,7 +400,10 @@ public static class AiStudioPromptEngine
     /// Bodies, motion and logic: the usual failures of video models (extra limbs, smeared motion, a child reaching into
     /// the fire) are named for what this scene shows — the rules fire on words of the analysis.
     /// </summary>
-    public static List<string> Behaviour(JsonObject analysis, bool hasPeople)
+    public const string CommonSense =
+        "Common sense: everything happens as in real life — sensible, safe everyday actions with clear cause and effect; objects keep their shape, size and use; nothing appears, vanishes or passes through anything.";
+
+    public static List<string> Behaviour(JsonObject analysis, bool hasPeople, string? reviewedRules = null)
     {
         var text = string.Join(" ", new[]
         {
@@ -407,8 +417,12 @@ public static class AiStudioPromptEngine
             rules.Add("Anatomy: each person has one head, two arms, two five-fingered hands and two legs in natural proportions.");
             rules.Add("Motion: slow, simple, physically plausible movement, one action at a time; faces and hands stay sharp, no morphing.");
         }
-        foreach (var (when, rule) in Rules)
-            if (when.IsMatch(text) && (hasPeople || rule.StartsWith("Animals") || rule.StartsWith("Water"))) rules.Add(rule);
+        rules.Add(CommonSense);
+        // the review's constraints are written for this very action; the word rules are the fallback without a review
+        if (reviewedRules != null) rules.Add(Sentence($"Logic: {StripNames(reviewedRules)}"));
+        else
+            foreach (var (when, rule) in Rules)
+                if (when.IsMatch(text) && (hasPeople || rule.StartsWith("Animals") || rule.StartsWith("Water"))) rules.Add(rule);
         return rules;
     }
 
@@ -454,7 +468,7 @@ public static class AiStudioPromptEngine
             if (Length() <= max) break;
             list.RemoveAll(p => p.StartsWith(prefix, StringComparison.Ordinal));
         }
-        foreach (var prefix in new[] { "Setting:", "Narration over this scene", "Color:", "Action:" })
+        foreach (var prefix in new[] { "Setting:", "Narration over this scene", "Color:" })
         {
             if (Length() <= max) break;
             var i = list.FindIndex(p => p.StartsWith(prefix, StringComparison.Ordinal));
@@ -502,7 +516,7 @@ public static class AiStudioPromptEngine
         o[name] is JsonValue v && v.TryGetValue<double>(out var d) ? d : null;
 
     /// <summary>Joins the usable items, dropping comma-separated phrases already said ("dirt ground, bamboo wall" twice → once).</summary>
-    private static string Join(string sep, params string?[] items)
+    public static string Join(string sep, params string?[] items)
     {
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var kept = new List<string>();

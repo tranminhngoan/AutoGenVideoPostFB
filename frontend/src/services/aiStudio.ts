@@ -228,6 +228,9 @@ export interface Scene {
   narration?: string | null;
   narrationEn?: string | null;
   narrationEdited: boolean;
+  /** The AI logic review: what the clip shows (concrete, possible, safe) and the constraints for this action. */
+  reviewedAction?: string | null;
+  reviewedRules?: string | null;
   prompt: string;
   promptVersion: number;
   promptEdited: boolean;
@@ -366,6 +369,7 @@ export const aiStudio = {
   editNarration: (id: string, sceneId: string, text: string) => call<Scene>('PUT', `/projects/${id}/scenes/${sceneId}/narration`, { text }),
   speakNarration: (id: string) => call<Project>('POST', `/projects/${id}/narration/speak`),
   fitDuration: (id: string) => call<Project>('POST', `/projects/${id}/fit`),
+  reviewLogic: (id: string) => call<Project>('POST', `/projects/${id}/review-logic`),
   condenseNarration: (id: string) => call<Project>('POST', `/projects/${id}/narration/condense`),
   brand: (id: string, body: { facebookAccountId: string | null; watermark: boolean }) => call<Project>('PUT', `/projects/${id}/brand`, body),
   setCaption: (id: string, text: string) => call<Project>('PUT', `/projects/${id}/caption`, { text }),
