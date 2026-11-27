@@ -134,10 +134,23 @@ public static class GrowthModelConfiguration
             e.HasIndex(x => new { x.CampaignId, x.CreatedAtUtc });
         });
 
+        modelBuilder.Entity<GrowthNewsUsage>(e =>
+        {
+            e.ToTable("GrowthNewsUsages");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Url).HasMaxLength(800);
+            e.Property(x => x.Title).HasMaxLength(500);
+            e.Property(x => x.Kind).HasMaxLength(10);
+            e.HasOne<FacebookAccount>().WithMany().HasForeignKey(x => x.FacebookAccountId).OnDelete(DeleteBehavior.Cascade);
+            e.HasIndex(x => new { x.FacebookAccountId, x.Url }).IsUnique();
+            e.HasIndex(x => x.CreatedAtUtc);
+        });
+
         modelBuilder.Entity<GrowthAutopilot>(e =>
         {
             e.ToTable("GrowthAutopilots");
             e.HasKey(x => x.Id);
+            e.Property(x => x.ContentMode).HasMaxLength(10);
             e.HasOne<FacebookAccount>().WithMany().HasForeignKey(x => x.FacebookAccountId).OnDelete(DeleteBehavior.Cascade);
             e.HasIndex(x => x.FacebookAccountId).IsUnique();
         });

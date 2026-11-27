@@ -2068,6 +2068,11 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
+                    b.Property<string>("ContentMode")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)");
+
                     b.Property<DateTime>("CreatedAtUtc")
                         .HasColumnType("timestamp with time zone");
 
@@ -2496,6 +2501,58 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                         .IsUnique();
 
                     b.ToTable("GrowthDailyMetrics", (string)null);
+                });
+
+            modelBuilder.Entity("NewsStudio.Domain.Entities.GrowthNewsUsage", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("ClusterId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("ContentId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("FacebookAccountId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<Guid?>("TrendingArticleId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Url")
+                        .IsRequired()
+                        .HasMaxLength(800)
+                        .HasColumnType("character varying(800)");
+
+                    b.Property<Guid?>("VideoProjectId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CreatedAtUtc");
+
+                    b.HasIndex("FacebookAccountId", "Url")
+                        .IsUnique();
+
+                    b.ToTable("GrowthNewsUsages", (string)null);
                 });
 
             modelBuilder.Entity("NewsStudio.Domain.Entities.GrowthPostMetric", b =>
@@ -4254,6 +4311,15 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                 });
 
             modelBuilder.Entity("NewsStudio.Domain.Entities.GrowthDailyMetric", b =>
+                {
+                    b.HasOne("NewsStudio.Domain.Entities.FacebookAccount", null)
+                        .WithMany()
+                        .HasForeignKey("FacebookAccountId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("NewsStudio.Domain.Entities.GrowthNewsUsage", b =>
                 {
                     b.HasOne("NewsStudio.Domain.Entities.FacebookAccount", null)
                         .WithMany()

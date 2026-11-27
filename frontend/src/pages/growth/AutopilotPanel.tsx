@@ -48,7 +48,7 @@ export function AutopilotPanel({ ctx, onChanged }: { ctx: GrowthCtx; onChanged?:
 
   if (!page) return null;
 
-  const update = async (patch: Partial<Pick<Autopilot, 'enabled' | 'scriptPost' | 'dailyVideo' | 'storiesPerDay'>>) => {
+  const update = async (patch: Partial<Pick<Autopilot, 'enabled' | 'contentMode' | 'scriptPost' | 'dailyVideo' | 'storiesPerDay'>>) => {
     setBusy('set');
     try {
       const next = await autopilotApi.set({ facebookAccountId: page.id, ...patch });
@@ -80,6 +80,7 @@ export function AutopilotPanel({ ctx, onChanged }: { ctx: GrowthCtx; onChanged?:
   };
 
   const s = data?.scripts;
+  const news = data?.effectiveMode === 'News';
   const errors = data?.notices.filter((n) => n.level === 'error') ?? [];
   const warnings = data?.notices.filter((n) => n.level === 'warning') ?? [];
   const infos = data?.notices.filter((n) => n.level === 'info') ?? [];
@@ -97,7 +98,9 @@ export function AutopilotPanel({ ctx, onChanged }: { ctx: GrowthCtx; onChanged?:
               {data && (data.enabled ? <Badge tone="success" dot pulse>Đang bật</Badge> : <Badge>Đang tắt</Badge>)}
             </div>
             <p className="mt-0.5 text-[13px] text-fg-muted">
-              Mỗi ngày: 1 bài viết từ kịch bản (ảnh AI + bài viết), 1 video Reels có sẵn, {data?.storiesPerDay ?? 2} Tin cắt từ video. Đăng lên Facebook{ctx.page?.instagramUsername ? ` và Instagram @${ctx.page.instagramUsername}` : ''}. Bạn chỉ cần xem — khi cần bạn, thông báo hiện ở đây.
+              {news
+                ? `Page tin tức (${data?.newsTopicName ?? 'chủ đề của Page'}): mỗi ngày 1 bài ảnh từ tin hot nhất đúng chủ đề (ảnh bài báo + tóm tắt viết trên ảnh, không giọng đọc) và ${data?.storiesPerDay ?? 2} Tin là video tin có giọng đọc như video tự động đăng.`
+                : `Page kịch bản: mỗi ngày 1 bài viết từ kịch bản (ảnh AI + bài viết), 1 video Reels có sẵn, ${data?.storiesPerDay ?? 2} Tin cắt từ video.`} Đăng lên Facebook{ctx.page?.instagramUsername ? ` và Instagram @${ctx.page.instagramUsername}` : ''}. Bạn chỉ cần xem — khi cần bạn, thông báo hiện ở đây.
             </p>
           </div>
         </div>
@@ -124,7 +127,15 @@ export function AutopilotPanel({ ctx, onChanged }: { ctx: GrowthCtx; onChanged?:
 
           <div className="grid gap-4 lg:grid-cols-[1fr_1.4fr]">
             <div className="space-y-3">
-              <div>
+              <label className="flex items-center justify-between gap-2 rounded-md border border-line bg-surface px-3 py-2 text-[13px]">
+                <span>Loại nội dung</span>
+                <Select size="sm" className="w-56" value={data.contentMode} disabled={!!busy} onChange={(e) => update({ contentMode: e.target.value as Autopilot['contentMode'] })}>
+                  <option value="Auto">Tự nhận ({data.effectiveMode === 'News' ? 'tin tức' : 'kịch bản'})</option>
+                  <option value="News">Tin tức theo chủ đề Page</option>
+                  <option value="Scripts">Kịch bản hoài niệm</option>
+                </Select>
+              </label>
+              {!news && <div>
                 <div className="flex items-baseline justify-between text-[13px]">
                   <span className="font-medium text-fg">Kho kịch bản</span>
                   <span className="tabular-nums text-fg-muted">còn {s?.remaining ?? 0} / {s?.total ?? 0}</span>
@@ -132,10 +143,10 @@ export function AutopilotPanel({ ctx, onChanged }: { ctx: GrowthCtx; onChanged?:
                 <ProgressBar className="mt-1.5" value={s && s.total ? (s.remaining * 100) / s.total : 0} tone={s && s.remaining <= 7 ? 'warning' : 'success'} />
                 <p className="mt-1 text-xs text-fg-subtle">Mỗi kịch bản chỉ dùng 1 lần cho Page này; các chủ đề lần lượt xoay vòng.</p>
                 {syncNote && <p className="mt-1 text-xs text-fg-muted">{syncNote}</p>}
-              </div>
+              </div>}
               <div className="grid grid-cols-1 gap-2 text-[13px] sm:grid-cols-3 lg:grid-cols-1">
-                <Toggle label="Bài viết từ kịch bản" checked={data.scriptPost} disabled={!!busy} onChange={(v) => update({ scriptPost: v })} />
-                <Toggle label="Đăng video Reels có sẵn" checked={data.dailyVideo} disabled={!!busy} onChange={(v) => update({ dailyVideo: v })} />
+                {!news && <Toggle label="Bài viết từ kịch bản" checked={data.scriptPost} disabled={!!busy} onChange={(v) => update({ scriptPost: v })} />}
+                {!news && <Toggle label="Đăng video Reels có sẵn" checked={data.dailyVideo} disabled={!!busy} onChange={(v) => update({ dailyVideo: v })} />}
                 <label className="flex items-center justify-between gap-2 rounded-md border border-line bg-surface px-3 py-2">
                   <span>Tin mỗi ngày</span>
                   <Select size="sm" className="w-20" value={data.storiesPerDay} disabled={!!busy} onChange={(e) => update({ storiesPerDay: Number(e.target.value) })}>
@@ -144,7 +155,10 @@ export function AutopilotPanel({ ctx, onChanged }: { ctx: GrowthCtx; onChanged?:
                 </label>
               </div>
               <p className="text-xs text-fg-subtle">
-                Mục tiêu tuần của Meta: 7 bài viết + 14 tin. Video mới không được tự tạo (mỗi video ~2 USD) — ứng dụng đăng video bạn đã dựng xong. Lần chạy gần nhất: {vnShort(data.lastRunAtUtc)}.
+                {news
+                  ? 'Tin chọn từ tin hot nhất cùng chủ đề, không trùng tin đã đăng hay đã làm video. Reels tin tức vẫn do "Tự động đăng" đảm nhận như cũ.'
+                  : 'Video mới không được tự tạo (mỗi video ~2 USD) — ứng dụng đăng video bạn đã dựng xong.'}{' '}
+                Mục tiêu tuần của Meta: 7 bài viết + 14 tin. Lần chạy gần nhất: {vnShort(data.lastRunAtUtc)}.
               </p>
             </div>
 

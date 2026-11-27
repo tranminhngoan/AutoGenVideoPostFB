@@ -120,7 +120,8 @@ def story_card(spec, item, index, total, L, out_path):
 
     # "1/6" counter on the picture (below the Story header on 9:16)
     meta = _font(BOLD_FONTS, 30)
-    _tag(draw, pal, f"{index}/{total}", M, L["top_safe"] if L is STORY else 40, meta, True)
+    if total > 1:  # a single card (one news photo post) has no counter
+        _tag(draw, pal, f"{index}/{total}", M, L["top_safe"] if L is STORY else 40, meta, True)
 
     # Page name on the edge between picture and card
     logo_h = _brand_pill(draw, pal, spec.get("brand"), M, PH - 32, W - 2 * M)

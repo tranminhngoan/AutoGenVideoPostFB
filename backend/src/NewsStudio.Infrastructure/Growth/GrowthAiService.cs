@@ -425,6 +425,14 @@ public class GrowthAiService
         return (v.Caption + (v.Question is { Length: > 0 } q ? "\n\n" + q : ""), string.Join(" ", v.Hashtags));
     }
 
+    /// <summary>Headline + summary for the news card and the post text (facts from the article only, source named).</summary>
+    public async Task<GrowthNewsService.NewsPostText> NewsPostAsync(GrowthCampaign c, string topicName, TrendingArticleDto article, string text, CancellationToken ct)
+    {
+        var (system, user) = GrowthNewsService.BuildPostPrompt(c.PageName, topicName, article, text);
+        var json = await CallAsync(c, $"bài tin \"{Cap(article.Title, 50)}\"", system, user, 2500, 0.5, ct);
+        return GrowthNewsService.ParsePost(json, article.SourceName) ?? throw new InvalidOperationException("AI không viết được bài tin hợp lệ.");
+    }
+
     public sealed class ScriptScene
     {
         public string? Title { get; set; }

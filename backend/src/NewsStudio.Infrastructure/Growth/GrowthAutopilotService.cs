@@ -45,12 +45,16 @@ public class GrowthAutopilotService
     private readonly StudioService _studio;
     private readonly StudioMedia _studioMedia;
     private readonly AiStudioService _aiStudio;
+    private readonly GrowthNewsService _news;
     private readonly ILogger<GrowthAutopilotService> _logger;
+    /// <summary>Videos not assigned to any Page may be used only when this is the one script (nostalgia) Page.</summary>
+    private bool _allowUnassigned;
 
     public GrowthAutopilotService(IApplicationDbContext db, GrowthCampaignService campaigns, GrowthContentService content, GrowthInsightsService insights,
         GrowthAiService ai, GrowthMedia media, AiStudioMedia probe, StudioService studio, StudioMedia studioMedia, AiStudioService aiStudio,
-        ILogger<GrowthAutopilotService> logger)
+        GrowthNewsService news, ILogger<GrowthAutopilotService> logger)
     {
+        _news = news;
         _db = db;
         _campaigns = campaigns;
         _content = content;
@@ -168,8 +172,12 @@ public class GrowthAutopilotService
         var items = await _db.GrowthScheduledContents.AsNoTracking().Where(x => x.IdempotencyKey.StartsWith(prefix)).OrderBy(x => x.ScheduledAtUtc).ToListAsync(ct);
         var campaign = await _db.GrowthCampaigns.AsNoTracking()
             .Where(c => c.FacebookAccountId == pageId && (c.Status == GrowthStatus.Running || c.Status == GrowthStatus.Paused)).Select(c => (Guid?)c.Id).FirstOrDefaultAsync(ct);
+        var news = await _news.NewsSettingsAsync(pageId, ct);
+        var mode = GrowthNewsService.EffectiveMode(a.ContentMode, news != null);
         var dto = new GrowthAutopilotDto
         {
+            ContentMode = a.ContentMode, EffectiveMode = mode,
+            NewsTopic = news?.Topic, NewsTopicName = news == null ? null : NewsStudio.Infrastructure.Trending.NewsTopics.NameOf(news.Topic),
             FacebookAccountId = pageId, Enabled = a.Enabled, ScriptPost = a.ScriptPost, DailyVideo = a.DailyVideo, StoriesPerDay = a.StoriesPerDay,
             LastRunAtUtc = a.LastRunAtUtc, Notices = Notices(a), Scripts = await ScriptStatsAsync(pageId, ct), CampaignId = campaign,
             Today = await _content.ToDtosAsync(items, ct), Slots = new Dictionary<string, string>(DefaultSlots)
@@ -191,6 +199,8 @@ public class GrowthAutopilotService
         if (input.Enabled == true && (!page.IsActive || string.IsNullOrWhiteSpace(page.EncryptedAccessToken)))
             throw new InvalidOperationException("Page chưa kết nối — kết nối lại ở Cài đặt → Facebook trước khi bật chế độ tự động.");
         if (input.Enabled is { } e) a.Enabled = e;
+        if (input.ContentMode != null)
+            a.ContentMode = input.ContentMode is "Auto" or "Scripts" or "News" ? input.ContentMode : throw new ArgumentException("Chế độ nội dung là Auto, Scripts hoặc News.");
         if (input.ScriptPost is { } sp) a.ScriptPost = sp;
         if (input.DailyVideo is { } dv) a.DailyVideo = dv;
         if (input.StoriesPerDay is { } n) a.StoriesPerDay = n is < 0 or > 4 ? throw new ArgumentException("Story mỗi ngày từ 0 đến 4.") : n;
@@ -228,10 +238,31 @@ public class GrowthAutopilotService
         void Notice(string level, string code, string message) => notices.Add(new GrowthNoticeDto { Level = level, Code = code, Message = message, AtUtc = now });
 
         var state = ReadState(a, today);
+        var newsSettings = await _news.NewsSettingsAsync(pageId, ct);
+        var mode = GrowthNewsService.EffectiveMode(a.ContentMode, newsSettings != null);
+        // anything still waiting that belongs to the other mode (e.g. a script post on a news Page) is cancelled
+        await CancelWrongModeAsync(pageId, mode, ct);
         await ReleaseCancelledScriptsAsync(pageId, ct);
+        _allowUnassigned = mode == "Scripts" && !await OtherScriptPagesAsync(pageId, ct);
 
         var campaign = await EnsureCampaignAsync(pageId, a, Notice, ct);
-        if (campaign != null)
+        if (campaign != null && mode == "News")
+        {
+            if (newsSettings == null)
+                Notice("error", "no_topic", "Page tin tức cần chủ đề: bật \"Tự động đăng\" cho Page (chọn chủ đề thể thao / tổng hợp…) hoặc chuyển chế độ sang Kịch bản.");
+            else
+            {
+                var slots = await SlotsAsync(campaign, ct);
+                await Step(state, "npost", force, Notice, () => PlanNewsPostAsync(campaign, pageId, newsSettings, today, slots, ct), ct);
+                for (var n = 1; n <= a.StoriesPerDay; n++)
+                {
+                    var slot = $"nstory{n}";
+                    var number = n;
+                    await Step(state, slot, force, Notice, () => PlanNewsStoryAsync(campaign, pageId, newsSettings, today, slot, number, slots, ct), ct);
+                }
+            }
+        }
+        if (campaign != null && mode == "Scripts")
         {
             var slots = await SlotsAsync(campaign, ct);
             if (a.ScriptPost) await Step(state, "post", force, Notice, () => PlanScriptPostAsync(campaign, pageId, today, slots, Notice, ct), ct);
@@ -247,7 +278,8 @@ public class GrowthAutopilotService
         }
 
         var stats = await ScriptStatsAsync(pageId, ct);
-        if (a.ScriptPost && stats.Total == 0) Notice("error", "no_scripts", "Chưa có kịch bản nào trong kho — mở trang Chiến dịch tăng trưởng để đồng bộ 300 kịch bản từ \"Lên kịch bản\".");
+        if (mode != "Scripts") { }
+        else if (a.ScriptPost && stats.Total == 0) Notice("error", "no_scripts", "Chưa có kịch bản nào trong kho — mở trang Chiến dịch tăng trưởng để đồng bộ 300 kịch bản từ \"Lên kịch bản\".");
         else if (a.ScriptPost && stats.Remaining == 0) Notice("error", "scripts_empty", $"Đã dùng hết {stats.Total} kịch bản — hãy nhờ AI viết thêm kịch bản ở \"Lên kịch bản\" rồi đồng bộ. Bài viết hằng ngày đang dừng để không đăng trùng.");
         else if (a.ScriptPost && stats.Remaining <= LowScriptsWarning) Notice("warning", "scripts_low", $"Chỉ còn {stats.Remaining} kịch bản chưa dùng — nên chuẩn bị thêm.");
 
@@ -373,6 +405,160 @@ public class GrowthAutopilotService
         await _db.SaveChangesAsync(ct);
     }
 
+
+    // ═══════════════════════════════ modes ═══════════════════════════════
+
+    /// <summary>Slots of the news mode start with "n" (npost, nstory1…); the script mode's don't (post, reel, story1…).</summary>
+    public static bool IsNewsSlot(string idempotencyKey)
+    {
+        var parts = idempotencyKey.Split(':');
+        return parts.Length >= 4 && parts[3].StartsWith('n');
+    }
+
+    /// <summary>Cancels waiting autopilot items of this Page made for the other content mode.</summary>
+    private async Task CancelWrongModeAsync(Guid pageId, string mode, CancellationToken ct)
+    {
+        var prefix = $"auto:{pageId:N}:";
+        var waiting = await _db.GrowthScheduledContents
+            .Where(x => x.IdempotencyKey.StartsWith(prefix) && (x.Status == GrowthStatus.Scheduled || x.Status == GrowthStatus.PendingApproval || x.Status == GrowthStatus.Draft))
+            .ToListAsync(ct);
+        var wrong = waiting.Where(x => IsNewsSlot(x.IdempotencyKey) != (mode == "News")).ToList();
+        foreach (var x in wrong)
+        {
+            x.Status = GrowthStatus.Cancelled;
+            x.LastError = "Không đúng chủ đề của Page (chế độ nội dung đã đổi) — đã huỷ, không đăng.";
+            _db.GrowthActivityLogs.Add(new GrowthActivityLog { CampaignId = x.CampaignId, ContentId = x.Id, Level = "Warning", Action = "AutopilotWrongMode", Message = x.LastError + $" \"{GrowthContentService.Short(x.Title, x.Caption)}\"", Actor = "scheduler" });
+        }
+        if (wrong.Count > 0) await _db.SaveChangesAsync(ct);
+    }
+
+    /// <summary>
+    /// For the publisher: an autopilot item that doesn't match its Page's content mode (a script post on a news Page, a
+    /// news item on a nostalgia Page) must not go out.
+    /// </summary>
+    public static async Task<bool> WrongModeAsync(IApplicationDbContext db, GrowthScheduledContent item, Guid? pageId, CancellationToken ct)
+    {
+        if (pageId is not { } pid || !item.IdempotencyKey.StartsWith("auto:", StringComparison.Ordinal)) return false;
+        var chosen = await db.GrowthAutopilots.AsNoTracking().Where(a => a.FacebookAccountId == pid).Select(a => a.ContentMode).FirstOrDefaultAsync(ct);
+        var hasNews = await db.AutoPostSettings.AsNoTracking().AnyAsync(s => s.FacebookAccountId == pid && s.Enabled, ct);
+        return IsNewsSlot(item.IdempotencyKey) != (GrowthNewsService.EffectiveMode(chosen, hasNews) == "News");
+    }
+
+    /// <summary>Another Page also runs the script (nostalgia) mode → videos without a Page are not used (they could be for it).</summary>
+    private async Task<bool> OtherScriptPagesAsync(Guid pageId, CancellationToken ct)
+    {
+        var others = await _db.GrowthAutopilots.AsNoTracking().Where(a => a.Enabled && a.FacebookAccountId != pageId).Select(a => new { a.FacebookAccountId, a.ContentMode }).ToListAsync(ct);
+        foreach (var o in others)
+        {
+            var hasNews = await _db.AutoPostSettings.AsNoTracking().AnyAsync(s => s.FacebookAccountId == o.FacebookAccountId && s.Enabled, ct);
+            if (GrowthNewsService.EffectiveMode(o.ContentMode, hasNews) == "Scripts") return true;
+        }
+        return false;
+    }
+
+    // ═══════════════════════════════ news Pages ═══════════════════════════════
+
+    /// <summary>
+    /// The day's news photo post: the hottest unused story of the Page's topic, its own photo with a short headline +
+    /// summary written on it, and a short post about it.
+    /// </summary>
+    private async Task<string?> PlanNewsPostAsync(GrowthCampaign c, Guid pageId, AutoPostSettings settings, DateOnly today, Dictionary<string, string> slots, CancellationToken ct)
+    {
+        var key = Key(pageId, today, "npost");
+        if (await ExistsAsync(key, ct)) return null;
+        var at = When(today, slots["post"], 0, Clock(), c.EndDate);
+        if (at == null) return "đã quá giờ đăng hôm nay — bắt đầu từ ngày mai.";
+        var topicName = NewsStudio.Infrastructure.Trending.NewsTopics.NameOf(settings.Topic);
+        var skip = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        for (var attempt = 0; attempt < 4; attempt++)
+        {
+            var article = await _news.PickAsync(pageId, settings, Clock(), ct, skip);
+            if (article == null) return $"!không còn tin hot mới thuộc chủ đề \"{topicName}\" chưa đăng — để lần sau.";
+            skip.Add(NewsStudio.Infrastructure.Services.AutoPostService.NormalizeUrl(article.Url));
+            var text = await _news.ReadAsync(article, ct);
+            var dir = StudioMedia.TempDir();
+            try
+            {
+                var photo = await _news.DownloadPhotoAsync(text.ImageUrls, article.Url, Path.Combine(dir, "photo"), ct);
+                if (photo == null) continue; // no usable picture in this article: next hottest
+                var written = await _ai.NewsPostAsync(c, topicName, article, text.Text, ct);
+                var page = await _db.FacebookAccounts.AsNoTracking().Where(x => x.Id == pageId).Select(x => x.PageName).FirstAsync(ct);
+                var card = await _news.RenderCardAsync(pageId, page, settings.Topic, photo, written.Headline, written.Summary, article.SourceName, dir, ct);
+                var asset = await _content.UploadAsync(c.Id, card, "tin-nong.jpg", "Template", ct);
+                var item = new GrowthScheduledContent
+                {
+                    CampaignId = c.Id, Kind = GrowthKinds.Photo, Status = GrowthStatus.Scheduled, IdempotencyKey = key, ScheduledAtUtc = at,
+                    Title = Trim(written.Headline, 300), Caption = written.Caption, Hashtags = written.Hashtags, Topic = Trim(topicName, 200), Style = "Knowledge",
+                    AssetIdsJson = JsonSerializer.Serialize(new[] { asset.Id })
+                };
+                _db.GrowthNewsUsages.Add(new GrowthNewsUsage
+                {
+                    FacebookAccountId = pageId, Url = Trim(NewsStudio.Infrastructure.Services.AutoPostService.NormalizeUrl(article.Url), 800), TrendingArticleId = article.Id,
+                    ClusterId = await _news.ClusterOfAsync(article.Id, ct), Title = Trim(article.Title, 500), Kind = "npost", ContentId = item.Id
+                });
+                try { await SaveNewAsync(item, ct); }
+                catch (DbUpdateException) { if (_db is DbContext ctx) ctx.ChangeTracker.Clear(); }
+                return null;
+            }
+            finally
+            {
+                StudioMedia.TryDelete(dir);
+            }
+        }
+        throw new InvalidOperationException("Các tin hot nhất đều không có ảnh dùng được — sẽ thử lại sau.");
+    }
+
+    /// <summary>
+    /// A voiced news Story: the hottest unused story of the topic is made into a short video by the news video pipeline
+    /// (same voice and look as the auto-posted videos); when it is ready it is scheduled as a Story.
+    /// </summary>
+    private async Task<string?> PlanNewsStoryAsync(GrowthCampaign c, Guid pageId, AutoPostSettings settings, DateOnly today, string slot, int n,
+        Dictionary<string, string> slots, CancellationToken ct)
+    {
+        var key = Key(pageId, today, slot);
+        if (await ExistsAsync(key, ct)) return null;
+        var dayStart = GrowthTime.DayStartUtc(today);
+        var usage = await _db.GrowthNewsUsages.FirstOrDefaultAsync(u => u.FacebookAccountId == pageId && u.Kind == slot && u.CreatedAtUtc >= dayStart && u.ContentId == null, ct);
+        var slotTime = slots.GetValueOrDefault(n == 1 ? "story1" : n == 2 ? "story2" : $"story{n}", "20:00");
+        if (usage == null)
+        {
+            if (When(today, slotTime, 1 + n, Clock(), c.EndDate) == null) return "đã quá giờ đăng hôm nay — bắt đầu từ ngày mai.";
+            var article = await _news.PickAsync(pageId, settings, Clock(), ct);
+            if (article == null) return $"!không còn tin hot mới thuộc chủ đề \"{NewsStudio.Infrastructure.Trending.NewsTopics.NameOf(settings.Topic)}\" để làm Tin.";
+            var projectId = await _news.StartStoryVideoAsync(pageId, settings, article, ct);
+            _db.GrowthNewsUsages.Add(new GrowthNewsUsage
+            {
+                FacebookAccountId = pageId, Url = Trim(NewsStudio.Infrastructure.Services.AutoPostService.NormalizeUrl(article.Url), 800), TrendingArticleId = article.Id,
+                ClusterId = await _news.ClusterOfAsync(article.Id, ct), Title = Trim(article.Title, 500), Kind = slot, VideoProjectId = projectId
+            });
+            await _db.SaveChangesAsync(ct);
+            return null; // the video is being made: checked again on the next run
+        }
+
+        var project = await _db.VideoProjects.AsNoTracking().FirstOrDefaultAsync(p => p.Id == usage.VideoProjectId, ct);
+        var failed = project == null || project.Status is NewsStudio.Domain.Enums.VideoProjectStatus.Failed or NewsStudio.Domain.Enums.VideoProjectStatus.Cancelled
+                     || Clock() - usage.CreatedAtUtc > TimeSpan.FromMinutes(90) && project.Status != NewsStudio.Domain.Enums.VideoProjectStatus.AwaitingApproval;
+        if (failed)
+        {
+            usage.Kind = "failed"; // frees the slot; the story stays marked as used so it isn't tried again
+            await _db.SaveChangesAsync(ct);
+            throw new InvalidOperationException("Dựng video tin cho Tin không thành: " + (project?.ErrorMessage ?? "quá lâu") + " — sẽ chọn tin khác.");
+        }
+        if (project!.Status != NewsStudio.Domain.Enums.VideoProjectStatus.AwaitingApproval) return null; // still being made
+
+        var at = When(today, slotTime, 1 + n, Clock(), c.EndDate);
+        if (at == null) return "video xong muộn — quá giờ đăng hôm nay.";
+        var item = new GrowthScheduledContent
+        {
+            CampaignId = c.Id, Kind = GrowthKinds.Story, Status = GrowthStatus.Scheduled, IdempotencyKey = key, ScheduledAtUtc = at,
+            Title = "Tin · " + Trim(project.Title.Length > 0 ? project.Title : usage.Title, 280), SourceType = GrowthSources.VideoProject, SourceId = project.Id
+        };
+        usage.ContentId = item.Id;
+        try { await SaveNewAsync(item, ct); }
+        catch (DbUpdateException) { if (_db is DbContext ctx) ctx.ChangeTracker.Clear(); }
+        return null;
+    }
+
     // ── the script post ──
 
     private async Task<string?> PlanScriptPostAsync(GrowthCampaign c, Guid pageId, DateOnly today, Dictionary<string, string> slots, Action<string, string, string> notice, CancellationToken ct)
@@ -461,7 +647,7 @@ public class GrowthAutopilotService
         Guid id = default;
         string title = "", caption = "";
         var studio = await _db.StudioVideos.AsNoTracking()
-            .Where(v => v.Status == "Ready" && v.FinalBlobId != null && v.PublishedPostId == null && (v.FacebookAccountId == pageId || v.FacebookAccountId == null)
+            .Where(v => v.Status == "Ready" && v.FinalBlobId != null && v.PublishedPostId == null && (v.FacebookAccountId == pageId || (_allowUnassigned && v.FacebookAccountId == null))
                         && !scheduledReels.Contains(v.Id))
             .OrderByDescending(v => v.FacebookAccountId == pageId).ThenByDescending(v => v.UpdatedAtUtc ?? v.CreatedAtUtc)
             .Select(v => new { v.Id, v.Title, v.Caption }).FirstOrDefaultAsync(ct);
@@ -469,7 +655,7 @@ public class GrowthAutopilotService
         else
         {
             var ai = await _db.AiStudioProjects.AsNoTracking()
-                .Where(p => p.FinalStatus == "Done" && p.FinalBlobId != null && (p.FacebookAccountId == pageId || p.FacebookAccountId == null) && !scheduledReels.Contains(p.Id))
+                .Where(p => p.FinalStatus == "Done" && p.FinalBlobId != null && (p.FacebookAccountId == pageId || (_allowUnassigned && p.FacebookAccountId == null)) && !scheduledReels.Contains(p.Id))
                 .OrderByDescending(p => p.FacebookAccountId == pageId).ThenByDescending(p => p.FinalUpdatedAtUtc ?? p.CreatedAtUtc)
                 .Select(p => new { p.Id, p.Title, p.Caption }).FirstOrDefaultAsync(ct);
             if (ai != null) { type = GrowthSources.AiStudioProject; id = ai.Id; title = ai.Title; caption = ai.Caption; }
@@ -537,11 +723,11 @@ public class GrowthAutopilotService
     private async Task<(string Type, Guid Id, string Title, double Start, double Seconds)?> FindHighlightAsync(Guid pageId, CancellationToken ct)
     {
         var studio = await _db.StudioVideos.AsNoTracking()
-            .Where(v => v.FinalBlobId != null && (v.FacebookAccountId == pageId || v.FacebookAccountId == null))
+            .Where(v => v.FinalBlobId != null && (v.FacebookAccountId == pageId || (_allowUnassigned && v.FacebookAccountId == null)))
             .OrderByDescending(v => v.PublishedAtUtc != null).ThenByDescending(v => v.PublishedAtUtc ?? v.CreatedAtUtc)
             .Select(v => new { v.Id, v.Title, Blob = v.FinalBlobId!.Value }).Take(8).ToListAsync(ct);
         var ai = await _db.AiStudioProjects.AsNoTracking()
-            .Where(p => p.FinalStatus == "Done" && p.FinalBlobId != null && (p.FacebookAccountId == pageId || p.FacebookAccountId == null))
+            .Where(p => p.FinalStatus == "Done" && p.FinalBlobId != null && (p.FacebookAccountId == pageId || (_allowUnassigned && p.FacebookAccountId == null)))
             .OrderByDescending(p => p.FinalUpdatedAtUtc ?? p.CreatedAtUtc).Select(p => new { p.Id, p.Title, Blob = p.FinalBlobId!.Value }).Take(8).ToListAsync(ct);
         var candidates = studio.Select(v => (Type: GrowthSources.StudioVideo, v.Id, v.Title, v.Blob))
             .Concat(ai.Select(p => (Type: GrowthSources.AiStudioProject, p.Id, p.Title, p.Blob))).ToList();

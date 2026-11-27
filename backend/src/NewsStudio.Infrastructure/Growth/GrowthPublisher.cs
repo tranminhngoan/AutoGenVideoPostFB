@@ -40,10 +40,12 @@ public class GrowthPublishGateway : IGrowthPublishGateway
     private readonly GrowthGraphClient _graph;
     private readonly GrowthContentService _content;
     private readonly GrowthMedia _growthMedia;
+    private readonly IVideoAssetService _assets;
 
     public GrowthPublishGateway(IApplicationDbContext db, IFacebookPublishingService facebook, StudioService studio, AiStudioService aiStudio,
-        AiStudioMedia media, GrowthGraphClient graph, GrowthContentService content, GrowthMedia growthMedia)
+        AiStudioMedia media, GrowthGraphClient graph, GrowthContentService content, GrowthMedia growthMedia, IVideoAssetService assets)
     {
+        _assets = assets;
         _growthMedia = growthMedia;
         _db = db;
         _facebook = facebook;
@@ -72,6 +74,7 @@ public class GrowthPublishGateway : IGrowthPublishGateway
         try
         {
             var result = await PublishFacebookAsync(campaign, item, ct);
+            _facebookDone = true;
             if (!campaign.AlsoInstagram || campaign.FacebookAccountId is not { } page) return result;
             // Facebook is live: the Instagram copy is extra — its failure is recorded, never thrown
             try
@@ -90,8 +93,20 @@ public class GrowthPublishGateway : IGrowthPublishGateway
         finally
         {
             if (_storyTempDir != null) StudioMedia.TryDelete(_storyTempDir);
+            if (_facebookDone && _newsProjectToClean is { } done)
+            {
+                try
+                {
+                    await _assets.CleanupProjectAssetsAsync(done, CancellationToken.None);
+                    var project = await _db.VideoProjects.FirstOrDefaultAsync(p => p.Id == done, CancellationToken.None);
+                    if (project != null) { project.Status = NewsStudio.Domain.Enums.VideoProjectStatus.Published; await _db.SaveChangesAsync(CancellationToken.None); }
+                }
+                catch (Exception) { /* cleanup is best effort; the cleaner job removes old files anyway */ }
+            }
             _storyTempDir = null;
             _lastStoryVideo = null;
+            _newsProjectToClean = null;
+            _facebookDone = false;
         }
     }
 
@@ -154,6 +169,9 @@ public class GrowthPublishGateway : IGrowthPublishGateway
     /// <summary>The video file just posted as a Facebook Story (kept until the Instagram copy is done).</summary>
     private string? _lastStoryVideo;
     private string? _storyTempDir;
+    /// <summary>The news video posted as a Story: its files are removed once posted (as the news Reels do).</summary>
+    private Guid? _newsProjectToClean;
+    private bool _facebookDone;
 
     private async Task<GrowthPublishResult> PublishFacebookAsync(GrowthCampaign campaign, GrowthScheduledContent item, CancellationToken ct)
     {
@@ -288,6 +306,15 @@ public class GrowthPublishGateway : IGrowthPublishGateway
             var blob = await _db.AiStudioProjects.AsNoTracking().Where(p => p.Id == ap).Select(p => p.FinalBlobId).FirstOrDefaultAsync(ct);
             videoPath = (await _aiStudio.FileAsync(blob, ct))?.Path;
         }
+        else if (item.SourceType == GrowthSources.VideoProject && item.SourceId is { } vp)
+        {
+            // a voiced news video made for this Story (news Pages): its file on this server
+            var output = await _db.VideoProjects.AsNoTracking().Where(p => p.Id == vp).Select(p => p.OutputVideoPath).FirstOrDefaultAsync(ct);
+            var finalFiles = await _db.VideoAssets.AsNoTracking().Where(a => a.VideoProjectId == vp && a.AssetType == "FinalVideo" && !a.IsCleanedUp).Select(a => a.LocalTempPath).ToListAsync(ct);
+            videoPath = new[] { output }.Concat(finalFiles).FirstOrDefault(x => !string.IsNullOrWhiteSpace(x) && File.Exists(x));
+            if (videoPath == null) throw new GrowthPublishException(GrowthErrorKind.Content, "File video tin của Tin đã mất (máy chủ khởi động lại?) — Tin này bỏ qua.");
+            _newsProjectToClean = vp;
+        }
         if (videoPath == null) throw new GrowthPublishException(GrowthErrorKind.Content, "Không tìm thấy ảnh / video cho Story.");
         if (item.ClipStartSeconds is { } start && item.ClipSeconds is { } length)
         {
@@ -304,8 +331,14 @@ public class GrowthPublishGateway : IGrowthPublishGateway
     private async Task<GrowthPublishResult> PublishVideoStoryFileAsync(Guid pageId, string videoPath, CancellationToken ct)
     {
         var probe = await _media.ProbeAsync(videoPath, ct);
-        if (probe.Duration > GrowthContentService.MaxStorySeconds)
-            throw new GrowthPublishException(GrowthErrorKind.Content, $"Video Story dài {probe.Duration:0.#} giây — Facebook chỉ nhận tối đa 60 giây.");
+        if (probe.Duration > GrowthMedia.MaxStorySeconds + 0.5)
+        {
+            _storyTempDir ??= StudioMedia.TempDir();
+            var cut = Path.Combine(_storyTempDir, "story-59s.mp4");
+            await _growthMedia.CutAsync(videoPath, 0, GrowthMedia.MaxStorySeconds, cut, ct);
+            videoPath = cut;
+            _lastStoryVideo = cut;
+        }
         try
         {
             var storyId = await _facebook.PublishVideoStoryAsync(pageId, videoPath, ct);
@@ -410,6 +443,14 @@ public class GrowthPublisher
 
         var item = await _db.GrowthScheduledContents.FirstAsync(x => x.Id == contentId, ct);
         var campaign = await _db.GrowthCampaigns.AsNoTracking().FirstAsync(c => c.Id == item.CampaignId, ct);
+        if (await GrowthAutopilotService.WrongModeAsync(_db, item, campaign.FacebookAccountId, ct))
+        {
+            item.Status = GrowthStatus.Cancelled;
+            item.LastError = "Không đúng chủ đề của Page (ví dụ bài kịch bản hoài niệm trên Page tin tức) — đã huỷ, không đăng.";
+            Log(item.CampaignId, item.Id, "Warning", "PublishSkipped", item.LastError, "scheduler");
+            await _db.SaveChangesAsync(ct);
+            return;
+        }
         if (item.ScheduledAtUtc >= GrowthTime.EndUtc(campaign.EndDate) || DateTime.UtcNow >= GrowthTime.EndUtc(campaign.EndDate))
         {
             item.Status = GrowthStatus.Cancelled;

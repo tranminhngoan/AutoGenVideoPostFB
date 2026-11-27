@@ -18,6 +18,7 @@ public static class GrowthRegistration
         services.AddScoped<IGrowthTextAi, GeminiGrowthTextAi>();
         services.AddScoped<IGrowthImageAi, GeminiGrowthImageAi>();
         services.AddSingleton<GrowthMedia>();
+        services.AddScoped<GrowthNewsService>();
         services.AddScoped<GrowthAutopilotService>();
         services.AddScoped<GrowthAiService>();
         services.AddScoped<GrowthReportService>();

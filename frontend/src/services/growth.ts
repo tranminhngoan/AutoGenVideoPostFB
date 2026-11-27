@@ -681,6 +681,10 @@ export interface Notice {
 export interface Autopilot {
   facebookAccountId: string;
   enabled: boolean;
+  contentMode: 'Auto' | 'Scripts' | 'News';
+  effectiveMode: 'Scripts' | 'News';
+  newsTopic?: string | null;
+  newsTopicName?: string | null;
   scriptPost: boolean;
   dailyVideo: boolean;
   storiesPerDay: number;
@@ -694,7 +698,7 @@ export interface Autopilot {
 
 export const autopilotApi = {
   get: (pageId: string) => call<Autopilot>('GET', `/autopilot?pageId=${pageId}`),
-  set: (input: { facebookAccountId: string; enabled?: boolean; scriptPost?: boolean; dailyVideo?: boolean; storiesPerDay?: number }) =>
+  set: (input: { facebookAccountId: string; enabled?: boolean; contentMode?: 'Auto' | 'Scripts' | 'News'; scriptPost?: boolean; dailyVideo?: boolean; storiesPerDay?: number }) =>
     call<Autopilot>('PUT', '/autopilot', input),
   run: (pageId: string) => call<Autopilot>('POST', `/autopilot/run?pageId=${pageId}`),
   scriptStats: (pageId?: string) => call<ScriptStats>('GET', `/scripts/stats${pageId ? `?pageId=${pageId}` : ''}`),

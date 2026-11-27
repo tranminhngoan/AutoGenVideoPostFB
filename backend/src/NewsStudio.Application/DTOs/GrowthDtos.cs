@@ -712,6 +712,13 @@ public class GrowthAutopilotDto
 {
     public Guid FacebookAccountId { get; set; }
     public bool Enabled { get; set; }
+    /// <summary>Auto, Scripts or News (as chosen).</summary>
+    public string ContentMode { get; set; } = "Auto";
+    /// <summary>What the Page actually gets: Scripts or News.</summary>
+    public string EffectiveMode { get; set; } = "Scripts";
+    /// <summary>For News: the Page's news topic ("the-thao", "tong-hop"…) and its name.</summary>
+    public string? NewsTopic { get; set; }
+    public string? NewsTopicName { get; set; }
     public bool ScriptPost { get; set; }
     public bool DailyVideo { get; set; }
     public int StoriesPerDay { get; set; }
@@ -727,6 +734,7 @@ public class GrowthAutopilotInputDto
 {
     public Guid FacebookAccountId { get; set; }
     public bool? Enabled { get; set; }
+    public string? ContentMode { get; set; }
     public bool? ScriptPost { get; set; }
     public bool? DailyVideo { get; set; }
     public int? StoriesPerDay { get; set; }

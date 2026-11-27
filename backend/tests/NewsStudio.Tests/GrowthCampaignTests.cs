@@ -284,7 +284,7 @@ public class GrowthLogicTests
 // ═══════════════════════════════ API / integration ═══════════════════════════════
 
 [Collection("DatabaseCollection")]
-public class GrowthApiTests : IClassFixture<WebApplicationFactory<Program>>
+public class GrowthApiTests : IClassFixture<WebApplicationFactory<Program>>, IAsyncLifetime
 {
     private const string Key = "test-growth-studio-key";
     private readonly WebApplicationFactory<Program> _factory;
@@ -294,6 +294,26 @@ public class GrowthApiTests : IClassFixture<WebApplicationFactory<Program>>
     {
         _factory = factory;
         _client = factory.CreateClient();
+    }
+
+    // pages made by a test are removed afterwards (with the existing "delete page"), so the shared test DB doesn't grow
+    private readonly List<Guid> _createdPages = new();
+    public Task InitializeAsync() => Task.CompletedTask;
+    public async Task DisposeAsync()
+    {
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IApplicationDbContext>();
+        var fb = scope.ServiceProvider.GetRequiredService<NewsStudio.Application.Interfaces.IFacebookPublishingService>();
+        foreach (var id in _createdPages)
+        {
+            try
+            {
+                await db.GrowthScheduledContents.Where(x => db.GrowthCampaigns.Any(c => c.Id == x.CampaignId && c.FacebookAccountId == id))
+                    .ExecuteUpdateAsync(x => x.SetProperty(c => c.Status, "Cancelled"));
+                await fb.DeletePageAsync(id);
+            }
+            catch { /* best effort */ }
+        }
     }
 
     /// <summary>Runs with a studio key configured on the shared host (like the studio guard tests).</summary>
@@ -328,6 +348,7 @@ public class GrowthApiTests : IClassFixture<WebApplicationFactory<Program>>
         var db = scope.ServiceProvider.GetRequiredService<IApplicationDbContext>();
         var page = new FacebookAccount { PageId = "9" + Random.Shared.NextInt64(100000000, 999999999), PageName = "Growth Test " + Guid.NewGuid().ToString("N")[..6], EncryptedAccessToken = active ? "test-token" : "", IsActive = active };
         db.FacebookAccounts.Add(page);
+        _createdPages.Add(page.Id);
         await db.SaveChangesAsync();
         return page;
     }

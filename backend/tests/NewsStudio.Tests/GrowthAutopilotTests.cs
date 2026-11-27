@@ -112,6 +112,32 @@ public class GrowthAutopilotLogicTests
         }
     }
 
+    [Fact]
+    public void NewsPagesGetNewsAndNostalgiaPagesGetScripts()
+    {
+        GrowthNewsService.EffectiveMode("Auto", hasNewsVideos: true).Should().Be("News");
+        GrowthNewsService.EffectiveMode("Auto", hasNewsVideos: false).Should().Be("Scripts");
+        GrowthNewsService.EffectiveMode(null, hasNewsVideos: true).Should().Be("News");
+        GrowthNewsService.EffectiveMode("Scripts", hasNewsVideos: true).Should().Be("Scripts");
+        GrowthNewsService.EffectiveMode("News", hasNewsVideos: false).Should().Be("News");
+        GrowthAutopilotService.IsNewsSlot("auto:abc:20261127:npost").Should().BeTrue();
+        GrowthAutopilotService.IsNewsSlot("auto:abc:20261127:nstory1").Should().BeTrue();
+        GrowthAutopilotService.IsNewsSlot("auto:abc:20261127:post").Should().BeFalse();
+        GrowthAutopilotService.IsNewsSlot("auto:abc:20261127:story2").Should().BeFalse();
+    }
+
+    [Fact]
+    public void NewsPostTextNamesItsSourceAndKeepsCardTextShort()
+    {
+        var t = GrowthNewsService.ParsePost("{\"headline\":\"Việt Nam thắng 2-0\",\"summary\":\"Đội tuyển thắng Lào ở vòng bảng.\",\"caption\":\"Tối qua…\",\"hashtags\":[\"bongda\",\"#doituyen\"]}", "VnExpress");
+        t.Should().NotBeNull();
+        t!.Caption.Should().EndWith("📰 Nguồn: VnExpress");
+        t.Hashtags.Should().Be("#bongda #doituyen");
+        GrowthNewsService.ParsePost("{\"headline\":\"\"}", "X").Should().BeNull();
+        var (_, user) = GrowthNewsService.BuildPostPrompt("Page", "Thể thao", new TrendingArticleDto { Title = "T", SourceName = "S" }, "nội dung");
+        user.Should().Contain("tối đa 12 chữ").And.Contain("không bịa");
+    }
+
     internal static GrowthScript Script(string code, string category = "tro_choi_tho_au") => new()
     {
         Code = code, Title = "Thả diều " + code, Category = category, CategoryName = category, Era = "9x", Region = "Bắc Bộ", Mood = "Ấm áp hoài niệm",
@@ -126,7 +152,7 @@ public class GrowthAutopilotLogicTests
 }
 
 [Collection("DatabaseCollection")]
-public class GrowthAutopilotApiTests : IClassFixture<WebApplicationFactory<Program>>
+public class GrowthAutopilotApiTests : IClassFixture<WebApplicationFactory<Program>>, IAsyncLifetime
 {
     private readonly WebApplicationFactory<Program> _factory;
     private readonly HttpClient _client;
@@ -135,6 +161,26 @@ public class GrowthAutopilotApiTests : IClassFixture<WebApplicationFactory<Progr
     {
         _factory = factory;
         _client = factory.CreateClient();
+    }
+
+    // pages made by a test are removed afterwards (with the existing "delete page"), so the shared test DB doesn't grow
+    private readonly List<Guid> _createdPages = new();
+    public Task InitializeAsync() => Task.CompletedTask;
+    public async Task DisposeAsync()
+    {
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IApplicationDbContext>();
+        var fb = scope.ServiceProvider.GetRequiredService<NewsStudio.Application.Interfaces.IFacebookPublishingService>();
+        foreach (var id in _createdPages)
+        {
+            try
+            {
+                await db.GrowthScheduledContents.Where(x => db.GrowthCampaigns.Any(c => c.Id == x.CampaignId && c.FacebookAccountId == id))
+                    .ExecuteUpdateAsync(x => x.SetProperty(c => c.Status, "Cancelled"));
+                await fb.DeletePageAsync(id);
+            }
+            catch { /* best effort */ }
+        }
     }
 
     private sealed class FakeText : IGrowthTextAi
@@ -173,7 +219,7 @@ public class GrowthAutopilotApiTests : IClassFixture<WebApplicationFactory<Progr
         var service = new GrowthAutopilotService(sp.GetRequiredService<IApplicationDbContext>(), sp.GetRequiredService<GrowthCampaignService>(),
             sp.GetRequiredService<GrowthContentService>(), sp.GetRequiredService<GrowthInsightsService>(), ai, sp.GetRequiredService<GrowthMedia>(),
             sp.GetRequiredService<AiStudioMedia>(), sp.GetRequiredService<StudioService>(), sp.GetRequiredService<StudioMedia>(),
-            sp.GetRequiredService<AiStudioService>(), NullLogger<GrowthAutopilotService>.Instance)
+            sp.GetRequiredService<AiStudioService>(), sp.GetRequiredService<GrowthNewsService>(), NullLogger<GrowthAutopilotService>.Instance)
         {
             // 10:00 Vietnam time today: the 11:30 post slot is still ahead
             Clock = () => GrowthTime.DayStartUtc(GrowthTime.Today(DateTime.UtcNow)).AddHours(10)
@@ -187,6 +233,7 @@ public class GrowthAutopilotApiTests : IClassFixture<WebApplicationFactory<Progr
         var db = scope.ServiceProvider.GetRequiredService<IApplicationDbContext>();
         var page = new FacebookAccount { PageId = "8" + Random.Shared.NextInt64(100000000, 999999999), PageName = "Trạm thử " + Guid.NewGuid().ToString("N")[..5], EncryptedAccessToken = "test-token" };
         db.FacebookAccounts.Add(page);
+        _createdPages.Add(page.Id);
         db.GrowthAutopilots.Add(new GrowthAutopilot { FacebookAccountId = page.Id, Enabled = true, ScriptPost = true, DailyVideo = true, StoriesPerDay = 2 });
         await db.SaveChangesAsync();
         return page;
@@ -319,6 +366,73 @@ public class GrowthAutopilotApiTests : IClassFixture<WebApplicationFactory<Progr
         await db.GrowthScheduledContents.Where(x => x.Id == post.Id).ExecuteUpdateAsync(s => s.SetProperty(x => x.Status, "Cancelled"));
         await service.RunAsync(page.Id, force: false, CancellationToken.None);
         (await db.GrowthScriptUsages.AnyAsync(u => u.ContentId == post.Id)).Should().BeFalse();
+    }
+
+    /// <summary>A news Page: "Tự động đăng" on, with a topic no story matches (so nothing is fetched from the internet).</summary>
+    private async Task<FacebookAccount> NewNewsPageAsync()
+    {
+        var page = await NewPageAsync();
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IApplicationDbContext>();
+        db.AutoPostSettings.Add(new AutoPostSettings { FacebookAccountId = page.Id, Enabled = true, Topic = "tu-chon", TopicKeywords = "zzqxw-khong-co-tin-nao" });
+        await db.SaveChangesAsync();
+        return page;
+    }
+
+    [Fact]
+    public async Task ANewsPageNeverGetsScriptPosts()
+    {
+        var page = await NewNewsPageAsync();
+        await ImportAsync(2);
+        using var scope = _factory.Services.CreateScope();
+        var (service, db, _, image) = Build(scope);
+        var status = await service.RunAsync(page.Id, force: false, CancellationToken.None);
+        status.EffectiveMode.Should().Be("News");
+        image.Calls.Should().Be(0, "no AI picture of a drama script for a news Page");
+        status.Today.Should().NotContain(x => x.ScriptId != null);
+        (await db.GrowthScriptUsages.AnyAsync(u => u.FacebookAccountId == page.Id)).Should().BeFalse();
+        status.Notices.Should().Contain(n => n.Message.Contains("không còn tin hot"), "no story of its topic → told, nothing off-topic posted");
+    }
+
+    [Fact]
+    public async Task ScriptItemsAlreadyScheduledOnANewsPageAreCancelledAndNeverPosted()
+    {
+        var page = await NewPageAsync();
+        await ImportAsync(1);
+        Guid postId;
+        using (var scope = _factory.Services.CreateScope())
+        {
+            // made while the Page was (wrongly) in script mode
+            var (service, _, _, _) = Build(scope);
+            var status = await service.RunAsync(page.Id, force: false, CancellationToken.None);
+            postId = status.Today.Single(x => x.Kind == "Photo").Id;
+        }
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<IApplicationDbContext>();
+            db.AutoPostSettings.Add(new AutoPostSettings { FacebookAccountId = page.Id, Enabled = true, Topic = "tu-chon", TopicKeywords = "zzqxw-khong-co-tin-nao" });
+            await db.SaveChangesAsync();
+            // even before the autopilot runs again, the publisher refuses it
+            await db.GrowthScheduledContents.Where(x => x.Id == postId).ExecuteUpdateAsync(x => x.SetProperty(c => c.ScheduledAtUtc, DateTime.UtcNow.AddMinutes(-1)));
+            var gateway = new CountingGateway();
+            var publisher = new GrowthPublisher(db, gateway, scope.ServiceProvider.GetRequiredService<GrowthCampaignService>(),
+                scope.ServiceProvider.GetRequiredService<Hangfire.IBackgroundJobClient>(), NullLogger<GrowthPublisher>.Instance);
+            await publisher.PublishOneAsync(postId, CancellationToken.None);
+            gateway.Calls.Should().Be(0);
+            var item = await db.GrowthScheduledContents.AsNoTracking().FirstAsync(x => x.Id == postId);
+            item.Status.Should().Be("Cancelled");
+            item.LastError.Should().Contain("Không đúng chủ đề");
+        }
+    }
+
+    private sealed class CountingGateway : IGrowthPublishGateway
+    {
+        public int Calls;
+        public Task<GrowthPublishResult> PublishAsync(GrowthCampaign campaign, GrowthScheduledContent item, CancellationToken ct)
+        {
+            Calls++;
+            return Task.FromResult(new GrowthPublishResult("1_1", null, null, null));
+        }
     }
 
     [Fact]

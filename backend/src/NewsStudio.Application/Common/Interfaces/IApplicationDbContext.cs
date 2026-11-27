@@ -68,6 +68,7 @@ public interface IApplicationDbContext
     DbSet<GrowthAutopilot> GrowthAutopilots { get; }
     DbSet<GrowthScript> GrowthScripts { get; }
     DbSet<GrowthScriptUsage> GrowthScriptUsages { get; }
+    DbSet<GrowthNewsUsage> GrowthNewsUsages { get; }
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

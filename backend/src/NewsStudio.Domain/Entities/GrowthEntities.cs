@@ -252,6 +252,11 @@ public class GrowthAutopilot : BaseEntity
 {
     public Guid FacebookAccountId { get; set; }
     public bool Enabled { get; set; }
+    /// <summary>
+    /// What the Page posts: Scripts (drama scripts + AI picture — nostalgia Pages), News (the hottest news of the Page's own
+    /// topic — news Pages), or Auto: News when the Page has "Tự động đăng" news videos on, else Scripts.
+    /// </summary>
+    public string ContentMode { get; set; } = "Auto";
     public bool ScriptPost { get; set; } = true;
     public bool DailyVideo { get; set; } = true;
     public int StoriesPerDay { get; set; } = 2;
@@ -288,5 +293,20 @@ public class GrowthScriptUsage : BaseEntity
     public Guid FacebookAccountId { get; set; }
     public Guid ScriptId { get; set; }
     public GrowthScript? Script { get; set; }
+    public Guid? ContentId { get; set; }
+}
+
+/// <summary>A news article the autopilot used on a Page (photo post or voiced Story) — never used twice.</summary>
+public class GrowthNewsUsage : BaseEntity
+{
+    public Guid FacebookAccountId { get; set; }
+    /// <summary>Normalised article link.</summary>
+    public string Url { get; set; } = string.Empty;
+    public Guid? TrendingArticleId { get; set; }
+    public Guid? ClusterId { get; set; }
+    public string Title { get; set; } = string.Empty;
+    /// <summary>post (photo with the summary written on it) or story (voiced news video).</summary>
+    public string Kind { get; set; } = "post";
+    public Guid? VideoProjectId { get; set; }
     public Guid? ContentId { get; set; }
 }
