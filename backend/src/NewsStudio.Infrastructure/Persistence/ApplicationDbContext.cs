@@ -723,6 +723,7 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
             entity.Property(e => e.VoiceKey).HasMaxLength(64);
             entity.Property(e => e.ReviewedAction).HasMaxLength(900);
             entity.Property(e => e.ReviewedRules).HasMaxLength(900);
+            entity.Property(e => e.ReviewedSetting).HasMaxLength(900);
             entity.HasIndex(e => new { e.ProjectId, e.Order });
         });
         modelBuilder.Entity<AiStudioPromptVersion>(entity =>

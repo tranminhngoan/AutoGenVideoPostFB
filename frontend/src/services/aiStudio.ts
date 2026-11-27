@@ -231,6 +231,8 @@ export interface Scene {
   /** The AI logic review: what the clip shows (concrete, possible, safe) and the constraints for this action. */
   reviewedAction?: string | null;
   reviewedRules?: string | null;
+  /** The review's place for this situation (what is in frame), true to the theme (e.g. a Mekong Delta village). */
+  reviewedSetting?: string | null;
   prompt: string;
   promptVersion: number;
   promptEdited: boolean;

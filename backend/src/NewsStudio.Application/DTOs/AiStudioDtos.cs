@@ -148,6 +148,7 @@ public class AiStudioSceneDto
     /// <summary>The AI logic review of the scene (what the clip shows, the constraints), or null when not reviewed.</summary>
     public string? ReviewedAction { get; set; }
     public string? ReviewedRules { get; set; }
+    public string? ReviewedSetting { get; set; }
     public string Prompt { get; set; } = string.Empty;
     public int PromptVersion { get; set; }
     public bool PromptEdited { get; set; }

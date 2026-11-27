@@ -501,6 +501,10 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                         .HasMaxLength(900)
                         .HasColumnType("character varying(900)");
 
+                    b.Property<string>("ReviewedSetting")
+                        .HasMaxLength(900)
+                        .HasColumnType("character varying(900)");
+
                     b.Property<double>("StartSeconds")
                         .HasColumnType("double precision");
 

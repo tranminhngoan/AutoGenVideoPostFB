@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System.Text;
 using System.Text.Json.Nodes;
 using FluentAssertions;
@@ -90,7 +90,7 @@ public class AiStudioUnitTests
         // wider than the reference's close-up, the place sharp
         prompt.Should().Contain("Camera: medium shot showing the person and the surroundings");
         var plain = input with { Analysis = JsonNode.Parse("""{"summary":"A girl walks home","camera":{"shot_size":"close-up"},"environment":{"location":"village path"}}""")!.AsObject() };
-        AiStudioPromptEngine.Build(plain).Should().Contain("deep focus, the person and the surroundings both sharp").And.Contain("Look: Vietnamese countryside people").And.Contain("Children: gentle, safe").And.Contain("Walking:");
+        AiStudioPromptEngine.Build(plain).Should().Contain("deep focus, the person and the surroundings both sharp").And.Contain("Look: Mekong Delta country people").And.Contain("Children: gentle, safe").And.Contain("Walking:");
         // the fire and the meal get their safety / plausibility rules; bodies and motion always
         prompt.Should().Contain("nobody touches the fire, coals or a hot pot").And.Contain("Eating: small slow bites")
             .And.Contain("Anatomy: each person has one head, two arms");
@@ -156,6 +156,67 @@ public class AiStudioUnitTests
         AiStudioPromptEngine.Build(Input()).Should().Contain("Sequence:").And.Contain("Walking:").And.Contain("Common sense:");
         AiStudioService.ParseLogic("""{"scenes":[{"scene":3,"action":"A","rules":["x.","y"]}]}""")[3].Rules.Should().Be("x; y");
         AiStudioService.ParseLogic("không phải json").Should().BeEmpty();
+    }
+
+    [Fact]
+    public void The_mekong_theme_is_strict_local_people_clothes_places_and_vietnamese_writing_only()
+    {
+        // a Chinese reference: a padded coat, a northern courtyard, a chalkboard with hanzi
+        var input = Input() with { Topic = AiStudioTopics.VietnamChildhood };
+        input.Characters.Clear();
+        input.Characters.Add(JsonNode.Parse("""{"id":"C1","label":"girl","age_group":"about 8 years old","clothing":"red padded cotton coat","footwear":"cloth shoes","scenes":[3]}"""));
+        input.Environments.Clear();
+        input.Environments.Add(JsonNode.Parse("""{"id":"E1","location":"northern Chinese brick courtyard","background":"red lanterns","scenes":[3]}"""));
+        var raw = AiStudioPromptEngine.Build(input);
+        // never cut: the country rule and the writing rule; the foreign coat waits for the review
+        raw.Should().Contain("Vietnam: everything is authentically southern Vietnamese (Mekong Delta, 1990s)")
+            .And.Contain("Writing: any visible writing (chalkboard, book, sign, label) is Vietnamese in Latin letters")
+            .And.Contain("Look: Mekong Delta country people of the 1990s in authentic southern Vietnamese clothes (áo bà ba")
+            .And.Contain("Chinese characters, hanzi").And.Contain("padded winter coats").And.NotContain("red padded cotton coat")
+            .And.NotContain("red lanterns").And.NotContain("torii");
+
+        // the review translated the bibles (in place, marked) and wrote this situation's place
+        const string review = """
+            {"characters":[{"id":"C1","clothing":"faded white áo bà ba shirt and black trousers","footwear":"barefoot","hair":"two short black braids"}],
+             "environments":[{"id":"E1","location":"packed-earth yard of a nipa-palm house by a canal","background":"coconut trees and a monkey bridge"}],
+             "scenes":[{"scene":1,"action":"She sweeps the yard.","rules":["the broom stays in both hands"],"setting":"the yard in front of the house, a clay water jar by the door, late afternoon sun"}]}
+            """;
+        var cast = AiStudioService.ApplyLocalized(input.Characters.ToJsonString(), review, "characters", new[] { "clothing", "footwear", "hair" });
+        var places = AiStudioService.ApplyLocalized(input.Environments.ToJsonString(), review, "environments", new[] { "location", "background" });
+        cast.Should().Contain("áo bà ba").And.Contain("\"localized\":true").And.NotContain("padded");
+        places.Should().Contain("nipa-palm house").And.NotContain("Chinese");
+        var local = AiStudioPromptEngine.Build(input with
+        {
+            Characters = JsonNode.Parse(cast)!.AsArray(), Environments = JsonNode.Parse(places)!.AsArray(),
+            ReviewedSetting = AiStudioService.ParseLogic(review)[1].Setting
+        });
+        local.Should().Contain("wearing faded white áo bà ba shirt and black trousers, barefoot")
+            .And.Contain("Setting: packed-earth yard of a nipa-palm house by a canal, a poor 1990s Mekong Delta village in southern Vietnam (miền Tây sông nước), the yard in front of the house, a clay water jar by the door")
+            .And.NotContain("torii").And.NotContain("lanterns").And.NotContain("pine trees");
+        local.Length.Should().BeLessThanOrEqualTo(AiStudioPromptEngine.MaxPromptChars);
+        // a bad answer leaves the bible as it was; no theme → no country rule
+        AiStudioService.ApplyLocalized(input.Characters.ToJsonString(), "rác", "characters", new[] { "clothing" }).Should().Contain("red padded cotton coat");
+        AiStudioPromptEngine.Build(Input()).Should().NotContain("Vietnam:").And.NotContain("Writing:");
+    }
+
+    [Fact]
+    public void The_review_asks_for_local_clothes_and_places_only_in_a_strict_theme()
+    {
+        var p = new NewsStudio.Domain.Entities.AiStudioProject
+        {
+            Title = "Tuổi thơ", Topic = AiStudioTopics.VietnamChildhood,
+            CharacterBibleJson = """[{"id":"C1","label":"boy","clothing":"padded coat","scenes":[1]}]""",
+            EnvironmentBibleJson = """[{"id":"E1","location":"classroom with a chalkboard","scenes":[1]}]"""
+        };
+        var scene = new NewsStudio.Domain.Entities.AiStudioScene { Index = 1, Order = 0, TargetSeconds = 6, Enabled = true, AnalysisJson = """{"summary":"A boy writes on the chalkboard"}""" };
+        var (system, user) = AiStudioService.BuildLogicPrompt(p, new[] { scene });
+        system.Should().Contain("costume designer").And.Contain("nothing foreign is left");
+        user.Should().Contain("Mekong Delta").And.Contain("C1: boy; clothes: padded coat").And.Contain("E1: classroom with a chalkboard")
+            .And.Contain("Scene 1 (6s clip, place E1, cast C1)").And.Contain("\"characters\"").And.Contain("never Chinese characters")
+            .And.Contain("\"setting\"").And.Contain("Say exactly how many people are in frame");
+        var (plainSystem, plainUser) = AiStudioService.BuildLogicPrompt(new NewsStudio.Domain.Entities.AiStudioProject { Title = "x", Topic = AiStudioTopics.AsianBeauty, CharacterBibleJson = p.CharacterBibleJson, EnvironmentBibleJson = "[]" }, new[] { scene });
+        plainSystem.Should().NotContain("costume designer");
+        plainUser.Should().NotContain("\"characters\"").And.Contain("Do not change who the people are");
     }
 
     [Fact]
@@ -237,9 +298,10 @@ public class AiStudioUnitTests
         child.Characters.Clear();
         child.Characters.Add(JsonNode.Parse("""{"id":"C1","label":"boy","age_group":"about 6 years old","apparent_ethnicity":"White","skin_tone":"pale","clothing":"blue sweater","scenes":[3]}"""));
         var memory = AiStudioPromptEngine.Build(child);
-        memory.Should().Contain("Subject: Vietnamese (Southeast Asian) boy about 6 years old, sun-tanned brown skin from working outdoors, wearing blue sweater");
-        memory.Should().NotContain("White").And.NotContain("pale skin");
-        memory.Should().Contain("poor rural Vietnamese village in the 1990s");
+        memory.Should().Contain("Subject: Mekong Delta Vietnamese (Kinh, Southeast Asian) boy about 6 years old, sun-tanned brown skin from working outdoors.");
+        memory.Should().NotContain("blue sweater"); // the reference's clothes wait for the review to make them local
+        memory.Split("Avoid:")[0].Should().NotContain("White").And.NotContain("pale");
+        memory.Should().Contain("a poor 1990s Mekong Delta village in southern Vietnam");
         memory.Should().Contain("nostalgic warm golden afternoon light");
         memory.Should().Contain("smartphones");
 

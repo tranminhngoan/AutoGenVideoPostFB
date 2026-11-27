@@ -62,7 +62,7 @@ function DurationBar({ project: p, setProject }: { project: Project; setProject:
     setReviewing(true);
     try {
       setProject(await aiStudio.reviewLogic(p.id));
-      toast.success('Đã rà soát logic', 'Mỗi cảnh có hành động cụ thể, hợp lý, an toàn và ràng buộc riêng — prompt đã cập nhật (trừ prompt bạn tự sửa).');
+      toast.success('Đã rà soát logic', 'Mỗi cảnh có hành động cụ thể, hợp lý, an toàn, bối cảnh rõ ràng; chủ đề Việt Nam: người, quần áo, nhà cửa, xe cộ, đồ vật, chữ viết đã đổi về chuẩn miền Tây — prompt đã cập nhật (trừ prompt bạn tự sửa).');
     } catch (e) {
       toast.error('Chưa rà soát được', (e as Error).message);
     } finally {
@@ -92,7 +92,7 @@ function DurationBar({ project: p, setProject }: { project: Project; setProject:
       </span>
       <span className="ml-auto flex flex-wrap gap-2">
         <Button size="sm" variant={reviewed < enabled ? 'primary' : 'ghost'} icon={<Sparkles className="h-3.5 w-3.5" />} loading={reviewing} disabled={busy} onClick={review}
-          title="AI đọc hành động từng cảnh và viết lại cho cụ thể, hợp lý, an toàn — chống video phi logic">
+          title="AI đọc từng cảnh và viết lại hành động cho cụ thể, hợp lý, an toàn, bối cảnh rõ ràng; chủ đề Việt Nam thì đổi người, quần áo, nhà cửa, xe cộ, chữ viết về chuẩn miền Tây">
           {reviewed ? 'Rà soát logic lại' : 'Rà soát logic (AI)'}
         </Button>
         {over && (
@@ -328,6 +328,7 @@ function SceneCard({ project: p, scene: s, first, last, open, onToggle, onChange
                 <div className="rounded-lg border border-success/30 bg-success/[0.05] px-3 py-2 text-xs">
                   <div className="mb-0.5 font-semibold text-fg">Đã rà soát logic — clip sẽ diễn ra thế này</div>
                   <p className="text-fg">{s.reviewedAction}</p>
+                  {s.reviewedSetting && <p className="mt-1 text-fg-muted"><b>Bối cảnh:</b> {s.reviewedSetting}</p>}
                   {s.reviewedRules && <p className="mt-1 text-fg-muted"><b>Ràng buộc:</b> {s.reviewedRules}</p>}
                 </div>
               ) : s.enabled && (

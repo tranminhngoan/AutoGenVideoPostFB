@@ -157,6 +157,8 @@ public class AiStudioScene : BaseEntity
     /// </summary>
     public string? ReviewedAction { get; set; }
     public string? ReviewedRules { get; set; }
+    /// <summary>The review's place for this situation (what is in frame, the props it needs), true to the theme.</summary>
+    public string? ReviewedSetting { get; set; }
     /// <summary>The narration read by the narrator voice (AAC) and its length.</summary>
     public Guid? VoiceBlobId { get; set; }
     public double? VoiceSeconds { get; set; }

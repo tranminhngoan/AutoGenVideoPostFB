@@ -26,7 +26,8 @@ public sealed record ScenePromptInput(
     string Topic = "",
     string? Narration = null,
     string? ReviewedAction = null,
-    string? ReviewedRules = null);
+    string? ReviewedRules = null,
+    string? ReviewedSetting = null);
 
 /// <summary>
 /// Cinematic prompt engine for Seedance (deterministic, no AI call, so a prompt can be rebuilt instantly when the user
@@ -57,7 +58,7 @@ public static class AiStudioPromptEngine
     public const double SecondsPerAction = 2.5;
 
     /// <summary>Keeps a prompt under what the model reads well (characters).</summary>
-    public const int MaxPromptChars = 2400;
+    public const int MaxPromptChars = 3000;
 
     private static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
 
@@ -120,23 +121,34 @@ public static class AiStudioPromptEngine
         // the channel's theme: how the people must look, whatever the reference showed
         var hasPeople = cast.Count > 0 || people.Count > 0 || (creative && Clean(v.Character) != null);
         if (topic != null && hasPeople && !(creative && Clean(v.Character) != null)) parts.Add(Sentence($"Look: {topic.Look}"));
+        // a strict theme: the whole picture belongs to its country and era (never cut)
+        if (topic?.LocaleRule != null) parts.Add(Sentence(topic.LocaleRule));
 
         // 3. environment: the analysis + the theme's countryside, rich and the same for every scene of one place
         if (creative && Clean(v.Setting) is { } setting) parts.Add(Sentence($"Setting: {setting}"));
         else
         {
             var bibleEnv = EnvironmentOf(s);
-            var env = DescribeEnvironment(a, bibleEnv);
+            var reviewedSetting = Clean(s.ReviewedSetting);
+            // the review's setting is this situation's place, already true to the theme; the reference's own details are
+            // left out then (in a strict theme they may be foreign — a northern house, a Chinese sign)
+            var refEnv = Obj(a, "environment");
+            var env = reviewedSetting != null ? ""
+                // a strict theme before the review: only the kind of place (below), the weather and the time from the reference
+                : topic?.Locale != null ? Join(", ", Field(refEnv, "weather") ?? Field(bibleEnv, "weather"), Field(refEnv, "time_of_day") ?? Field(bibleEnv, "time_of_day"))
+                : DescribeEnvironment(a, bibleEnv);
+            var place = Field(bibleEnv, "location") ?? (reviewedSetting == null ? Field(Obj(a, "environment"), "location") : null);
             if (RichDetails(topic, a, bibleEnv, s.Index) is { Length: > 0 } rich)
             {
-                // the place, the era, the village's details first — the reference's own small details after (cut first when long)
-                var place = Field(bibleEnv, "location") ?? Field(Obj(a, "environment"), "location");
+                // the place, the era, this situation, the village's details — the reference's own small details last (cut first when long)
                 var era = topic!.SettingHint?.Split(':')[0];
-                env = Join(", ", place, era, rich, env);
+                env = Join(", ", place, era, StripNames(reviewedSetting ?? ""), rich, env);
             }
+            else if (reviewedSetting != null) env = Join(", ", place, StripNames(reviewedSetting), topic?.SettingHint);
             else if (topic?.SettingHint != null) env = Join(", ", env, topic.SettingHint);
             AddIf(parts, env.Length > 0 ? Sentence($"Setting: {env}") : null);
         }
+        if (topic?.WritingRule != null) parts.Add(Sentence(topic.WritingRule));
 
         // 4–5. main action: the logic review's concrete, possible, safe version when there is one; else the analysis'
         //      summary + timed sequence (scaled to the clip length, one action per ~2.5 s at most)
@@ -270,9 +282,11 @@ public static class AiStudioPromptEngine
             var hairText = Field(c, "hair");
             if (hairText != null && !hairText.Contains("hair", StringComparison.OrdinalIgnoreCase) && !hairText.Contains("bald", StringComparison.OrdinalIgnoreCase))
                 hairText = $"{hairText.TrimEnd('.')} hair";
-            var clothes = wardrobeOverride ?? Field(c, "clothing");
-            var feet = Field(c, "footwear");
-            var accessories = Field(c, "accessories");
+            // a strict theme takes the clothes only once the review has made them local; until then the theme's look dresses them
+            var foreign = topic?.Locale != null && !Localized(c);
+            var clothes = wardrobeOverride ?? (foreign ? null : Field(c, "clothing"));
+            var feet = foreign ? null : Field(c, "footwear");
+            var accessories = foreign ? null : Field(c, "accessories");
             if (accessories != null && Regex.IsMatch(accessories, @"^\s*(none|no)\b", RegexOptions.IgnoreCase)) accessories = null;
             // older / edited bibles keep age and build inside "appearance"
             var body = Field(c, "build") ?? (age == null ? Field(c, "appearance") : null);
@@ -289,6 +303,9 @@ public static class AiStudioPromptEngine
         var text = Join(", ", appearance ?? label, hair, clothing != null ? $"wearing {clothing}" : null, acc != null ? $"with {acc}" : null);
         return StripNames(text);
     }
+
+    /// <summary>The review has translated this bible entry into the theme's place and era ("localized": true).</summary>
+    public static bool Localized(JsonObject? o) => o?["localized"] is JsonValue v && v.TryGetValue<bool>(out var b) && b;
 
     private static string DescribeEnvironment(JsonObject analysis, JsonObject? bibleEnv)
     {
@@ -455,12 +472,13 @@ public static class AiStudioPromptEngine
 
     /// <summary>
     /// Fits the prompt under <paramref name="max"/>: the optional sentences go first (composition, depth, body
-    /// mechanics, expression, lighting, look, the mild rules), then the setting and the narration are cut at a comma.
-    /// The subject, the action, the camera and the safety / anatomy / continuity / quality lines are never cut.
+    /// mechanics, expression, lighting, the mild rules), then the setting and the narration are cut at a comma.
+    /// The subject, the look, the theme's country and writing rules, the action, the camera and the safety / anatomy /
+    /// logic / continuity / quality lines are never cut.
     /// </summary>
     private static string Shorten(List<string> parts, int max)
     {
-        var order = new[] { "Composition:", "Body mechanics:", "Expression:", "Lighting:", "Children:", "Animals:", "Water:", "Walking:", "Depth of field:", "Look:" };
+        var order = new[] { "Composition:", "Body mechanics:", "Expression:", "Lighting:", "Children:", "Animals:", "Water:", "Walking:", "Depth of field:" };
         var list = parts.ToList();
         int Length() => string.Join(" ", list).Length;
         foreach (var prefix in order)
