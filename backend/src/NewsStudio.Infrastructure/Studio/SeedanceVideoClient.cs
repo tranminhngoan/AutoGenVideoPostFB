@@ -140,6 +140,13 @@ public class SeedanceVideoClient
         return aspectRatio == "16:9" ? $"{w}x{h}" : $"{h}x{w}";
     }
 
+    /// <summary>
+    /// The resolution as the gateway's Veo provider reads it: the AI SDK maps only the LANDSCAPE sizes ("1280x720" →
+    /// 720p, "1920x1080" → 1080p) and passes any other string to Google unchanged — "720x1280" was refused there with
+    /// "Invalid resolution" (2026-11-27). Portrait or landscape is the separate aspect ratio.
+    /// </summary>
+    public static string RequestResolution(string resolution) => NormalizeResolution(resolution) == "1080p" ? "1920x1080" : "1280x720";
+
     /// <summary>The engine's prompt split into what to show and its trailing "Avoid: …" (Veo's negative prompt).</summary>
     public static (string Prompt, string? Negative) SplitNegative(string prompt)
     {
@@ -220,10 +227,26 @@ public class SeedanceVideoClient
             return new VideoClip(bytes, resumed.Mime, resumeOperation, seconds, 0m);
         }
 
-        var (operation, usedResolution) = await StartAsync(key, prompt, aspectRatio, resolution, seconds, seed, ct, image);
-        if (onStarted != null) await onStarted(operation);
+        var sizes = Sizes(resolution);
+        var size = 0;
+        string operation, usedResolution;
+        JobStatus status;
         var started = DateTime.UtcNow;
-        var status = await WaitAsync(VeoLiteModel, operation, key, ct);
+        while (true)
+        {
+            (operation, usedResolution, size) = await StartAsync(key, prompt, aspectRatio, sizes, size, seconds, seed, ct, image);
+            if (onStarted != null) await onStarted(operation);
+            started = DateTime.UtcNow;
+            status = await WaitAsync(VeoLiteModel, operation, key, ct);
+            // Google refused the size only once the job ran (nothing was made): the next way of writing it
+            if (status.Status != "completed" && (status.Error ?? "").Contains("resolution", StringComparison.OrdinalIgnoreCase) && size + 1 < sizes.Count)
+            {
+                _logger.LogWarning("Veo refused the resolution {Res} while running: {Error} — sending again", sizes[size].Value, status.Error);
+                size++;
+                continue;
+            }
+            break;
+        }
         if (status.Status != "completed")
         {
             var reason = status.Error ?? status.Status;
@@ -303,14 +326,20 @@ public class SeedanceVideoClient
     /// the frame size as "720p" / "1080p", then none; children allowed → adults only → the provider's default; the
     /// top-level sound switch, the seed, the separate negative prompt. 1080p refused for the clip length → 720p.
     /// </summary>
-    private async Task<(string Operation, string Resolution)> StartAsync(string key, string prompt, string aspectRatio, string resolution, int seconds, int? seed,
-        CancellationToken ct, VideoStartImage? image = null)
+    /// <summary>The ways of writing the resolution, tried in order: "1280x720" (what the SDK maps), "720p", 720p for a refused 1080p, none.</summary>
+    public static List<(string? Value, string Res)> Sizes(string resolution)
     {
-        var sizes = new List<(string? Value, string Res)> { (FrameSize(aspectRatio, resolution), resolution), (resolution, resolution) };
-        if (resolution != "720p") sizes.Add((FrameSize(aspectRatio, "720p"), "720p"));
+        resolution = NormalizeResolution(resolution);
+        var sizes = new List<(string? Value, string Res)> { (RequestResolution(resolution), resolution), (resolution, resolution) };
+        if (resolution != "720p") sizes.Add((RequestResolution("720p"), "720p"));
         sizes.Add((null, "720p"));
-        var size = 0;
-        var options = new StartOptions(sizes[0].Value);
+        return sizes;
+    }
+
+    private async Task<(string Operation, string Resolution, int Size)> StartAsync(string key, string prompt, string aspectRatio,
+        List<(string? Value, string Res)> sizes, int size, int seconds, int? seed, CancellationToken ct, VideoStartImage? image = null)
+    {
+        var options = new StartOptions(sizes[size].Value);
         for (var attempt = 1; ; attempt++)
         {
             try
@@ -320,7 +349,7 @@ public class SeedanceVideoClient
                 using var doc = JsonDocument.Parse(text);
                 if (!doc.RootElement.TryGetProperty("operation", out var op) || op.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
                     throw new InvalidOperationException("Vercel không trả về mã job video.");
-                return (op.GetRawText(), sizes[size].Res);
+                return (op.GetRawText(), sizes[size].Res, size);
             }
             catch (VideoRejectedException ex) when (attempt < 10)
             {

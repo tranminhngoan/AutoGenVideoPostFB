@@ -117,7 +117,32 @@ public class StudioTests
         gw.Polls.Enqueue("""{"status":"completed","videos":[{"type":"base64","data":"__VIDEO__"}]}""");
         var clip = await Client(gw).GenerateAsync(SeedanceVideoClient.ProModel, "p", "9:16", "1080p", 5, null, CancellationToken.None);
         clip.Video.Should().Equal(FakeGateway.VideoBytes);
-        gw.StartResolutions.Should().Equal("1080x1920", "1080p"); // WxH refused (not billed) → "1080p" accepted
+        gw.StartResolutions.Should().Equal("1920x1080", "1080p"); // WxH refused (not billed) → "1080p" accepted
+    }
+
+    [Fact]
+    public async Task A_portrait_clip_asks_for_the_landscape_size_name_and_a_size_refused_while_running_is_sent_again()
+    {
+        // the SDK maps only "1280x720" / "1920x1080"; "720x1280" reached Google unchanged and failed (2026-11-27)
+        SeedanceVideoClient.RequestResolution("720p").Should().Be("1280x720");
+        SeedanceVideoClient.RequestResolution("1080p").Should().Be("1920x1080");
+        SeedanceVideoClient.Sizes("720p").Select(x => x.Value).Should().Equal("1280x720", "720p", null);
+        var gw = new FakeGateway();
+        gw.Polls.Enqueue("""{"status":"error","error":"Invalid resolution: 1280x720"}""");
+        gw.Polls.Enqueue("""{"status":"completed","videos":[{"type":"base64","data":"__VIDEO__"}]}""");
+        var started = new List<string>();
+        var clip = await Client(gw).GenerateAsync(SeedanceVideoClient.VeoLiteModel, "p", "9:16", "720p", 6, null, CancellationToken.None,
+            onStarted: op => { started.Add(op); return Task.CompletedTask; });
+        clip.Video.Should().Equal(FakeGateway.VideoBytes);
+        gw.StartResolutions.Should().Equal("1280x720", "720p");
+        gw.StartBody!["aspectRatio"]!.GetValue<string>().Should().Be("9:16");
+        started.Should().HaveCount(2); // each job id stored the moment it is accepted
+        // an error that is not about the size is not sent again
+        var other = new FakeGateway();
+        other.Polls.Enqueue("""{"status":"error","error":"internal failure"}""");
+        var act = () => Client(other).GenerateAsync(SeedanceVideoClient.VeoLiteModel, "p", "9:16", "720p", 6, null, CancellationToken.None);
+        await act.Should().ThrowAsync<InvalidOperationException>();
+        other.StartResolutions.Should().HaveCount(1);
     }
 
     [Fact]
