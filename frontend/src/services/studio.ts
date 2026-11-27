@@ -1,4 +1,4 @@
-/* AI video studio API client (Seedance text-to-video + TTS). Writes need the X-Studio-Key header (the server's Vercel AI Gateway or Gemini key), asked once and kept
+/* AI video studio API client (Google Veo text-to-video + TTS). Writes need the X-Studio-Key header (the server's Vercel AI Gateway or Gemini key), asked once and kept
    only in this browser's localStorage. Media URLs (images, music, clips, final video) need no key. */
 
 const BASE = '/api/studio';

@@ -48,8 +48,8 @@ public class StudioVideo : BaseEntity
     public string Resolution { get; set; } = "720p";
     public string? StyleNotes { get; set; }
     public string AssetIdsJson { get; set; } = "[]"; // unused since text-to-video (kept for old rows)
-    /// <summary>Video model id (Vercel AI Gateway), e.g. bytedance/seedance-v1.0-pro-fast.</summary>
-    public string VideoModel { get; set; } = "bytedance/seedance-v1.0-pro-fast";
+    /// <summary>Video model id (Vercel AI Gateway): google/veo-3.1-lite-generate-001 (older videos may still say a Seedance id).</summary>
+    public string VideoModel { get; set; } = "google/veo-3.1-lite-generate-001";
     /// <summary>
     /// Character / location bible written by the planner and editable by the user: fixed English looks reused in every
     /// shot prompt (text-to-video has no reference images) and each character's TTS voice. JSON.
@@ -86,7 +86,7 @@ public class StudioVideo : BaseEntity
     public ICollection<StudioShot> Shots { get; set; } = new List<StudioShot>();
 }
 
-/// <summary>One generated clip (2–12 s) of a video, with its spoken line read by TTS.</summary>
+/// <summary>One generated clip (4, 6 or 8 s) of a video, with its spoken line read by TTS.</summary>
 public class StudioShot : BaseEntity
 {
     public Guid StudioVideoId { get; set; }

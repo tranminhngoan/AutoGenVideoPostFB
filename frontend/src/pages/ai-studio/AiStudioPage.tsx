@@ -96,12 +96,12 @@ function Hero({ overview: o }: { overview: Overview | null }) {
       <div className="relative flex flex-col gap-4 p-5 sm:flex-row sm:items-end sm:justify-between sm:p-6">
         <div className="max-w-2xl">
           <div className="inline-flex items-center gap-1.5 rounded-full border border-line bg-surface/80 px-2.5 py-1 text-[11px] font-medium text-fg-muted backdrop-blur">
-            <Sparkles className="h-3.5 w-3.5 text-accent" /> Video → phân tích → prompt → Seedance
+            <Sparkles className="h-3.5 w-3.5 text-accent" /> Video → phân tích → prompt → Veo
           </div>
           <h1 className="mt-3 text-2xl font-semibold tracking-tight text-fg sm:text-[28px]">AI Video Studio</h1>
           <p className="mt-1.5 text-[13px] leading-relaxed text-fg-muted sm:text-sm">
             Tải video tham chiếu lên, AI trên máy tính của bạn (miễn phí, không gửi video ra ngoài) đọc từng cảnh, hành động, máy quay, ánh sáng, màu —
-            rồi viết prompt điện ảnh để Seedance tạo video mới ngay tại đây.
+            rồi viết prompt điện ảnh để Google Veo tạo video mới ngay tại đây.
           </p>
         </div>
         <div className="grid grid-cols-2 gap-2 sm:w-[360px]">
@@ -112,7 +112,7 @@ function Hero({ overview: o }: { overview: Overview | null }) {
             value={o?.engine.tokensPerSecond?.['4b'] ? `${o.engine.tokensPerSecond['4b']} token/s` : '—'} />
           <Pill icon={<Wallet className="h-4 w-4" />} label="Đã chi tháng này"
             value={o ? `${usd(o.budget.monthSpentUsd, 2)}${o.budget.monthlyBudgetUsd > 0 ? ` / ${usd(o.budget.monthlyBudgetUsd, 0)}` : ''}` : '—'} />
-          <Pill icon={<Film className="h-4 w-4" />} label="Seedance" value={o ? (o.seedanceConfigured ? 'Đã kết nối' : 'Chưa có khoá') : '…'}
+          <Pill icon={<Film className="h-4 w-4" />} label="Veo" value={o ? (o.seedanceConfigured ? 'Đã kết nối' : 'Chưa có khoá') : '…'}
             tone={o && !o.seedanceConfigured ? 'text-warning' : 'text-fg'} />
         </div>
       </div>

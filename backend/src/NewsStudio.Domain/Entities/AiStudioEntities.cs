@@ -4,7 +4,7 @@ namespace NewsStudio.Domain.Entities;
 
 /// <summary>
 /// AI Video Studio: a reference video analysed on the owner's PC (local AI, no paid analysis), turned into per-scene
-/// prompts and regenerated as new clips with Seedance. The app has a single owner (no tenants): access to writes is the
+/// prompts and regenerated as new clips with Google Veo. The app has a single owner (no tenants): access to writes is the
 /// studio key, like the rest of the studio.
 /// </summary>
 public class AiStudioProject : BaseEntity
@@ -72,7 +72,7 @@ public class AiStudioProject : BaseEntity
     public string NegativePrompt { get; set; } = string.Empty;
 
     // ── generator ──
-    public string VideoModel { get; set; } = "bytedance/seedance-v1.0-pro-fast";
+    public string VideoModel { get; set; } = "google/veo-3.1-lite-generate-001";
     public string Resolution { get; set; } = "720p";
     public string GenAspectRatio { get; set; } = "9:16";
     /// <summary>Same seed for every clip (null = random per clip).</summary>
@@ -132,7 +132,7 @@ public class AiStudioScene : BaseEntity
     /// <summary>Continues the previous scene without a cut (a long shot split into clips).</summary>
     public bool IsContinuation { get; set; }
     public bool Enabled { get; set; } = true;
-    /// <summary>Length of the clip to generate (2–12 s).</summary>
+    /// <summary>Length of the clip to generate (4, 6 or 8 s — what Veo makes).</summary>
     public int TargetSeconds { get; set; } = 5;
     public Guid? ThumbBlobId { get; set; }
     /// <summary>Keyframes: [{t, reason, blobId}] (JSON).</summary>
@@ -147,7 +147,7 @@ public class AiStudioScene : BaseEntity
 
     /// <summary>What the narration says in this scene (speech recognised in the reference, editable): read again by TTS.</summary>
     public string? Narration { get; set; }
-    /// <summary>Its English meaning (local model), used as story context in the Seedance prompt.</summary>
+    /// <summary>Its English meaning (local model), used as story context in the video prompt.</summary>
     public string? NarrationEn { get; set; }
     /// <summary>The user rewrote the narration (the English meaning is then not used: the prompt quotes their words).</summary>
     public bool NarrationEdited { get; set; }
@@ -165,7 +165,7 @@ public class AiStudioScene : BaseEntity
     /// <summary>Text + voice + style the take was read with: another key means the take is out of date.</summary>
     public string? VoiceKey { get; set; }
 
-    /// <summary>The prompt sent to Seedance (latest version).</summary>
+    /// <summary>The prompt sent to the video model (Veo) (latest version).</summary>
     public string Prompt { get; set; } = string.Empty;
     public int PromptVersion { get; set; }
     /// <summary>The user wrote this prompt by hand: the engine does not overwrite it when settings change.</summary>
@@ -184,7 +184,7 @@ public class AiStudioPromptVersion : BaseEntity
     public string Mode { get; set; } = "Faithful";
 }
 
-/// <summary>One Seedance clip generated for a scene (a scene can have many: retries, other settings).</summary>
+/// <summary>One video clip generated for a scene (a scene can have many: retries, other settings).</summary>
 public class AiStudioGeneration : BaseEntity
 {
     public Guid ProjectId { get; set; }

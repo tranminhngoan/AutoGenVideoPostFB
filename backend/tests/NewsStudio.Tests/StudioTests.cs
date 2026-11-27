@@ -9,31 +9,54 @@ using Xunit;
 
 namespace NewsStudio.Tests;
 
-/// <summary>AI video studio: Seedance (Vercel AI Gateway) calls, the character bible, planning, prompts, voices and FFmpeg work.</summary>
+/// <summary>AI video studio: Veo (Vercel AI Gateway) calls, the character bible, planning, prompts, voices and FFmpeg work.</summary>
 public class StudioTests
 {
-    // ───────────── Seedance through the Vercel AI Gateway ─────────────
+    // ───────────── Google Veo 3.1 Lite through the Vercel AI Gateway ─────────────
 
     [Fact]
-    public void Start_body_is_text_to_video_without_watermark()
+    public void Start_body_is_silent_veo_with_the_avoid_list_as_negative_prompt()
     {
-        var body = SeedanceVideoClient.BuildStartBody("A judge slams the table", "9:16", "720x1280", 30, 1234);
-        body["prompt"]!.GetValue<string>().Should().Be("A judge slams the table");
+        var body = SeedanceVideoClient.BuildStartBody("A judge slams the table. Avoid: extra fingers, on-screen text.", "9:16", "720x1280", 30, 1234);
+        body["prompt"]!.GetValue<string>().Should().Be("A judge slams the table.");
         body["n"]!.GetValue<int>().Should().Be(1);
         body["aspectRatio"]!.GetValue<string>().Should().Be("9:16");
-        body["duration"]!.GetValue<int>().Should().Be(12); // Seedance max
+        body["duration"]!.GetValue<int>().Should().Be(8); // Veo max
         body["resolution"]!.GetValue<string>().Should().Be("720x1280");
         body["seed"]!.GetValue<int>().Should().Be(1234);
-        body["providerOptions"]!["bytedance"]!["watermark"]!.GetValue<bool>().Should().BeFalse();
+        body["generateAudio"]!.GetValue<bool>().Should().BeFalse(); // the studios add their own sound (and silent is cheaper)
+        var vertex = body["providerOptions"]!["vertex"]!;
+        vertex["generateAudio"]!.GetValue<bool>().Should().BeFalse();
+        vertex["negativePrompt"]!.GetValue<string>().Should().Be("extra fingers, on-screen text");
+        vertex["personGeneration"]!.GetValue<string>().Should().Be("allow_all"); // the childhood videos need children
         body.ContainsKey("image").Should().BeFalse();
         SeedanceVideoClient.BuildStartBody("x", "16:9", null, 1, null).ContainsKey("resolution").Should().BeFalse();
+        SeedanceVideoClient.BuildStartBody("x", "16:9", null, 1, null)["providerOptions"]!["vertex"]!.AsObject().ContainsKey("negativePrompt").Should().BeFalse();
     }
+
+    [Theory]
+    [InlineData(1, 4)]
+    [InlineData(4, 4)]
+    [InlineData(5, 6)]
+    [InlineData(6, 6)]
+    [InlineData(7, 8)]
+    [InlineData(12, 8)]
+    public void Clips_are_4_6_or_8_seconds_rounded_up(int wanted, int made) => SeedanceVideoClient.ClampSeconds(wanted).Should().Be(made);
+
+    [Theory]
+    [InlineData(2.3, 4)]
+    [InlineData(4.9, 4)]
+    [InlineData(5.0, 6)]
+    [InlineData(6.8, 6)]
+    [InlineData(7.0, 8)]
+    [InlineData(11.0, 8)]
+    public void A_measured_scene_gets_the_nearest_clip_length(double seconds, int made) => SeedanceVideoClient.NearestSeconds(seconds).Should().Be(made);
 
     [Theory]
     [InlineData("9:16", "720p", "720x1280")]
     [InlineData("16:9", "1080p", "1920x1080")]
-    [InlineData("9:16", "480p", "480x864")]
-    public void Seedance_frame_sizes(string aspect, string res, string expected) =>
+    [InlineData("9:16", "480p", "720x1280")] // no 480p on Veo
+    public void Veo_frame_sizes(string aspect, string res, string expected) =>
         SeedanceVideoClient.FrameSize(aspect, res).Should().Be(expected);
 
     [Theory]
@@ -54,11 +77,14 @@ public class StudioTests
     public void Prices_follow_model_and_resolution()
     {
         var client = Client(new FakeGateway());
-        client.EstimateCost(SeedanceVideoClient.FastModel, "480p", 10).Should().Be(0.097m);
-        client.EstimateCost(SeedanceVideoClient.ProModel, "480p", 10).Should().Be(0.20m);
-        client.PricePerSecond(SeedanceVideoClient.FastModel, "1080p").Should().BeGreaterThan(client.PricePerSecond(SeedanceVideoClient.FastModel, "720p"));
-        client.Models().Select(m => m.Id).Should().Equal(SeedanceVideoClient.FastModel, SeedanceVideoClient.ProModel);
-        SeedanceVideoClient.NormalizeModel("grok-imagine-video-1.5-lite").Should().Be(SeedanceVideoClient.FastModel);
+        client.EstimateCost(SeedanceVideoClient.VeoLiteModel, "720p", 8).Should().Be(0.24m); // $0.03/s
+        client.EstimateCost(SeedanceVideoClient.VeoLiteModel, "720p", 5).Should().Be(0.18m); // a 5 s scene is a 6 s clip
+        client.EstimateCost(SeedanceVideoClient.VeoLiteModel, "1080p", 8).Should().Be(0.40m);
+        client.Models().Select(m => m.Id).Should().Equal(SeedanceVideoClient.VeoLiteModel);
+        // every page and every older video / project (Seedance ids) now makes its clips with Veo
+        SeedanceVideoClient.NormalizeModel(SeedanceVideoClient.FastModel).Should().Be(SeedanceVideoClient.VeoLiteModel);
+        SeedanceVideoClient.NormalizeModel(null).Should().Be(SeedanceVideoClient.VeoLiteModel);
+        SeedanceVideoClient.Resolutions.Should().Equal("720p", "1080p");
     }
 
     [Fact]
@@ -73,11 +99,12 @@ public class StudioTests
             onStarted: op => { stored = op; return Task.CompletedTask; });
 
         clip.Video.Should().Equal(FakeGateway.VideoBytes);
-        clip.CostUsd.Should().Be(Math.Round(6 * 0.0216m, 4));
+        clip.CostUsd.Should().Be(Math.Round(6 * 0.03m, 4));
+        clip.HadAudio.Should().BeFalse();
         stored.Should().Be("""{"id":"op1"}"""); // kept on the shot the moment the job is paid for
         gw.Starts.Should().Be(1);
         gw.Headers["authorization"].Should().Be("Bearer test-gateway-key");
-        gw.Headers["ai-model-id"].Should().Be(SeedanceVideoClient.FastModel);
+        gw.Headers["ai-model-id"].Should().Be(SeedanceVideoClient.VeoLiteModel); // whatever the old video said
         gw.Headers["ai-video-model-specification-version"].Should().Be("4");
         gw.Headers["ai-gateway-protocol-version"].Should().Be("0.0.1");
         gw.StartBody!["seed"]!.GetValue<int>().Should().Be(42);
@@ -91,6 +118,41 @@ public class StudioTests
         var clip = await Client(gw).GenerateAsync(SeedanceVideoClient.ProModel, "p", "9:16", "1080p", 5, null, CancellationToken.None);
         clip.Video.Should().Equal(FakeGateway.VideoBytes);
         gw.StartResolutions.Should().Equal("1080x1920", "1080p"); // WxH refused (not billed) → "1080p" accepted
+    }
+
+    [Fact]
+    public async Task Refused_parameters_are_dropped_one_by_one_without_paying()
+    {
+        // children refused → adults only; the top-level sound switch unknown → only the vertex one
+        var gw = new FakeGateway { RefusePeople = true, RefuseTopLevelAudio = true };
+        gw.Polls.Enqueue("""{"status":"completed","videos":[{"type":"base64","data":"__VIDEO__"}]}""");
+        var clip = await Client(gw).GenerateAsync(SeedanceVideoClient.VeoLiteModel, "p", "9:16", "720p", 6, null, CancellationToken.None);
+        clip.Video.Should().Equal(FakeGateway.VideoBytes);
+        gw.Starts.Should().Be(1);
+        gw.StartBody!["providerOptions"]!["vertex"]!["personGeneration"]!.GetValue<string>().Should().Be("allow_adult");
+        gw.StartBody.ContainsKey("generateAudio").Should().BeFalse();
+        gw.StartBody["providerOptions"]!["vertex"]!["generateAudio"]!.GetValue<bool>().Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task A_clip_removed_by_the_safety_filter_is_a_rejection_not_a_lost_download()
+    {
+        var gw = new FakeGateway();
+        gw.Polls.Enqueue("""{"status":"completed","videos":[]}""");
+        var act = () => Client(gw).GenerateAsync(SeedanceVideoClient.VeoLiteModel, "p", "9:16", "720p", 4, null, CancellationToken.None);
+        (await act.Should().ThrowAsync<VideoRejectedException>()).Which.Message.Should().Contain("bộ lọc an toàn");
+        var refused = new FakeGateway { StartStatus = 400, StartErrorType = "invalid_request_error", StartError = "The prompt violates Vertex AI's usage guidelines" };
+        var act2 = () => Client(refused).GenerateAsync(SeedanceVideoClient.VeoLiteModel, "p", "9:16", "720p", 4, null, CancellationToken.None);
+        (await act2.Should().ThrowAsync<VideoRejectedException>()).Which.Message.Should().Contain("bộ lọc an toàn");
+    }
+
+    [Fact]
+    public void A_sound_track_is_found_in_the_mp4_handler_box()
+    {
+        byte[] Box(string handler) => new byte[] { 0, 0, 0, 33 }.Concat("hdlr"u8.ToArray()).Concat(new byte[8]).Concat(System.Text.Encoding.ASCII.GetBytes(handler)).Concat(new byte[13]).ToArray();
+        SeedanceVideoClient.HasAudioTrack(Box("vide")).Should().BeFalse();
+        SeedanceVideoClient.HasAudioTrack(Box("vide").Concat(Box("soun")).ToArray()).Should().BeTrue();
+        SeedanceVideoClient.HasAudioTrack(FakeGateway.VideoBytes).Should().BeFalse();
     }
 
     [Fact]
@@ -166,6 +228,8 @@ public class StudioTests
         public string StartErrorType { get; set; } = "internal_server_error";
         public string StartError { get; set; } = "busy";
         public bool RefuseFrameSizeResolution { get; set; }
+        public bool RefusePeople { get; set; }
+        public bool RefuseTopLevelAudio { get; set; }
         public List<string?> StartResolutions { get; } = new();
         public JsonObject? StartBody { get; private set; }
         public Dictionary<string, string> Headers { get; } = new(StringComparer.OrdinalIgnoreCase);
@@ -184,6 +248,10 @@ public class StudioTests
                 if (StartStatus != 200) return Error(StartStatus, StartErrorType, StartError);
                 if (RefuseFrameSizeResolution && res != null && res.Contains('x'))
                     return Error(400, "invalid_request_error", "Unsupported resolution for this model");
+                if (RefusePeople && body["providerOptions"]?["vertex"]?["personGeneration"]?.GetValue<string>() == "allow_all")
+                    return Error(400, "invalid_request_error", "personGeneration allow_all is not available for this project");
+                if (RefuseTopLevelAudio && body.ContainsKey("generateAudio"))
+                    return Error(400, "invalid_request_error", "Unrecognized key: generateAudio");
                 Starts++;
                 StartBody = body;
                 return Json("""{"operation":{"id":"op1"}}""");
@@ -400,10 +468,11 @@ public class StudioTests
     }
 
     [Theory]
-    [InlineData(11.4, true, 12)]   // the real case: 11.4 s at -8 % — starts at 0.25 s, still fits a 12 s clip
-    [InlineData(11.6, true, 12)]
-    [InlineData(11.7, false, 12)]
-    [InlineData(4.2, true, 5)]     // short line: planned 3 s grows to fit line + breath
+    [InlineData(7.4, true, 8)]     // starts at 0.25 s, still fits an 8 s clip (Veo's longest)
+    [InlineData(7.6, true, 8)]
+    [InlineData(7.7, false, 8)]
+    [InlineData(4.2, true, 6)]     // short line: planned 3 s grows to fit line + breath (5 s → Veo's 6 s)
+    [InlineData(2.0, true, 4)]     // Veo's shortest clip
     public void A_line_fits_one_clip_up_to_the_last_breath(double voice, bool fits, int clip)
     {
         StudioService.FitsOneClip(voice).Should().Be(fits);
@@ -581,13 +650,15 @@ public class StudioTests
         var d = StudioService.FitSceneTake(new[] { (10, 4, false), (20, 6, false), (10, 4, false) }, 13);
         d.Should().Equal(4, 6, 4);                          // words end at 3.5 → 4, 10 → 10; 13.25 + breath → 14
         d.Sum().Should().BeGreaterThanOrEqualTo(14);        // the whole take plays inside the scene
-        d.Should().OnlyContain(x => x >= 2 && x <= 12);
+        d.Should().OnlyContain(x => SeedanceVideoClient.AllowedSeconds.Contains(x));
 
-        // a shot that already has its clip keeps its length; a silent closing beat keeps its own
-        StudioService.FitSceneTake(new[] { (10, 8, true), (10, 4, false), (0, 5, false) }, 9).Should().Equal(8, 2, 5);
+        // a shot that already has its clip keeps its length; the others become Veo lengths (2 → 4, a 5 s beat → 6)
+        StudioService.FitSceneTake(new[] { (10, 8, true), (10, 4, false), (0, 5, false) }, 9).Should().Equal(8, 4, 6);
 
-        // the real case (BCN-03, scene 2): one shot, 11.6 s read slowly — fits one 12 s clip like a single line does
-        StudioService.FitSceneTake(new[] { (26, 9, false) }, 11.6).Should().Equal(12);
+        // one shot read in 7.2 s fits one 8 s clip like a single line does; 11.6 s no longer does (Veo makes 8 s at most)
+        StudioService.FitSceneTake(new[] { (18, 6, false) }, 7.2).Should().Equal(8);
+        var tooLongForOne = () => StudioService.FitSceneTake(new[] { (26, 8, false) }, 11.6);
+        tooLongForOne.Should().Throw<InvalidOperationException>();
 
         // clips already made: a 9.68 s take only has to end inside the 10 s clip (BCN-03 scene 4 got a needless extra shot)
         StudioService.FitSceneTake(new[] { (20, 10, true) }, 9.68, 0.3).Should().Equal(10);
@@ -672,7 +743,7 @@ public class StudioTests
         plan.Shots[0].Cast.Should().Equal("Bao Công");                                   // canonical name; stranger + narrator dropped
         plan.Shots[0].Location.Should().Be("Công đường");
         plan.Shots[0].Duration.Should().Be(6);                                           // 14 words → 6 s, not 3
-        plan.Shots[1].Duration.Should().Be(12);                                          // Seedance max
+        plan.Shots[1].Duration.Should().Be(8);                                           // Veo max
         plan.Shots[1].Speaker.Should().BeNull();
     }
 
@@ -689,7 +760,7 @@ public class StudioTests
         var (system, user) = StudioService.BuildPlanPrompt(new StudioVideo { Script = "Bao Công: Án mạng à?", TargetDurationSeconds = 180 }, new List<StudioMusicTrack>());
         system.Should().Contain("TEXT-TO-VIDEO").And.Contain("KHÔNG có tiếng");
         user.Should().Contain("gemini:Charon").And.Contain("\"characters\"").And.Contain("\"locations\"").And.Contain("\"cast\"");
-        user.Should().Contain("KHÔNG thêm shot độn").And.Contain("số nguyên 2–12").And.NotContain("180");
+        user.Should().Contain("KHÔNG thêm shot độn").And.Contain("CHỈ 4, 6 hoặc 8").And.NotContain("180");
     }
 
     [Fact]

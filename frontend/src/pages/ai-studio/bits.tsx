@@ -23,7 +23,7 @@ const PROJECT_STATUS: Record<ProjectStatus, { label: string; tone: Tone; pulse?:
 
 const GEN_STATUS: Record<GenStatus, { label: string; tone: Tone; pulse?: boolean }> = {
   Queued: { label: 'Chờ gửi', tone: 'info', pulse: true },
-  Generating: { label: 'Seedance đang tạo', tone: 'info', pulse: true },
+  Generating: { label: 'Veo đang tạo', tone: 'info', pulse: true },
   Recovering: { label: 'Đang lấy lại', tone: 'info', pulse: true },
   Done: { label: 'Xong', tone: 'success' },
   Failed: { label: 'Lỗi', tone: 'danger' },

@@ -10,7 +10,7 @@ namespace NewsStudio.Infrastructure.Studio;
 
 /// <summary>
 /// Sound effects for a shot: ElevenLabs Sound Effects v2 through the Vercel AI Gateway — the same key and credit as the
-/// Seedance clips, no other account. It turns the shot's sound notes (the script's own "âm thanh" lines, translated to
+/// Veo clips, no other account. It turns the shot's sound notes (the script's own "âm thanh" lines, translated to
 /// English when the script is imported) into an effects track exactly as long as the clip: rain on banana leaves, a
 /// crackling wood stove, frogs at dusk, footsteps on a dirt road… The AI SDK sends sound effects through the gateway's
 /// speech endpoint: POST {base}/speech-model with { text, outputFormat, providerOptions.elevenlabs.durationSeconds },

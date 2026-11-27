@@ -30,7 +30,7 @@ public sealed record ScenePromptInput(
     string? ReviewedSetting = null);
 
 /// <summary>
-/// Cinematic prompt engine for Seedance (deterministic, no AI call, so a prompt can be rebuilt instantly when the user
+/// Cinematic prompt engine for the video model (Google Veo; deterministic, no AI call, so a prompt can be rebuilt instantly when the user
 /// changes the mode or a bible). It writes, in order: subject, character appearance, environment, main action, timed
 /// action sequence, body mechanics, facial expression, camera angle / movement, composition, lighting, colour, depth
 /// of field, physical realism, motion continuity, visual quality and the constraints. Only facts of the analysis are
@@ -38,7 +38,7 @@ public sealed record ScenePromptInput(
 /// Faithful (A) — keeps subject, actions, order, emotion, rhythm and layout, described in new words;
 /// Creative (B) — the same actions with the user's chosen character / wardrobe / setting / camera / lighting / style;
 /// Cinematic (C) — the same content with upgraded camera language, lighting, grade, depth and photorealism.
-/// Seedance has no separate negative prompt, so the constraints end the prompt as "Avoid: …".
+/// The constraints end the prompt as "Avoid: …"; the video client sends that part as Veo's own negative prompt.
 /// </summary>
 public static class AiStudioPromptEngine
 {
@@ -227,7 +227,7 @@ public static class AiStudioPromptEngine
             ? "Quality: photorealistic cinematic live-action footage, high detail, fine skin and fabric texture, sharp and stable, no artifacts"
             : "Quality: photorealistic live-action footage, natural detail, sharp and stable, no artifacts"));
 
-        // 17. constraints (Seedance has no negative prompt field)
+        // 17. constraints (sent as Veo's negative prompt by the video client)
         var negative = Join(", ", Clean(s.NegativePrompt) ?? DefaultNegative, AlwaysAvoid, topic?.Avoid);
         var prompt = string.Join(" ", parts);
         var avoid = $" Avoid: {negative.TrimEnd('.')}.";

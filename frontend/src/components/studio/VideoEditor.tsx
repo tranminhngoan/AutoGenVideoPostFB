@@ -75,12 +75,13 @@ export const secondsToSay = (line?: string | null) =>
 export const fmtDuration = (s: number) => (s >= 60 ? `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}` : `${Math.round(s)}s`);
 
 const RESOLUTION_LABEL: Record<string, string> = {
-  '480p': '480p (xem thử, rẻ nhất)',
   '720p': '720p (khuyên dùng)',
   '1080p': '1080p (nét nhất, đắt nhất)',
 };
-/** Seedance 1.0 makes clips of 2–12 s. */
-const clampSecs = (n: number) => Math.min(12, Math.max(2, n || 0));
+/** Google Veo 3.1 Lite makes clips of 4, 6 or 8 s (a length in between is rounded up, as the server does). */
+const VEO_MODEL = 'google/veo-3.1-lite-generate-001';
+const CLIP_SECONDS = [4, 6, 8];
+const clampSecs = (n: number) => { const x = Math.round(n || 0); return x <= 4 ? 4 : x >= 8 ? 8 : Math.ceil(x / 2) * 2; };
 const NARRATOR = 'Lời dẫn';
 const isNarrator = (name?: string | null) => !name?.trim() || ['lời dẫn', 'người dẫn chuyện', 'dẫn chuyện', 'narrator'].includes(name.trim().toLowerCase());
 
@@ -159,9 +160,9 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
   const loadImport = (s: StudioScriptImport) => {
     const n = narratorFor(s.mood);
     setImporting(s);
-    setImportLength(estimateImport(s).seconds > 70 ? 60 : 0); // default: a ~1 minute video (under 2 USD at Pro Fast 720p)
-    // recommended for realism within the budget: Seedance Pro Fast at 720p
-    setForm((f) => ({ ...f, videoModel: 'bytedance/seedance-v1.0-pro-fast', resolution: '720p' }));
+    setImportLength(estimateImport(s).seconds > 70 ? 60 : 0); // default: a ~1 minute video (well under 2 USD at Veo 720p)
+    // within the budget: Veo 3.1 Lite at 720p ($0.03 a second)
+    setForm((f) => ({ ...f, videoModel: VEO_MODEL, resolution: '720p' }));
     setNarratorVoice(settings?.defaultNarratorVoice || n.voice);
     setNarratorSpeed(settings?.defaultNarratorVoice ? '+0%' : n.speed);
     // the page used last time (the anti-reupload watermark carries its name)
@@ -235,7 +236,7 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
         setPages(p.filter((x) => x.isActive));
         setMusic(m);
         setSettings(st);
-        setForm((f) => ({ ...f, videoModel: f.videoModel || 'bytedance/seedance-v1.0-pro-fast' }));
+        setForm((f) => ({ ...f, videoModel: VEO_MODEL })); // every clip is made by Veo now, whatever the video stored
         // a script opened before the settings arrived still gets the channel's narrator
         if (st.defaultNarratorVoice) {
           setNarratorVoice((cur) => (cur === 'gemini:Charon' || cur === 'gemini:Sulafat' ? st.defaultNarratorVoice! : cur));
@@ -664,7 +665,7 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
               ))}
             </ol>
             <p className="text-[11px] text-fg-subtle">
-              Mỗi phân cảnh dùng đúng prompt tiếng Anh của kịch bản, chia thành các clip ≤ 12s với góc máy khác nhau; lời bình (kèm hook và lời kết)
+              Mỗi phân cảnh dùng đúng prompt tiếng Anh của kịch bản, chia thành các clip 4–8s (Veo) với góc máy khác nhau; lời bình (kèm hook và lời kết)
               đọc bằng giọng AI theo cảm xúc; mô tả âm thanh của kịch bản được dịch sang tiếng Anh để AI tạo đúng tiếng động đó; nhạc nền AI chọn hợp tâm trạng.
             </p>
             <Field label={`Độ dài video (kịch bản gốc khoảng ${fmtDuration(fullImportSeconds)})`}
@@ -728,11 +729,9 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
               ))}
             </Select>
           </Field>
-          <Field label="Độ phân giải clip" hint={form.resolution === '480p'
-            ? `⚠ ${usd(perSecond, 4)}/giây — rẻ nhưng hình mờ, dễ bệt như tranh vẽ. Nên dùng Pro Fast 720p (${usd(rateOf('bytedance/seedance-v1.0-pro-fast', '720p'), 4)}/giây): video ~1 phút 15 vẫn dưới 2 USD.`
-            : `${usd(perSecond, 4)}/giây · video cuối luôn xuất 1080p`}>
-            <Select value={form.resolution} onChange={(e) => setForm({ ...form, resolution: e.target.value })} disabled={locked}>
-              {(['480p', '720p', '1080p'] as const).map((r) => (
+          <Field label="Độ phân giải clip" hint={`${usd(perSecond, 4)}/giây · video cuối luôn xuất 1080p`}>
+            <Select value={form.resolution === '480p' ? '720p' : form.resolution} onChange={(e) => setForm({ ...form, resolution: e.target.value })} disabled={locked}>
+              {(['720p', '1080p'] as const).map((r) => (
                 <option key={r} value={r}>{RESOLUTION_LABEL[r]} — {usd(rateOf(form.videoModel, r), 4)}/s</option>
               ))}
             </Select>
@@ -800,7 +799,7 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
             </span>
             {importCost > 2 && (
               <span className="w-full text-xs text-warning">
-                ⚠ Ước tính ~{usd(importCost)}, quá 2 USD. Để dưới 2 USD: chọn "Rút gọn còn ~1 phút 15" (hoặc ~1 phút), giữ Pro Fast 720p; tắt hiệu ứng âm thanh bớt thêm khoảng 0,15 USD.
+                ⚠ Ước tính ~{usd(importCost)}, quá 2 USD. Để dưới 2 USD: chọn "Rút gọn còn ~1 phút 15" (hoặc ~1 phút), giữ Veo 720p; tắt hiệu ứng âm thanh bớt thêm khoảng 0,15 USD.
               </span>
             )}
           </div>
@@ -965,9 +964,11 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
                       <div className="grid gap-3 lg:grid-cols-[1fr_200px]">
                         <div className="space-y-2">
                           <div className="grid gap-2 sm:grid-cols-[90px_1fr_2fr]">
-                            <Field label="Giây (2–12)">
-                              <Input type="number" min={2} max={12} value={s.durationSeconds} disabled={locked}
-                                onChange={(e) => updateShot(i, { durationSeconds: Number(e.target.value) || 6 })} />
+                            <Field label="Giây (Veo)">
+                              <Select value={String(clampSecs(s.durationSeconds))} disabled={locked}
+                                onChange={(e) => updateShot(i, { durationSeconds: Number(e.target.value) })}>
+                                {CLIP_SECONDS.map((n) => <option key={n} value={n}>{n}s</option>)}
+                              </Select>
                             </Field>
                             <Field label="Người nói">
                               <Input list="studio-speakers" value={s.speaker ?? ''} disabled={locked} onChange={(e) => updateShot(i, { speaker: e.target.value })} placeholder="(không thoại)" />
@@ -978,8 +979,8 @@ export function VideoEditor({ videoId, onAuthError }: { videoId?: string; onAuth
                           </div>
                           {needs > clampSecs(s.durationSeconds) && !st?.hasVoice && !s.scene && (
                             <p className="text-[11px] text-warning">
-                              Câu thoại cần khoảng {Math.min(12, needs)}s — shot sẽ tự dài ra cho vừa giọng đọc.
-                              {needs > 12 && ' Câu quá dài cho 1 clip (tối đa 12s): nên tách thành 2 shot.'}
+                              Câu thoại cần khoảng {Math.min(8, needs)}s — shot sẽ tự dài ra cho vừa giọng đọc.
+                              {needs > 8 && ' Câu quá dài cho 1 clip (Veo tối đa 8s): nên tách thành 2 shot.'}
                             </p>
                           )}
                           {st?.hasVoice && s.id && (

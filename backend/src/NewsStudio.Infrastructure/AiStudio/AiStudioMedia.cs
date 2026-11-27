@@ -144,7 +144,7 @@ public class AiStudioMedia
         return known.MinBy(k => Math.Abs(Math.Log(r / k.Ratio))).Name;
     }
 
-    /// <summary>Seedance makes 9:16 or 16:9 clips: the one closest to the reference.</summary>
+    /// <summary>Veo makes 9:16 or 16:9 clips: the one closest to the reference.</summary>
     public static string GenerationAspect(int w, int h) => w > h ? "16:9" : "9:16";
 
     /// <summary>Decodes the first seconds and the end: a truncated or corrupt file fails here instead of on the PC.</summary>

@@ -199,7 +199,7 @@ public partial class AiStudioService
             g.FinishedAtUtc = now;
             g.ErrorMessage = g.ProviderOperation != null
                 ? "Mất theo dõi clip (máy chủ khởi động lại?) — bấm \"Lấy lại clip\" (miễn phí)."
-                : "Mất theo dõi clip trước khi gửi Seedance — tạo lại.";
+                : "Mất theo dõi clip trước khi gửi Veo — tạo lại.";
         }
         foreach (var p in await _db.AiStudioProjects.Where(p => p.FinalStatus == "Assembling" && (p.UpdatedAtUtc ?? p.CreatedAtUtc) < stuck).ToListAsync(ct))
         {

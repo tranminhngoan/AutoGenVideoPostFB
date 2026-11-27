@@ -14,7 +14,7 @@ namespace NewsStudio.Infrastructure.AiStudio;
 /// <summary>
 /// AI Video Studio: upload a reference video → the owner's PC analyses it locally (FFmpeg + OpenCV measurements and a
 /// local Qwen3-VL model, no paid analysis) → scenes, timeline, character / environment / style bibles → per-scene
-/// Seedance prompts the user can edit (with versions) → new clips made by the project's existing Seedance integration
+/// Video prompts the user can edit (with versions) → new clips made by the project's existing video client (Google Veo)
 /// (same key, same cost records and monthly budget as the video studio) → preview, download, history.
 /// Heavy analysis runs only in the Hangfire queue <see cref="PcQueue"/>, which only the PC listens to.
 /// </summary>
@@ -552,7 +552,7 @@ public partial class AiStudioService
                 ProjectId = p.Id, Index = node["index"]?.GetValue<int>() ?? order + 1, Order = order++,
                 StartSeconds = Math.Round(start, 3), EndSeconds = Math.Round(end, 3),
                 IsContinuation = node["continuation"]?.GetValue<bool>() == true,
-                TargetSeconds = SeedanceVideoClient.ClampSeconds((int)Math.Round(end - start)),
+                TargetSeconds = SeedanceVideoClient.NearestSeconds(end - start),
                 ThumbBlobId = thumb ?? frames.FirstOrDefault()?.BlobId,
                 FramesJson = JsonSerializer.Serialize(frames, Json),
                 MeasuredJson = measured.ToJsonString(),

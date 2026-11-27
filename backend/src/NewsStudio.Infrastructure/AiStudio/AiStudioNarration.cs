@@ -8,7 +8,7 @@ namespace NewsStudio.Infrastructure.AiStudio;
 
 /// <summary>
 /// The narration of a reference video, re-made: what is said in each scene (speech recognised on the PC, editable),
-/// its English meaning for the Seedance prompt, and a narrator voice + acting direction chosen to sound like the
+/// its English meaning for the video prompt, and a narrator voice + acting direction chosen to sound like the
 /// reference speaker (measured pitch, pace and liveliness) and the channel theme. The narration is then read again by
 /// Gemini TTS — the reference speaker's own voice is never reused.
 /// </summary>
@@ -19,8 +19,8 @@ public static class AiStudioNarration
     /// <summary>The whole narration is read in one take: about two minutes of speech at most (a video is ≤ 1:45).</summary>
     public const int MaxNarrationChars = 3000;
 
-    /// <summary>Speech one scene may hold before its sentences are split with the neighbouring scenes (a clip is at most 12 s).</summary>
-    public const double MaxSceneSpeechSeconds = 10.5;
+    /// <summary>Speech one scene may hold before its sentences are split with the neighbouring scenes (a clip is at most 8 s).</summary>
+    public const double MaxSceneSpeechSeconds = 7.0;
 
     public sealed record Word(double Start, double End, string Text);
 

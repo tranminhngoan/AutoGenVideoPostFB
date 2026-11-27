@@ -9,19 +9,21 @@ using NewsStudio.Infrastructure.Studio;
 namespace NewsStudio.Infrastructure.AiStudio;
 
 /// <summary>
-/// How long the made video is: a reference up to a minute keeps its length (each scene its own length); a longer one
-/// is condensed to a minute — every scene shortened in proportion (at least 3 s, so an action still reads), and when
-/// that is still too long the least important scenes (short, silent, uncertain) are left out. The first scene stays.
+/// How long the made video is. Veo makes clips of 4, 6 or 8 s, so each scene gets the nearest of those to its own
+/// length. A reference up to a minute keeps that; a longer one is condensed to a minute — the scenes that are longest
+/// for their share of the minute step down first (8 → 6 → 4 s), and when every scene is at 4 s and it is still too
+/// long the least important scenes (short, silent, uncertain) are left out. The first scene stays.
 /// </summary>
 public static class AiStudioDuration
 {
     public const int MaxVideoSeconds = 60;
-    public const int MinCondensedSeconds = 3;
+    public const int MinCondensedSeconds = SeedanceVideoClient.MinSeconds;
 
     public sealed record Slot(Guid Id, double Seconds, bool HasNarration, double Confidence);
     public sealed record Plan(Dictionary<Guid, int> Targets, List<Guid> Dropped, bool Condensed);
 
-    public static int Natural(double seconds) => SeedanceVideoClient.ClampSeconds((int)Math.Round(seconds));
+    /// <summary>The clip length nearest to a scene of the reference (4, 6 or 8 s).</summary>
+    public static int Natural(double seconds) => SeedanceVideoClient.NearestSeconds(seconds);
 
     public static Plan Fit(IReadOnlyList<Slot> slots, int max = MaxVideoSeconds)
     {
@@ -32,21 +34,17 @@ public static class AiStudioDuration
         var dropped = new List<Guid>();
         while (true)
         {
+            var targets = kept.ToDictionary(x => x.Id, x => natural[x.Id]);
             var total = Math.Max(0.1, kept.Sum(x => x.Seconds));
             var f = max / total;
-            int Min(Slot x) => Math.Min(MinCondensedSeconds, natural[x.Id]);
-            var targets = kept.ToDictionary(x => x.Id, x => Math.Clamp((int)Math.Round(x.Seconds * f), Min(x), natural[x.Id]));
-            if (targets.Values.Sum() <= max || kept.Count == 1)
+            // step down the clip that is longest for its share of the minute, one step (2 s) at a time
+            while (targets.Values.Sum() > max)
             {
-                // the seconds left go to the scenes that lost the most, up to their own length
-                for (var left = max - targets.Values.Sum(); left > 0; left--)
-                {
-                    var best = kept.Where(x => targets[x.Id] < natural[x.Id]).OrderByDescending(x => x.Seconds * f - targets[x.Id]).FirstOrDefault();
-                    if (best == null) break;
-                    targets[best.Id]++;
-                }
-                return new Plan(targets, dropped, true);
+                var longest = kept.Where(x => targets[x.Id] > MinCondensedSeconds).OrderByDescending(x => targets[x.Id] - x.Seconds * f).FirstOrDefault();
+                if (longest == null) break;
+                targets[longest.Id] -= 2;
             }
+            if (targets.Values.Sum() <= max || kept.Count == 1) return new Plan(targets, dropped, true);
             // too many scenes for a minute: leave out the least important one (never the first)
             var least = kept.Skip(1).OrderBy(x => x.Seconds + (x.HasNarration ? 2 : 0) + x.Confidence).First();
             kept.Remove(least);

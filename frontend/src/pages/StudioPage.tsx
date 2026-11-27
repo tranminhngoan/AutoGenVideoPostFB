@@ -13,7 +13,7 @@ import { useConfirm, useToast } from '../components/feedback';
 type Tab = 'videos' | 'music' | 'voices' | 'costs';
 
 /**
- * AI video studio: make live-action videos with Seedance (text-to-video) from a script, AI voices and the music store, track
+ * AI video studio: make live-action videos with Google Veo (text-to-video) from a script, AI voices and the music store, track
  * the cost, and post them to a Facebook Page. Routes: /studio[/assets|/music|/costs], /studio/new, /studio/videos/:id.
  */
 export function StudioPage({ segments }: { segments: string[] }) {
@@ -52,7 +52,7 @@ export function StudioPage({ segments }: { segments: string[] }) {
           Studio Video AI <Badge tone="info" className="text-[11px] font-normal">{settings?.videoModel ?? 'grok-imagine'}</Badge>
         </span>
       }
-      description="Dựng video bằng Seedance (text-to-video): kịch bản → hồ sơ nhân vật → video + giọng đọc AI + kho nhạc → 1080p → đăng Page. Chi phí theo giây video."
+      description="Dựng video bằng Google Veo (text-to-video): kịch bản → hồ sơ nhân vật → video + giọng đọc AI + kho nhạc → 1080p → đăng Page. Chi phí theo giây video."
       back={
         editingId || creating ? (
           <Button variant="ghost" size="sm" icon={<ArrowLeft className="h-4 w-4" />} onClick={() => navigate('/studio')}>

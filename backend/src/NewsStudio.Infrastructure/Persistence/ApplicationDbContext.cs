@@ -678,7 +678,7 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
             entity.HasIndex(e => e.StudioVideoId);
         });
 
-        // ───────── AI Video Studio (analysis on the owner's PC, clips by Seedance) ─────────
+        // ───────── AI Video Studio (analysis on the owner's PC, clips by Google Veo) ─────────
         modelBuilder.Entity<AiStudioProject>(entity =>
         {
             entity.ToTable("AiStudioProjects");

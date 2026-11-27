@@ -113,18 +113,22 @@ public class AiStudioUnitTests
     {
         AiStudioDuration.Slot Slot(double seconds, bool narrated = false, double confidence = 0.8) => new(Guid.NewGuid(), seconds, narrated, confidence);
 
-        // 50 s: every scene its own length
-        var short_ = new[] { Slot(10), Slot(15.4), Slot(24.6) };
+        // 50 s: every scene the Veo length nearest to its own (4, 6 or 8 s)
+        var short_ = new[] { Slot(3.2), Slot(5.4), Slot(7.9), Slot(4.6) };
         var keep = AiStudioDuration.Fit(short_);
         keep.Condensed.Should().BeFalse();
-        keep.Targets.Values.Should().Equal(10, 12, 12); // (a clip is at most 12 s)
+        keep.Targets.Values.Should().Equal(4, 6, 8, 4);
 
-        // 2 minutes in 6 scenes of 20 s: each scene halved → 60 s, none left out
-        var two = Enumerable.Range(0, 6).Select(_ => Slot(20)).ToList();
+        // 80 s in 10 scenes of 8 s: each scene steps down to 6 s → 60 s, none left out
+        var two = Enumerable.Range(0, 10).Select(_ => Slot(8)).ToList();
         var half = AiStudioDuration.Fit(two);
         half.Condensed.Should().BeTrue();
         half.Dropped.Should().BeEmpty();
         half.Targets.Values.Sum().Should().Be(60);
+        half.Targets.Values.Should().OnlyContain(t => t == 6);
+        // the scene that is long for its share loses first: an 8 s and four 4 s scenes into 22 s → the 8 s one becomes 6 s
+        var mixed = new[] { Slot(8), Slot(4), Slot(4), Slot(4), Slot(4) };
+        AiStudioDuration.Fit(mixed, 22).Targets.Values.Should().Equal(6, 4, 4, 4, 4);
 
         // 3 minutes in 36 short scenes: at least 3 s each → the least important are left out, the first and the narrated stay
         var many = Enumerable.Range(0, 36).Select(i => Slot(5, narrated: i % 3 == 0, confidence: i == 7 ? 0.1 : 0.8)).ToList();
@@ -553,11 +557,11 @@ public class AiStudioUnitTests
     }
 
     [Fact]
-    public void Seedance_request_is_unchanged_without_an_image_and_carries_it_inline_with_one()
+    public void Veo_request_is_silent_without_an_image_and_carries_it_inline_with_one()
     {
-        // regression: the video studio page's requests stay byte-for-byte the same
+        // the request of both studio pages: a 5 s scene asks Veo for 6 s, sound off, people of all ages allowed
         SeedanceVideoClient.BuildStartBody("p", "9:16", "720p", 5, 7).ToJsonString().Should().Be(
-            """{"prompt":"p","n":1,"aspectRatio":"9:16","duration":5,"providerOptions":{"bytedance":{"watermark":false,"cameraFixed":false}},"resolution":"720p","seed":7}""");
+            """{"prompt":"p","n":1,"aspectRatio":"9:16","duration":6,"providerOptions":{"vertex":{"generateAudio":false,"personGeneration":"allow_all"}},"generateAudio":false,"resolution":"720p","seed":7}""");
         var body = SeedanceVideoClient.BuildStartBody("p", "9:16", "720p", 5, null, new VideoStartImage(new byte[] { 1, 2, 3 }, "image/jpeg"));
         body["image"]!["type"]!.GetValue<string>().Should().Be("file");
         body["image"]!["mediaType"]!.GetValue<string>().Should().Be("image/jpeg");
@@ -610,6 +614,37 @@ public class AiStudioFlowTests : IClassFixture<WebApplicationFactory<Program>>
         var (code, _, err) = await AiStudioMedia.RunAsync(media.Ffmpeg, args, CancellationToken.None);
         code.Should().Be(0, err);
         return path;
+    }
+
+    [Fact]
+    public async Task A_clip_that_comes_back_with_sound_is_made_silent_and_counted_at_the_sound_price()
+    {
+        var dir = NewDir();
+        try
+        {
+            var withSound = await File.ReadAllBytesAsync(await MakeClipAsync(dir, 4, audio: true));
+            SeedanceVideoClient.HasAudioTrack(withSound).Should().BeTrue();
+            SeedanceVideoClient.HasAudioTrack(await File.ReadAllBytesAsync(await MakeClipAsync(dir, 4, audio: false))).Should().BeFalse();
+
+            var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+                { ["Ai:Gateway:ApiKey"] = "test-gateway-key", ["Ai:Gateway:BaseUrl"] = "https://gw.test/v4/ai" }).Build();
+            var gw = new FakeGateway { Video = withSound };
+            var client = new SeedanceVideoClient(new HttpClient(gw), config, Microsoft.Extensions.Logging.Abstractions.NullLogger<SeedanceVideoClient>.Instance,
+                new StudioMedia(config)) { PollInterval = TimeSpan.FromMilliseconds(5) };
+            var clip = await client.GenerateAsync(SeedanceVideoClient.VeoLiteModel, "a boy runs. Avoid: text.", "9:16", "720p", 4, null, CancellationToken.None);
+            clip.HadAudio.Should().BeTrue();
+            SeedanceVideoClient.HasAudioTrack(clip.Video).Should().BeFalse(); // the studios' own narration / music only
+            clip.CostUsd.Should().Be(4 * 0.05m);                              // what Vercel bills for a clip with sound
+            var path = Path.Combine(dir, "silent.mp4");
+            await File.WriteAllBytesAsync(path, clip.Video);
+            var probe = await new AiStudioMedia(config).ProbeAsync(path, CancellationToken.None);
+            probe.Audio.Should().BeEmpty();
+            probe.Duration.Should().BeApproximately(4, 0.2);
+            // a recovered clip is made silent too
+            (await client.TryRecoverAsync(SeedanceVideoClient.VeoLiteModel, """{"id":"op1"}""", CancellationToken.None))!.Value.Bytes
+                .Should().Match<byte[]>(x => !SeedanceVideoClient.HasAudioTrack(x));
+        }
+        finally { try { Directory.Delete(dir, true); } catch (IOException) { } }
     }
 
     internal static string NewDir()
@@ -885,8 +920,8 @@ public class AiStudioFlowTests : IClassFixture<WebApplicationFactory<Program>>
             await studio.SetGeneratorAsync(p.Id, new AiStudioGeneratorSettingsDto { VideoModel = SeedanceVideoClient.FastModel, Resolution = "720p", AspectRatio = "9:16", Seed = 99 }, CancellationToken.None);
 
             var estimate = await studio.EstimateAsync(p.Id, ids, CancellationToken.None);
-            estimate.TotalSeconds.Should().Be(4);
-            estimate.TotalUsd.Should().Be(Math.Round(4 * 0.0216m, 4));
+            estimate.TotalSeconds.Should().Be(8); // two 2 s scenes → two 4 s Veo clips
+            estimate.TotalUsd.Should().Be(Math.Round(8 * 0.03m, 4));
             estimate.Blocker.Should().BeNull();
 
             // a cost higher than the one the user confirmed is refused
@@ -900,7 +935,7 @@ public class AiStudioFlowTests : IClassFixture<WebApplicationFactory<Program>>
             await studio.GenerateAsync(p.Id, req, CancellationToken.None); // the same click sent again: nothing new
             var gens = await db.AiStudioGenerations.AsNoTracking().Where(g => g.ProjectId == p.Id).ToListAsync();
             gens.Should().HaveCount(2);
-            gens.Should().OnlyContain(g => g.Seed == 99 && g.Seconds == 2 && g.Prompt.Contains("Avoid:"));
+            gens.Should().OnlyContain(g => g.Seed == 99 && g.Seconds == 4 && g.Prompt.Contains("Avoid:") && g.Model == SeedanceVideoClient.VeoLiteModel);
             // a scene being made cannot be ordered twice
             var busy = await studio.EstimateAsync(p.Id, ids, CancellationToken.None);
             busy.Lines.Should().OnlyContain(l => l.Skip != null);
@@ -910,9 +945,13 @@ public class AiStudioFlowTests : IClassFixture<WebApplicationFactory<Program>>
             await WaitAsync(db, async () => await db.AiStudioGenerations.AsNoTracking().CountAsync(g => g.ProjectId == p.Id && g.Status == "Done") == 2);
             gw.Starts.Should().Be(2);
             var done = await db.AiStudioGenerations.AsNoTracking().Where(g => g.ProjectId == p.Id).ToListAsync();
-            done.Should().OnlyContain(g => g.Status == "Done" && g.ClipBlobId != null && g.ProviderOperation != null && g.CostUsd == Math.Round(2 * 0.0216m, 4));
+            done.Should().OnlyContain(g => g.Status == "Done" && g.ClipBlobId != null && g.ProviderOperation != null && g.CostUsd == Math.Round(4 * 0.03m, 4));
             (await db.StudioCostRecords.CountAsync(c => c.Note!.Contains("Seedance thử"))).Should().Be(costsBefore + 2);
             gw.StartBodies.Should().OnlyContain(b => b["seed"]!.GetValue<int>() == 99 && b["image"] == null);
+            // the "Avoid: …" end of the prompt goes as Veo's negative prompt, the clip is asked silent
+            gw.StartBodies.Should().OnlyContain(b => !b["prompt"]!.GetValue<string>().Contains("Avoid:")
+                && b["providerOptions"]!["vertex"]!["negativePrompt"]!.GetValue<string>().Contains("extra fingers")
+                && b["providerOptions"]!["vertex"]!["generateAudio"]!.GetValue<bool>() == false);
 
             // a paid job whose download is lost: failed, then recovered for free
             var s2 = ids[1];
@@ -1089,7 +1128,7 @@ public class AiStudioFlowTests : IClassFixture<WebApplicationFactory<Program>>
             narrator.Takes.Should().OnlyContain(t => t.Voice == "gemini:Algenib" && t.Style!.Contains("storyteller"));
             read.NarrationCurrent.Should().BeTrue();
             read.NarrationSeconds.Should().Be(4.5);
-            read.Scenes.Select(x => x.TargetSeconds).Should().Equal(2, 2); // the clips are not touched
+            read.Scenes.Select(x => x.TargetSeconds).Should().Equal(4, 4); // the clips are not touched (2 s scenes → Veo's 4 s)
             (await db.StudioCostRecords.AsNoTracking().CountAsync(c => c.Kind == "Voice" && c.Note!.Contains(title) && c.Note.Contains("lời bình cả video"))).Should().Be(1);
             await studio.SpeakNarrationAsync(p.Id, CancellationToken.None);
             narrator.Calls.Should().Be(1);                // same words, voice and style: never paid twice
@@ -1204,10 +1243,10 @@ public class AiStudioFlowTests : IClassFixture<WebApplicationFactory<Program>>
             // switching the theme off turns the sound off too
             var off = await studio.SetPromptSettingsAsync(p.Id, new AiStudioPromptSettingsDto { Mode = "Faithful", Topic = "" }, CancellationToken.None);
             off.AudioMode.Should().Be("None");
-            // a short reference keeps its length; the narration (~7 s of speech for 4 s of video) is shortened to fit (text only)
+            // a short reference keeps its length (two 2 s scenes → two 4 s Veo clips); its ~7 s of narration fits 8 s: left as it is
             var fitted = await studio.FitDurationAsync(p.Id, CancellationToken.None);
-            fitted.VideoSeconds.Should().Be(4);
-            fitted.Scenes.Select(x => x.Narration).Should().Equal("Nhà tôi nghèo lắm.", "Mẹ đi chợ sớm.");
+            fitted.VideoSeconds.Should().Be(8);
+            fitted.Scenes.Select(x => x.Narration).Should().Equal("Hồi đó nhà tôi nghèo lắm, cơm không đủ ăn.", "Mẹ đi chợ từ sáng sớm, đường DÀI lắm.");
             editor.Asked.Clear();
             var fits = () => studio.CondenseNarrationAsync(p.Id, CancellationToken.None);
             (await fits.Should().ThrowAsync<InvalidOperationException>()).WithMessage("*không cần rút gọn*");
@@ -1219,7 +1258,7 @@ public class AiStudioFlowTests : IClassFixture<WebApplicationFactory<Program>>
             shortened.Scenes[0].Narration.Should().Be("Nhà tôi nghèo lắm.");
             shortened.Scenes[0].Prompt.Should().Contain("\"My family was very poor\"");
             shortened.NarrationCurrent.Should().BeFalse(); // to be read again
-            (await db.StudioCostRecords.AsNoTracking().CountAsync(c => c.Note!.Contains(title) && c.Note.Contains("rút gọn lời bình"))).Should().Be(2);
+            (await db.StudioCostRecords.AsNoTracking().CountAsync(c => c.Note!.Contains(title) && c.Note.Contains("rút gọn lời bình"))).Should().Be(1); // only this one: the fit above had nothing to shorten
 
             var take = (await db.AiStudioProjects.AsNoTracking().FirstAsync(x => x.Id == p.Id)).NarrationBlobId!.Value;
             take.Should().NotBe(narrationBlob); // the earlier take was replaced, not kept

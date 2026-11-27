@@ -50,11 +50,11 @@ Chỉ riêng bước này đã có lợi: **cập nhật code / server khởi đ
 - Video **tin tức** ghép trên máy tính vẫn đăng bình thường, nhưng xem lại trong trang web (Video → chi tiết) có thể không phát được
   vì file nằm trên máy tính. Video **Studio AI** thì xem được ở mọi nơi (nằm trong kho file chung).
 
-## AI Video Studio (phân tích video tham chiếu trên máy tính — miễn phí; tạo clip bằng Seedance)
+## AI Video Studio (phân tích video tham chiếu trên máy tính — miễn phí; tạo clip bằng Google Veo 3.1 Lite)
 
 Menu **AI Video Studio** thay cho Reup Video. Bước **phân tích** chạy **chỉ trên máy tính** (hàng đợi `pc_local`): không gọi AI trả phí,
-không tốn CPU Railway; máy tắt thì việc nằm chờ. Bước **tạo clip** dùng Seedance (Vercel AI Gateway, cùng khoá / cùng bảng chi phí và trần
-ngân sách tháng với Studio Video AI) — máy nào nhận việc cũng được vì Seedance chạy trên cloud.
+không tốn CPU Railway; máy tắt thì việc nằm chờ. Bước **tạo clip** dùng Google Veo 3.1 Lite (Vercel AI Gateway, clip 4/6/8 giây, không tiếng, ~$0.03/giây ở 720p, cùng khoá / cùng bảng chi phí và trần
+ngân sách tháng với Studio Video AI) — máy nào nhận việc cũng được vì Veo chạy trên cloud.
 
 1. Cài một lần: bấm đúp **`scripts\pc\setup-ai-studio.bat`** (thêm `-With8B` để có model 8B chính xác hơn, `-NoWhisper` để bỏ phần nghe lời nói).
    Thư mục `D:\TramTinAI` (đổi bằng biến `AI_STUDIO_HOME`). Mọi file cố định phiên bản, kiểm tra SHA-256:
@@ -77,5 +77,5 @@ bình thường, không bi lụy); khi ghép, bản đọc được cắt ở ch
 của cảnh đó; nhanh lên tối đa 25 % nếu dài hơn video, còn dư thì giữ khung hình cuối.
 Muốn nghe chuẩn hơn ggml-small: đặt `ggml-large-v3-turbo*.bin` hoặc `ggml-medium.bin` vào `D:\TramTinAI\whisper` — bộ phân tích tự dùng model tốt nhất có sẵn.
 
-Video tham chiếu trên R2 tự xoá sau 7 ngày (phân tích, prompt, khung hình chính được giữ), clip Seedance sau 14 ngày (đổi trong Cài đặt).
+Video tham chiếu trên R2 tự xoá sau 7 ngày (phân tích, prompt, khung hình chính được giữ), clip Veo sau 14 ngày (đổi trong Cài đặt).
 Bảng `Reup*` cũ vẫn còn trong cơ sở dữ liệu (không xoá dữ liệu); code không dùng nữa.

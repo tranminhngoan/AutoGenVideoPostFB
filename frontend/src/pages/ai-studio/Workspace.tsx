@@ -130,7 +130,7 @@ function WorkspaceTabs({ project, setProject, reload }: { project: Project; setP
       )}
       {shown === 'storyboard' && (
         <Step id="storyboard" n={2} title="Cảnh & prompt"
-          description="Bấm một cảnh để xem hành động, máy quay và sửa prompt gửi cho Seedance.">
+          description="Bấm một cảnh để xem hành động, máy quay và sửa prompt gửi cho Veo.">
           <Storyboard {...props} />
         </Step>
       )}
@@ -140,7 +140,7 @@ function WorkspaceTabs({ project, setProject, reload }: { project: Project; setP
         </Step>
       )}
       {shown === 'generator' && (
-        <Step id="generator" n={visible.findIndex((t) => t.id === 'generator') + 1} title="Tạo clip bằng Seedance"
+        <Step id="generator" n={visible.findIndex((t) => t.id === 'generator') + 1} title="Tạo clip bằng Veo"
           description="Chọn model, độ phân giải, xem chi phí trước khi xác nhận.">
           <GeneratorPanel {...props} />
         </Step>
@@ -475,7 +475,7 @@ function BibleEditor({ kind, value, fields, project, onClose, onSaved }: {
   const prefix = kind === 'characters' ? 'C' : 'E';
   return (
     <Modal open onClose={onClose} size="lg" title={kind === 'characters' ? 'Sửa Character Bible' : kind === 'environments' ? 'Sửa Environment Bible' : 'Sửa Visual Style Bible'}
-      description="Viết bằng tiếng Anh (Seedance hiểu tốt nhất), ví dụ “Southeast Asian / Vietnamese”, “royal-blue cable-knit sweater”. Mọi prompt dùng lại các mô tả này để giữ nhân vật / bối cảnh nhất quán giữa các cảnh."
+      description="Viết bằng tiếng Anh (Veo hiểu tốt nhất), ví dụ “Southeast Asian / Vietnamese”, “royal-blue cable-knit sweater”. Mọi prompt dùng lại các mô tả này để giữ nhân vật / bối cảnh nhất quán giữa các cảnh."
       footer={<>
         <label className="mr-auto flex items-center gap-2 text-xs text-fg-muted"><input type="checkbox" checked={overwrite} onChange={(e) => setOverwrite(e.target.checked)} />Viết lại cả prompt tôi đã tự sửa</label>
         <Button variant="ghost" onClick={onClose}>Huỷ</Button>

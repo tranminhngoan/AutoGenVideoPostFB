@@ -41,8 +41,8 @@ except Exception:  # noqa: BLE001
     pass
 
 PROMPT_VERSION = 7  # bump when the scene prompt / schema changes (invalidates cached scene results)
-MAX_CLIP = 12.0  # longest clip the video model makes (Seedance 1.0: 2–12 s)
-SPLIT_TARGET = 10.0
+MAX_CLIP = 8.0  # longest clip the video model makes (Google Veo 3.1 Lite: 4, 6 or 8 s)
+SPLIT_TARGET = 6.0
 MIN_SCENE = 0.8
 ANALYSIS_FPS = 10.0
 ANALYSIS_WIDTH = 320
@@ -680,7 +680,7 @@ TRANSLATE_SCHEMA = {
 
 
 def translate_pass(port, transcript):
-    """English meaning of every spoken line (local model, text only) — it goes into the Seedance prompts as context."""
+    """English meaning of every spoken line (local model, text only) — it goes into the video prompts as context."""
     segs = transcript.get("segments") or []
     if not segs:
         return

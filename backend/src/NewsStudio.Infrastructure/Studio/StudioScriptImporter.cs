@@ -6,17 +6,17 @@ namespace NewsStudio.Infrastructure.Studio;
 /// <summary>
 /// Turns a finished script from the script library (/drama-scripts: hook, ending, mood, and scenes with an English
 /// video prompt, a Vietnamese narration, sound notes and a camera) into studio shots that follow it exactly — no AI
-/// planning needed. A scene lasts 15–30 s but a Seedance clip at most 12 s, so each scene becomes several shots on the
+/// planning needed. A scene lasts 15–30 s but a Veo clip at most 8 s, so each scene becomes several shots on the
 /// same prompt with varied framing, and its narration is split by sentence across them (each piece short enough to
 /// be read within one clip). The hook opens the first scene and the ending closes the last.
 /// </summary>
 public static class StudioScriptImporter
 {
     /// <summary>
-    /// Longest narration piece for one clip: ~24 words. Emotional narration is read slowly (a 28-word line took 11.4 s at
-    /// -8 %), so this leaves room in a 12 s clip.
+    /// Longest narration piece for one clip: ~16 words. Emotional narration is read slowly (a 28-word line took 11.4 s at
+    /// -8 %, ~0.41 s a word), so 16 words (~6.5 s) leave room in an 8 s clip.
     /// </summary>
-    public const int MaxWordsPerShot = 24;
+    public const int MaxWordsPerShot = 16;
     private const int MaxShotsPerScene = 6;
 
     /// <summary>Extra framings for the 2nd, 3rd… shot of a scene, so one long scene doesn't repeat the same picture.</summary>
@@ -139,10 +139,10 @@ public static class StudioScriptImporter
             var narration = NarrationOf(s, i);
             var pieces = SplitNarration(narration);
             var sceneSeconds = Math.Max(scene.DurationSeconds, 4);
-            var wanted = Math.Clamp((int)Math.Ceiling(sceneSeconds / 10.0), 1, MaxShotsPerScene);
+            var wanted = Math.Clamp((int)Math.Ceiling(sceneSeconds / 7.0), 1, MaxShotsPerScene);
             // the scene is read in ONE take running over its shots: rather than silent shots between the words,
             // cut the narration finer so every picture carries (and illustrates) a piece of it
-            for (var max = MaxWordsPerShot - 4; pieces.Count < wanted && max >= 8; max -= 4) pieces = SplitNarration(narration, max);
+            for (var max = MaxWordsPerShot - 4; pieces.Count < wanted && max >= 6; max -= 3) pieces = SplitNarration(narration, max);
             var count = Math.Clamp(Math.Max(pieces.Count, wanted), 1, MaxShotsPerScene);
             count = Math.Max(count, pieces.Count); // never drop narration
             // spoken pieces first, in order; any silent picture beats close the scene after the words

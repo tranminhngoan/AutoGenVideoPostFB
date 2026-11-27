@@ -84,7 +84,7 @@ export function CostPanel({ onAuthError }: { onAuthError: (e: unknown) => boolea
         <div className="text-sm font-semibold text-fg">Trần ngân sách tháng cho Studio</div>
         <p className="text-xs text-fg-muted">
           Trước mỗi bước tốn tiền (lập kế hoạch, tạo clip), hệ thống kiểm tra trần này; vượt trần thì dừng và báo, không tự trừ tiếp. Đặt 0 nếu không
-          muốn giới hạn. Tiền tạo clip trừ vào credit Vercel AI Gateway (Seedance); lập kế hoạch và giọng đọc dùng Gemini (vài xu mỗi video).
+          muốn giới hạn. Tiền tạo clip trừ vào credit Vercel AI Gateway (Google Veo); lập kế hoạch và giọng đọc dùng Gemini (vài xu mỗi video).
         </p>
         <div className="flex max-w-sm items-end gap-2">
           <Field label="USD / tháng" className="flex-1">

@@ -15,7 +15,7 @@ namespace NewsStudio.Infrastructure.Studio;
 
 /// <summary>
 /// AI video studio (text-to-video): script → Gemini plan (a character / location bible with fixed looks and TTS voices,
-/// then shots) → each spoken line read by Gemini TTS → one Seedance clip per shot through the Vercel AI Gateway (silent;
+/// then shots) → each spoken line read by Gemini TTS → one Veo clip per shot through the Vercel AI Gateway (silent;
 /// its length fitted to the line) → joined with the voices, ducked music and the Page watermark at 1080p → posted to a
 /// Facebook Page. Every paid call is recorded in StudioCostRecords and checked against the monthly studio budget first.
 /// Small files (voices, music) live in the database; clips and final videos on the app disk (see StudioFileStore).
@@ -736,8 +736,8 @@ public class StudioService
     public static (string System, string User) BuildPlanPrompt(StudioVideo v, IReadOnlyList<StudioMusicTrack> music)
     {
         var system =
-            "Bạn là đạo diễn phim ngắn người thật cho mạng xã hội. Bạn chia kịch bản thành các shot để model TEXT-TO-VIDEO Seedance " +
-            "tạo (mỗi shot là 1 clip 2–12 giây, video KHÔNG có tiếng — lời thoại được lồng bằng giọng đọc AI, nhạc nền thêm sau). Chỉ trả về JSON hợp lệ.";
+            "Bạn là đạo diễn phim ngắn người thật cho mạng xã hội. Bạn chia kịch bản thành các shot để model TEXT-TO-VIDEO Google Veo " +
+            "tạo (mỗi shot là 1 clip đúng 4, 6 hoặc 8 giây, video KHÔNG có tiếng — lời thoại được lồng bằng giọng đọc AI, nhạc nền thêm sau). Chỉ trả về JSON hợp lệ.";
         var sb = new StringBuilder();
         sb.AppendLine($"KỊCH BẢN (giữ nguyên lời thoại):\n{v.Script}\n");
         sb.AppendLine($"Khung hình {(v.AspectRatio == "16:9" ? "ngang 16:9" : "dọc 9:16")}. Độ dài video do KỊCH BẢN quyết định — không có thời lượng mục tiêu.");
@@ -763,7 +763,7 @@ SHOT:
 - Bám sát kịch bản: mỗi câu thoại và mỗi hành động / cảnh trong kịch bản thành shot tương ứng, đúng thứ tự. KHÔNG thêm shot độn,
   KHÔNG bỏ hay rút gọn phần nào. Mỗi shot tối đa 1 người nói. ""dialogue"" là câu thoại nguyên văn tiếng Việt (không dịch, không thêm);
   ""speaker"" là tên người nói (lời dẫn chuyện → ""Lời dẫn""); shot không thoại → null.
-- ""duration"" (giây, số nguyên 2–12): shot có thoại >= số chữ / 3 + 1; câu dài hơn 30 chữ thì tách thành 2 shot liên tiếp.
+- ""duration"" (giây, CHỈ 4, 6 hoặc 8): shot có thoại >= số chữ / 3 + 1; câu dài hơn 20 chữ thì tách thành 2 shot liên tiếp.
 - Giọng được LỒNG SAU nên miệng không khớp từng chữ: ưu tiên góc trung cảnh / toàn cảnh, người nói diễn bằng nét mặt và cử chỉ,
   KHÔNG dùng cận cảnh miệng (extreme close-up).
 - ""camera"": shot đầu mỗi cảnh là wide establishing shot; còn lại ưu tiên medium-wide / two-shot thấy rõ người và bối cảnh;
@@ -1244,7 +1244,7 @@ Trả về JSON: {{ ""scenes"": [ {{ ""scene"": 1, ""narration"": ""..."" }} ] }
     }
 
     /// <summary>
-    /// The "director" step for a library script. Seedance has no reference images, so the only way to keep the same
+    /// The "director" step for a library script. Veo gets no reference images here, so the only way to keep the same
     /// people and places from clip to clip is to describe them identically, in detail, in every clip: Gemini reads the
     /// whole script once and writes a fixed identity for each person (face, hair, build — no clothes), a fixed look
     /// for each place, each scene's time / weather / light and costumes (the same in every shot of the scene; costumes
@@ -1255,7 +1255,7 @@ Trả về JSON: {{ ""scenes"": [ {{ ""scene"": 1, ""narration"": ""..."" }} ] }
     {
         var system =
             "Bạn là đạo diễn kiêm biên kịch hình ảnh cho phim ngắn NGƯỜI THẬT, chân thực như phim tài liệu, tạo bằng model TEXT-TO-VIDEO " +
-            "Seedance (mỗi shot là 1 clip 2–12 giây, KHÔNG có ảnh tham chiếu, KHÔNG có tiếng — lời bình đọc bằng giọng AI và nhạc thêm sau). " +
+            "Google Veo (mỗi shot là 1 clip đúng 4, 6 hoặc 8 giây, KHÔNG có ảnh tham chiếu, KHÔNG có tiếng — lời bình đọc bằng giọng AI và nhạc thêm sau). " +
             "Model chỉ nhìn thấy chữ bạn viết cho từng shot, nên muốn cùng một người / một nơi trông giống nhau ở mọi clip thì phải tả họ " +
             "Y HỆT nhau, thật chi tiết. Chỉ trả về JSON hợp lệ.";
         var sb = new StringBuilder();
@@ -1308,7 +1308,7 @@ VIỆC CẦN LÀM (mọi mô tả hình viết bằng TIẾNG ANH):
    - ""shots"": MỖI shot của cảnh 1 mục { ""shot"": số shot, ""cast"": [tên trong characters NHÌN THẤY trong hình],
      ""action"": 35–60 từ — đúng khoảnh khắc người xem thấy khi nghe lời bình của shot đó: minh hoạ đúng điều lời bình nói (hoặc
      phản ứng cảm xúc của nhân vật), gọi nhân vật bằng đúng ""name"", vị trí trong khung hình, MỘT hành động liền mạch, chậm, tự
-     nhiên đủ cho 4–12 giây, nét mặt, người phụ / quần chúng phía sau tả ngắn; ""props"": [tên đồ vật trong props thấy trong hình];
+     nhiên đủ cho 4–8 giây, nét mặt, người phụ / quần chúng phía sau tả ngắn; ""props"": [tên đồ vật trong props thấy trong hình];
      ""camera"": cỡ cảnh + chuyển động máy chậm, mượt; ""sound"": tiếng động CỦA RIÊNG shot này bằng tiếng Anh, cụ thể nguồn phát,
      chất liệu, nhịp (vd ""a small brass hand bell rung by hand, bright 'ting ting ting' in short bursts, from a slowly passing bicycle"")
      — tiếng đặc trưng chỉ đặt ở shot nó xảy ra, kèm âm nền của cảnh; KHÔNG lời nói, KHÔNG nhạc }.
@@ -1674,7 +1674,7 @@ Trả về JSON:
         }
         var needed = seconds + minRoom; // the room holds the 0.25 s lead and a short breath
         for (var k = lastSpoken; k >= 0 && d.Sum() < needed - 1e-6; k--)
-            if (!shots[k].Fixed) d[k] = Math.Min(SeedanceVideoClient.MaxSeconds, d[k] + (int)Math.Ceiling(needed - d.Sum() - 1e-6));
+            if (!shots[k].Fixed) d[k] = SeedanceVideoClient.ClampSeconds(d[k] + (int)Math.Ceiling(needed - d.Sum() - 1e-6));
         if (d.Sum() < needed - 1e-6)
             throw new InvalidOperationException($"Lời bình của cảnh đọc mất {seconds:0.0}s — dài hơn cả cảnh có thể chứa ({d.Sum()}s). " +
                                                 "Thêm 1 shot cho cảnh này hoặc rút gọn lời bình.");
@@ -1750,7 +1750,7 @@ Trả về JSON:
     /// <summary>Whether a line read in <paramref name="voiceSeconds"/> fits one clip (with a little tolerance for rounding).</summary>
     public static bool FitsOneClip(double voiceSeconds) => voiceSeconds + MinVoiceRoom <= SeedanceVideoClient.MaxSeconds + 1e-6;
 
-    /// <summary>Clip length for a line: at least the planned length, long enough for the line plus a breath, at most 12 s.</summary>
+    /// <summary>Clip length for a line: at least the planned length, long enough for the line plus a breath (4, 6 or 8 s).</summary>
     public static int ClipSecondsFor(int planned, double voiceSeconds) =>
         SeedanceVideoClient.ClampSeconds(Math.Max(planned, (int)Math.Ceiling(voiceSeconds + VoiceTail - 1e-6)));
 

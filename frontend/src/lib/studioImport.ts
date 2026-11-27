@@ -64,7 +64,7 @@ export function narratorFor(mood?: string | null): { voice: string; speed: strin
 const words = (t?: string | null) => (t ?? '').trim().split(/\s+/).filter(Boolean).length;
 
 /**
- * Rough size of the video the server will build (it splits each scene into ≤ 12 s clips and reads ~3 words a second):
+ * Rough size of the video the server will build (it splits each scene into 4–8 s Veo clips and reads ~3 words a second):
  * number of clips and seconds, for the cost shown before creating.
  */
 export function estimateImport(s: StudioScriptImport, targetSeconds?: number | null): { shots: number; seconds: number } {
@@ -90,8 +90,8 @@ function estimateFull(s: StudioScriptImport): { shots: number; seconds: number }
     if (i === 0 && s.hook && !narration.includes(s.hook.slice(0, 20))) narration = `${s.hook} ${narration}`;
     if (i === s.scenes.length - 1 && s.ending && !narration.includes(s.ending.slice(0, 20))) narration = `${narration} ${s.ending}`;
     const w = words(narration);
-    const pieces = Math.ceil(w / 28);
-    const count = Math.min(6, Math.max(pieces, Math.ceil(Math.max(scene.durationSeconds, 4) / 10), 1));
+    const pieces = Math.ceil(w / 16);
+    const count = Math.min(6, Math.max(pieces, Math.ceil(Math.max(scene.durationSeconds, 4) / 7), 1));
     shots += Math.max(count, pieces);
     seconds += Math.max(scene.durationSeconds, Math.ceil(w / 3 + pieces));
   });

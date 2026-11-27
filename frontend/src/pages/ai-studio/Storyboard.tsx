@@ -86,7 +86,7 @@ function DurationBar({ project: p, setProject }: { project: Project; setProject:
     <div className={cn('flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border px-4 py-3 text-[13px]', over ? 'border-warning/40 bg-warning/[0.06]' : 'border-line bg-subtle')}>
       <span>Video gốc <b>{sec(p.durationSeconds)}</b> → video tạo ra <b>~{p.videoSeconds}s</b> · {enabled}/{p.scenes.length} cảnh</span>
       {condensed && <span className="text-xs text-fg-muted">Đã rút gọn còn tối đa {p.maxVideoSeconds}s: cảnh ngắn / ít quan trọng được tắt, mỗi cảnh giữ hành động chính.</span>}
-      {over && <span className="text-xs text-warning">Dài hơn {p.maxVideoSeconds}s — tốn thêm tiền Seedance.</span>}
+      {over && <span className="text-xs text-warning">Dài hơn {p.maxVideoSeconds}s — tốn thêm tiền Veo.</span>}
       <span className={cn('text-xs', reviewed < enabled ? 'text-warning' : 'text-fg-muted')}>
         Rà soát logic: {reviewed}/{enabled} cảnh
       </span>
@@ -190,7 +190,7 @@ function PromptSettings({ project: p, setProject }: { project: Project; setProje
         <Field label="Global prompt (đặt ở đầu mọi cảnh)" hint="Khoá phong cách chung. Tiếng Anh.">
           <Textarea rows={3} value={global} onChange={(e) => setGlobal(e.target.value)} />
         </Field>
-        <Field label="Ràng buộc / tránh" hint="Seedance không có ô negative prompt riêng: phần này được ghi cuối prompt dạng “Avoid: …”.">
+        <Field label="Ràng buộc / tránh" hint="Ghi cuối prompt dạng “Avoid: …” — khi tạo clip phần này được gửi vào ô negative prompt riêng của Veo.">
           <Textarea rows={3} value={negative} onChange={(e) => setNegative(e.target.value)} />
         </Field>
       </div>
@@ -238,8 +238,8 @@ function SceneCard({ project: p, scene: s, first, last, open, onToggle, onChange
   const palette: string[] = Array.isArray(m.dominant_colors) ? m.dominant_colors.map((c: Json) => c.hex) : [];
   const timeline: Json[] = Array.isArray(a.timeline) ? a.timeline : [];
   const characters: Json[] = Array.isArray(a.characters) ? a.characters : [];
-  const max = overview?.maxClipSeconds ?? 12;
-  const min = overview?.minClipSeconds ?? 2;
+  // Veo makes 4, 6 or 8 s clips
+  const lengths = [4, 6, 8].filter((n) => n >= (overview?.minClipSeconds ?? 4) && n <= (overview?.maxClipSeconds ?? 8));
 
   const run = async (f: () => Promise<unknown>, ok?: string) => {
     setSaving(true);
@@ -360,7 +360,7 @@ function SceneCard({ project: p, scene: s, first, last, open, onToggle, onChange
 
             <div className="space-y-2">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="text-[13px] font-semibold text-fg">Prompt cho Seedance <span className="font-normal text-fg-subtle">v{s.promptVersion} · {text.length} ký tự</span></div>
+                <div className="text-[13px] font-semibold text-fg">Prompt cho Veo <span className="font-normal text-fg-subtle">v{s.promptVersion} · {text.length} ký tự</span></div>
                 <div className="flex gap-1">
                   <Button size="sm" variant="ghost" icon={<Copy className="h-3.5 w-3.5" />} onClick={() => { navigator.clipboard.writeText(text); toast.success('Đã copy prompt'); }}>Copy</Button>
                   <Button size="sm" variant="ghost" icon={<History className="h-3.5 w-3.5" />} onClick={() => setVersions(true)}>Phiên bản</Button>
@@ -380,7 +380,7 @@ function SceneCard({ project: p, scene: s, first, last, open, onToggle, onChange
                 <label className="flex items-center gap-2">Thời lượng clip
                   <Select size="sm" className="w-20" value={String(s.targetSeconds)} disabled={saving}
                     onChange={(e) => { const n = Number(e.target.value); run(() => aiStudio.updateScene(p.id, s.id, { targetSeconds: n })); }}>
-                    {Array.from({ length: max - min + 1 }, (_, i) => <option key={i} value={min + i}>{min + i}s</option>)}
+                    {(lengths.includes(s.targetSeconds) ? lengths : [...lengths, s.targetSeconds].sort((x, y) => x - y)).map((n) => <option key={n} value={n}>{n}s</option>)}
                   </Select>
                 </label>
                 <span className="text-fg-subtle">gốc {(s.endSeconds - s.startSeconds).toFixed(1)}s</span>

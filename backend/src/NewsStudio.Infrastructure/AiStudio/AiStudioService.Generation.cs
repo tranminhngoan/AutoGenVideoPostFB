@@ -9,7 +9,7 @@ using NewsStudio.Infrastructure.Studio;
 namespace NewsStudio.Infrastructure.AiStudio;
 
 /// <summary>
-/// The Seedance generator of AI Video Studio. It calls the project's existing <see cref="SeedanceVideoClient"/>
+/// The clip generator of AI Video Studio (Google Veo 3.1 Lite since 2026-11-27, Seedance before). It calls the project's existing <see cref="SeedanceVideoClient"/>
 /// (same Vercel AI Gateway key and models as the video studio page, which is not touched) and writes every paid clip to
 /// the same <see cref="StudioCostRecord"/> table under the same monthly budget. Money rules:
 /// the user confirms the estimate first (refused when the real estimate is higher); a click is sent with a request key,
@@ -29,8 +29,7 @@ public partial class AiStudioService
     public async Task<AiStudioProjectDto> SetGeneratorAsync(Guid id, AiStudioGeneratorSettingsDto input, CancellationToken ct)
     {
         var p = await _db.AiStudioProjects.FirstOrDefaultAsync(x => x.Id == id, ct) ?? throw new KeyNotFoundException("Không tìm thấy dự án.");
-        if (_video.Models().All(m => m.Id != input.VideoModel)) throw new ArgumentException("Model không có trong danh sách Seedance đã cấu hình.");
-        p.VideoModel = input.VideoModel;
+        p.VideoModel = SeedanceVideoClient.NormalizeModel(input.VideoModel); // every new clip: Veo 3.1 Lite
         p.Resolution = SeedanceVideoClient.NormalizeResolution(input.Resolution);
         p.GenAspectRatio = input.AspectRatio == "16:9" ? "16:9" : "9:16";
         p.Seed = input.Seed is { } seed ? Math.Clamp(seed, 0, int.MaxValue) : null;
@@ -92,7 +91,7 @@ public partial class AiStudioService
         var dto = new AiStudioEstimateDto { Lines = lines, Budget = await BudgetAsync(ct) };
         dto.TotalUsd = Math.Round(lines.Where(l => l.Skip == null).Sum(l => l.CostUsd), 4);
         dto.TotalSeconds = lines.Where(l => l.Skip == null).Sum(l => l.Seconds);
-        dto.Blocker = !_video.IsConfigured ? "Chưa có khoá Vercel AI Gateway (AI_GATEWAY_API_KEY) — Seedance chưa dùng được."
+        dto.Blocker = !_video.IsConfigured ? "Chưa có khoá Vercel AI Gateway (AI_GATEWAY_API_KEY) — Veo chưa dùng được."
             : p.Status != "Analyzed" ? "Phân tích video xong rồi mới tạo clip."
             : dto.TotalSeconds == 0 ? "Không có cảnh nào để tạo (cảnh đang tắt hoặc đang tạo)."
             : dto.Budget.MonthlyBudgetUsd > 0 && dto.Budget.MonthSpentUsd + dto.TotalUsd > dto.Budget.MonthlyBudgetUsd
@@ -122,7 +121,7 @@ public partial class AiStudioService
         if (key != null && await _db.AiStudioGenerations.AnyAsync(g => g.RequestKey == key, ct))
             return await GetProjectAsync(id, ct); // the same click sent twice: already queued, nothing new is paid
         var p = await _db.AiStudioProjects.FirstOrDefaultAsync(x => x.Id == id, ct) ?? throw new KeyNotFoundException("Không tìm thấy dự án.");
-        if (!_video.IsConfigured) throw new InvalidOperationException("Chưa có khoá Vercel AI Gateway (AI_GATEWAY_API_KEY) — Seedance chưa dùng được.");
+        if (!_video.IsConfigured) throw new InvalidOperationException("Chưa có khoá Vercel AI Gateway (AI_GATEWAY_API_KEY) — Veo chưa dùng được.");
         if (p.Status != "Analyzed") throw new InvalidOperationException("Phân tích video xong rồi mới tạo clip.");
         var (lines, scenes) = await PlanAsync(p, req.SceneIds, ct);
         var todo = lines.Where(l => l.Skip == null).ToList();
@@ -167,11 +166,11 @@ public partial class AiStudioService
         foreach (var id in ids) await RunGenerationAsync(id, ct);
     }
 
-    /// <summary>Makes one clip (any machine: Seedance works in the cloud, this only waits for it).</summary>
+    /// <summary>Makes one clip (any machine: Veo works in the cloud, this only waits for it).</summary>
     [AutomaticRetry(Attempts = 0, OnAttemptsExceeded = AttemptsExceededAction.Delete)]
     public async Task RunGenerationAsync(Guid generationId, CancellationToken ct)
     {
-        // claim the clip in one atomic update: two workers (or a duplicated job) can never both send it to Seedance
+        // claim the clip in one atomic update: two workers (or a duplicated job) can never both send it to the video model
         var claimed = await _db.AiStudioGenerations.Where(x => x.Id == generationId && x.Status == "Queued")
             .ExecuteUpdateAsync(u => u.SetProperty(x => x.Status, "Generating").SetProperty(x => x.UpdatedAtUtc, DateTime.UtcNow), ct);
         if (claimed == 0) return; // already handled (duplicate job, cancelled)
@@ -251,7 +250,7 @@ public partial class AiStudioService
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             g.Status = "Failed";
-            g.ErrorMessage = g.ProviderOperation != null ? "Máy chủ khởi động lại giữa chừng — bấm \"Lấy lại clip\" (không trả tiền lần nữa)." : "Bị dừng trước khi gửi Seedance — tạo lại.";
+            g.ErrorMessage = g.ProviderOperation != null ? "Máy chủ khởi động lại giữa chừng — bấm \"Lấy lại clip\" (không trả tiền lần nữa)." : "Bị dừng trước khi gửi Veo — tạo lại.";
             g.FinishedAtUtc = DateTime.UtcNow;
             await _db.SaveChangesAsync(CancellationToken.None);
             throw;
@@ -299,7 +298,7 @@ public partial class AiStudioService
     {
         var g = await _db.AiStudioGenerations.FirstOrDefaultAsync(x => x.Id == generationId, ct) ?? throw new KeyNotFoundException("Không tìm thấy clip.");
         if (g.Status != "Failed" || g.ProviderOperation == null || g.ClipBlobId != null)
-            throw new InvalidOperationException("Chỉ lấy lại được clip lỗi đã gửi Seedance (đã trả tiền). Clip khác: bấm Tạo lại.");
+            throw new InvalidOperationException("Chỉ lấy lại được clip lỗi đã gửi đi tạo (đã trả tiền). Clip khác: bấm Tạo lại.");
         g.Status = "Recovering";
         g.ErrorMessage = null;
         await _db.SaveChangesAsync(ct);
@@ -322,7 +321,7 @@ public partial class AiStudioService
             if (got == null)
             {
                 g.Status = "Failed";
-                g.ErrorMessage = "Seedance không còn giữ clip này (job lỗi hoặc đã hết hạn) — bấm Tạo lại (lần tạo mới sẽ tính tiền).";
+                g.ErrorMessage = "Nhà cung cấp không còn giữ clip này (job lỗi hoặc đã hết hạn) — bấm Tạo lại (lần tạo mới sẽ tính tiền).";
             }
             else
             {
@@ -348,11 +347,11 @@ public partial class AiStudioService
         }
     }
 
-    /// <summary>Only a clip not yet sent to Seedance can be cancelled (a sent one is already paid and cannot be stopped there).</summary>
+    /// <summary>Only a clip not yet sent to the video model can be cancelled (a sent one is already paid and cannot be stopped there).</summary>
     public async Task<AiStudioGenerationDto> CancelGenerationAsync(Guid generationId, CancellationToken ct)
     {
         var g = await _db.AiStudioGenerations.FirstOrDefaultAsync(x => x.Id == generationId, ct) ?? throw new KeyNotFoundException("Không tìm thấy clip.");
-        if (g.Status == "Generating") throw new InvalidOperationException("Clip đã gửi Seedance (đã tính tiền) — Seedance không cho huỷ giữa chừng, chờ clip về.");
+        if (g.Status == "Generating") throw new InvalidOperationException("Clip đã gửi Veo (đã tính tiền) — không huỷ được giữa chừng, chờ clip về.");
         if (g.Status == "Queued")
         {
             g.Status = "Cancelled";

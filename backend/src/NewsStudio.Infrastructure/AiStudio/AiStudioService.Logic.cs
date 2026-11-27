@@ -72,7 +72,7 @@ public partial class AiStudioService
         var topic = AiStudioTopics.Find(p.Topic);
         var strict = topic?.Locale != null;
         var system =
-            "You are the continuity supervisor and physical-plausibility editor for an AI text-to-video model (Seedance). " +
+            "You are the continuity supervisor and physical-plausibility editor for an AI text-to-video model (Google Veo). " +
             "Video models make illogical clips when an action is vague: hands go into fire or boiling pots, food passes through cheeks, " +
             "a child does something dangerous, feet slide or float while walking, objects appear, vanish, merge into hands or change size, " +
             "tools are held the wrong way, people pass through things or sit on nothing, limbs multiply, animals morph, extra people pop in, " +

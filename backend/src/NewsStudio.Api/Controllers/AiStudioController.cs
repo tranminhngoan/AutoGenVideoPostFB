@@ -8,7 +8,7 @@ using NewsStudio.Infrastructure.AiStudio;
 namespace NewsStudio.Api.Controllers;
 
 /// <summary>
-/// AI Video Studio — reference video → local analysis on the owner's PC → scene prompts → new clips with Seedance.
+/// AI Video Studio — reference video → local analysis on the owner's PC → scene prompts → new clips with Google Veo.
 /// Every data call needs the studio key (<see cref="StudioAccess"/>); media files (thumbnails, keyframes, clips) stay
 /// open by their random ids so the page can show them in &lt;img&gt; / &lt;video&gt; tags, and only files that belong to
 /// AI Video Studio are served. Uploads are streamed to disk in 4 MB pieces, never held whole in memory.
@@ -284,7 +284,7 @@ public class AiStudioController : ControllerBase
     public Task<IActionResult> Restore(Guid id, [FromBody] RestoreRequest req, CancellationToken ct) =>
         Run(async () => await _studio.RestoreVersionAsync(id, req.VersionId, ct));
 
-    // ───────────── Seedance generator ─────────────
+    // ───────────── clip generator (Veo) ─────────────
 
     [HttpPut("projects/{id:guid}/generator")]
     public Task<IActionResult> Generator(Guid id, [FromBody] AiStudioGeneratorSettingsDto input, CancellationToken ct) =>

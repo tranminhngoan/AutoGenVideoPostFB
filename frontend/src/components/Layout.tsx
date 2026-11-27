@@ -165,7 +165,7 @@ function SidebarContent({
       <nav className="mt-5 flex-1 space-y-0.5 overflow-y-auto px-3">
         {main.map(renderItem)}
         <div className="!mt-5 mb-1.5 px-2.5 text-xs font-semibold uppercase tracking-wider text-indigo-400">
-          Video AI (Seedance)
+          Video AI (Veo)
         </div>
         {studio.map(renderItem)}
         <div className="!mt-5 mb-1.5 px-2.5 text-xs font-semibold uppercase tracking-wider text-violet-400">

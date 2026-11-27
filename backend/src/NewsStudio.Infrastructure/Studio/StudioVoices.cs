@@ -10,7 +10,7 @@ namespace NewsStudio.Infrastructure.Studio;
 public sealed record StudioVoice(string Id, string Name, string Gender, string Description);
 
 /// <summary>
-/// Dialogue voices: each line is read by Gemini TTS in the voice given to its speaker. Seedance 1.0 makes silent video,
+/// Dialogue voices: each line is read by Gemini TTS in the voice given to its speaker. Veo clips are made silent,
 /// so these voices (plus the music) are the whole soundtrack. Only the line itself is sent — an acting direction in
 /// front of it was sometimes read aloud by the model (see <see cref="GeminiTtsService"/>).
 /// </summary>

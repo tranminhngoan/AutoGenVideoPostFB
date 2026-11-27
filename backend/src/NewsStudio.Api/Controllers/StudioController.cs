@@ -9,7 +9,7 @@ using NewsStudio.Infrastructure.Studio;
 namespace NewsStudio.Api.Controllers;
 
 /// <summary>
-/// AI video studio API (Seedance text-to-video + Gemini TTS). The app has no login, so every call that spends money or
+/// AI video studio API (Google Veo text-to-video + Gemini TTS). The app has no login, so every call that spends money or
 /// writes data needs X-Studio-Key equal to the server's Vercel AI Gateway key, its paid Gemini key or Security:AdminApiKey. Media downloads (images, music, clips, final video) stay
 /// open so the page can show them in &lt;img&gt;/&lt;video&gt; tags.
 /// </summary>

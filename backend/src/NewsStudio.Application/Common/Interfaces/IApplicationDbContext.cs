@@ -49,7 +49,7 @@ public interface IApplicationDbContext
     DbSet<StudioShot> StudioShots { get; }
     DbSet<StudioCostRecord> StudioCostRecords { get; }
 
-    // AI Video Studio (analysis on the owner's PC, clips by Seedance)
+    // AI Video Studio (analysis on the owner's PC, clips by Google Veo)
     DbSet<AiStudioProject> AiStudioProjects { get; }
     DbSet<AiStudioScene> AiStudioScenes { get; }
     DbSet<AiStudioPromptVersion> AiStudioPromptVersions { get; }

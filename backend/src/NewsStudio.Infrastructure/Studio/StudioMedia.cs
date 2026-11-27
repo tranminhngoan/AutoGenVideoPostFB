@@ -217,6 +217,23 @@ public class StudioMedia
         }
     }
 
+    /// <summary>The clip without its sound track (the picture copied, not re-encoded); null when FFmpeg fails.</summary>
+    public async Task<byte[]?> StripAudioAsync(byte[] video, CancellationToken ct)
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "studio-silent-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var input = Path.Combine(dir, "in.mp4");
+            var output = Path.Combine(dir, "out.mp4");
+            await File.WriteAllBytesAsync(input, video, ct);
+            var (code, _, _) = await RunAsync(_ffmpeg, $"-hide_banner -v error -y -i \"{input}\" -map 0:v:0 -c:v copy -an -movflags +faststart \"{output}\"", ct);
+            return code == 0 && File.Exists(output) && new FileInfo(output).Length > 1024 ? await File.ReadAllBytesAsync(output, ct) : null;
+        }
+        catch (Exception ex) when (ex is IOException or InvalidOperationException or System.ComponentModel.Win32Exception) { return null; }
+        finally { TryDelete(dir); }
+    }
+
     private async Task<bool> HasAudioAsync(string path, CancellationToken ct)
     {
         var (_, output, _) = await RunAsync(_ffprobe, $"-v error -select_streams a -show_entries stream=index -of csv=p=0 \"{path}\"", ct);

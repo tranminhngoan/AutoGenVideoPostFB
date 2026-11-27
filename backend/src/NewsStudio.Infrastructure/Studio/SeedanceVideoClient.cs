@@ -8,7 +8,8 @@ using Microsoft.Extensions.Logging;
 
 namespace NewsStudio.Infrastructure.Studio;
 
-public sealed record VideoClip(byte[] Video, string MimeType, string? RequestId, int Seconds, decimal CostUsd);
+/// <summary>A made clip. <paramref name="HadAudio"/>: the provider returned a sound track (it was removed, and billed at the audio price).</summary>
+public sealed record VideoClip(byte[] Video, string MimeType, string? RequestId, int Seconds, decimal CostUsd, bool HadAudio = false);
 
 /// <summary>A picture the clip starts from (image-to-video), sent inline to the gateway.</summary>
 public sealed record VideoStartImage(byte[] Data, string MediaType);
@@ -41,40 +42,49 @@ public sealed class VideoTransientException : InvalidOperationException
 public sealed record VideoModelOption(string Id, string Label, IReadOnlyDictionary<string, decimal> PricePerSecond, string Note);
 
 /// <summary>
-/// ByteDance Seedance 1.0 (text-to-video, no audio) through the Vercel AI Gateway, with the same HTTP calls the AI SDK's
-/// gateway provider makes: POST {base}/video-model/start → an opaque "operation", then POST {base}/video-model/status
-/// with that operation until it is completed (videos: url or base64) or errors. The operation is stored on the shot, so
-/// a run cut off by a restart picks the same paid job up again. Key: Ai:Gateway:ApiKey / AI_GATEWAY_API_KEY.
+/// The video model of every studio page: Google Veo 3.1 Lite (text-to-video / image-to-video) through the Vercel AI
+/// Gateway. (The class keeps its old name: it made ByteDance Seedance 1.0 clips until 2026-11-27 — those model ids are
+/// kept only so a job paid on Seedance can still be fetched again for free.) Same HTTP calls as the AI SDK's gateway
+/// provider: POST {base}/video-model/start → an opaque "operation", then POST {base}/video-model/status with it until
+/// the job is completed (videos: url or base64) or errors. The operation is stored on the shot, so a run cut off by a
+/// restart picks the same paid job up again. Key: Ai:Gateway:ApiKey / AI_GATEWAY_API_KEY.
+/// Veo makes 4, 6 or 8 s clips at 720p / 1080p in 9:16 or 16:9, and makes sound unless told not to: the studios add
+/// their own narration / music, so sound is switched off (cheaper) and a sound track that still comes back is removed.
+/// The prompt's trailing "Avoid: …" goes into Veo's own negative prompt.
 /// </summary>
 public class SeedanceVideoClient
 {
-    public const int MinSeconds = 2;
-    public const int MaxSeconds = 12;
+    public const string VeoLiteModel = "google/veo-3.1-lite-generate-001";
+    /// <summary>Old Seedance ids: only to fetch again a clip already paid on Seedance (never for a new clip).</summary>
     public const string FastModel = "bytedance/seedance-v1.0-pro-fast";
     public const string ProModel = "bytedance/seedance-v1.0-pro";
-    public static readonly string[] Resolutions = { "480p", "720p", "1080p" };
+
+    /// <summary>The clip lengths Veo makes (seconds).</summary>
+    public static readonly int[] AllowedSeconds = { 4, 6, 8 };
+    public const int MinSeconds = 4;
+    public const int MaxSeconds = 8;
+    public static readonly string[] Resolutions = { "720p", "1080p" };
     private const string DefaultBaseUrl = "https://ai-gateway.vercel.sh/v4/ai";
 
-    // Vercel lists Pro Fast from $0.0097/s and Pro from $0.02/s (480p); higher resolutions scale with the pixel count.
-    // Estimates only — override with Studio:Prices:{model}:{resolution}.
-    private static readonly Dictionary<string, Dictionary<string, decimal>> DefaultPrices = new()
-    {
-        [FastModel] = new() { ["480p"] = 0.0097m, ["720p"] = 0.0216m, ["1080p"] = 0.0486m },
-        [ProModel] = new() { ["480p"] = 0.02m, ["720p"] = 0.0445m, ["1080p"] = 0.10m },
-    };
+    // Veo 3.1 Lite: $0.03/s at 720p and $0.05/s at 1080p without sound; with sound $0.05 / $0.08. Override with
+    // Studio:Prices:{model}:{resolution} (and Studio:AudioPrices:… for the sound price) if Vercel's rate changes.
+    private static readonly Dictionary<string, decimal> SilentPrices = new() { ["720p"] = 0.03m, ["1080p"] = 0.05m };
+    private static readonly Dictionary<string, decimal> AudioPrices = new() { ["720p"] = 0.05m, ["1080p"] = 0.08m };
 
     private readonly HttpClient _http;
     private readonly IConfiguration _configuration;
     private readonly ILogger<SeedanceVideoClient> _logger;
+    private readonly StudioMedia? _media;
 
     public TimeSpan PollInterval { get; set; } = TimeSpan.FromSeconds(5);
     public TimeSpan MaxWait { get; set; } = TimeSpan.FromMinutes(15);
 
-    public SeedanceVideoClient(HttpClient http, IConfiguration configuration, ILogger<SeedanceVideoClient> logger)
+    public SeedanceVideoClient(HttpClient http, IConfiguration configuration, ILogger<SeedanceVideoClient> logger, StudioMedia? media = null)
     {
         _http = http;
         _configuration = configuration;
         _logger = logger;
+        _media = media;
     }
 
     public static string? ApiKey(IConfiguration configuration) =>
@@ -84,67 +94,87 @@ public class SeedanceVideoClient
 
     private string BaseUrl => NonEmpty(_configuration["Ai:Gateway:BaseUrl"])?.TrimEnd('/') ?? DefaultBaseUrl;
 
-    public string DefaultModel => NormalizeModel(_configuration["Studio:VideoModel"]);
+    public string DefaultModel => VeoLiteModel;
 
     public IReadOnlyList<VideoModelOption> Models() => new[]
     {
-        new VideoModelOption(FastModel, "Seedance 1.0 Pro Fast", Prices(FastModel), "Nhanh, rẻ (~3 lần rẻ hơn Pro)"),
-        new VideoModelOption(ProModel, "Seedance 1.0 Pro", Prices(ProModel), "Chất lượng cao nhất, chậm và đắt hơn"),
+        new VideoModelOption(VeoLiteModel, "Google Veo 3.1 Lite", Prices(), "Clip 4, 6 hoặc 8 giây · không tiếng (lời bình / nhạc thêm sau)"),
     };
 
-    public static string NormalizeModel(string? model) => model == ProModel ? ProModel : FastModel;
+    /// <summary>Every new clip is made by Veo 3.1 Lite, whatever an older video or project has stored (e.g. a Seedance id).</summary>
+    public static string NormalizeModel(string? model) => VeoLiteModel;
 
     public static string NormalizeResolution(string? resolution) =>
-        Resolutions.FirstOrDefault(r => string.Equals(r, resolution, StringComparison.OrdinalIgnoreCase)) ?? "720p";
+        Resolutions.FirstOrDefault(r => string.Equals(r, resolution?.Trim(), StringComparison.OrdinalIgnoreCase)) ?? "720p";
 
-    public static int ClampSeconds(int seconds) => Math.Clamp(seconds, MinSeconds, MaxSeconds);
+    /// <summary>
+    /// The clip length Veo can make for a wanted length: 4, 6 or 8 s, rounded UP between them (5 → 6, 7 → 8) so a clip
+    /// is never shorter than asked within range; at most 8 (a longer scene is split before it gets here).
+    /// </summary>
+    public static int ClampSeconds(int seconds) => seconds <= MinSeconds ? MinSeconds : seconds >= MaxSeconds ? MaxSeconds : (seconds + 1) / 2 * 2;
 
-    private Dictionary<string, decimal> Prices(string model) =>
-        Resolutions.ToDictionary(r => r, r => PricePerSecond(model, r));
+    /// <summary>The nearest length Veo makes (for a measured length: 4.9 → 4, 5.0 → 6).</summary>
+    public static int NearestSeconds(double seconds) => AllowedSeconds.OrderBy(a => Math.Abs(a - seconds)).ThenByDescending(a => a).First();
 
-    public decimal PricePerSecond(string? model, string? resolution)
+    private Dictionary<string, decimal> Prices() => Resolutions.ToDictionary(r => r, r => PricePerSecond(VeoLiteModel, r));
+
+    public decimal PricePerSecond(string? model, string? resolution) => Price("Studio:Prices", SilentPrices, resolution);
+
+    private decimal AudioPricePerSecond(string? resolution) => Price("Studio:AudioPrices", AudioPrices, resolution);
+
+    private decimal Price(string section, Dictionary<string, decimal> defaults, string? resolution)
     {
-        model = NormalizeModel(model);
         resolution = NormalizeResolution(resolution);
-        var configured = _configuration[$"Studio:Prices:{model}:{resolution}"];
+        var configured = _configuration[$"{section}:{VeoLiteModel}:{resolution}"];
         if (decimal.TryParse(configured, NumberStyles.Number, CultureInfo.InvariantCulture, out var p) && p > 0) return p;
-        return DefaultPrices[model][resolution];
+        return defaults[resolution];
     }
 
     public decimal EstimateCost(string? model, string? resolution, int seconds) =>
         Math.Round(ClampSeconds(seconds) * PricePerSecond(model, resolution), 4);
 
-    /// <summary>Frame size Seedance renders for a resolution and shape ("720x1280"…), as the AI SDK spec writes it.</summary>
+    /// <summary>Frame size for a resolution and shape ("720x1280"…), as the AI SDK spec writes it (WIDTHxHEIGHT).</summary>
     public static string FrameSize(string aspectRatio, string resolution)
     {
-        var (w, h) = NormalizeResolution(resolution) switch
-        {
-            "480p" => (864, 480),
-            "1080p" => (1920, 1080),
-            _ => (1280, 720)
-        };
+        var (w, h) = NormalizeResolution(resolution) == "1080p" ? (1920, 1080) : (1280, 720);
         return aspectRatio == "16:9" ? $"{w}x{h}" : $"{h}x{w}";
     }
 
+    /// <summary>The engine's prompt split into what to show and its trailing "Avoid: …" (Veo's negative prompt).</summary>
+    public static (string Prompt, string? Negative) SplitNegative(string prompt)
+    {
+        var i = prompt.LastIndexOf(" Avoid: ", StringComparison.Ordinal);
+        if (i < 0) return (prompt.Trim(), null);
+        var negative = prompt[(i + " Avoid: ".Length)..].Trim().TrimEnd('.').Trim();
+        return negative.Length == 0 ? (prompt[..i].Trim(), null) : (prompt[..i].Trim(), negative);
+    }
+
+    /// <summary>What can still be changed in a request the provider refused for one of its parameters.</summary>
+    public sealed record StartOptions(string? Resolution, string? PersonGeneration = "allow_all", bool TopLevelAudio = true, bool SendSeed = true, bool SeparateNegative = true);
+
     /// <summary>
-    /// Body of POST /video-model/start. <paramref name="resolution"/> null = let the model pick its default.
+    /// Body of POST /video-model/start. <paramref name="resolution"/> null = the model's default.
     /// <paramref name="image"/> (optional) = the first frame, as the AI SDK's gateway provider sends it ({type: file, mediaType, data: base64}).
     /// </summary>
-    public static JsonObject BuildStartBody(string prompt, string aspectRatio, string? resolution, int seconds, int? seed, VideoStartImage? image = null)
+    public static JsonObject BuildStartBody(string prompt, string aspectRatio, string? resolution, int seconds, int? seed, VideoStartImage? image = null,
+        StartOptions? options = null)
     {
+        var o = options ?? new StartOptions(resolution);
+        var (text, negative) = o.SeparateNegative ? SplitNegative(prompt) : (prompt.Trim(), null);
+        var vertex = new JsonObject { ["generateAudio"] = false };
+        if (negative != null) vertex["negativePrompt"] = negative;
+        if (o.PersonGeneration != null) vertex["personGeneration"] = o.PersonGeneration;
         var body = new JsonObject
         {
-            ["prompt"] = prompt,
+            ["prompt"] = text,
             ["n"] = 1,
             ["aspectRatio"] = aspectRatio == "16:9" ? "16:9" : "9:16",
             ["duration"] = ClampSeconds(seconds),
-            ["providerOptions"] = new JsonObject
-            {
-                ["bytedance"] = new JsonObject { ["watermark"] = false, ["cameraFixed"] = false }
-            }
+            ["providerOptions"] = new JsonObject { ["vertex"] = vertex }
         };
+        if (o.TopLevelAudio) body["generateAudio"] = false;
         if (resolution != null) body["resolution"] = resolution;
-        if (seed != null) body["seed"] = seed.Value;
+        if (seed != null && o.SendSeed) body["seed"] = seed.Value;
         if (image != null)
             body["image"] = new JsonObject { ["type"] = "file", ["mediaType"] = image.MediaType, ["data"] = Convert.ToBase64String(image.Data) };
         return body;
@@ -180,40 +210,59 @@ public class SeedanceVideoClient
         CancellationToken ct, string? resumeOperation = null, Func<string, Task>? onStarted = null, VideoStartImage? image = null)
     {
         var key = ApiKey(_configuration) ?? throw new VideoAccountException("Chưa có khoá Vercel AI Gateway (biến AI_GATEWAY_API_KEY trên Railway).");
-        model = NormalizeModel(model);
         resolution = NormalizeResolution(resolution);
         seconds = ClampSeconds(seconds);
-        var cost = EstimateCost(model, resolution, seconds);
 
-        if (resumeOperation != null && await TryFinishAsync(model, resumeOperation, key, ct) is { } resumed)
+        if (resumeOperation != null && await TryFinishAnyAsync(model, resumeOperation, key, ct) is { } resumed)
         {
-            _logger.LogInformation("Seedance job resumed without a new charge");
-            return new VideoClip(resumed.Bytes, resumed.Mime, resumeOperation, seconds, 0m);
+            _logger.LogInformation("Video job resumed without a new charge");
+            var (bytes, _) = await SilentAsync(resumed.Bytes, ct);
+            return new VideoClip(bytes, resumed.Mime, resumeOperation, seconds, 0m);
         }
 
-        var operation = await StartAsync(model, key, prompt, aspectRatio, resolution, seconds, seed, ct, image);
+        var (operation, usedResolution) = await StartAsync(key, prompt, aspectRatio, resolution, seconds, seed, ct, image);
         if (onStarted != null) await onStarted(operation);
         var started = DateTime.UtcNow;
-        var status = await WaitAsync(model, operation, key, ct);
+        var status = await WaitAsync(VeoLiteModel, operation, key, ct);
         if (status.Status != "completed")
         {
             var reason = status.Error ?? status.Status;
             if (LooksLikeModeration(reason))
-                throw new VideoRejectedException($"Seedance không tạo clip vì nội dung bị chặn ({reason}) — sửa hành động / lời thoại của shot rồi tạo lại.");
-            throw new InvalidOperationException($"Seedance tạo clip lỗi ({reason}).");
+                throw new VideoRejectedException($"Veo không tạo clip vì bộ lọc an toàn của Google chặn ({reason}) — sửa hành động / prompt của cảnh rồi tạo lại.");
+            throw new InvalidOperationException($"Veo tạo clip lỗi ({reason}).");
         }
+        if (string.IsNullOrEmpty(status.VideoUrl) && string.IsNullOrEmpty(status.VideoBase64))
+            // Google answers "done" with no video when its safety filter removed it (not billed)
+            throw new VideoRejectedException("Veo không trả clip — thường do bộ lọc an toàn của Google chặn (trẻ em, người thật, hành động nguy hiểm…). " +
+                                             "Sửa prompt cảnh này cho nhẹ nhàng hơn rồi tạo lại.");
         var file = await TakeVideoAsync(status, ct)
                    ?? throw new InvalidOperationException("Không tải được clip từ Vercel — bấm \"Lấy lại clip đã trả tiền\" để thử tải lại (không trả tiền lần nữa).");
-        _logger.LogInformation("Seedance clip {Model} {Seconds}s {Res} in {Elapsed:F0}s ({Size} KB)", model, seconds, resolution,
-            (DateTime.UtcNow - started).TotalSeconds, file.Bytes.Length / 1024);
-        return new VideoClip(file.Bytes, file.Mime, operation, seconds, cost);
+        var (video, hadAudio) = await SilentAsync(file.Bytes, ct);
+        var cost = Math.Round(seconds * (hadAudio ? AudioPricePerSecond(usedResolution) : PricePerSecond(VeoLiteModel, usedResolution)), 4);
+        if (hadAudio) _logger.LogWarning("Veo returned a sound track although sound was switched off — removed; cost counted at the sound price");
+        _logger.LogInformation("Veo clip {Seconds}s {Res} in {Elapsed:F0}s ({Size} KB)", seconds, usedResolution,
+            (DateTime.UtcNow - started).TotalSeconds, video.Length / 1024);
+        return new VideoClip(video, file.Mime, operation, seconds, cost, hadAudio);
     }
 
     /// <summary>Downloads the clip of an already-paid job again. Never submits anything new — costs nothing.</summary>
     public async Task<(byte[] Bytes, string Mime)?> TryRecoverAsync(string model, string operation, CancellationToken ct)
     {
         var key = ApiKey(_configuration) ?? throw new VideoAccountException("Chưa có khoá Vercel AI Gateway (biến AI_GATEWAY_API_KEY trên Railway).");
-        return await TryFinishAsync(NormalizeModel(model), operation, key, ct);
+        if (await TryFinishAnyAsync(model, operation, key, ct) is not { } file) return null;
+        return ((await SilentAsync(file.Bytes, ct)).Video, file.Mime);
+    }
+
+    /// <summary>
+    /// A stored job may have been paid on Seedance (before the switch) or on Veo: its status is asked from the stored
+    /// model first, then the others — status calls are free.
+    /// </summary>
+    private async Task<(byte[] Bytes, string Mime)?> TryFinishAnyAsync(string? model, string operation, string key, CancellationToken ct)
+    {
+        var models = new[] { model?.Trim(), VeoLiteModel, FastModel, ProModel }.Where(m => !string.IsNullOrEmpty(m)).Distinct().Cast<string>();
+        foreach (var m in models)
+            if (await TryFinishAsync(m, operation, key, ct) is { } file) return file;
+        return null;
     }
 
     private async Task<(byte[] Bytes, string Mime)?> TryFinishAsync(string model, string operation, string key, CancellationToken ct)
@@ -225,37 +274,89 @@ public class SeedanceVideoClient
         }
         catch (Exception ex) when (ex is not OperationCanceledException and not VideoAccountException)
         {
-            _logger.LogInformation("Seedance job not reusable: {Message}", ex.Message);
+            _logger.LogInformation("Video job not reusable with {Model}: {Message}", model, ex.Message);
             return null;
         }
     }
 
-    /// <summary>
-    /// Starts the job. The exact resolution format the gateway wants for Seedance 1.0 isn't documented, so a request it
-    /// rejects for its resolution (rejections are not billed) is sent again as "720p", then without one.
-    /// </summary>
-    private async Task<string> StartAsync(string model, string key, string prompt, string aspectRatio, string resolution, int seconds, int? seed, CancellationToken ct,
-        VideoStartImage? image = null)
+    /// <summary>The clip without a sound track (the studios add their own sound); true when it had one.</summary>
+    private async Task<(byte[] Video, bool HadAudio)> SilentAsync(byte[] video, CancellationToken ct)
     {
-        var candidates = new List<string?> { FrameSize(aspectRatio, resolution), resolution, null };
-        VideoRejectedException? last = null;
-        foreach (var res in candidates)
+        if (!HasAudioTrack(video)) return (video, false);
+        if (_media != null && await _media.StripAudioAsync(video, ct) is { } silent) return (silent, true);
+        _logger.LogWarning("Video clip has a sound track that could not be removed");
+        return (video, true);
+    }
+
+    /// <summary>An MP4 with an audio track has a handler box of type "soun" (hdlr: size, type, version/flags, pre-defined, handler).</summary>
+    public static bool HasAudioTrack(byte[] mp4)
+    {
+        for (var i = 0; i + 16 <= mp4.Length; i++)
+            if (mp4[i] == 'h' && mp4[i + 1] == 'd' && mp4[i + 2] == 'l' && mp4[i + 3] == 'r'
+                && mp4[i + 12] == 's' && mp4[i + 13] == 'o' && mp4[i + 14] == 'u' && mp4[i + 15] == 'n')
+                return true;
+        return false;
+    }
+
+    /// <summary>
+    /// Starts the job. A request refused for one of its parameters (refusals are not billed) is sent again without it:
+    /// the frame size as "720p" / "1080p", then none; children allowed → adults only → the provider's default; the
+    /// top-level sound switch, the seed, the separate negative prompt. 1080p refused for the clip length → 720p.
+    /// </summary>
+    private async Task<(string Operation, string Resolution)> StartAsync(string key, string prompt, string aspectRatio, string resolution, int seconds, int? seed,
+        CancellationToken ct, VideoStartImage? image = null)
+    {
+        var sizes = new List<(string? Value, string Res)> { (FrameSize(aspectRatio, resolution), resolution), (resolution, resolution) };
+        if (resolution != "720p") sizes.Add((FrameSize(aspectRatio, "720p"), "720p"));
+        sizes.Add((null, "720p"));
+        var size = 0;
+        var options = new StartOptions(sizes[0].Value);
+        for (var attempt = 1; ; attempt++)
         {
             try
             {
-                var text = await PostAsync(model, "video-model/start", key, BuildStartBody(prompt, aspectRatio, res, seconds, seed, image), ct);
+                var body = BuildStartBody(prompt, aspectRatio, sizes[size].Value, seconds, seed, image, options);
+                var text = await PostAsync(VeoLiteModel, "video-model/start", key, body, ct);
                 using var doc = JsonDocument.Parse(text);
                 if (!doc.RootElement.TryGetProperty("operation", out var op) || op.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
                     throw new InvalidOperationException("Vercel không trả về mã job video.");
-                return op.GetRawText();
+                return (op.GetRawText(), sizes[size].Res);
             }
-            catch (VideoRejectedException ex) when (ex.Message.Contains("resolution", StringComparison.OrdinalIgnoreCase) && res != null)
+            catch (VideoRejectedException ex) when (attempt < 10)
             {
-                _logger.LogInformation("Seedance refused resolution {Res}: {Message}", res, ex.Message);
-                last = ex;
+                var m = ex.Message.ToLowerInvariant();
+                var changed = false;
+                // people of all ages (the childhood videos need children) → adults only → the provider's default
+                if (m.Contains("person") && options.PersonGeneration != null)
+                {
+                    options = options with { PersonGeneration = options.PersonGeneration == "allow_all" ? "allow_adult" : null };
+                    changed = true;
+                }
+                else if (LooksLikeModeration(ex.Message)) throw;
+                else if (m.Contains("generateaudio") && options.TopLevelAudio)
+                {
+                    options = options with { TopLevelAudio = false };
+                    changed = true;
+                }
+                else if (m.Contains("seed") && options.SendSeed && seed != null)
+                {
+                    options = options with { SendSeed = false };
+                    changed = true;
+                }
+                else if (m.Contains("negative") && options.SeparateNegative)
+                {
+                    options = options with { SeparateNegative = false };
+                    changed = true;
+                }
+                else if ((m.Contains("resolution") || (m.Contains("duration") && sizes[size].Res != "720p")) && size + 1 < sizes.Count)
+                {
+                    size++;
+                    changed = true;
+                }
+                if (!changed) throw;
+                _logger.LogInformation("Veo refused a parameter, sending again: {Message}", ex.Message);
             }
         }
-        throw last ?? new VideoRejectedException("Seedance từ chối độ phân giải.");
     }
 
     private async Task<JobStatus> WaitAsync(string model, string operation, string key, CancellationToken ct)
@@ -272,10 +373,10 @@ public class SeedanceVideoClient
             catch (VideoTransientException ex)
             {
                 // a hiccup while polling must not lose a paid job: keep waiting until the deadline
-                _logger.LogWarning("Seedance poll: {Message}", ex.Message);
+                _logger.LogWarning("Video poll: {Message}", ex.Message);
             }
             if (DateTime.UtcNow - started > MaxWait)
-                throw new InvalidOperationException($"Quá {MaxWait.TotalMinutes:0} phút Seedance chưa trả clip — bấm \"Lấy lại clip đã trả tiền\" sau ít phút (không trả tiền lần nữa).");
+                throw new InvalidOperationException($"Quá {MaxWait.TotalMinutes:0} phút Veo chưa trả clip — bấm \"Lấy lại clip đã trả tiền\" sau ít phút (không trả tiền lần nữa).");
             await Task.Delay(PollInterval, ct);
         }
     }
@@ -306,7 +407,9 @@ public class SeedanceVideoClient
                     $"Tài khoản Vercel AI Gateway không dùng được (HTTP {code}: {message}). Kiểm tra khoá AI_GATEWAY_API_KEY và credit " +
                     "(tạo video cần tối thiểu $10 credit). Clip đã tạo vẫn được giữ — nạp xong bấm \"Tạo các clip còn thiếu\".");
             if (code is 429 or >= 500 || type is "rate_limit_exceeded" or "internal_server_error" or "failed_dependency")
-                throw new VideoTransientException($"Vercel / Seedance đang bận (HTTP {code}): {message}");
+                throw new VideoTransientException($"Vercel / Veo đang bận (HTTP {code}): {message}");
+            if (LooksLikeModeration(message))
+                throw new VideoRejectedException($"Veo không nhận prompt vì bộ lọc an toàn của Google ({message}) — sửa hành động / prompt của cảnh rồi tạo lại.");
             throw new VideoRejectedException($"Vercel từ chối yêu cầu (HTTP {code}, {type}): {message}");
         }
     }
@@ -333,7 +436,7 @@ public class SeedanceVideoClient
             }
             catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException && !ct.IsCancellationRequested)
             {
-                _logger.LogWarning(ex, "Seedance clip download attempt {Attempt} failed", attempt);
+                _logger.LogWarning(ex, "Video clip download attempt {Attempt} failed", attempt);
                 if (attempt < 4) await Task.Delay(PollInterval * attempt, ct);
             }
         }
@@ -345,7 +448,8 @@ public class SeedanceVideoClient
             .Any(w => message.Contains(w, StringComparison.OrdinalIgnoreCase));
 
     private static bool LooksLikeModeration(string reason) =>
-        new[] { "sensitive", "policy", "moderation", "safety", "inappropriate", "real person", "copyright" }
+        new[] { "sensitive", "policy", "moderation", "safety", "inappropriate", "real person", "copyright", "usage guidelines", "violat",
+                "responsible ai", "raimediafiltered", "filtered", "prohibited", "blocked" }
             .Any(w => reason.Contains(w, StringComparison.OrdinalIgnoreCase));
 
     private static (string Message, string? Type) ErrorOf(string body)

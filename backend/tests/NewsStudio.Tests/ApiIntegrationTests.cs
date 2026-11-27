@@ -168,17 +168,17 @@ public class ApiIntegrationTests : IClassFixture<WebApplicationFactory<Program>>
         var video = JsonDocument.Parse(await saved.Content.ReadAsStringAsync()).RootElement;
         var shots = video.GetProperty("shots").EnumerateArray().ToList();
         shots.Should().HaveCount(2);
-        shots[1].GetProperty("durationSeconds").GetInt32().Should().Be(12); // clamped to Seedance's max
+        shots[1].GetProperty("durationSeconds").GetInt32().Should().Be(8); // clamped to Veo's max
         shots[0].GetProperty("cast").EnumerateArray().Select(c => c.GetString()).Should().Equal("Anh Hai"); // duplicates dropped
         shots[0].GetProperty("location").GetString().Should().Be("Sân");
         video.GetProperty("status").GetString().Should().Be("Planned");
-        video.GetProperty("targetDurationSeconds").GetInt32().Should().Be(20); // length = the shots, not the number typed
+        video.GetProperty("targetDurationSeconds").GetInt32().Should().Be(16); // length = the shots (8 + 8), not the number typed
 
         // saving the details again (with a script estimate) must not overwrite the shots' real length
         (await _client.SendAsync(StudioRequest("PUT", $"/api/studio/videos/{id}", "{\"targetDurationSeconds\":180}", StudioKey)))
             .StatusCode.Should().Be(HttpStatusCode.OK);
         var reread = JsonDocument.Parse(await _client.GetStringAsync($"/api/studio/videos/{id}")).RootElement;
-        reread.GetProperty("targetDurationSeconds").GetInt32().Should().Be(20);
+        reread.GetProperty("targetDurationSeconds").GetInt32().Should().Be(16);
 
         // edit the first shot (by id), drop the second, add a new one
         var firstId = shots[0].GetProperty("id").GetString();
@@ -263,7 +263,7 @@ public class ApiIntegrationTests : IClassFixture<WebApplicationFactory<Program>>
         res.StatusCode.Should().Be(HttpStatusCode.OK, await res.Content.ReadAsStringAsync());
         var video = JsonDocument.Parse(await res.Content.ReadAsStringAsync()).RootElement;
         video.GetProperty("title").GetString().Should().Be("Nồi Cơm Độn Sắn (BCN-01)");
-        video.GetProperty("resolution").GetString().Should().Be("480p");
+        video.GetProperty("resolution").GetString().Should().Be("720p"); // Veo has no 480p
         var narrator = video.GetProperty("characters").EnumerateArray().Single();
         narrator.GetProperty("name").GetString().Should().Be("Lời dẫn");
         narrator.GetProperty("voice").GetString().Should().Be("gemini:Sulafat");

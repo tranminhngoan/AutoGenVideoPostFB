@@ -53,7 +53,7 @@ export function GeneratorPanel({ project: p, setProject, reload }: WorkspaceProp
     try {
       const ids = estimate.lines.filter((l) => !l.skip).map((l) => l.sceneId);
       setProject(await aiStudio.generate(p.id, ids, estimate.totalUsd));
-      toast.success('Đã gửi Seedance', `${ids.length} clip · ~${usd(estimate.totalUsd)}. Trang tự cập nhật — có thể đóng trình duyệt, việc vẫn chạy.`);
+      toast.success('Đã gửi Veo', `${ids.length} clip · ~${usd(estimate.totalUsd)}. Trang tự cập nhật — có thể đóng trình duyệt, việc vẫn chạy.`);
       setEstimate(null);
       refreshOverview();
     } catch (e) {
@@ -71,13 +71,13 @@ export function GeneratorPanel({ project: p, setProject, reload }: WorkspaceProp
   return (
     <div className="space-y-5">
       {overview && !overview.seedanceConfigured && (
-        <Alert tone="danger" title="Seedance chưa có khoá">Đặt biến <code>AI_GATEWAY_API_KEY</code> (Vercel AI Gateway) trên Railway — cùng khoá trang Studio Video AI đang dùng.</Alert>
+        <Alert tone="danger" title="Veo chưa có khoá">Đặt biến <code>AI_GATEWAY_API_KEY</code> (Vercel AI Gateway) trên Railway — cùng khoá trang Studio Video AI đang dùng.</Alert>
       )}
 
       {/* settings */}
       <div className="rounded-xl border border-line bg-subtle p-4">
       <div className="grid gap-4 lg:grid-cols-2">
-        <Field label="Model Seedance" hint={model?.note}>
+        <Field label="Model tạo video" hint={model?.note}>
           <Select value={p.videoModel} onChange={(e) => save({ videoModel: e.target.value })}>
             {models.map((m) => <option key={m.id} value={m.id}>{m.label} — {usd(m.pricePerSecondUsd[p.resolution] ?? 0, 4)}/giây ở {p.resolution}</option>)}
           </Select>
@@ -156,8 +156,8 @@ export function GeneratorPanel({ project: p, setProject, reload }: WorkspaceProp
       </div>
 
       {estimate && (
-        <Modal open onClose={() => setEstimate(null)} title="Xác nhận chi phí Seedance"
-          description="Tiền chỉ bị trừ khi Seedance nhận việc. Gửi lại cùng lần bấm không trả tiền hai lần."
+        <Modal open onClose={() => setEstimate(null)} title="Xác nhận chi phí Veo"
+          description="Tiền chỉ bị trừ khi Veo nhận việc. Gửi lại cùng lần bấm không trả tiền hai lần."
           footer={<>
             <Button variant="ghost" onClick={() => setEstimate(null)}>Huỷ</Button>
             <Button variant="accent" loading={sending} disabled={!!estimate.blocker || estimate.totalSeconds === 0} icon={<Play className="h-4 w-4" />} onClick={go}>
@@ -210,7 +210,7 @@ function SceneOutput({ project: p, scene: s, checked, onCheck, onRetry, onChange
           <>
             {s.hasThumb && <img src={aiStudio.sceneThumbUrl(s.id)} alt="" className="h-full w-full object-cover opacity-40" loading="lazy" />}
             <div className="absolute inset-0 grid place-items-center p-3 text-center text-xs text-white">
-              {g && isGenActive(g.status) ? <div className="flex flex-col items-center gap-2"><Spinner className="h-6 w-6" />{g.status === 'Queued' ? 'Chờ gửi Seedance…' : 'Seedance đang tạo (1–3 phút)…'}</div>
+              {g && isGenActive(g.status) ? <div className="flex flex-col items-center gap-2"><Spinner className="h-6 w-6" />{g.status === 'Queued' ? 'Chờ gửi Veo…' : 'Veo đang tạo (1–3 phút)…'}</div>
                 : g?.status === 'Failed' ? <span className="text-red-200">{g.errorMessage}</span>
                 : <span className="opacity-80">Chưa có clip</span>}
             </div>
@@ -347,7 +347,7 @@ export function HistoryTable({ projectId, refreshKey }: { projectId?: string; re
   }, [projectId, refreshKey, onKeyNeeded]);
 
   if (!rows) return <div className="p-5"><Spinner /></div>;
-  if (rows.length === 0) return <EmptyState icon={<Clapperboard />} title="Chưa tạo video nào" description="Clip Seedance tạo ra sẽ nằm ở đây, kèm prompt và thông số đã dùng." />;
+  if (rows.length === 0) return <EmptyState icon={<Clapperboard />} title="Chưa tạo video nào" description="Clip Veo tạo ra sẽ nằm ở đây, kèm prompt và thông số đã dùng." />;
   const total = rows.reduce((a, r) => a + r.costUsd, 0);
   return (
     <div className="overflow-x-auto">
@@ -390,7 +390,7 @@ export function HistoryTable({ projectId, refreshKey }: { projectId?: string; re
                         <div className="font-medium text-fg">Prompt đã dùng</div>
                         <p className="whitespace-pre-wrap font-mono text-[11px] text-fg-muted">{r.prompt}</p>
                         {r.errorMessage && <p className="text-danger">{r.errorMessage}</p>}
-                        <p className="text-fg-subtle">Bắt đầu {formatDateTime(r.startedAtUtc)} · xong {formatDateTime(r.finishedAtUtc)} · {r.attempts} lần chạy{r.paid ? ' · đã gửi Seedance' : ''}</p>
+                        <p className="text-fg-subtle">Bắt đầu {formatDateTime(r.startedAtUtc)} · xong {formatDateTime(r.finishedAtUtc)} · {r.attempts} lần chạy{r.paid ? ' · đã gửi đi tạo (đã tính tiền)' : ''}</p>
                       </div>
                     </div>
                   </td>
