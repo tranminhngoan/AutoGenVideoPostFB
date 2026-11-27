@@ -92,6 +92,30 @@ public partial class GrowthMedia
         if (code != 0 || !File.Exists(outputJpg)) throw new InvalidOperationException("Gắn watermark vào ảnh thất bại: " + Tail(err));
     }
 
+    /// <summary>
+    /// A 9:16 Story video from one picture and a narration: the picture slowly zooms in (Ken Burns) for the length of the
+    /// voice, the Page watermark sits bottom-left. No subtitles. Returns the video length in seconds.
+    /// </summary>
+    public async Task MakeStoryVideoAsync(string image, string audio, string? watermarkPng, string output, CancellationToken ct)
+    {
+        var args = new List<string> { "-y", "-hide_banner", "-loop", "1", "-framerate", "30", "-i", image, "-i", audio };
+        var filter = "[0:v]scale=1188:2112:force_original_aspect_ratio=increase,crop=1188:2112," +
+                     "zoompan=z='min(zoom+0.0004,1.1)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=1080x1920:fps=30,setsar=1[bg]";
+        if (watermarkPng != null && File.Exists(watermarkPng))
+        {
+            args.AddRange(new[] { "-i", watermarkPng });
+            filter += ";[2:v]scale=420:-1[wm];[bg][wm]overlay=x=44:y=main_h-overlay_h-150,format=yuv420p[v]";
+        }
+        else filter += ";[bg]format=yuv420p[v]";
+        args.AddRange(new[]
+        {
+            "-filter_complex", filter, "-map", "[v]", "-map", "1:a", "-shortest", "-t", MaxStorySeconds.ToString("0.###", CultureInfo.InvariantCulture),
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "21", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", output
+        });
+        var (code, _, err) = await RunAsync(Ffmpeg, args, ct);
+        if (code != 0 || !File.Exists(output)) throw new InvalidOperationException("Dựng video Tin thất bại: " + Tail(err));
+    }
+
     /// <summary>Re-encodes any picture to JPEG (Facebook photo upload).</summary>
     public async Task ToJpegAsync(string image, string outputJpg, CancellationToken ct)
     {

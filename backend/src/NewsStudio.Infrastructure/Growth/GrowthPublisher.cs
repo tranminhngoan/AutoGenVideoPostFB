@@ -93,6 +93,11 @@ public class GrowthPublishGateway : IGrowthPublishGateway
         finally
         {
             if (_storyTempDir != null) StudioMedia.TryDelete(_storyTempDir);
+            if (_facebookDone)
+            {
+                try { await _content.PurgePostedStoryVideosAsync(item, CancellationToken.None); }
+                catch (Exception) { /* best effort */ }
+            }
             if (_facebookDone && _newsProjectToClean is { } done)
             {
                 try

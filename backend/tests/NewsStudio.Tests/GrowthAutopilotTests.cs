@@ -138,6 +138,27 @@ public class GrowthAutopilotLogicTests
         user.Should().Contain("tối đa 12 chữ").And.Contain("không bịa");
     }
 
+    [Fact]
+    public void AStoryNarrationIsTheScriptsOwnWordsCutAtASentence()
+    {
+        var s = Script("N-1");
+        var text = GrowthAutopilotService.StoryNarration(s);
+        text.Should().StartWith("Con diều giấy bố làm.").And.Contain("Diều lên").And.EndWith("Gió vẫn thổi.");
+        var longer = Script("N-2");
+        longer.Hook = string.Join(" ", Enumerable.Range(1, 60).Select(i => "Câu số " + i + "."));
+        var cut = GrowthAutopilotService.StoryNarration(longer, 50);
+        cut.Split(' ').Length.Should().BeLessThanOrEqualTo(50);
+        cut.Should().EndWith(".");
+    }
+
+    [Fact]
+    public void StoriesCutFromPostedVideosAreNoLongerPosted()
+    {
+        GrowthAutopilotService.IsCutFromPostedVideo(new GrowthScheduledContent { Kind = "Story", ClipStartSeconds = 12, IdempotencyKey = "auto:x:20261127:story1" }).Should().BeTrue();
+        GrowthAutopilotService.IsCutFromPostedVideo(new GrowthScheduledContent { Kind = "Story", IdempotencyKey = "auto:x:20261127:story1" }).Should().BeFalse();
+        GrowthAutopilotService.IsCutFromPostedVideo(new GrowthScheduledContent { Kind = "Story", ClipStartSeconds = 12, IdempotencyKey = "manual-key" }).Should().BeFalse();
+    }
+
     internal static GrowthScript Script(string code, string category = "tro_choi_tho_au") => new()
     {
         Code = code, Title = "Thả diều " + code, Category = category, CategoryName = category, Era = "9x", Region = "Bắc Bộ", Mood = "Ấm áp hoài niệm",
@@ -196,6 +217,23 @@ public class GrowthAutopilotApiTests : IClassFixture<WebApplicationFactory<Progr
         }
     }
 
+    /// <summary>A 6-second tone made with FFmpeg instead of a paid voice.</summary>
+    private sealed class FakeVoice : IGrowthVoice
+    {
+        public int Calls;
+        public async Task<(string AudioPath, double Seconds, string CleanupDir)> SpeakAsync(string text, string style, CancellationToken ct)
+        {
+            Calls++;
+            var dir = Path.Combine(Path.GetTempPath(), "growth-voice-test-" + Guid.NewGuid().ToString("N")[..6]);
+            Directory.CreateDirectory(dir);
+            var wav = Path.Combine(dir, "voice.wav");
+            var psi = new System.Diagnostics.ProcessStartInfo(StudioMedia.LocateFfmpeg()!) { RedirectStandardError = true, UseShellExecute = false, CreateNoWindow = true };
+            foreach (var a in new[] { "-y", "-f", "lavfi", "-i", "sine=f=300:d=6", wav }) psi.ArgumentList.Add(a);
+            using (var proc = System.Diagnostics.Process.Start(psi)!) { await proc.StandardError.ReadToEndAsync(ct); await proc.WaitForExitAsync(ct); }
+            return (wav, 6, dir);
+        }
+    }
+
     private sealed class FakeImage : IGrowthImageAi
     {
         // 1×1 PNG
@@ -209,6 +247,8 @@ public class GrowthAutopilotApiTests : IClassFixture<WebApplicationFactory<Progr
         }
     }
 
+    private FakeVoice _voice = new();
+
     private (GrowthAutopilotService Service, IApplicationDbContext Db, FakeText Text, FakeImage Image) Build(IServiceScope scope)
     {
         var sp = scope.ServiceProvider;
@@ -219,7 +259,7 @@ public class GrowthAutopilotApiTests : IClassFixture<WebApplicationFactory<Progr
         var service = new GrowthAutopilotService(sp.GetRequiredService<IApplicationDbContext>(), sp.GetRequiredService<GrowthCampaignService>(),
             sp.GetRequiredService<GrowthContentService>(), sp.GetRequiredService<GrowthInsightsService>(), ai, sp.GetRequiredService<GrowthMedia>(),
             sp.GetRequiredService<AiStudioMedia>(), sp.GetRequiredService<StudioService>(), sp.GetRequiredService<StudioMedia>(),
-            sp.GetRequiredService<AiStudioService>(), sp.GetRequiredService<GrowthNewsService>(), NullLogger<GrowthAutopilotService>.Instance)
+            sp.GetRequiredService<AiStudioService>(), sp.GetRequiredService<GrowthNewsService>(), _voice, NullLogger<GrowthAutopilotService>.Instance)
         {
             // 10:00 Vietnam time today: the 11:30 post slot is still ahead
             Clock = () => GrowthTime.DayStartUtc(GrowthTime.Today(DateTime.UtcNow)).AddHours(10)
@@ -264,13 +304,13 @@ public class GrowthAutopilotApiTests : IClassFixture<WebApplicationFactory<Progr
     public async Task TheDailyPostUsesAnUnusedScriptOnceAndNeverTwice()
     {
         var page = await NewPageAsync();
-        await ImportAsync(3);
+        await ImportAsync(4);
         GrowthAutopilotDto status;
         using (var scope = _factory.Services.CreateScope())
         {
             var (service, db, text, image) = Build(scope);
             status = await service.RunAsync(page.Id, force: false, CancellationToken.None);
-            image.Calls.Should().Be(1);
+            image.Calls.Should().Be(3, "1 picture for the post + 1 per Story (each Story is its own script)");
             var post = status.Today.Single(x => x.Kind == "Photo");
             post.Status.Should().Be("Scheduled");
             post.Caption.Should().Contain("Bạn còn nhớ con diều đầu tiên?").And.Contain(GrowthAiService.ImageDisclosure);
@@ -279,8 +319,12 @@ public class GrowthAutopilotApiTests : IClassFixture<WebApplicationFactory<Progr
             campaign.Status.Should().Be("Running");
             campaign.ApprovalMode.Should().Be("Auto");
             campaign.AiSpentUsd.Should().BeGreaterThan(0);
-            // the 2nd Story is the day's picture
-            status.Today.Should().Contain(x => x.Kind == "Story" && x.Assets.Count == 1 && x.Assets[0].Id == post.Assets[0].Id);
+            // Stories: new narrated videos of their own unused scripts — never a part of a posted video
+            var stories = status.Today.Where(x => x.Kind == "Story").ToList();
+            stories.Should().HaveCount(2);
+            stories.Should().OnlyContain(x => x.ClipStartSeconds == null && x.SourceId == null && x.Assets.Count == 1 && x.Assets[0].Kind == "Video" && x.ScriptId != null);
+            new[] { post.ScriptId }.Concat(stories.Select(x => x.ScriptId)).Distinct().Should().HaveCount(3, "a script is used once: post and Stories differ");
+            _voice.Calls.Should().Be(2);
             // a Reel only from a real finished video; without one the owner is told (other tests may leave unassigned videos in the shared test DB)
             (status.Today.Any(x => x.Kind == "Reel" && x.SourceId != null) || status.Notices.Any(n => n.Code == "no_video")).Should().BeTrue();
         }
@@ -290,7 +334,7 @@ public class GrowthAutopilotApiTests : IClassFixture<WebApplicationFactory<Progr
             var again = await service.RunAsync(page.Id, force: false, CancellationToken.None);
             image.Calls.Should().Be(0, "today's post already exists");
             again.Today.Count(x => x.Kind == "Photo").Should().Be(1);
-            (await db.GrowthScriptUsages.CountAsync(u => u.FacebookAccountId == page.Id)).Should().Be(1);
+            (await db.GrowthScriptUsages.CountAsync(u => u.FacebookAccountId == page.Id)).Should().Be(3, "post + 2 Stories, each its own script, nothing added on the second run");
         }
     }
 

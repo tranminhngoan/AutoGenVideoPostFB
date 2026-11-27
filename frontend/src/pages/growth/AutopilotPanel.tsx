@@ -100,7 +100,7 @@ export function AutopilotPanel({ ctx, onChanged }: { ctx: GrowthCtx; onChanged?:
             <p className="mt-0.5 text-[13px] text-fg-muted">
               {news
                 ? `Page tin tức (${data?.newsTopicName ?? 'chủ đề của Page'}): mỗi ngày 1 bài ảnh từ tin hot nhất đúng chủ đề (ảnh bài báo + tóm tắt viết trên ảnh, không giọng đọc) và ${data?.storiesPerDay ?? 2} Tin là video tin có giọng đọc như video tự động đăng.`
-                : `Page kịch bản: mỗi ngày 1 bài viết từ kịch bản (ảnh AI + bài viết), 1 video Reels có sẵn, ${data?.storiesPerDay ?? 2} Tin cắt từ video.`} Đăng lên Facebook{ctx.page?.instagramUsername ? ` và Instagram @${ctx.page.instagramUsername}` : ''}. Bạn chỉ cần xem — khi cần bạn, thông báo hiện ở đây.
+                : `Page kịch bản: mỗi ngày 1 bài viết từ kịch bản (ảnh AI + bài viết), 1 video Reels có sẵn, ${data?.storiesPerDay ?? 2} Tin là video mới từ kịch bản khác (ảnh AI + giọng đọc) — không cắt lại video đã đăng.`} Đăng lên Facebook{ctx.page?.instagramUsername ? ` và Instagram @${ctx.page.instagramUsername}` : ''}. Bạn chỉ cần xem — khi cần bạn, thông báo hiện ở đây.
             </p>
           </div>
         </div>

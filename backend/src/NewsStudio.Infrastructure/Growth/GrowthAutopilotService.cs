@@ -46,15 +46,17 @@ public class GrowthAutopilotService
     private readonly StudioMedia _studioMedia;
     private readonly AiStudioService _aiStudio;
     private readonly GrowthNewsService _news;
+    private readonly IGrowthVoice _voice;
     private readonly ILogger<GrowthAutopilotService> _logger;
     /// <summary>Videos not assigned to any Page may be used only when this is the one script (nostalgia) Page.</summary>
     private bool _allowUnassigned;
 
     public GrowthAutopilotService(IApplicationDbContext db, GrowthCampaignService campaigns, GrowthContentService content, GrowthInsightsService insights,
         GrowthAiService ai, GrowthMedia media, AiStudioMedia probe, StudioService studio, StudioMedia studioMedia, AiStudioService aiStudio,
-        GrowthNewsService news, ILogger<GrowthAutopilotService> logger)
+        GrowthNewsService news, IGrowthVoice voice, ILogger<GrowthAutopilotService> logger)
     {
         _news = news;
+        _voice = voice;
         _db = db;
         _campaigns = campaigns;
         _content = content;
@@ -267,13 +269,12 @@ public class GrowthAutopilotService
             var slots = await SlotsAsync(campaign, ct);
             if (a.ScriptPost) await Step(state, "post", force, Notice, () => PlanScriptPostAsync(campaign, pageId, today, slots, Notice, ct), ct);
             if (a.DailyVideo) await Step(state, "reel", force, Notice, () => PlanReelAsync(campaign, pageId, today, slots, Notice, ct), ct);
-            // the 2nd Story waits for today's post picture while that post can still be made today
-            var postPending = a.ScriptPost && !state.Skipped.Contains("post") && state.Attempts.GetValueOrDefault("post") < MaxAttemptsPerDay;
+            // every Story is a new video of its own unused script (AI picture + narration) — never a part of a posted video
             for (var n = 1; n <= a.StoriesPerDay; n++)
             {
                 var slot = $"story{n}";
                 var number = n;
-                await Step(state, slot, force, Notice, () => PlanStoryAsync(campaign, pageId, today, slot, number, slots, postPending, ct), ct);
+                await Step(state, slot, force, Notice, () => PlanScriptStoryAsync(campaign, pageId, today, slot, number, slots, Notice, ct), ct);
             }
         }
 
@@ -415,6 +416,13 @@ public class GrowthAutopilotService
         return parts.Length >= 4 && parts[3].StartsWith('n');
     }
 
+    /// <summary>
+    /// A Story cut from one of the Page's videos (the old autopilot way): it shows up again next to the Reel in the Page's
+    /// Reels tab, so it is no longer posted.
+    /// </summary>
+    public static bool IsCutFromPostedVideo(GrowthScheduledContent item) =>
+        item.Kind == GrowthKinds.Story && item.ClipStartSeconds != null && item.IdempotencyKey.StartsWith("auto:", StringComparison.Ordinal);
+
     /// <summary>Cancels waiting autopilot items of this Page made for the other content mode.</summary>
     private async Task CancelWrongModeAsync(Guid pageId, string mode, CancellationToken ct)
     {
@@ -422,7 +430,7 @@ public class GrowthAutopilotService
         var waiting = await _db.GrowthScheduledContents
             .Where(x => x.IdempotencyKey.StartsWith(prefix) && (x.Status == GrowthStatus.Scheduled || x.Status == GrowthStatus.PendingApproval || x.Status == GrowthStatus.Draft))
             .ToListAsync(ct);
-        var wrong = waiting.Where(x => IsNewsSlot(x.IdempotencyKey) != (mode == "News")).ToList();
+        var wrong = waiting.Where(x => IsNewsSlot(x.IdempotencyKey) != (mode == "News") || IsCutFromPostedVideo(x)).ToList();
         foreach (var x in wrong)
         {
             x.Status = GrowthStatus.Cancelled;
@@ -439,6 +447,7 @@ public class GrowthAutopilotService
     public static async Task<bool> WrongModeAsync(IApplicationDbContext db, GrowthScheduledContent item, Guid? pageId, CancellationToken ct)
     {
         if (pageId is not { } pid || !item.IdempotencyKey.StartsWith("auto:", StringComparison.Ordinal)) return false;
+        if (IsCutFromPostedVideo(item)) return true;
         var chosen = await db.GrowthAutopilots.AsNoTracking().Where(a => a.FacebookAccountId == pid).Select(a => a.ContentMode).FirstOrDefaultAsync(ct);
         var hasNews = await db.AutoPostSettings.AsNoTracking().AnyAsync(s => s.FacebookAccountId == pid && s.Enabled, ct);
         return IsNewsSlot(item.IdempotencyKey) != (GrowthNewsService.EffectiveMode(chosen, hasNews) == "News");
@@ -683,74 +692,94 @@ public class GrowthAutopilotService
 
     // ── Stories ──
 
-    private async Task<string?> PlanStoryAsync(GrowthCampaign c, Guid pageId, DateOnly today, string slot, int n, Dictionary<string, string> slots, bool postPending, CancellationToken ct)
+    /// <summary>
+    /// What the narrator reads for a Story: the script's hook, its scenes' narration and its ending, cut at a sentence so it
+    /// stays under about <paramref name="maxWords"/> words (≈ 50 s of Vietnamese speech).
+    /// </summary>
+    public static string StoryNarration(GrowthScript script, int maxWords = 120)
+    {
+        var parts = new List<string>();
+        if (!string.IsNullOrWhiteSpace(script.Hook)) parts.Add(script.Hook.Trim());
+        parts.AddRange(GrowthAiService.ScriptScenes(script).Select(x => (x.Voiceover ?? "").Trim()).Where(x => x.Length > 0));
+        if (!string.IsNullOrWhiteSpace(script.EndingNote)) parts.Add(script.EndingNote.Trim());
+        if (parts.Count == 0 && !string.IsNullOrWhiteSpace(script.Synopsis)) parts.Add(script.Synopsis.Trim());
+        var sentences = parts.SelectMany(p => System.Text.RegularExpressions.Regex.Split(p, @"(?<=[.!?…])\s+")).Select(x => x.Trim()).Where(x => x.Length > 0).ToList();
+        var result = new List<string>();
+        var words = 0;
+        foreach (var sentence in sentences)
+        {
+            var n = sentence.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length;
+            if (words + n > maxWords && result.Count > 0) break;
+            result.Add(sentence);
+            words += n;
+        }
+        return string.Join(" ", result);
+    }
+
+    public const string StoryVoiceStyle = "Giọng kể chuyện ấm áp, hoài niệm, chậm rãi và chân thành, như kể lại một kỷ niệm tuổi thơ cho người thân nghe; không bi lụy.";
+
+    /// <summary>
+    /// A Story of the script Page: a new unused script, its key moment drawn by AI (9:16), its narration read by the
+    /// natural voice, made into a short video with the Page watermark. The script is marked used (never twice).
+    /// </summary>
+    private async Task<string?> PlanScriptStoryAsync(GrowthCampaign c, Guid pageId, DateOnly today, string slot, int n, Dictionary<string, string> slots,
+        Action<string, string, string> notice, CancellationToken ct)
     {
         var key = Key(pageId, today, slot);
         if (await ExistsAsync(key, ct)) return null;
         var at = When(today, slots.GetValueOrDefault(slot, "20:00"), 1 + n, Clock(), c.EndDate);
         if (at == null) return "đã quá giờ đăng hôm nay — bắt đầu từ ngày mai.";
-        var item = new GrowthScheduledContent { CampaignId = c.Id, Kind = GrowthKinds.Story, Status = GrowthStatus.Scheduled, IdempotencyKey = key, ScheduledAtUtc = at };
+        var script = await NextScriptAsync(pageId, ct);
+        if (script == null) return null; // "out of scripts" is told by RunAsync
+        var narration = StoryNarration(script);
+        if (narration.Length < 20) throw new InvalidOperationException($"Kịch bản {script.Code} không có lời dẫn để đọc.");
 
-        // the 2nd Story is the day's script picture (once the post is ready)
-        if (n == 2)
+        var dir = StudioMedia.TempDir();
+        string? ttsDir = null;
+        GrowthAssetDto asset;
+        try
         {
-            var post = await _db.GrowthScheduledContents.AsNoTracking().FirstOrDefaultAsync(x => x.IdempotencyKey == Key(pageId, today, "post"), ct);
-            var assetId = post == null ? (Guid?)null : GrowthContentService.AssetIds(post.AssetIdsJson).FirstOrDefault();
-            if (assetId is { } aid && aid != Guid.Empty)
-            {
-                item.Title = "Tin · " + Trim(post!.Title, 280);
-                item.AssetIdsJson = JsonSerializer.Serialize(new[] { aid });
-                try { await SaveNewAsync(item, ct); }
-                catch (DbUpdateException) { if (_db is DbContext ctx) ctx.ChangeTracker.Clear(); }
-                return null;
-            }
-            if (postPending) return null; // try again once the post is ready
-        }
+            // 1. the picture (9:16) and the voice
+            var (bytes, mime) = await _ai.ScriptImageAsync(c, script, ct, "9:16");
+            var image = Path.Combine(dir, mime.Contains("png") ? "story.png" : "story.jpg");
+            await File.WriteAllBytesAsync(image, bytes, ct);
+            var (audio, _, cleanup) = await _voice.SpeakAsync(narration, StoryVoiceStyle, ct);
+            ttsDir = cleanup;
 
-        // otherwise: the liveliest part of a Page video not used for a Story yet
-        var highlight = await FindHighlightAsync(pageId, ct);
-        if (highlight == null) return "!chưa có video nào còn đoạn chưa dùng để cắt Tin — hôm nay bỏ qua (bấm \"Chạy ngay\" sau khi có video mới).";
-        item.Title = "Tin · " + Trim(highlight.Value.Title, 280);
-        item.SourceType = highlight.Value.Type;
-        item.SourceId = highlight.Value.Id;
-        item.ClipStartSeconds = Math.Round(highlight.Value.Start, 1);
-        item.ClipSeconds = Math.Round(highlight.Value.Seconds, 1);
-        try { await SaveNewAsync(item, ct); }
-        catch (DbUpdateException) { if (_db is DbContext ctx) ctx.ChangeTracker.Clear(); }
-        return null;
-    }
-
-    private async Task<(string Type, Guid Id, string Title, double Start, double Seconds)?> FindHighlightAsync(Guid pageId, CancellationToken ct)
-    {
-        var studio = await _db.StudioVideos.AsNoTracking()
-            .Where(v => v.FinalBlobId != null && (v.FacebookAccountId == pageId || (_allowUnassigned && v.FacebookAccountId == null)))
-            .OrderByDescending(v => v.PublishedAtUtc != null).ThenByDescending(v => v.PublishedAtUtc ?? v.CreatedAtUtc)
-            .Select(v => new { v.Id, v.Title, Blob = v.FinalBlobId!.Value }).Take(8).ToListAsync(ct);
-        var ai = await _db.AiStudioProjects.AsNoTracking()
-            .Where(p => p.FinalStatus == "Done" && p.FinalBlobId != null && (p.FacebookAccountId == pageId || (_allowUnassigned && p.FacebookAccountId == null)))
-            .OrderByDescending(p => p.FinalUpdatedAtUtc ?? p.CreatedAtUtc).Select(p => new { p.Id, p.Title, Blob = p.FinalBlobId!.Value }).Take(8).ToListAsync(ct);
-        var candidates = studio.Select(v => (Type: GrowthSources.StudioVideo, v.Id, v.Title, v.Blob))
-            .Concat(ai.Select(p => (Type: GrowthSources.AiStudioProject, p.Id, p.Title, p.Blob))).ToList();
-        foreach (var cand in candidates)
-        {
-            var used = await _db.GrowthScheduledContents.AsNoTracking()
-                .Where(x => x.Kind == GrowthKinds.Story && x.SourceId == cand.Id && x.Status != GrowthStatus.Cancelled)
-                .Select(x => new { x.ClipStartSeconds, x.ClipSeconds }).ToListAsync(ct);
-            var windows = used.Select(u => (u.ClipStartSeconds ?? 0, u.ClipSeconds ?? 9999)).ToList();
-            string? path;
+            // 2. the Page watermark (as on the studio videos)
+            string? wm = null;
             try
             {
-                path = cand.Type == GrowthSources.StudioVideo ? (await _studio.DiskFileAsync(cand.Blob, ct))?.Path : (await _aiStudio.FileAsync(cand.Blob, ct))?.Path;
+                var (brand, logo) = await _studio.BrandAsync(pageId, ct);
+                wm = Path.Combine(dir, "watermark.png");
+                await _studioMedia.CreateWatermarkAsync(brand, logo, wm, ct);
             }
-            catch (Exception ex) when (ex is not OperationCanceledException) { path = null; }
-            if (path == null) continue;
-            double duration;
-            try { duration = (await _probe.ProbeAsync(path, ct)).Duration; }
-            catch (InvalidOperationException) { continue; }
-            var loudness = duration > GrowthMedia.MaxStorySeconds ? await _media.LoudnessAsync(path, ct) : new();
-            if (GrowthMedia.PickWindow(loudness, duration, GrowthMedia.StorySeconds, windows) is { } w)
-                return (cand.Type, cand.Id, cand.Title, w.Start, w.Seconds);
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                wm = null;
+                notice("warning", "watermark", "Không gắn được watermark Page lên video Tin: " + ex.Message);
+            }
+
+            // 3. picture + voice → video
+            var video = Path.Combine(dir, "story.mp4");
+            await _media.MakeStoryVideoAsync(image, audio, wm, video, ct);
+            asset = await _content.UploadAsync(c.Id, video, $"tin-{script.Code}.mp4", "Ai", ct);
         }
+        finally
+        {
+            StudioMedia.TryDelete(dir);
+            if (ttsDir != null) StudioMedia.TryDelete(ttsDir);
+        }
+
+        var item = new GrowthScheduledContent
+        {
+            CampaignId = c.Id, Kind = GrowthKinds.Story, Status = GrowthStatus.Scheduled, IdempotencyKey = key, ScheduledAtUtc = at,
+            Title = "Tin · " + Trim(script.Title, 280), Topic = Trim(script.CategoryName ?? "", 200), ScriptId = script.Id,
+            AssetIdsJson = JsonSerializer.Serialize(new[] { asset.Id })
+        };
+        _db.GrowthScriptUsages.Add(new GrowthScriptUsage { FacebookAccountId = pageId, ScriptId = script.Id, ContentId = item.Id });
+        try { await SaveNewAsync(item, ct); }
+        catch (DbUpdateException) { if (_db is DbContext ctx) ctx.ChangeTracker.Clear(); }
         return null;
     }
 

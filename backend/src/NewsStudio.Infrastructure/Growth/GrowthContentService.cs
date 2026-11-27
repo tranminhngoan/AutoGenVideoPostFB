@@ -672,6 +672,23 @@ public partial class GrowthContentService
         return baseUrl == null ? null : $"{baseUrl}/api/growth/assets/{a.Id}/file";
     }
 
+    /// <summary>
+    /// Removes the file of an autopilot Story video once it is posted (storage is small; the Story lives on Facebook and
+    /// Instagram). The asset row stays for the history.
+    /// </summary>
+    public async Task PurgePostedStoryVideosAsync(GrowthScheduledContent item, CancellationToken ct)
+    {
+        if (item.Kind != GrowthKinds.Story) return;
+        var ids = AssetIds(item.AssetIdsJson);
+        var videos = await _db.GrowthContentAssets.Where(a => ids.Contains(a.Id) && a.Kind == "Video" && a.Source == "Ai").ToListAsync(ct);
+        foreach (var v in videos)
+        {
+            _files.Delete(v.FileId);
+            v.SizeBytes = 0;
+        }
+        if (videos.Count > 0) await _db.SaveChangesAsync(ct);
+    }
+
     private static string SafeName(string name, string mime)
     {
         var ext = mime switch { "image/png" => ".png", "image/jpeg" => ".jpg", "video/quicktime" => ".mov", _ => ".mp4" };

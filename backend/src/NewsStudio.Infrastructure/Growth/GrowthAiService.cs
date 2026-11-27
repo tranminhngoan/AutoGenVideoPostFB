@@ -347,12 +347,12 @@ public class GrowthAiService
     // ───────────────────────── autopilot: the daily script post ─────────────────────────
 
     /// <summary>One English prompt for a single still picture of the script (from its middle scene), no text in the picture.</summary>
-    public static string BuildScriptImagePrompt(GrowthScript script)
+    public static string BuildScriptImagePrompt(GrowthScript script, string aspect = "4:5")
     {
         var scenes = ScriptScenes(script);
         var key = scenes.Count == 0 ? null : scenes[Math.Min(scenes.Count - 1, scenes.Count / 2)];
         var scene = key?.AiPromptEn is { Length: > 10 } en ? en : (key?.VisualVi ?? script.Synopsis);
-        return "A single cinematic still photograph, vertical 4:5 composition. " + Cap(scene, 1200) +
+        return $"A single cinematic still photograph, vertical {aspect} composition. " + Cap(scene, 1200) +
                $" Setting: rural Vietnam in the {(script.Era == "8x" ? "1980s" : "1990s")}{(string.IsNullOrWhiteSpace(script.Region) || script.Region == "Chung" ? "" : ", " + script.Region)}. " +
                "Warm nostalgic film photography, soft natural light, gentle grain, authentic everyday details, dignified and tender mood. " +
                "Absolutely no text, letters, captions, watermarks or logos in the image. No celebrities, no real people's likeness.";
@@ -399,14 +399,14 @@ public class GrowthAiService
     }
 
     /// <summary>The script's picture (4:5; 1:1 when the model refuses that ratio). Budget-checked and recorded like every AI call.</summary>
-    public async Task<(byte[] Bytes, string MimeType)> ScriptImageAsync(GrowthCampaign c, GrowthScript script, CancellationToken ct)
+    public async Task<(byte[] Bytes, string MimeType)> ScriptImageAsync(GrowthCampaign c, GrowthScript script, CancellationToken ct, string aspect = "4:5")
     {
         var estimate = Math.Max(0.02m, _images.EstimatedCostUsd);
         EnsureCampaignBudget(c, estimate);
         await _studio.EnsureMonthlyBudgetAsync(estimate, ct);
-        var prompt = BuildScriptImagePrompt(script);
+        var prompt = BuildScriptImagePrompt(script, aspect);
         (byte[] Bytes, string MimeType, decimal CostUsd, string Model) r;
-        try { r = await _images.ImageAsync(prompt, "4:5", ct); }
+        try { r = await _images.ImageAsync(prompt, aspect, ct); }
         catch (InvalidOperationException ex) when (ex.Message.Contains("aspect", StringComparison.OrdinalIgnoreCase)) { r = await _images.ImageAsync(prompt, "1:1", ct); }
         c.AiSpentUsd += r.CostUsd;
         _db.StudioCostRecords.Add(new StudioCostRecord { Kind = "Plan", Model = r.Model, CostUsd = r.CostUsd, Note = $"Chiến dịch tăng trưởng · ảnh kịch bản {script.Code}" });
