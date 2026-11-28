@@ -71,6 +71,13 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
     public DbSet<FilmCostRecord> FilmCostRecords => Set<FilmCostRecord>();
     public DbSet<FilmPublishingRecord> FilmPublishingRecords => Set<FilmPublishingRecord>();
     public DbSet<LandingEvent> LandingEvents => Set<LandingEvent>();
+    public DbSet<OutreachSettings> OutreachSettings => Set<OutreachSettings>();
+    public DbSet<OutreachUnlockAttempt> OutreachUnlockAttempts => Set<OutreachUnlockAttempt>();
+    public DbSet<OutreachGroup> OutreachGroups => Set<OutreachGroup>();
+    public DbSet<OutreachContent> OutreachContents => Set<OutreachContent>();
+    public DbSet<OutreachCampaign> OutreachCampaigns => Set<OutreachCampaign>();
+    public DbSet<OutreachActivity> OutreachActivities => Set<OutreachActivity>();
+    public DbSet<OutreachPostTask> OutreachPostTasks => Set<OutreachPostTask>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -89,9 +96,76 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
             entity.Property(e => e.UtmSource).HasMaxLength(100);
             entity.Property(e => e.UtmMedium).HasMaxLength(100);
             entity.Property(e => e.UtmCampaign).HasMaxLength(100);
+            entity.Property(e => e.UtmContent).HasMaxLength(100);
             entity.Property(e => e.ReferrerHost).HasMaxLength(200);
             entity.HasIndex(e => new { e.Slug, e.CreatedAtUtc });
             entity.HasIndex(e => new { e.Slug, e.Type, e.CreatedAtUtc });
+        });
+
+        // "Chiến dịch kéo tương tác"
+        modelBuilder.Entity<OutreachSettings>(e =>
+        {
+            e.ToTable("OutreachSettings");
+            e.Property(x => x.PasswordHash).HasMaxLength(300);
+        });
+        modelBuilder.Entity<OutreachUnlockAttempt>(e =>
+        {
+            e.ToTable("OutreachUnlockAttempts");
+            e.Property(x => x.Ip).HasMaxLength(64).IsRequired();
+            e.HasIndex(x => new { x.Ip, x.CreatedAtUtc });
+        });
+        modelBuilder.Entity<OutreachGroup>(e =>
+        {
+            e.ToTable("OutreachGroups");
+            e.Property(x => x.Name).HasMaxLength(300).IsRequired();
+            e.Property(x => x.Url).HasMaxLength(500).IsRequired();
+            e.Property(x => x.Key).HasMaxLength(20).IsRequired();
+            e.Property(x => x.Topic).HasMaxLength(100);
+            e.Property(x => x.ExchangeTypes).HasMaxLength(100).IsRequired();
+            e.Property(x => x.Fit).HasMaxLength(10).IsRequired();
+            e.Property(x => x.Privacy).HasMaxLength(10).IsRequired();
+            e.Property(x => x.Rules).HasMaxLength(3000);
+            e.Property(x => x.Note).HasMaxLength(2000);
+            e.HasIndex(x => x.Url).IsUnique();
+            e.HasIndex(x => x.Key).IsUnique();
+        });
+        modelBuilder.Entity<OutreachContent>(e =>
+        {
+            e.ToTable("OutreachContents");
+            e.Property(x => x.Text).HasMaxLength(3000).IsRequired();
+            e.Property(x => x.Style).HasMaxLength(20).IsRequired();
+            e.Property(x => x.Topic).HasMaxLength(100);
+            e.Property(x => x.Origin).HasMaxLength(10).IsRequired();
+        });
+        modelBuilder.Entity<OutreachCampaign>(e =>
+        {
+            e.ToTable("OutreachCampaigns");
+            e.Property(x => x.Name).HasMaxLength(200).IsRequired();
+            e.Property(x => x.Slug).HasMaxLength(60).IsRequired();
+            e.Property(x => x.TargetPath).HasMaxLength(200).IsRequired();
+            e.Property(x => x.ContentText).HasMaxLength(3000);
+            e.Property(x => x.Status).HasMaxLength(20).IsRequired();
+            e.Property(x => x.Owner).HasMaxLength(100);
+            e.Property(x => x.ResultNote).HasMaxLength(3000);
+            e.HasIndex(x => x.Slug).IsUnique();
+        });
+        modelBuilder.Entity<OutreachActivity>(e =>
+        {
+            e.ToTable("OutreachActivities");
+            e.Property(x => x.Kind).HasMaxLength(10).IsRequired();
+            e.Property(x => x.PostUrl).HasMaxLength(500);
+            e.Property(x => x.Note).HasMaxLength(1000);
+            e.HasIndex(x => x.CampaignId);
+        });
+        modelBuilder.Entity<OutreachPostTask>(e =>
+        {
+            e.ToTable("OutreachPostTasks");
+            e.Property(x => x.PostUrl).HasMaxLength(500).IsRequired();
+            e.Property(x => x.PostText).HasMaxLength(5000);
+            e.Property(x => x.SuggestedComment).HasMaxLength(2000);
+            e.Property(x => x.Status).HasMaxLength(10).IsRequired();
+            e.Property(x => x.Note).HasMaxLength(1000);
+            e.HasIndex(x => new { x.Status, x.CreatedAtUtc });
         });
 
         // "Tự động đăng"

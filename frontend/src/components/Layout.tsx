@@ -17,6 +17,15 @@ import {
   Monitor,
   MessageCircle,
   HeartHandshake,
+  Gauge,
+  Megaphone,
+  Search,
+  UsersRound,
+  Bot,
+  FileText,
+  Flag,
+  BarChart3,
+  ShieldCheck,
   Wand2,
   TrendingUp,
   CalendarDays,
@@ -114,6 +123,18 @@ function SidebarContent({
     { id: 'growth:competitors', path: '/growth/competitors', label: 'Phân tích đối thủ', icon: Swords },
     { id: 'growth:settings', path: '/growth/settings', label: 'Cài đặt chiến dịch', icon: SlidersHorizontal },
   ];
+  // "Chiến dịch kéo tương tác" — behind its own campaign password (checked on the server)
+  const outreachNav: NavItem[] = [
+    { id: 'outreach:overview', path: '/outreach/overview', label: 'Tổng quan chiến dịch', icon: Gauge },
+    { id: 'outreach:campaigns', path: '/outreach/campaigns', label: 'Quản lý chiến dịch', icon: Megaphone },
+    { id: 'outreach:finder', path: '/outreach/finder', label: 'Group Finder', icon: Search },
+    { id: 'outreach:groups', path: '/outreach/groups', label: 'Danh sách Group', icon: UsersRound },
+    { id: 'outreach:ai', path: '/outreach/ai', label: 'AI Outreach', icon: Bot },
+    { id: 'outreach:posts', path: '/outreach/posts', label: 'Quản lý bài viết', icon: FileText },
+    { id: 'outreach:pages', path: '/outreach/pages', label: 'Quản lý Page phụ', icon: Flag },
+    { id: 'outreach:stats', path: '/outreach/stats', label: 'Thống kê hiệu quả', icon: BarChart3 },
+    { id: 'outreach:security', path: '/outreach/security', label: 'Cấu hình bảo mật', icon: ShieldCheck },
+  ];
   const secondary: NavItem[] = [{ id: 'settings', path: '/settings', label: 'Cài đặt', icon: Settings }];
 
   const renderItem = (item: NavItem) => {
@@ -177,6 +198,10 @@ function SidebarContent({
           <TrendingUp className="h-3.5 w-3.5" /> Chiến dịch tăng trưởng
         </div>
         {growthNav.map(renderItem)}
+        <div className="!mt-5 mb-1.5 flex items-center gap-1.5 px-2.5 text-xs font-semibold uppercase tracking-wider text-rose-500">
+          <Megaphone className="h-3.5 w-3.5" /> Chiến dịch kéo tương tác
+        </div>
+        {outreachNav.map(renderItem)}
         <div className="!mt-5 mb-1.5 px-2.5 text-xs font-medium text-fg-subtle">Hệ thống</div>
         {secondary.map(renderItem)}
       </nav>

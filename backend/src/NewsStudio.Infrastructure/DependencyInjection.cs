@@ -140,6 +140,9 @@ public static class DependencyInjection
 
         // AI video studio (Grok Imagine video) — registered in AddStudioServices below
         services.AddHttpClient<FilmGeminiClient>();
+        // "Chiến dịch kéo tương tác" (manual-first outreach, own password)
+        services.AddScoped<NewsStudio.Infrastructure.Outreach.OutreachAuth>();
+        services.AddScoped<NewsStudio.Infrastructure.Outreach.OutreachService>();
         services.AddStudioServices();
 
         // AI Video Studio: reference-video analysis on the owner's PC (local Qwen3-VL + OpenCV + FFmpeg; queue "pc_local"),

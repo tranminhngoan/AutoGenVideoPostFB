@@ -21,15 +21,17 @@ function visitorId(): string {
 }
 
 /** UTM tags of the link the visitor came from — kept for the whole visit. */
-function utm(): { utmSource?: string; utmMedium?: string; utmCampaign?: string } {
+function utm(): { utmSource?: string; utmMedium?: string; utmCampaign?: string; utmContent?: string } {
   const q = new URLSearchParams(window.location.search);
   const fromUrl = {
     utmSource: q.get('utm_source') ?? undefined,
     utmMedium: q.get('utm_medium') ?? undefined,
     utmCampaign: q.get('utm_campaign') ?? undefined,
+    // which helper Page × Group the link was posted in (outreach campaign links)
+    utmContent: q.get('utm_content') ?? undefined,
   };
   try {
-    if (fromUrl.utmSource || fromUrl.utmMedium || fromUrl.utmCampaign) {
+    if (fromUrl.utmSource || fromUrl.utmMedium || fromUrl.utmCampaign || fromUrl.utmContent) {
       sessionStorage.setItem(UTM_KEY, JSON.stringify(fromUrl));
       return fromUrl;
     }

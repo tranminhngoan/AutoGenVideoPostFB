@@ -84,6 +84,7 @@ public partial class PublicLandingController : ControllerBase
             UtmSource = Clip(request.UtmSource, 100),
             UtmMedium = Clip(request.UtmMedium, 100),
             UtmCampaign = Clip(request.UtmCampaign, 100),
+            UtmContent = Clip(request.UtmContent, 100),
             ReferrerHost = referrerHost,
         });
         await _db.SaveChangesAsync(ct);

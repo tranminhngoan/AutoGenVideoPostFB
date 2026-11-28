@@ -12,11 +12,13 @@ using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Configure Serilog from configuration
+// Configure Serilog from configuration. A plain startup logger (not CreateBootstrapLogger): the bootstrap kind is
+// "frozen" by the first host, so a second host in the same process (parallel integration tests) crashed with
+// "The logger is already frozen". UseSerilog below replaces it with the full logger either way.
 Log.Logger = new LoggerConfiguration()
     .ReadFrom.Configuration(builder.Configuration)
     .Enrich.FromLogContext()
-    .CreateBootstrapLogger();
+    .CreateLogger();
 
 builder.Host.UseSerilog((context, services, configuration) => configuration
     .ReadFrom.Configuration(context.Configuration)

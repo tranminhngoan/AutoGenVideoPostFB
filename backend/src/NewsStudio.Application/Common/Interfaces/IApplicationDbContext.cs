@@ -70,6 +70,13 @@ public interface IApplicationDbContext
     DbSet<GrowthScriptUsage> GrowthScriptUsages { get; }
     DbSet<GrowthNewsUsage> GrowthNewsUsages { get; }
     DbSet<LandingEvent> LandingEvents { get; }
+    DbSet<OutreachSettings> OutreachSettings { get; }
+    DbSet<OutreachUnlockAttempt> OutreachUnlockAttempts { get; }
+    DbSet<OutreachGroup> OutreachGroups { get; }
+    DbSet<OutreachContent> OutreachContents { get; }
+    DbSet<OutreachCampaign> OutreachCampaigns { get; }
+    DbSet<OutreachActivity> OutreachActivities { get; }
+    DbSet<OutreachPostTask> OutreachPostTasks { get; }
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

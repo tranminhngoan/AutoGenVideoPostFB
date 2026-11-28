@@ -21,6 +21,8 @@ public class LandingEvent : BaseEntity
     public string? UtmSource { get; set; }
     public string? UtmMedium { get; set; }
     public string? UtmCampaign { get; set; }
+    /// <summary>utm_content — which helper Page × Group the link was posted in (outreach links).</summary>
+    public string? UtmContent { get; set; }
     /// <summary>Host of the referring site only (e.g. m.facebook.com).</summary>
     public string? ReferrerHost { get; set; }
     /// <summary>For an open_page click: when the owner marked it "đã trả lại" (interacted back). Null = waiting.</summary>

@@ -33,6 +33,7 @@ public class LandingEventRequestDto
     public string? UtmSource { get; set; }
     public string? UtmMedium { get; set; }
     public string? UtmCampaign { get; set; }
+    public string? UtmContent { get; set; }
     public string? Referrer { get; set; }
 }
 

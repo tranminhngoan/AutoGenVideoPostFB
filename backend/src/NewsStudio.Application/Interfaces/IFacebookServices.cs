@@ -92,4 +92,9 @@ public interface IFacebookPublishingService
     /// Null when the page is not connected. Never returns tokens.
     /// </summary>
     Task<PageShowcaseDto?> GetPageShowcaseAsync(string pageId, int postLimit, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Asks Meta whether the stored Page token still works and which permissions it carries (no token leaves the server).
+    /// </summary>
+    Task<(bool Valid, IReadOnlyCollection<string> Permissions, DateTime? ExpiresAtUtc, string? Error)> CheckPageAccessAsync(Guid facebookAccountId, CancellationToken cancellationToken = default);
 }

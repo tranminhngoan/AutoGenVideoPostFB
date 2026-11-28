@@ -17,6 +17,8 @@ import { CheoLaiPage } from './pages/CheoLaiPage';
 import { AiStudioPage } from './pages/ai-studio/AiStudioPage';
 // Chiến dịch tăng trưởng: its own chunk, so the existing pages load exactly as before
 const GrowthPage = lazy(() => import('./pages/growth/GrowthPage').then((m) => ({ default: m.GrowthPage })));
+// Chiến dịch kéo tương tác: own chunk, behind its own campaign password
+const OutreachPage = lazy(() => import('./pages/outreach/OutreachPage').then((m) => ({ default: m.OutreachPage })));
 import { SystemConfig, VideoProject } from './types';
 import { api } from './services/api';
 import { useRoute } from './lib/router';
@@ -36,6 +38,7 @@ const TITLES: Record<string, string> = {
   'cheo-lai': 'Chéo lại',
   'ai-studio': 'AI Video Studio',
   growth: 'Chiến dịch tăng trưởng',
+  outreach: 'Chiến dịch kéo tương tác',
 };
 
 export function App() {
@@ -85,7 +88,7 @@ export function App() {
   useEffect(() => {
     const base = second && first === 'videos' ? 'Chi tiết video' : TITLES[active];
     // (AI Video Studio sets its own sub-page titles)
-    if (active === 'ai-studio' || active === 'growth') return;
+    if (active === 'ai-studio' || active === 'growth' || active === 'outreach') return;
     document.title = base ? `${base} · Facebook chéo uy tính` : 'Facebook chéo uy tính';
   }, [active, first, second]);
 
@@ -132,6 +135,13 @@ export function App() {
       case 'ai-studio':
         page = <AiStudioPage segments={route.segments.slice(1)} />;
         break;
+      case 'outreach':
+        page = (
+          <Suspense fallback={<div className="h-40 animate-pulse rounded-lg bg-muted" />}>
+            <OutreachPage section={second || 'overview'} />
+          </Suspense>
+        );
+        break;
       case 'growth':
         page = (
           <Suspense fallback={<div className="h-40 animate-pulse rounded-lg bg-muted" />}>
@@ -146,7 +156,7 @@ export function App() {
 
   return (
     <FeedbackProvider>
-      <Layout active={first === 'create' ? 'create' : active === 'growth' ? `growth:${second || 'overview'}` : active} apiHealthy={apiHealthy} awaitingCount={awaitingCount} simulation={config?.simulation}>
+      <Layout active={first === 'create' ? 'create' : active === 'growth' ? `growth:${second || 'overview'}` : active === 'outreach' ? `outreach:${second || 'overview'}` : active} apiHealthy={apiHealthy} awaitingCount={awaitingCount} simulation={config?.simulation}>
         {page}
       </Layout>
     </FeedbackProvider>

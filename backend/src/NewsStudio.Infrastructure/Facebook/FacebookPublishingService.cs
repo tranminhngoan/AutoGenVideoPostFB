@@ -1030,6 +1030,25 @@ public class FacebookPublishingService : IFacebookPublishingService
     }
 
     /// <summary>debug_token: expiry (null = never) and granted permissions of <paramref name="inputToken"/>.</summary>
+    public async Task<(bool Valid, IReadOnlyCollection<string> Permissions, DateTime? ExpiresAtUtc, string? Error)> CheckPageAccessAsync(
+        Guid facebookAccountId, CancellationToken cancellationToken = default)
+    {
+        var account = await _context.FacebookAccounts.AsNoTracking().FirstOrDefaultAsync(a => a.Id == facebookAccountId, cancellationToken);
+        if (account == null || !account.IsActive || string.IsNullOrWhiteSpace(account.EncryptedAccessToken))
+            return (false, Array.Empty<string>(), null, "Page chưa kết nối hoặc đã ngắt kết nối.");
+        try
+        {
+            var token = _tokenProtection.DecryptToken(account.EncryptedAccessToken);
+            var (expires, scopes, error) = await DebugTokenAsync(token, token, cancellationToken);
+            return (error == null, scopes.OrderBy(x => x).ToList(), expires ?? account.TokenExpiresAtUtc, error);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogInformation("Access check of page {Page} failed: {Message}", account.PageId, ex.Message);
+            return (false, Array.Empty<string>(), account.TokenExpiresAtUtc, ex.Message);
+        }
+    }
+
     private async Task<(DateTime? ExpiresAtUtc, HashSet<string> Scopes, string? Error)> DebugTokenAsync(string inputToken, string accessToken, CancellationToken ct)
     {
         var url = $"https://graph.facebook.com/{_graphApiVersion}/debug_token?input_token={Uri.EscapeDataString(inputToken)}&access_token={Uri.EscapeDataString(accessToken)}";
