@@ -41,6 +41,7 @@ export function AiSection() {
   const [count, setCount] = useState(3);
   const [extra, setExtra] = useState('');
   const [busy, setBusy] = useState(false);
+  const [wait, setWait] = useState(0);
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const [manual, setManual] = useState('');
   const [manualCheck, setManualCheck] = useState<Draft | null>(null);
@@ -49,7 +50,8 @@ export function AiSection() {
   const write = async () => {
     setBusy(true);
     try {
-      setDrafts(await outreach.write({ style, topic: topic || undefined, groupId: groupId || undefined, count, extra: extra || undefined }));
+      setWait(0);
+      setDrafts(await outreach.write({ style, topic: topic || undefined, groupId: groupId || undefined, count, extra: extra || undefined }, setWait));
     } catch (e) {
       toast.error('AI chưa viết được', (e as Error).message);
     } finally {
@@ -104,6 +106,7 @@ export function AiSection() {
             </Field>
             <div className="sm:col-span-2">
               <Button variant="primary" icon={<Wand2 className="h-4 w-4" />} loading={busy} onClick={write}>AI viết {count} phiên bản</Button>
+              {busy && <span className="ml-3 text-xs text-fg-muted">AI đang viết… {wait} giây (lần đầu có thể mất 1–3 phút)</span>}
             </div>
           </div>
         </Card>

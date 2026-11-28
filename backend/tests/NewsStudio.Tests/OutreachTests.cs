@@ -196,6 +196,32 @@ public class OutreachApiTests : IClassFixture<WebApplicationFactory<Program>>
     }
 
     [Fact]
+    public async Task AiWritersRunInTheBackgroundAndReportTheirOutcome()
+    {
+        await ResetSecurityAsync();
+        var c = await UnlockedAsync("10.0.2.1");
+        foreach (var (url, body) in new (string, object)[] { ("/api/outreach/contents/variants", new { count = 3 }), ("/api/outreach/contents/write", new { style = "friendly", count = 2 }) })
+        {
+            var start = await c.PostAsJsonAsync(url, body);
+            start.StatusCode.Should().Be(HttpStatusCode.OK);
+            var jobId = (await start.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("jobId").GetGuid();
+            // tests run without AI keys: the job must end with a readable error, not hang or crash
+            JsonElement job = default;
+            for (var i = 0; i < 50; i++)
+            {
+                job = await c.GetFromJsonAsync<JsonElement>($"/api/outreach/ai-jobs/{jobId}");
+                if (job.GetProperty("status").GetString() != "running") break;
+                await Task.Delay(100);
+            }
+            job.GetProperty("status").GetString().Should().Be("error");
+            job.GetProperty("error").GetString().Should().Contain("Gemini");
+        }
+        (await c.GetAsync($"/api/outreach/ai-jobs/{Guid.NewGuid()}")).StatusCode.Should().Be(HttpStatusCode.NotFound);
+        (await Client("10.0.2.9").PostAsJsonAsync("/api/outreach/contents/variants", new { count = 3 })).StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        await ResetSecurityAsync();
+    }
+
+    [Fact]
     public async Task WholeCampaignFlowFromGroupsToTrackedClicks()
     {
         await ResetSecurityAsync();

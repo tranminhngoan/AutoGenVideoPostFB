@@ -269,6 +269,19 @@ export interface UnlockResult {
   lockedUntilUtc?: string | null;
 }
 
+/** Polls a background AI job every 2 s (up to ~5 min) and returns its drafts, or throws its error. */
+async function aiJob(jobId: string, onWait?: (seconds: number) => void): Promise<Draft[]> {
+  const started = Date.now();
+  while (Date.now() - started < 5 * 60 * 1000) {
+    await new Promise((r) => setTimeout(r, 2000));
+    const job = await call<{ status: 'running' | 'done' | 'error'; drafts?: Draft[] | null; error?: string | null; seconds: number }>('GET', `/ai-jobs/${jobId}`);
+    if (job.status === 'done') return job.drafts ?? [];
+    if (job.status === 'error') throw new Error(job.error || 'AI chưa viết được.');
+    onWait?.(job.seconds);
+  }
+  throw new Error('AI trả lời quá chậm. Bấm thử lại nhé.');
+}
+
 // ── calls ──
 export const outreach = {
   async unlock(password: string): Promise<UnlockResult> {
@@ -308,8 +321,11 @@ export const outreach = {
   saveContent: (c: { text: string; style?: string; topic?: string | null; origin?: string }) => call<Content>('POST', '/contents', c),
   deleteContent: (id: string) => call<void>('DELETE', `/contents/${id}`),
   copied: (id: string) => call<void>('POST', `/contents/${id}/copied`),
-  variants: (count: number, extra?: string) => call<Draft[]>('POST', '/contents/variants', { count, extra }),
-  write: (r: { style: string; topic?: string; groupId?: string; count: number; extra?: string }) => call<Draft[]>('POST', '/contents/write', r),
+  /** AI writers run in the background on the server (an answer can take minutes): start, then poll until done. */
+  variants: async (count: number, extra?: string, onWait?: (seconds: number) => void) =>
+    aiJob((await call<{ jobId: string }>('POST', '/contents/variants', { count, extra })).jobId, onWait),
+  write: async (r: { style: string; topic?: string; groupId?: string; count: number; extra?: string }, onWait?: (seconds: number) => void) =>
+    aiJob((await call<{ jobId: string }>('POST', '/contents/write', r)).jobId, onWait),
   check: (text: string) => call<Draft>('POST', '/contents/check', { text }),
 
   campaigns: () => call<Campaign[]>('GET', '/campaigns'),

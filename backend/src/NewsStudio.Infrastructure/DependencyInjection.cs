@@ -143,6 +143,7 @@ public static class DependencyInjection
         // "Chiến dịch kéo tương tác" (manual-first outreach, own password)
         services.AddScoped<NewsStudio.Infrastructure.Outreach.OutreachAuth>();
         services.AddScoped<NewsStudio.Infrastructure.Outreach.OutreachService>();
+        services.AddSingleton<NewsStudio.Infrastructure.Outreach.OutreachAiJobs>();
         services.AddHttpClient("brave-search", c => c.Timeout = TimeSpan.FromSeconds(20));
         services.AddStudioServices();
 

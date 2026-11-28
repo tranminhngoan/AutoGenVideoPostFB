@@ -69,12 +69,14 @@ public class OutreachController : ControllerBase
 {
     private readonly OutreachService _svc;
     private readonly OutreachAuth _auth;
+    private readonly OutreachAiJobs _ai;
     private readonly ILogger<OutreachController> _logger;
 
-    public OutreachController(OutreachService svc, OutreachAuth auth, ILogger<OutreachController> logger)
+    public OutreachController(OutreachService svc, OutreachAuth auth, OutreachAiJobs ai, ILogger<OutreachController> logger)
     {
         _svc = svc;
         _auth = auth;
+        _ai = ai;
         _logger = logger;
     }
 
@@ -121,8 +123,21 @@ public class OutreachController : ControllerBase
     [HttpPost("contents")] public Task<ActionResult> SaveContent([FromBody] OutreachContentInputDto input, CancellationToken ct) => Run(() => _svc.SaveContentAsync(input, ct))!;
     [HttpDelete("contents/{id:guid}")] public Task<ActionResult> DeleteContent(Guid id, CancellationToken ct) => Done(() => _svc.DeleteContentAsync(id, ct));
     [HttpPost("contents/{id:guid}/copied")] public Task<ActionResult> Copied(Guid id, CancellationToken ct) => Done(() => _svc.MarkCopiedAsync(id, ct));
-    [HttpPost("contents/variants")] public Task<ActionResult> Variants([FromBody] OutreachVariantsRequestDto input, CancellationToken ct) => Run(() => _svc.WriteVariantsAsync(input ?? new(), ct))!;
-    [HttpPost("contents/write")] public Task<ActionResult> Write([FromBody] OutreachWriteRequestDto input, CancellationToken ct) => Run(() => _svc.WriteAsync(input, ct))!;
+    // AI writers run in the background (a Gemini answer can outlast the proxy's request time): start, then poll.
+    [HttpPost("contents/variants")]
+    public ActionResult Variants([FromBody] OutreachVariantsRequestDto input)
+    {
+        var request = input ?? new();
+        return Ok(new { jobId = _ai.Start("variants", (svc, token) => svc.WriteVariantsAsync(request, token)) });
+    }
+    [HttpPost("contents/write")]
+    public ActionResult Write([FromBody] OutreachWriteRequestDto input)
+    {
+        var request = input ?? new();
+        return Ok(new { jobId = _ai.Start("write", (svc, token) => svc.WriteAsync(request, token)) });
+    }
+    [HttpGet("ai-jobs/{id:guid}")]
+    public ActionResult AiJob(Guid id) => _ai.Get(id) is { } job ? Ok(job) : NotFound(new { error = "Không thấy yêu cầu AI (máy chủ vừa khởi động lại?) — bấm viết lại nhé." });
     [HttpPost("contents/check")] public Task<ActionResult> Check([FromBody] OutreachTextCheckDto input, CancellationToken ct) => Run(() => _svc.CheckTextAsync(input?.Text ?? "", ct))!;
 
     // ── campaigns ──

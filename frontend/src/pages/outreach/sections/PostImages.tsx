@@ -227,6 +227,7 @@ export function PostImagesCard({ onSaved }: { onSaved: () => void }) {
   const [count, setCount] = useState(5);
   const [extra, setExtra] = useState('');
   const [busy, setBusy] = useState(false);
+  const [wait, setWait] = useState(0);
   const [posts, setPosts] = useState<Post[]>([]);
   const [domain, setDomain] = useState('tuongtaccheo.xyz');
   const [fontReady, setFontReady] = useState(false);
@@ -247,7 +248,8 @@ export function PostImagesCard({ onSaved }: { onSaved: () => void }) {
   const write = async () => {
     setBusy(true);
     try {
-      const drafts = await outreach.variants(count, extra || undefined);
+      setWait(0);
+      const drafts = await outreach.variants(count, extra || undefined, setWait);
       const start = Math.floor(Math.random() * BACKGROUNDS.length);
       setPosts(drafts.map((d, i) => ({ ...d, bg: (start + i) % BACKGROUNDS.length, seed: Date.now() % 100000 + i * 97 })));
     } catch (e) {
@@ -291,6 +293,7 @@ export function PostImagesCard({ onSaved }: { onSaved: () => void }) {
           <Button variant="primary" icon={posts.length ? <RefreshCw className="h-4 w-4" /> : <Sparkles className="h-4 w-4" />} loading={busy} disabled={!fontReady} onClick={write}>
             {posts.length ? 'Viết lại' : `AI viết ${count} bài`}
           </Button>
+          {busy && <span className="text-xs text-fg-muted sm:col-span-4">AI đang viết… {wait} giây (lần đầu có thể mất 1–3 phút, cứ để trang mở)</span>}
         </div>
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label="Đăng lên tường Page">
