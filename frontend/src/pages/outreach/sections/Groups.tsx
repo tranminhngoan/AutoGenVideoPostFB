@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { ExternalLink, Pencil, Plus, Search, ThumbsDown, ThumbsUp, Trash2, UsersRound } from 'lucide-react';
 import { Badge, Button, Card, EmptyState, Field, Input, Modal, Select, Skeleton, Textarea, cn } from '../../../components/ui';
 import { useConfirm, useToast } from '../../../components/feedback';
-import { EXCHANGE_TYPES, Group, GroupInput, MEMBERSHIP_LABEL, outreach } from '../outreachApi';
+import { EXCHANGE_TYPES, Group, GroupInput, MEMBERSHIP_LABEL, MembershipStatus, outreach } from '../outreachApi';
 import { rate, useLoad } from '../shared';
 
 const empty: GroupInput = { name: '', url: '', topic: '', exchangeTypes: [], fit: 'unknown', privacy: 'unknown', rules: '', note: '' };
@@ -116,6 +116,22 @@ export function GroupsSection() {
   const [sort, setSort] = useState<Sort>('new');
   const [editing, setEditing] = useState<Group | null>(null);
   const [adding, setAdding] = useState(false);
+  const [busy, setBusy] = useState<string | null>(null);
+
+  const setMembership = async (g: Group, pageId: string, status: MembershipStatus | 'none') => {
+    setBusy(g.id + pageId);
+    try {
+      const m = await outreach.setMembership(g.id, pageId, status);
+      setData((list) => list?.map((x) => x.id !== g.id ? x : {
+        ...x,
+        memberships: status === 'none' ? x.memberships.filter((y) => y.pageId !== pageId) : [...x.memberships.filter((y) => y.pageId !== pageId), m],
+      }) ?? null);
+    } catch (e) {
+      toast.error('Chưa lưu được', (e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  };
 
   const topics = useMemo(() => [...new Set((groups ?? []).map((g) => g.topic).filter(Boolean) as string[])].sort(), [groups]);
   const list = useMemo(() => {
@@ -150,6 +166,10 @@ export function GroupsSection() {
 
   return (
     <div className="space-y-4">
+      <p className="px-1 text-xs text-fg-muted">
+        Muốn Page nào vào nhóm: trên Facebook <b>chuyển sang Page đó</b> (ảnh đại diện góc phải → chọn Page), bấm tên nhóm để mở → <b>Tham gia</b>,
+        rồi chọn trạng thái ở ô của Page đó bên dưới. Facebook không cho trang ngoài tự đổi Page hộ bạn.
+      </p>
       <Card className="flex flex-wrap items-center gap-2 p-3">
         <div className="min-w-[200px] flex-1">
           <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Tìm theo tên, link, ghi chú…" leading={<Search className="h-4 w-4" />} />
@@ -198,16 +218,26 @@ export function GroupsSection() {
                   <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-fg-muted">
                     {g.topic && <Badge tone="info">{g.topic}</Badge>}
                     {g.exchangeTypes.map((t) => <Badge key={t}>{EXCHANGE_TYPES.find((x) => x.value === t)?.label ?? t}</Badge>)}
-                    <span>{g.views} lượt xem · {g.clicks} lượt bấm · tỉ lệ {rate(g.clicks, g.views)}</span>
                   </div>
                   {helpers.length > 0 && (
-                    <div className="mt-1.5 flex flex-wrap gap-1.5 text-[11px]">
+                    <div className="mt-2 flex flex-wrap gap-1.5 text-xs">
                       {helpers.map((p) => {
                         const s = g.memberships.find((m) => m.pageId === p.id)?.status;
                         return (
-                          <span key={p.id} className={cn('rounded-md px-1.5 py-0.5', s === 'joined' ? 'bg-success/10 text-success' : s === 'requested' ? 'bg-warning/10 text-warning' : s === 'rejected' ? 'bg-danger/10 text-danger' : 'bg-muted text-fg-subtle')}>
-                            {p.name.replace(/^Trạm Tin\s*/i, '')}: {s ? MEMBERSHIP_LABEL[s] : 'chưa vào'}
-                          </span>
+                          <label key={p.id} title={`Trạng thái của ${p.name} trong nhóm này (bạn tham gia trên Facebook bằng Page ${p.name}, rồi chọn ở đây)`}
+                            className={cn('flex items-center gap-1 rounded-md border py-0.5 pl-2 pr-1',
+                              s === 'joined' ? 'border-success/30 bg-success/10 text-success' : s === 'requested' ? 'border-warning/30 bg-warning/10 text-warning'
+                                : s === 'rejected' ? 'border-danger/30 bg-danger/10 text-danger' : 'border-line bg-muted text-fg-muted')}>
+                            <span className="font-medium">{p.name.replace(/^Trạm Tin\s*/i, '')}:</span>
+                            <select value={s ?? 'none'} disabled={busy === g.id + p.id}
+                              onChange={(e) => setMembership(g, p.id, e.target.value as MembershipStatus | 'none')}
+                              className="cursor-pointer rounded bg-transparent text-xs font-medium outline-none">
+                              <option value="none">Chưa vào</option>
+                              <option value="requested">{MEMBERSHIP_LABEL.requested}</option>
+                              <option value="joined">{MEMBERSHIP_LABEL.joined}</option>
+                              <option value="rejected">{MEMBERSHIP_LABEL.rejected}</option>
+                            </select>
+                          </label>
                         );
                       })}
                     </div>

@@ -166,7 +166,7 @@ public partial class OutreachService
     {
         Id = g.Id, Name = g.Name, Url = g.Url, Key = g.Key, Topic = g.Topic,
         ExchangeTypes = g.ExchangeTypes.Split(',', StringSplitOptions.RemoveEmptyEntries).ToList(),
-        Fit = g.Fit, Privacy = g.Privacy, Members = g.Members, Rules = g.Rules, Note = g.Note,
+        Fit = g.Fit, Privacy = g.Privacy, Members = g.Members, Rules = g.Rules, Note = IsLoginWallText(g.Note) ? null : g.Note,
         CreatedAtUtc = g.CreatedAtUtc, Views = views, Clicks = clicks,
     };
 
@@ -267,6 +267,11 @@ public partial class OutreachService
         return t;
     }
 
+    /// <summary>Facebook's logged-out boilerplate ("Popular groups · Find communities for you · Log in…") — not a description.</summary>
+    public static bool IsLoginWallText(string? text) =>
+        !string.IsNullOrWhiteSpace(text) && new[] { "Find communities for you", "Over 1 billion people", "Popular groups", "Log in · Categories", "Đăng nhập · Danh mục" }
+            .Any(p => text.Contains(p, StringComparison.OrdinalIgnoreCase));
+
     /// <summary>Brave web results → Facebook Group links only (deduplicated; snippet read for members / privacy).</summary>
     public static List<OutreachDiscoveredGroupDto> ParseBraveResults(JsonElement body)
     {
@@ -280,6 +285,7 @@ public partial class OutreachService
             var title = CleanTitle(r.TryGetProperty("title", out var t) ? t.GetString() ?? "" : "");
             var desc = WebUtility.HtmlDecode(r.TryGetProperty("description", out var d) ? d.GetString() ?? "" : "");
             desc = Regex.Replace(desc, "<[^>]+>", "").Trim();
+            if (IsLoginWallText(desc)) desc = "";
             var extra = r.TryGetProperty("extra_snippets", out var ex) && ex.ValueKind == JsonValueKind.Array
                 ? string.Join(" ", ex.EnumerateArray().Select(x => x.GetString())) : "";
             var all = (title + " " + desc + " " + extra).ToLowerInvariant();

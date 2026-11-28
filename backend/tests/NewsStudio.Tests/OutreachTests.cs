@@ -60,6 +60,13 @@ public class OutreachLogicTests
     public void MemberCountsAreReadFromSnippets(string text, int? expected) =>
         OutreachService.ParseMembers(text).Should().Be(expected);
 
+    [Theory]
+    [InlineData("Popular groups · Find communities for you · Over 1 billion people across the globe are using Facebook groups", true)]
+    [InlineData("Nhóm Công khai · 25K thành viên · giao lưu follow chéo", false)]
+    [InlineData(null, false)]
+    public void FacebookLoginWallTextIsNotADescription(string? text, bool junk) =>
+        OutreachService.IsLoginWallText(text).Should().Be(junk);
+
     [Fact]
     public void BraveResultsKeepOnlyGroupLinks()
     {
