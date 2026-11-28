@@ -1,22 +1,14 @@
 import { useMemo, useState } from 'react';
-import { CalendarRange, Check, ExternalLink, Link2, Megaphone, Pencil, Plus, Trash2, X } from 'lucide-react';
+import { CalendarRange, Check, ExternalLink, ImageIcon, ListChecks, Megaphone, Pencil, Plus, Share2, Trash2, UsersRound } from 'lucide-react';
 import { Badge, Button, Card, Checkbox, Drawer, EmptyState, Field, Input, Modal, ProgressBar, Select, Skeleton, Textarea } from '../../../components/ui';
 import { useConfirm, useToast } from '../../../components/feedback';
-import { Activity, Campaign, CampaignInput, CampaignLink, CampaignStatus, Group, outreach, OutreachPage, STATUS_LABEL } from '../outreachApi';
-import { CopyButton, fmtDate, fmtDateTime, PageAvatar, rate, useLoad } from '../shared';
+import { href } from '../../../lib/router';
+import { Campaign, CampaignInput, CampaignLink, CampaignStatus, Group, outreach, OutreachPage, STATUS_LABEL } from '../outreachApi';
+import { fmtDate, fmtDateTime, PageAvatar, rate, useLoad } from '../shared';
 
 const STATUS_TONE: Record<CampaignStatus, 'neutral' | 'warning' | 'success' | 'info' | 'danger'> = {
   Draft: 'neutral', PendingApproval: 'warning', Running: 'success', Paused: 'info', Completed: 'neutral',
 };
-const KIND_LABEL: Record<Activity['kind'], string> = { post: 'Đã đăng bài', join: 'Đã tham gia Group', comment: 'Đã bình luận' };
-
-/** Puts the tracking link in the text: replaces any /cheo-uy-tinh link already there, else adds it at the end. */
-export function withLink(text: string, link: string) {
-  const t = (text ?? '').trim();
-  if (!t) return link;
-  return /https?:\/\/\S*cheo-uy-tinh\S*/.test(t) ? t.replace(/https?:\/\/\S*cheo-uy-tinh\S*/g, link) : `${t}\n👉 ${link}`;
-}
-
 function CampaignForm({ open, initial, pages, groups, onClose, onSaved }: {
   open: boolean; initial: Campaign | null; pages: OutreachPage[]; groups: Group[]; onClose: () => void; onSaved: (c: Campaign) => void;
 }) {
@@ -58,7 +50,7 @@ function CampaignForm({ open, initial, pages, groups, onClose, onSaved }: {
 
   return (
     <Modal open={open} onClose={onClose} size="lg" title={initial ? 'Sửa chiến dịch' : 'Tạo chiến dịch'}
-      description="Đích đến luôn là trang /cheo-uy-tinh; mỗi Group × Page có link theo dõi riêng."
+      description="Chọn Page phụ và nhóm mục tiêu. Bài đăng lên tường Page rồi chia sẻ vào các nhóm này."
       footer={<><Button variant="ghost" onClick={onClose}>Huỷ</Button><Button variant="primary" loading={busy} disabled={!form.name.trim()} onClick={save}>Lưu</Button></>}>
       <div className="grid gap-3 sm:grid-cols-2">
         <Field label="Tên chiến dịch" className="sm:col-span-2">
@@ -108,7 +100,7 @@ function CampaignForm({ open, initial, pages, groups, onClose, onSaved }: {
           </div>
         </Field>
 
-        <Field label="Nội dung quảng bá" className="sm:col-span-2" hint="Chọn từ thư viện hoặc tự viết; link theo dõi sẽ được gắn riêng cho từng Group × Page.">
+        <Field label="Nội dung quảng bá" className="sm:col-span-2" hint="Ghi chú nội dung chính của chiến dịch (bài đăng thật tạo ở AI Outreach → Bài đăng ảnh chữ).">
           <Select value={form.contentId ?? ''} onChange={(e) => {
             const c = (library ?? []).find((x) => x.id === e.target.value);
             set({ contentId: c?.id ?? null, contentText: c?.text ?? form.contentText });
@@ -126,86 +118,45 @@ function CampaignForm({ open, initial, pages, groups, onClose, onSaved }: {
   );
 }
 
-function LinksDrawer({ campaign, onClose, onChanged }: { campaign: Campaign | null; onClose: () => void; onChanged: () => void }) {
-  const toast = useToast();
-  const { data: links, setData, loading } = useLoad(() => (campaign ? outreach.links(campaign.id) : Promise.resolve([] as CampaignLink[])), [campaign?.id]);
-  const [mark, setMark] = useState<{ row: CampaignLink; kind: Activity['kind']; postUrl: string } | null>(null);
-
-  const addActivity = async () => {
-    if (!campaign || !mark) return;
-    try {
-      const a = await outreach.addActivity(campaign.id, { groupId: mark.row.groupId, pageId: mark.row.pageId, kind: mark.kind, postUrl: mark.postUrl || undefined });
-      setData((list) => list?.map((r) => (r.utmContent === mark.row.utmContent ? { ...r, activities: [a, ...r.activities] } : r)) ?? null);
-      setMark(null);
-      onChanged();
-    } catch (e) {
-      toast.error('Chưa lưu được', (e as Error).message);
-    }
-  };
-  const removeActivity = async (row: CampaignLink, a: Activity) => {
-    try {
-      await outreach.deleteActivity(a.id);
-      setData((list) => list?.map((r) => (r.utmContent === row.utmContent ? { ...r, activities: r.activities.filter((x) => x.id !== a.id) } : r)) ?? null);
-      onChanged();
-    } catch (e) {
-      toast.error('Chưa xoá được', (e as Error).message);
-    }
-  };
+function ProgressDrawer({ campaign, onClose }: { campaign: Campaign | null; onClose: () => void }) {
+  const { data: rows, loading } = useLoad(() => (campaign ? outreach.links(campaign.id) : Promise.resolve([] as CampaignLink[])), [campaign?.id]);
+  const list = rows ?? [];
+  const shared = list.filter((r) => r.shares > 0 || r.activities.length > 0).length;
 
   return (
-    <Drawer open={campaign != null} onClose={onClose} title={campaign?.name ?? ''} subtitle={`utm_campaign=${campaign?.slug ?? ''} · làm thủ công rồi đánh dấu`}>
-      {loading && !links ? <Skeleton className="h-40 w-full" /> : (links ?? []).length === 0 ? (
-        <EmptyState icon={<Link2 />} title="Chiến dịch chưa có Group" description="Sửa chiến dịch để chọn Group mục tiêu." />
+    <Drawer open={campaign != null} onClose={onClose} title={campaign?.name ?? ''} subtitle={`Tiến độ chia sẻ bài vào nhóm · ${shared}/${list.length} nhóm × Page`}>
+      <div className="mb-3 flex flex-wrap gap-2">
+        <a href={href('/outreach/ai')}><Button size="sm" variant="primary" icon={<ImageIcon className="h-3.5 w-3.5" />}>1. Tạo & đăng bài lên tường Page</Button></a>
+        <a href={href('/outreach/share')}><Button size="sm" variant="secondary" icon={<Share2 className="h-3.5 w-3.5" />}>2. Chia sẻ vào nhóm</Button></a>
+      </div>
+      {loading && !rows ? <Skeleton className="h-40 w-full" /> : list.length === 0 ? (
+        <EmptyState icon={<UsersRound />} title="Chiến dịch chưa có Group" description="Bấm Sửa chiến dịch để chọn Group mục tiêu." />
       ) : (
-        <div className="space-y-3">
-          {(links ?? []).map((row) => (
-            <Card key={row.utmContent} className="space-y-2 p-3">
-              <div className="flex flex-wrap items-center gap-1.5">
-                <a href={row.groupUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-sm font-medium text-fg hover:text-accent">
-                  {row.groupName} <ExternalLink className="h-3 w-3" />
-                </a>
-                {row.pageName && <Badge tone="info">qua {row.pageName}</Badge>}
+        <div className="divide-y divide-line rounded-lg border border-line">
+          {list.map((row) => {
+            const done = row.shares > 0 || row.activities.length > 0;
+            return (
+              <div key={row.utmContent} className="flex flex-wrap items-center gap-2 px-3 py-2.5">
+                <div className="min-w-0 flex-1">
+                  <a href={row.groupUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-sm font-medium text-fg hover:text-accent">
+                    {row.groupName} <ExternalLink className="h-3 w-3" />
+                  </a>
+                  {row.pageName && <p className="text-xs text-fg-subtle">qua {row.pageName}</p>}
+                </div>
                 {row.pageName && (row.membership === 'joined'
-                  ? <Badge tone="success">Page đã vào Group</Badge>
-                  : <Badge tone="warning">{row.membership === 'requested' ? 'Page đang chờ duyệt' : row.membership === 'rejected' ? 'Page bị từ chối' : 'Page chưa vào Group'}</Badge>)}
-                <span className="ml-auto text-xs text-fg-muted">{row.views} xem · {row.clicks} bấm · {rate(row.clicks, row.views)}</span>
+                  ? <Badge tone="success">Page đã vào nhóm</Badge>
+                  : <Badge tone="warning">{row.membership === 'requested' ? 'Page chờ duyệt' : row.membership === 'rejected' ? 'Page bị từ chối' : 'Page chưa vào nhóm'}</Badge>)}
+                {done
+                  ? <Badge tone="success" dot><Check className="h-3 w-3" />Đã chia sẻ{row.shares > 1 ? ` ${row.shares} lần` : ''}{row.lastSharedAtUtc ? ` · ${fmtDateTime(row.lastSharedAtUtc)}` : ''}</Badge>
+                  : <Badge>Chưa chia sẻ</Badge>}
               </div>
-              <div className="flex items-center gap-2 rounded-md bg-subtle px-2 py-1.5">
-                <code className="min-w-0 flex-1 truncate text-[11px] text-fg-muted">{row.link}</code>
-                <CopyButton text={row.link} label="Link" />
-                <CopyButton text={withLink(campaign?.contentText ?? '', row.link)} label="Nội dung + link" variant="primary" />
-              </div>
-              {row.activities.map((a) => (
-                <div key={a.id} className="flex items-center gap-2 text-xs text-fg-muted">
-                  <Check className="h-3.5 w-3.5 text-success" />
-                  <span>{KIND_LABEL[a.kind]} · {fmtDateTime(a.doneAtUtc)}</span>
-                  {a.postUrl && <a href={a.postUrl} target="_blank" rel="noreferrer" className="text-accent">xem bài</a>}
-                  <button type="button" className="ml-auto text-fg-subtle hover:text-danger" onClick={() => removeActivity(row, a)} aria-label="Bỏ đánh dấu"><X className="h-3.5 w-3.5" /></button>
-                </div>
-              ))}
-              {mark?.row.utmContent === row.utmContent ? (
-                <div className="flex flex-wrap gap-2">
-                  <Select size="sm" className="w-auto" value={mark.kind} onChange={(e) => setMark({ ...mark, kind: e.target.value as Activity['kind'] })}>
-                    <option value="post">Đã đăng bài</option>
-                    <option value="join">Đã tham gia Group</option>
-                    <option value="comment">Đã bình luận</option>
-                  </Select>
-                  <div className="min-w-[180px] flex-1">
-                    <Input value={mark.postUrl} onChange={(e) => setMark({ ...mark, postUrl: e.target.value })} placeholder="Link bài đã đăng (không bắt buộc)" />
-                  </div>
-                  <Button size="sm" variant="primary" onClick={addActivity}>Lưu</Button>
-                  <Button size="sm" variant="ghost" onClick={() => setMark(null)}>Huỷ</Button>
-                </div>
-              ) : (
-                <Button size="sm" variant="secondary" icon={<Check className="h-3.5 w-3.5" />} onClick={() => setMark({ row, kind: 'post', postUrl: '' })}>
-                  Đánh dấu đã làm
-                </Button>
-              )}
-            </Card>
-          ))}
-          <p className="text-xs text-fg-subtle">Lượt bấm là lượt mở Facebook từ trang /cheo-uy-tinh — không phải lượt Follow đã xác nhận.</p>
+            );
+          })}
         </div>
       )}
+      <p className="mt-3 text-xs text-fg-subtle">
+        Tích “Đã chia sẻ” ở mục Chia sẻ vào nhóm (bài phải được đăng kèm chiến dịch này) — tiến độ ở đây tự cập nhật.
+      </p>
     </Drawer>
   );
 }
@@ -246,7 +197,7 @@ export function CampaignsSection() {
       </div>
 
       {loading && !campaigns ? <Skeleton className="h-48 w-full" /> : list.length === 0 ? (
-        <EmptyState icon={<Megaphone />} title="Chưa có chiến dịch" description="Tạo chiến dịch: chọn Page phụ, Group mục tiêu và nội dung — hệ thống tạo link theo dõi riêng cho từng Group." />
+        <EmptyState icon={<Megaphone />} title="Chưa có chiến dịch" description="Tạo chiến dịch: chọn Page phụ và nhóm mục tiêu, rồi đăng bài lên tường Page và chia sẻ vào các nhóm đó." />
       ) : (
         <div className="grid gap-3 lg:grid-cols-2">
           {list.map((c) => (
@@ -259,7 +210,7 @@ export function CampaignsSection() {
                 <Badge tone={STATUS_TONE[c.status]} dot={c.status === 'Running'} pulse={c.status === 'Running'}>{STATUS_LABEL[c.status]}</Badge>
               </div>
               <div className="grid grid-cols-3 gap-2 text-center">
-                {[{ l: 'Lượt xem', v: c.views }, { l: 'Bấm sang FB', v: c.clicks }, { l: 'Tỉ lệ', v: rate(c.clicks, c.views) }].map((x) => (
+                {[{ l: 'Nhóm mục tiêu', v: c.groupIds.length }, { l: 'Page phụ', v: c.pageIds.length }, { l: 'Đã chia sẻ', v: `${c.activitiesDone}/${c.activitiesPlanned}` }].map((x) => (
                   <div key={x.l} className="rounded-lg bg-subtle py-2">
                     <p className="text-lg font-semibold tabular-nums text-fg">{x.v}</p>
                     <p className="text-[11px] text-fg-muted">{x.l}</p>
@@ -268,7 +219,7 @@ export function CampaignsSection() {
               </div>
               <div>
                 <div className="mb-1 flex justify-between text-xs text-fg-muted">
-                  <span>Đã làm thủ công</span>
+                  <span>Đã chia sẻ vào nhóm</span>
                   <span>{c.activitiesDone}/{c.activitiesPlanned}</span>
                 </div>
                 <ProgressBar value={c.activitiesPlanned ? (100 * c.activitiesDone) / c.activitiesPlanned : 0} tone="success" />
@@ -281,7 +232,7 @@ export function CampaignsSection() {
               </div>
               {c.resultNote && <p className="line-clamp-2 text-xs text-fg-muted">📝 {c.resultNote}</p>}
               <div className="flex flex-wrap gap-2">
-                <Button size="sm" variant="primary" icon={<Link2 className="h-3.5 w-3.5" />} onClick={() => setLinksOf(c)}>Link & việc cần làm</Button>
+                <Button size="sm" variant="primary" icon={<ListChecks className="h-3.5 w-3.5" />} onClick={() => setLinksOf(c)}>Tiến độ chia sẻ</Button>
                 <Button size="sm" variant="secondary" icon={<Pencil className="h-3.5 w-3.5" />} onClick={() => setEditing(c)}>Sửa</Button>
                 <Button size="sm" variant="danger-soft" icon={<Trash2 className="h-3.5 w-3.5" />} onClick={() => remove(c)}>Xoá</Button>
               </div>
@@ -293,7 +244,7 @@ export function CampaignsSection() {
       <CampaignForm open={adding || editing != null} initial={editing} pages={pages ?? []} groups={groups ?? []}
         onClose={() => { setAdding(false); setEditing(null); }}
         onSaved={(c) => setData((l) => (l?.some((x) => x.id === c.id) ? l.map((x) => (x.id === c.id ? c : x)) : [c, ...(l ?? [])]))} />
-      <LinksDrawer campaign={linksOf} onClose={() => setLinksOf(null)} onChanged={reload} />
+      <ProgressDrawer campaign={linksOf} onClose={() => { setLinksOf(null); reload(); }} />
     </div>
   );
 }

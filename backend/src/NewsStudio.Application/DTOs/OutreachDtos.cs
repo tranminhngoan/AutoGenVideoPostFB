@@ -206,6 +206,9 @@ public class OutreachCampaignLinkDto
     public string UtmContent { get; set; } = string.Empty;
     /// <summary>Whether this helper Page is in the Group: null (not asked) | requested | joined | rejected.</summary>
     public string? Membership { get; set; }
+    /// <summary>How many of this campaign's wall posts the Page shared into the Group, and the last time.</summary>
+    public int Shares { get; set; }
+    public DateTime? LastSharedAtUtc { get; set; }
     /// <summary>Path + query, e.g. /cheo-uy-tinh?utm_source=facebook&amp;… (the frontend adds its own domain).</summary>
     public string Link { get; set; } = string.Empty;
     public int Views { get; set; }
@@ -342,3 +345,25 @@ public class OutreachDiscoverResultDto
     public string FacebookSearchUrl { get; set; } = string.Empty;
     public List<OutreachDiscoveredGroupDto> Results { get; set; } = new();
 }
+
+// ── Wall posts on helper Pages + shares into Groups (by hand) ──
+public class OutreachWallPostDto
+{
+    public Guid Id { get; set; }
+    public Guid PageId { get; set; }
+    public string PageName { get; set; } = string.Empty;
+    public Guid? CampaignId { get; set; }
+    public string PostId { get; set; } = string.Empty;
+    public string PermalinkUrl { get; set; } = string.Empty;
+    public string Text { get; set; } = string.Empty;
+    public DateTime CreatedAtUtc { get; set; }
+    public List<OutreachShareDto> Shares { get; set; } = new();
+}
+
+public class OutreachShareDto
+{
+    public Guid GroupId { get; set; }
+    public DateTime SharedAtUtc { get; set; }
+}
+
+public class OutreachShareInputDto { public bool Shared { get; set; } = true; }

@@ -5,10 +5,10 @@ import { outreach, STATUS_LABEL } from '../outreachApi';
 import { PageAvatar, rate, Stat, useLoad } from '../shared';
 
 const STEPS = [
-  { to: '/outreach/finder', icon: Search, title: 'Tìm Group', text: 'Tìm Group phù hợp trên Facebook, thêm vào danh sách.' },
-  { to: '/outreach/ai', icon: Bot, title: 'Soạn lời mời', text: 'AI viết nhiều phiên bản, lưu vào thư viện.' },
-  { to: '/outreach/campaigns', icon: Megaphone, title: 'Tạo chiến dịch', text: 'Chọn Page phụ + Group, lấy link theo dõi riêng.' },
-  { to: '/outreach/posts', icon: FileText, title: 'Trả lời bài Group', text: 'AI gợi ý bình luận, bạn tự đăng.' },
+  { to: '/outreach/finder', icon: Search, title: 'Tìm & thêm nhóm', text: 'Tìm nhóm theo từ khoá, thêm vào danh sách.' },
+  { to: '/outreach/join', icon: UsersRound, title: 'Tham gia nhóm', text: 'Mỗi Page phụ vào nhóm (bấm tay trên Facebook).' },
+  { to: '/outreach/ai', icon: Bot, title: 'Tạo & đăng bài', text: 'AI viết bài ảnh chữ, đăng lên tường Page phụ.' },
+  { to: '/outreach/share', icon: FileText, title: 'Chia sẻ vào nhóm', text: 'Mở bài → Chia sẻ → Nhóm, tích đã chia sẻ.' },
 ];
 
 export function OverviewSection() {
@@ -76,7 +76,7 @@ export function OverviewSection() {
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-medium text-fg">{c.name}</p>
                   <p className="text-xs text-fg-subtle">
-                    {c.groupIds.length} Group · {c.views} lượt xem · {c.clicks} lượt bấm · đã làm {c.activitiesDone}/{c.activitiesPlanned}
+                    {c.groupIds.length} nhóm · đã chia sẻ {c.activitiesDone}/{c.activitiesPlanned}
                   </p>
                 </div>
                 <Badge tone={c.status === 'Running' ? 'success' : 'warning'}>{STATUS_LABEL[c.status]}</Badge>

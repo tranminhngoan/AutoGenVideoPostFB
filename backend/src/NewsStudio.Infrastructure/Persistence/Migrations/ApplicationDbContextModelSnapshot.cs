@@ -3302,6 +3302,40 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                     b.ToTable("OutreachSettings", (string)null);
                 });
 
+            modelBuilder.Entity("NewsStudio.Domain.Entities.OutreachShare", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("CampaignId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("FacebookAccountId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("GroupId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("WallPostId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CampaignId");
+
+                    b.HasIndex("WallPostId", "GroupId")
+                        .IsUnique();
+
+                    b.ToTable("OutreachShares", (string)null);
+                });
+
             modelBuilder.Entity("NewsStudio.Domain.Entities.OutreachUnlockAttempt", b =>
                 {
                     b.Property<Guid>("Id")
@@ -3327,6 +3361,46 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                     b.HasIndex("Ip", "CreatedAtUtc");
 
                     b.ToTable("OutreachUnlockAttempts", (string)null);
+                });
+
+            modelBuilder.Entity("NewsStudio.Domain.Entities.OutreachWallPost", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("CampaignId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ExternalPostId")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<Guid>("FacebookAccountId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("PermalinkUrl")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("Text")
+                        .IsRequired()
+                        .HasMaxLength(3000)
+                        .HasColumnType("character varying(3000)");
+
+                    b.Property<DateTime?>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("FacebookAccountId", "CreatedAtUtc");
+
+                    b.ToTable("OutreachWallPosts", (string)null);
                 });
 
             modelBuilder.Entity("NewsStudio.Domain.Entities.PageFollowerSnapshot", b =>

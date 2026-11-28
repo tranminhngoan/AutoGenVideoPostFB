@@ -112,3 +112,23 @@ public class OutreachGroupMembership : BaseEntity
     /// <summary>requested (asked to join) | joined | rejected</summary>
     public string Status { get; set; } = "requested";
 }
+
+/// <summary>A picture post the tool published on a helper Page's wall (to be shared into Groups by hand).</summary>
+public class OutreachWallPost : BaseEntity
+{
+    public Guid FacebookAccountId { get; set; }
+    public Guid? CampaignId { get; set; }
+    /// <summary>Facebook post id ("pageId_postId").</summary>
+    public string ExternalPostId { get; set; } = string.Empty;
+    public string PermalinkUrl { get; set; } = string.Empty;
+    public string Text { get; set; } = string.Empty;
+}
+
+/// <summary>The owner shared a wall post into one Group (done by hand on Facebook, ticked in the tool).</summary>
+public class OutreachShare : BaseEntity
+{
+    public Guid WallPostId { get; set; }
+    public Guid GroupId { get; set; }
+    public Guid FacebookAccountId { get; set; }
+    public Guid? CampaignId { get; set; }
+}

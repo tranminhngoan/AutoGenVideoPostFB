@@ -206,6 +206,7 @@ public partial class OutreachService
         _db.OutreachGroups.Remove(group);
         _db.OutreachActivities.RemoveRange(await _db.OutreachActivities.Where(a => a.GroupId == id).ToListAsync(ct));
         _db.OutreachGroupMemberships.RemoveRange(await _db.OutreachGroupMemberships.Where(m => m.GroupId == id).ToListAsync(ct));
+        _db.OutreachShares.RemoveRange(await _db.OutreachShares.Where(s => s.GroupId == id).ToListAsync(ct));
         await _db.SaveChangesAsync(ct);
         return true;
     }
@@ -531,7 +532,8 @@ Trả về JSON: {{ ""texts"": [""..."", ""...""] }}");
         var drafts = new List<OutreachDraftDto>();
         foreach (var t in texts.Take(count))
         {
-            var text = t.Trim() + "\n👉 " + LandingUrl();
+            // the site as plain text (many Groups refuse links), on its own line so readers can copy it
+            var text = t.Trim() + "\n\n👉 " + new Uri(PublicBaseUrl).Host.Replace("www.", "");
             var (score, similar) = await MostSimilarAsync(text, null, ct);
             // also compare with the other drafts of this batch
             foreach (var d in drafts)
@@ -736,6 +738,8 @@ TUYỆT ĐỐI KHÔNG: nhắc tới tài khoản nuôi / clone / nick phụ / t�
         var c = await _db.OutreachCampaigns.FirstOrDefaultAsync(x => x.Id == id, ct);
         if (c == null) return false;
         _db.OutreachActivities.RemoveRange(await _db.OutreachActivities.Where(a => a.CampaignId == id).ToListAsync(ct));
+        foreach (var s in await _db.OutreachShares.Where(x => x.CampaignId == id).ToListAsync(ct)) s.CampaignId = null;
+        foreach (var w in await _db.OutreachWallPosts.Where(x => x.CampaignId == id).ToListAsync(ct)) w.CampaignId = null;
         _db.OutreachCampaigns.Remove(c);
         await _db.SaveChangesAsync(ct);
         return true;
@@ -750,6 +754,9 @@ TUYỆT ĐỐI KHÔNG: nhắc tới tài khoản nuôi / clone / nick phụ / t�
             .Select(g => new { g.Key.UtmCampaign, g.Key.Type, Count = g.Count() })
             .ToListAsync(ct);
         var done = await _db.OutreachActivities.AsNoTracking().GroupBy(a => a.CampaignId).Select(g => new { g.Key, Count = g.Count() }).ToDictionaryAsync(x => x.Key, x => x.Count, ct);
+        var sharedPairs = (await _db.OutreachShares.AsNoTracking().Where(s => s.CampaignId != null)
+                .Select(s => new { s.CampaignId, s.GroupId, s.FacebookAccountId }).Distinct().ToListAsync(ct))
+            .GroupBy(s => s.CampaignId!.Value).ToDictionary(g => g.Key, g => g.Count());
         return campaigns.Select(c =>
         {
             var pages = Ids(c.PageIdsJson);
@@ -761,7 +768,7 @@ TUYỆT ĐỐI KHÔNG: nhắc tới tài khoản nuôi / clone / nick phụ / t�
                 Status = c.Status, Owner = c.Owner, ResultNote = c.ResultNote, CreatedAtUtc = c.CreatedAtUtc,
                 Views = byCampaign.Where(x => x.UtmCampaign == c.Slug && x.Type == "view").Sum(x => x.Count),
                 Clicks = byCampaign.Where(x => x.UtmCampaign == c.Slug && x.Type == "open_page").Sum(x => x.Count),
-                ActivitiesDone = done.GetValueOrDefault(c.Id),
+                ActivitiesDone = Math.Min(groups.Count * Math.Max(1, pages.Count), sharedPairs.GetValueOrDefault(c.Id) + done.GetValueOrDefault(c.Id)),
                 ActivitiesPlanned = groups.Count * Math.Max(1, pages.Count),
             };
         }).ToList();
@@ -778,6 +785,7 @@ TUYỆT ĐỐI KHÔNG: nhắc tới tài khoản nuôi / clone / nick phụ / t�
         var pages = await _db.FacebookAccounts.AsNoTracking().Where(a => pageIds.Contains(a.Id)).ToListAsync(ct);
         var activities = await _db.OutreachActivities.AsNoTracking().Where(a => a.CampaignId == id).OrderByDescending(a => a.DoneAtUtc).ToListAsync(ct);
         var memberships = await _db.OutreachGroupMemberships.AsNoTracking().Where(m => groupIds.Contains(m.GroupId)).ToListAsync(ct);
+        var shares = await _db.OutreachShares.AsNoTracking().Where(s => s.CampaignId == id).ToListAsync(ct);
         var counts = await _db.LandingEvents.AsNoTracking()
             .Where(e => e.Slug == LandingSlug && e.UtmCampaign == c.Slug && e.UtmContent != null && (e.Type == "view" || e.Type == "open_page"))
             .GroupBy(e => new { e.UtmContent, e.Type }).Select(g => new { g.Key.UtmContent, g.Key.Type, Count = g.Count() }).ToListAsync(ct);
@@ -794,6 +802,8 @@ TUYỆT ĐỐI KHÔNG: nhắc tới tài khoản nuôi / clone / nick phụ / t�
                 {
                     GroupId = g.Id, GroupName = g.Name, GroupUrl = g.Url, PageId = p?.Id, PageName = p?.PageName, UtmContent = content,
                     Membership = p == null ? null : memberships.FirstOrDefault(m => m.GroupId == g.Id && m.FacebookAccountId == p.Id)?.Status,
+                    Shares = shares.Count(s => s.GroupId == g.Id && (p == null || s.FacebookAccountId == p.Id)),
+                    LastSharedAtUtc = shares.Where(s => s.GroupId == g.Id && (p == null || s.FacebookAccountId == p.Id)).Select(s => (DateTime?)s.CreatedAtUtc).Max(),
                     Link = LandingUrl(query),
                     Views = counts.Where(x => x.UtmContent == content && x.Type == "view").Sum(x => x.Count),
                     Clicks = counts.Where(x => x.UtmContent == content && x.Type == "open_page").Sum(x => x.Count),
@@ -839,6 +849,87 @@ TUYỆT ĐỐI KHÔNG: nhắc tới tài khoản nuôi / clone / nick phụ / t�
         _db.OutreachActivities.Remove(a);
         await _db.SaveChangesAsync(ct);
         return true;
+    }
+
+
+    // ═════════════════════════ Wall posts + shares into Groups ═════════════════════════
+
+    /// <summary>
+    /// Publishes a picture + text on a helper Page's wall through the Graph API (allowed). Sharing it into Groups is
+    /// then done by hand on Facebook — Meta has no API for Groups.
+    /// </summary>
+    public async Task<OutreachWallPostDto> PublishWallPostAsync(Guid pageAccountId, Guid? campaignId, string? message, Stream image, string fileName, CancellationToken ct)
+    {
+        var page = await _db.FacebookAccounts.AsNoTracking().FirstOrDefaultAsync(a => a.Id == pageAccountId && a.IsActive, ct);
+        if (page == null || !IsHelper(page.PageId)) throw new OutreachInputException("Chỉ đăng lên tường Page phụ của chiến dịch.");
+        if (campaignId is { } cid && !await _db.OutreachCampaigns.AnyAsync(c => c.Id == cid, ct)) throw new OutreachInputException("Chiến dịch không còn tồn tại.");
+        var text = Clip(message, 3000) ?? throw new OutreachInputException("Bài đăng cần có chữ.");
+        var ext = Path.GetExtension(fileName).ToLowerInvariant() is ".png" or ".jpg" or ".jpeg" or ".webp" ? Path.GetExtension(fileName).ToLowerInvariant() : ".jpg";
+
+        var dir = Path.Combine(Path.GetTempPath(), "outreach-wall");
+        Directory.CreateDirectory(dir);
+        var path = Path.Combine(dir, Guid.NewGuid().ToString("N") + ext);
+        string postId;
+        try
+        {
+            await using (var file = File.Create(path)) await image.CopyToAsync(file, ct);
+            if (new FileInfo(path).Length is 0 or > 8 * 1024 * 1024) throw new OutreachInputException("Ảnh trống hoặc quá 8MB.");
+            postId = await _facebook.PublishPhotoPostAsync(pageAccountId, new[] { path }, text, ct);
+        }
+        finally
+        {
+            try { File.Delete(path); } catch (IOException) { /* temp file, ignore */ }
+        }
+
+        var post = new OutreachWallPost
+        {
+            FacebookAccountId = pageAccountId, CampaignId = campaignId, ExternalPostId = postId,
+            PermalinkUrl = "https://www.facebook.com/" + postId, Text = text,
+        };
+        _db.OutreachWallPosts.Add(post);
+        await _db.SaveChangesAsync(ct);
+        _logger.LogInformation("Outreach wall post published on {Page}: {PostId}", page.PageName, postId);
+        return new OutreachWallPostDto
+        {
+            Id = post.Id, PageId = pageAccountId, PageName = page.PageName, CampaignId = campaignId, PostId = postId,
+            PermalinkUrl = post.PermalinkUrl, Text = text, CreatedAtUtc = post.CreatedAtUtc,
+        };
+    }
+
+    public async Task<List<OutreachWallPostDto>> ListWallPostsAsync(Guid? pageAccountId, CancellationToken ct)
+    {
+        var q = _db.OutreachWallPosts.AsNoTracking();
+        if (pageAccountId is { } pid) q = q.Where(p => p.FacebookAccountId == pid);
+        var posts = await q.OrderByDescending(p => p.CreatedAtUtc).Take(50).ToListAsync(ct);
+        var ids = posts.Select(p => p.Id).ToList();
+        var shares = (await _db.OutreachShares.AsNoTracking().Where(s => ids.Contains(s.WallPostId)).ToListAsync(ct)).ToLookup(s => s.WallPostId);
+        var names = await _db.FacebookAccounts.AsNoTracking().ToDictionaryAsync(a => a.Id, a => a.PageName, ct);
+        return posts.Select(p => new OutreachWallPostDto
+        {
+            Id = p.Id, PageId = p.FacebookAccountId, PageName = names.GetValueOrDefault(p.FacebookAccountId, "Page"), CampaignId = p.CampaignId,
+            PostId = p.ExternalPostId, PermalinkUrl = p.PermalinkUrl, Text = p.Text, CreatedAtUtc = p.CreatedAtUtc,
+            Shares = shares[p.Id].Select(s => new OutreachShareDto { GroupId = s.GroupId, SharedAtUtc = s.CreatedAtUtc }).ToList(),
+        }).ToList();
+    }
+
+    /// <summary>Ticks / unticks "shared this wall post into that Group" (done by hand on Facebook).</summary>
+    public async Task<OutreachShareDto?> SetShareAsync(Guid wallPostId, Guid groupId, bool shared, CancellationToken ct)
+    {
+        var post = await _db.OutreachWallPosts.AsNoTracking().FirstOrDefaultAsync(p => p.Id == wallPostId, ct);
+        if (post == null || !await _db.OutreachGroups.AnyAsync(g => g.Id == groupId, ct)) return null;
+        var row = await _db.OutreachShares.FirstOrDefaultAsync(s => s.WallPostId == wallPostId && s.GroupId == groupId, ct);
+        if (!shared)
+        {
+            if (row != null) { _db.OutreachShares.Remove(row); await _db.SaveChangesAsync(ct); }
+            return new OutreachShareDto { GroupId = groupId, SharedAtUtc = DateTime.MinValue };
+        }
+        if (row == null)
+        {
+            row = new OutreachShare { WallPostId = wallPostId, GroupId = groupId, FacebookAccountId = post.FacebookAccountId, CampaignId = post.CampaignId };
+            _db.OutreachShares.Add(row);
+            await _db.SaveChangesAsync(ct);
+        }
+        return new OutreachShareDto { GroupId = groupId, SharedAtUtc = row.CreatedAtUtc };
     }
 
     // ═════════════════════════ Group posts to answer by hand ═════════════════════════

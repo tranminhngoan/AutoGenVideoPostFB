@@ -79,6 +79,8 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
     public DbSet<OutreachActivity> OutreachActivities => Set<OutreachActivity>();
     public DbSet<OutreachPostTask> OutreachPostTasks => Set<OutreachPostTask>();
     public DbSet<OutreachGroupMembership> OutreachGroupMemberships => Set<OutreachGroupMembership>();
+    public DbSet<OutreachWallPost> OutreachWallPosts => Set<OutreachWallPost>();
+    public DbSet<OutreachShare> OutreachShares => Set<OutreachShare>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -156,6 +158,20 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
             e.Property(x => x.Kind).HasMaxLength(10).IsRequired();
             e.Property(x => x.PostUrl).HasMaxLength(500);
             e.Property(x => x.Note).HasMaxLength(1000);
+            e.HasIndex(x => x.CampaignId);
+        });
+        modelBuilder.Entity<OutreachWallPost>(e =>
+        {
+            e.ToTable("OutreachWallPosts");
+            e.Property(x => x.ExternalPostId).HasMaxLength(100).IsRequired();
+            e.Property(x => x.PermalinkUrl).HasMaxLength(500).IsRequired();
+            e.Property(x => x.Text).HasMaxLength(3000).IsRequired();
+            e.HasIndex(x => new { x.FacebookAccountId, x.CreatedAtUtc });
+        });
+        modelBuilder.Entity<OutreachShare>(e =>
+        {
+            e.ToTable("OutreachShares");
+            e.HasIndex(x => new { x.WallPostId, x.GroupId }).IsUnique();
             e.HasIndex(x => x.CampaignId);
         });
         modelBuilder.Entity<OutreachGroupMembership>(e =>

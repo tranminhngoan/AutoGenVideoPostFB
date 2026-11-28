@@ -331,6 +331,33 @@ public class OutreachApiTests : IClassFixture<WebApplicationFactory<Program>>
             (await c.PutAsJsonAsync($"/api/outreach/groups/{g1.Id}/membership/{Guid.NewGuid()}", new OutreachMembershipInputDto { Status = "joined" }))
                 .StatusCode.Should().Be(HttpStatusCode.BadRequest);
 
+            // ── Wall post on a helper Page, then shared into a Group by hand (ticked in the tool) ──
+            Guid wallId;
+            using (var scope = _factory.Services.CreateScope())
+            {
+                var db = scope.ServiceProvider.GetRequiredService<IApplicationDbContext>();
+                var wall = new OutreachWallPost { FacebookAccountId = pageA.Id, CampaignId = campaignId, ExternalPostId = pageA.PageId + "_1", PermalinkUrl = "https://www.facebook.com/x", Text = "Bài thử " + tag };
+                db.OutreachWallPosts.Add(wall);
+                await db.SaveChangesAsync();
+                wallId = wall.Id;
+            }
+            var walls = await c.GetFromJsonAsync<List<OutreachWallPostDto>>($"/api/outreach/wall-posts?pageId={pageA.Id}");
+            walls!.Should().ContainSingle(w => w.Id == wallId && w.PageName == pageA.PageName);
+            (await c.PutAsJsonAsync($"/api/outreach/wall-posts/{wallId}/shares/{g1.Id}", new OutreachShareInputDto { Shared = true })).StatusCode.Should().Be(HttpStatusCode.OK);
+            (await c.PutAsJsonAsync($"/api/outreach/wall-posts/{wallId}/shares/{g1.Id}", new OutreachShareInputDto { Shared = true })).StatusCode.Should().Be(HttpStatusCode.OK); // idempotent
+            (await c.GetFromJsonAsync<List<OutreachWallPostDto>>($"/api/outreach/wall-posts?pageId={pageA.Id}"))!.Single(w => w.Id == wallId).Shares.Should().ContainSingle(s => s.GroupId == g1.Id);
+            var sharedRow = (await c.GetFromJsonAsync<List<OutreachCampaignLinkDto>>($"/api/outreach/campaigns/{campaignId}/links"))!.Single(l => l.GroupId == g1.Id && l.PageId == pageA.Id);
+            sharedRow.Shares.Should().Be(1);
+            sharedRow.LastSharedAtUtc.Should().NotBeNull();
+            (await c.GetFromJsonAsync<List<OutreachCampaignDto>>("/api/outreach/campaigns"))!.Single(x => x.Id == campaignId).ActivitiesDone.Should().Be(2); // 1 old mark + 1 share
+            (await c.PutAsJsonAsync($"/api/outreach/wall-posts/{wallId}/shares/{g1.Id}", new OutreachShareInputDto { Shared = false })).StatusCode.Should().Be(HttpStatusCode.OK);
+            (await c.GetFromJsonAsync<List<OutreachWallPostDto>>($"/api/outreach/wall-posts?pageId={pageA.Id}"))!.Single(w => w.Id == wallId).Shares.Should().BeEmpty();
+            // Publishing checks its input before calling Facebook
+            using (var form = new MultipartFormDataContent { { new StringContent(Guid.NewGuid().ToString()), "pageId" }, { new StringContent("x"), "message" }, { new ByteArrayContent(new byte[] { 1, 2, 3 }), "image", "a.jpg" } })
+                (await c.PostAsync("/api/outreach/wall-posts", form)).StatusCode.Should().Be(HttpStatusCode.BadRequest);
+            using (var form = new MultipartFormDataContent { { new StringContent(pageA.Id.ToString()), "pageId" }, { new StringContent("x"), "message" } })
+                (await c.PostAsync("/api/outreach/wall-posts", form)).StatusCode.Should().Be(HttpStatusCode.BadRequest);
+
             // Group search needs the Brave key — a clear message, not a crash
             var noKey = await c.GetAsync("/api/outreach/groups/discover?keyword=" + Uri.EscapeDataString("hoài niệm"));
             noKey.StatusCode.Should().Be(HttpStatusCode.BadRequest);
@@ -374,6 +401,8 @@ public class OutreachApiTests : IClassFixture<WebApplicationFactory<Program>>
                 db.OutreachCampaigns.RemoveRange(await db.OutreachCampaigns.Where(x => x.Id == cid).ToListAsync());
             }
             db.OutreachGroupMemberships.RemoveRange(await db.OutreachGroupMemberships.Where(m => createdGroups.Contains(m.GroupId)).ToListAsync());
+            db.OutreachShares.RemoveRange(await db.OutreachShares.Where(x => x.FacebookAccountId == pageA.Id || x.FacebookAccountId == pageB.Id).ToListAsync());
+            db.OutreachWallPosts.RemoveRange(await db.OutreachWallPosts.Where(x => x.FacebookAccountId == pageA.Id || x.FacebookAccountId == pageB.Id).ToListAsync());
             db.OutreachGroups.RemoveRange(await db.OutreachGroups.Where(g => createdGroups.Contains(g.Id)).ToListAsync());
             db.OutreachContents.RemoveRange(await db.OutreachContents.Where(x => x.Text.Contains(tag)).ToListAsync());
             db.LandingEvents.RemoveRange(await db.LandingEvents.Where(e => e.VisitorId == "v-" + tag).ToListAsync());

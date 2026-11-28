@@ -134,6 +134,18 @@ public class OutreachController : ControllerBase
     [HttpPost("campaigns/{id:guid}/activities")] public Task<ActionResult> AddActivity(Guid id, [FromBody] OutreachActivityInputDto input, CancellationToken ct) => Run(() => _svc.AddActivityAsync(id, input, ct));
     [HttpDelete("activities/{id:guid}")] public Task<ActionResult> DeleteActivity(Guid id, CancellationToken ct) => Done(() => _svc.DeleteActivityAsync(id, ct));
 
+    // ── wall posts on helper Pages + shares into Groups ──
+    [HttpPost("wall-posts")]
+    [RequestSizeLimit(10 * 1024 * 1024)]
+    public async Task<ActionResult> PublishWallPost([FromForm] Guid pageId, [FromForm] Guid? campaignId, [FromForm] string? message, IFormFile? image, CancellationToken ct)
+    {
+        if (image == null || image.Length == 0) return BadRequest(new { error = "Thiếu ảnh bài đăng." });
+        await using var stream = image.OpenReadStream();
+        return await Run(() => _svc.PublishWallPostAsync(pageId, campaignId, message, stream, image.FileName, ct))!;
+    }
+    [HttpGet("wall-posts")] public Task<ActionResult> WallPosts([FromQuery] Guid? pageId, CancellationToken ct) => Run(() => _svc.ListWallPostsAsync(pageId, ct))!;
+    [HttpPut("wall-posts/{id:guid}/shares/{groupId:guid}")] public Task<ActionResult> Share(Guid id, Guid groupId, [FromBody] OutreachShareInputDto body, CancellationToken ct) => Run(() => _svc.SetShareAsync(id, groupId, body?.Shared ?? true, ct));
+
     // ── Group posts ──
     [HttpGet("posts")] public Task<ActionResult> Posts([FromQuery] string? status, CancellationToken ct) => Run(() => _svc.ListPostTasksAsync(status, ct))!;
     [HttpPost("posts")] public Task<ActionResult> AddPost([FromBody] OutreachPostTaskInputDto input, CancellationToken ct) => Run(() => _svc.SavePostTaskAsync(null, input, ct))!;

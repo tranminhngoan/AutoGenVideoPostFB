@@ -78,6 +78,8 @@ public interface IApplicationDbContext
     DbSet<OutreachActivity> OutreachActivities { get; }
     DbSet<OutreachPostTask> OutreachPostTasks { get; }
     DbSet<OutreachGroupMembership> OutreachGroupMemberships { get; }
+    DbSet<OutreachWallPost> OutreachWallPosts { get; }
+    DbSet<OutreachShare> OutreachShares { get; }
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

@@ -78,7 +78,7 @@ export function AiSection() {
       <div className="space-y-4">
         <Card>
           <CardHeader title={<span className="flex items-center gap-2"><Sparkles className="h-4 w-4 text-rose-500" /> AI viết lời mời</span>}
-            description="Lời mời ghé Page chính, kêu gọi Follow, xem video, Like / bình luận nếu thấy hay. Link /cheo-uy-tinh tự gắn ở cuối." />
+            description="Lời mời ghé Page chính, kêu gọi Follow, xem video, Like / bình luận nếu thấy hay. Tên trang (tuongtaccheo.xyz) tự ghi ở dòng cuối, dạng chữ không phải link." />
           <div className="grid gap-3 p-4 pt-0 sm:grid-cols-2">
             <Field label="Phong cách" className="sm:col-span-2">
               <Segmented value={style} onChange={setStyle} options={[

@@ -7,6 +7,7 @@ import { CampaignsSection } from './sections/Campaigns';
 import { FinderSection } from './sections/Finder';
 import { GroupsSection } from './sections/Groups';
 import { JoinSection } from './sections/Join';
+import { ShareSection } from './sections/Share';
 import { AiSection } from './sections/AiOutreach';
 import { PostsSection } from './sections/Posts';
 import { PagesSection } from './sections/Pages';
@@ -15,11 +16,12 @@ import { SecuritySection } from './sections/Security';
 
 const SECTIONS: Record<string, { title: string; subtitle: string }> = {
   overview: { title: 'Tổng quan chiến dịch', subtitle: 'Toàn cảnh hoạt động kéo tương tác về Page chính qua trang /cheo-uy-tinh.' },
-  campaigns: { title: 'Quản lý chiến dịch', subtitle: 'Mỗi chiến dịch: Page phụ, Group mục tiêu, nội dung, link theo dõi riêng cho từng Group × Page.' },
+  campaigns: { title: 'Quản lý chiến dịch', subtitle: 'Mỗi chiến dịch: Page phụ, nhóm mục tiêu và tiến độ chia sẻ bài vào từng nhóm.' },
   finder: { title: 'Group Finder', subtitle: 'Tìm Group công khai theo từ khoá, chọn nhiều Group rồi thêm vào danh sách bằng một lần bấm.' },
   join: { title: 'Tham gia Group', subtitle: 'Danh sách Group cần tham gia của từng Page phụ — chuyển Page một lần, bấm hết danh sách.' },
+  share: { title: 'Chia sẻ vào nhóm', subtitle: 'Bài đã đăng trên tường Page phụ → chia sẻ vào các nhóm Page đó đã vào, tích lại để theo dõi.' },
   groups: { title: 'Danh sách Group', subtitle: 'Quản lý, phân loại và lọc các Group trao đổi tương tác.' },
-  ai: { title: 'AI Outreach', subtitle: 'AI viết lời mời tự nhiên theo ngữ cảnh Group — bạn duyệt, copy và tự đăng.' },
+  ai: { title: 'AI Outreach', subtitle: 'AI viết bài ảnh chữ (mỗi bài một kiểu chữ, cùng ý) và đăng lên tường Page phụ.' },
   posts: { title: 'Quản lý bài viết Group', subtitle: 'Bài viết trong Group cần trả lời — AI gợi ý bình luận có giá trị, bạn tự đăng.' },
   pages: { title: 'Quản lý Page phụ', subtitle: 'Kết nối Facebook hiện có — kiểm tra quyền, không cần nhập lại token.' },
   stats: { title: 'Thống kê hiệu quả', subtitle: 'Lượt truy cập /cheo-uy-tinh và lượt bấm sang Facebook, theo ngày, nguồn, chiến dịch, Group.' },
@@ -115,6 +117,7 @@ export function OutreachPage({ section }: { section: string }) {
       case 'finder': return <FinderSection />;
       case 'groups': return <GroupsSection />;
       case 'join': return <JoinSection />;
+      case 'share': return <ShareSection />;
       case 'ai': return <AiSection />;
       case 'posts': return <PostsSection />;
       case 'pages': return <PagesSection />;

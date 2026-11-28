@@ -192,10 +192,25 @@ export interface CampaignLink {
   utmContent: string;
   /** Is this helper Page in the Group: null = not asked yet. */
   membership?: MembershipStatus | null;
+  /** Times this campaign's wall posts were shared into the Group by this Page. */
+  shares: number;
+  lastSharedAtUtc?: string | null;
   link: string;
   views: number;
   clicks: number;
   activities: Activity[];
+}
+
+export interface WallPost {
+  id: string;
+  pageId: string;
+  pageName: string;
+  campaignId?: string | null;
+  postId: string;
+  permalinkUrl: string;
+  text: string;
+  createdAtUtc: string;
+  shares: { groupId: string; sharedAtUtc: string }[];
 }
 
 export interface PostTask {
@@ -315,6 +330,30 @@ export const outreach = {
   addActivity: (id: string, a: { groupId: string; pageId?: string | null; kind: string; postUrl?: string; note?: string }) =>
     call<Activity>('POST', `/campaigns/${id}/activities`, a),
   deleteActivity: (id: string) => call<void>('DELETE', `/activities/${id}`),
+
+  /** Publishes picture + text on a helper Page's wall (Graph API). Sharing into Groups is then done by hand. */
+  async publishWallPost(pageId: string, message: string, image: Blob, campaignId?: string | null): Promise<WallPost> {
+    const session = getSession();
+    if (!session) {
+      clearSession();
+      throw new Error('Phiên chiến dịch đã hết hạn — nhập lại mật khẩu chiến dịch.');
+    }
+    const form = new FormData();
+    form.append('pageId', pageId);
+    form.append('message', message);
+    if (campaignId) form.append('campaignId', campaignId);
+    form.append('image', image, 'bai-dang.jpg');
+    const res = await fetch(`${BASE}/wall-posts`, { method: 'POST', headers: { 'X-Outreach-Session': session.token }, body: form });
+    if (res.status === 401) {
+      clearSession();
+      throw new Error('Phiên chiến dịch đã hết hạn — nhập lại mật khẩu chiến dịch.');
+    }
+    if (!res.ok) throw new Error(await errorText(res, 'Chưa đăng được bài'));
+    return await res.json();
+  },
+  wallPosts: (pageId?: string) => call<WallPost[]>('GET', `/wall-posts${pageId ? `?pageId=${pageId}` : ''}`),
+  setShare: (wallPostId: string, groupId: string, shared: boolean) =>
+    call<{ groupId: string; sharedAtUtc: string }>('PUT', `/wall-posts/${wallPostId}/shares/${groupId}`, { shared }),
 
   posts: (status?: string) => call<PostTask[]>('GET', `/posts${status ? `?status=${status}` : ''}`),
   addPost: (p: Partial<PostTask> & { postUrl: string }) => call<PostTask>('POST', '/posts', p),

@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import { BookmarkPlus, Download, ImageIcon, Palette, RefreshCw, Sparkles } from 'lucide-react';
+import { BookmarkPlus, Download, ExternalLink, ImageIcon, Palette, RefreshCw, Send, Share2, Sparkles } from 'lucide-react';
 import { Badge, Button, Card, CardHeader, Field, Input, Select, Textarea } from '../../../components/ui';
-import { useToast } from '../../../components/feedback';
-import { Draft, outreach } from '../outreachApi';
-import { CopyButton } from '../shared';
+import { useConfirm, useToast } from '../../../components/feedback';
+import { href } from '../../../lib/router';
+import { Campaign, Draft, outreach, OutreachPage, WallPost } from '../outreachApi';
+import { CopyButton, useLoad } from '../shared';
 
 const SIZE = 1080;
 
@@ -139,12 +140,38 @@ export function captionOf(text: string, domain: string) {
 interface Post extends Draft {
   bg: number;
   seed: number;
+  posted?: WallPost;
 }
 
-function PostCard({ post, index, domain, onChange, onSave }: {
-  post: Post; index: number; domain: string; onChange: (p: Post) => void; onSave: (p: Post) => Promise<boolean>;
+function PostCard({ post, index, domain, page, campaign, onChange, onSave }: {
+  post: Post; index: number; domain: string; page?: OutreachPage; campaign?: Campaign;
+  onChange: (p: Post) => void; onSave: (p: Post) => Promise<boolean>;
 }) {
+  const toast = useToast();
+  const confirm = useConfirm();
+  const [publishing, setPublishing] = useState(false);
   const ref = useRef<HTMLCanvasElement>(null);
+
+  const publish = async () => {
+    if (!page || !ref.current) return;
+    if (!(await confirm({
+      title: `Đăng bài ${index + 1} lên tường "${page.name}"?`,
+      description: 'Bài (ảnh + chữ) sẽ hiện công khai trên tường Page. Sau đó bạn mở bài trên Facebook và bấm Chia sẻ → Nhóm.',
+      confirmLabel: 'Đăng lên tường',
+    }))) return;
+    setPublishing(true);
+    try {
+      const blob = await new Promise<Blob | null>((resolve) => ref.current!.toBlob(resolve, 'image/jpeg', 0.92));
+      if (!blob) throw new Error('Không tạo được ảnh.');
+      const wall = await outreach.publishWallPost(page.id, captionOf(post.text, domain), blob, campaign?.id);
+      onChange({ ...post, posted: wall });
+      toast.success(`Đã đăng lên tường ${page.name}`, 'Mở bài → Chia sẻ → Nhóm, rồi tích “Đã chia sẻ” ở mục Chia sẻ vào nhóm.');
+    } catch (e) {
+      toast.error('Chưa đăng được', (e as Error).message);
+    } finally {
+      setPublishing(false);
+    }
+  };
   useEffect(() => {
     if (ref.current) drawPost(ref.current, post.text, post.bg, post.seed, domain);
   }, [post.text, post.bg, post.seed, domain]);
@@ -172,8 +199,18 @@ function PostCard({ post, index, domain, onChange, onSave }: {
           <span className="text-xs text-fg-subtle">Nền: {BACKGROUNDS[post.bg % BACKGROUNDS.length].name}</span>
         </div>
         <Textarea rows={4} value={post.text} onChange={(e) => onChange({ ...post, text: e.target.value })} />
+        {post.posted && (
+          <div className="flex flex-wrap items-center gap-2 rounded-lg border border-success/30 bg-success/5 px-2.5 py-2 text-xs text-fg">
+            <span>✅ Đã đăng lên <b>{post.posted.pageName}</b></span>
+            <a href={post.posted.permalinkUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-accent">Mở bài <ExternalLink className="h-3 w-3" /></a>
+            <a href={href('/outreach/share')} className="inline-flex items-center gap-1 text-accent">Chia sẻ vào nhóm <Share2 className="h-3 w-3" /></a>
+          </div>
+        )}
         <div className="mt-auto flex flex-wrap gap-2">
-          <Button size="sm" variant="primary" icon={<Download className="h-3.5 w-3.5" />} onClick={download}>Tải ảnh</Button>
+          <Button size="sm" variant="primary" icon={<Send className="h-3.5 w-3.5" />} loading={publishing} disabled={!page || !!post.posted} onClick={publish}>
+            {post.posted ? 'Đã đăng' : page ? `Đăng lên tường ${page.name.replace(/^Trạm Tin\s*/i, '')}` : 'Đăng lên tường'}
+          </Button>
+          <Button size="sm" variant="secondary" icon={<Download className="h-3.5 w-3.5" />} onClick={download}>Tải ảnh</Button>
           <CopyButton text={captionOf(post.text, domain)} label="Copy chữ đăng kèm" />
           <Button size="sm" variant="ghost" icon={<Palette className="h-3.5 w-3.5" />}
             onClick={() => onChange({ ...post, bg: (post.bg + 1) % BACKGROUNDS.length, seed: post.seed + 7 })}>Đổi nền</Button>
@@ -193,6 +230,14 @@ export function PostImagesCard({ onSaved }: { onSaved: () => void }) {
   const [posts, setPosts] = useState<Post[]>([]);
   const [domain, setDomain] = useState('tuongtaccheo.xyz');
   const [fontReady, setFontReady] = useState(false);
+  const { data: pages } = useLoad(() => outreach.pages());
+  const { data: campaigns } = useLoad(() => outreach.campaigns());
+  const helpers = (pages ?? []).filter((p) => p.isHelper && p.health !== 'error');
+  const [pageId, setPageId] = useState('');
+  const [campaignId, setCampaignId] = useState('');
+  const page = helpers.find((p) => p.id === pageId) ?? helpers[0];
+  const active = (campaigns ?? []).filter((c) => c.status === 'Running' || c.status === 'PendingApproval' || c.status === 'Draft');
+  const campaign = active.find((c) => c.id === campaignId);
 
   useEffect(() => {
     // Vietnamese diacritics need the web font loaded before drawing
@@ -247,11 +292,24 @@ export function PostImagesCard({ onSaved }: { onSaved: () => void }) {
             {posts.length ? 'Viết lại' : `AI viết ${count} bài`}
           </Button>
         </div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="Đăng lên tường Page">
+            <Select value={page?.id ?? ''} onChange={(e) => setPageId(e.target.value)}>
+              {helpers.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </Select>
+          </Field>
+          <Field label="Thuộc chiến dịch" optional hint="Để tính tiến độ chiến dịch khi bạn chia sẻ bài vào nhóm.">
+            <Select value={campaignId} onChange={(e) => setCampaignId(e.target.value)}>
+              <option value="">— Không gắn chiến dịch —</option>
+              {active.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </Select>
+          </Field>
+        </div>
         <p className="text-xs text-fg-subtle">
           AI không viết các ý “tài khoản nuôi / follow 1 trả 5 / quà / tiền” — đó là thứ Facebook tự gỡ bài và phạt Page.
         </p>
         {posts.map((p, i) => (
-          <PostCard key={i} post={p} index={i} domain={domain}
+          <PostCard key={i} post={p} index={i} domain={domain} page={page} campaign={campaign}
             onChange={(n) => setPosts((list) => list.map((x, j) => (j === i ? n : x)))}
             onSave={save} />
         ))}
