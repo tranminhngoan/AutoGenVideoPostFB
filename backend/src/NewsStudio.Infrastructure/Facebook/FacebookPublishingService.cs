@@ -1593,20 +1593,47 @@ public class FacebookPublishingService : IFacebookPublishingService
         }
         else _logger.LogInformation("Showcase info of page {Page}: {Error}", account.PageId, error);
 
+        // Stories vanish after 24 h, so a link to one soon opens nothing: never show them.
+        // Known by the ids we stored when posting them (Growth stories + daily digest stories),
+        // and by a /stories/ link as a safety net.
+        static string Tail(string id) => id[(id.LastIndexOf('_') + 1)..];
+        var storyIds = new HashSet<string>(StringComparer.Ordinal);
+        var since = DateTime.UtcNow.AddDays(-60);
+        foreach (var id in await _context.GrowthScheduledContents.AsNoTracking()
+                     .Where(c => c.Kind == "Story" && c.ExternalPostId != null && c.CreatedAtUtc >= since)
+                     .Select(c => c.ExternalPostId!).ToListAsync(cancellationToken))
+            storyIds.Add(Tail(id));
+        foreach (var id in await _context.DailyDigestRuns.AsNoTracking()
+                     .Where(r => r.StoryPostId != null && r.CreatedAtUtc >= since)
+                     .Select(r => r.StoryPostId!).ToListAsync(cancellationToken))
+            storyIds.Add(Tail(id));
+        static bool StoryLink(string? url) => url != null && url.Contains("/stories/", StringComparison.OrdinalIgnoreCase);
+
         var limit = Math.Clamp(postLimit, 1, 12);
         var (postsOk, posts, postsError) = await GetGraphAsync(
-            $"https://graph.facebook.com/{_graphApiVersion}/{account.PageId}/posts?fields=id,message,full_picture,permalink_url,created_time,attachments%7Bmedia_type%7D&limit={limit}&access_token={token}", cancellationToken);
+            $"https://graph.facebook.com/{_graphApiVersion}/{account.PageId}/posts?fields=id,message,full_picture,permalink_url,created_time,attachments%7Bmedia_type,url,target%7Bid%7D%7D&limit={Math.Min(limit * 2 + 6, 25)}&access_token={token}", cancellationToken);
         if (postsOk && posts.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Array)
         {
             foreach (var p in data.EnumerateArray())
             {
+                if (result.Posts.Count >= limit) break;
                 var permalink = Str(p, "permalink_url");
                 var message = Str(p, "message");
                 var picture = Str(p, "full_picture");
                 if (string.IsNullOrWhiteSpace(permalink) || (string.IsNullOrWhiteSpace(message) && string.IsNullOrWhiteSpace(picture))) continue;
+                if (StoryLink(permalink) || storyIds.Contains(Tail(Str(p, "id") ?? ""))) continue;
                 var isVideo = false;
+                var isStory = false;
                 if (p.TryGetProperty("attachments", out var att) && att.TryGetProperty("data", out var attData) && attData.ValueKind == JsonValueKind.Array)
-                    isVideo = attData.EnumerateArray().Any(a => (Str(a, "media_type") ?? "").Contains("video", StringComparison.OrdinalIgnoreCase));
+                {
+                    foreach (var a in attData.EnumerateArray())
+                    {
+                        if ((Str(a, "media_type") ?? "").Contains("video", StringComparison.OrdinalIgnoreCase)) isVideo = true;
+                        if (StoryLink(Str(a, "url"))) isStory = true;
+                        if (a.TryGetProperty("target", out var target) && Str(target, "id") is { } targetId && storyIds.Contains(Tail(targetId))) isStory = true;
+                    }
+                }
+                if (isStory) continue;
                 result.Posts.Add(new ShowcasePostDto
                 {
                     Id = Str(p, "id") ?? permalink,
