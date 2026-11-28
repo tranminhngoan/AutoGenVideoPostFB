@@ -35,10 +35,10 @@ function compact(n: number) {
 function splitMessage(message?: string | null): { title: string; description?: string } {
   const text = (message ?? '').trim();
   if (!text) return { title: 'Bài viết mới trên Page' };
-  const [first, ...rest] = text.split(/\n+/);
-  const title = first.length > 110 ? first.slice(0, 107).trimEnd() + '…' : first;
-  const description = (first.length > 110 ? first.slice(107) + ' ' : '') + rest.join(' ');
-  return { title, description: description.trim() || undefined };
+  // First line = title (CSS clamps it to 2 lines), the other lines = description
+  const [first, ...rest] = text.split(/\n+/).map((l) => l.trim()).filter(Boolean);
+  const description = rest.join(' ').trim();
+  return { title: first, description: description || undefined };
 }
 
 let viewTracked = false;
@@ -125,8 +125,8 @@ export function CheoUyTinhPage({ config }: { config: LandingConfig }) {
       <main className="relative mx-auto w-full max-w-xl px-4 pb-28 pt-4 sm:pt-10">
         {/* ── Hero ── */}
         <section className="overflow-hidden rounded-3xl bg-white shadow-2xl shadow-black/30">
-          <div className="relative aspect-[16/8] w-full bg-gradient-to-br from-[#0866FF] via-[#5b5bf5] to-[#e0457b]">
-            {cover && <img src={cover} alt="" className="h-full w-full object-cover" loading="eager" />}
+          <div className="relative aspect-[16/8] w-full overflow-hidden bg-gradient-to-br from-[#0866FF] via-[#5b5bf5] to-[#e0457b]">
+            {cover && <img src={cover} alt="" className="absolute inset-0 h-full w-full object-cover" loading="eager" />}
             <div className="absolute inset-0 bg-gradient-to-t from-black/30 to-transparent" />
           </div>
           <div className="relative px-5 pb-6">
@@ -194,7 +194,7 @@ export function CheoUyTinhPage({ config }: { config: LandingConfig }) {
             <div className="grid gap-4 sm:grid-cols-2">
               {[0, 1, 2].map((i) => (
                 <div key={i} className="overflow-hidden rounded-2xl bg-white/10">
-                  <div className="aspect-video animate-pulse bg-white/10" />
+                  <div className="aspect-[4/5] animate-pulse bg-white/10" />
                   <div className="space-y-2 p-4">
                     <div className="h-4 w-3/4 animate-pulse rounded bg-white/10" />
                     <div className="h-3 w-1/2 animate-pulse rounded bg-white/10" />
@@ -208,9 +208,9 @@ export function CheoUyTinhPage({ config }: { config: LandingConfig }) {
             <div className="grid gap-4 sm:grid-cols-2">
               {posts.map((post) => (
                 <article key={post.id} className="flex flex-col overflow-hidden rounded-2xl bg-white shadow-lg shadow-black/20">
-                  <a href={post.url} onClick={(e) => onOpenPost(e, post)} className="relative block aspect-video bg-slate-100">
+                  <a href={post.url} onClick={(e) => onOpenPost(e, post)} className="relative block aspect-[4/5] overflow-hidden bg-slate-100">
                     {post.imageUrl ? (
-                      <img src={post.imageUrl} alt="" loading="lazy" className="h-full w-full object-cover" />
+                      <img src={post.imageUrl} alt="" loading="lazy" className="absolute inset-0 h-full w-full object-cover" />
                     ) : (
                       <div className="flex h-full items-center justify-center bg-gradient-to-br from-blue-50 to-pink-50">
                         <Heart className="h-8 w-8 text-pink-400" />
@@ -228,10 +228,11 @@ export function CheoUyTinhPage({ config }: { config: LandingConfig }) {
                     {post.date && <p className="text-xs font-medium text-slate-400">{post.date}</p>}
                     <h3 className="mt-1 line-clamp-2 text-[15px] font-bold leading-snug text-slate-900">{post.title}</h3>
                     {post.description && <p className="mt-1.5 line-clamp-3 text-sm leading-relaxed text-slate-600">{post.description}</p>}
+                    <div className="min-h-4 flex-1" />
                     <a
                       href={post.url}
                       onClick={(e) => onOpenPost(e, post)}
-                      className="mt-4 inline-flex items-center justify-center gap-2 rounded-xl bg-slate-100 px-4 py-2.5 text-sm font-bold text-[#0866FF] transition hover:bg-blue-50 active:scale-[0.98]"
+                      className="mt-4 inline-flex w-full items-center justify-center gap-1.5 whitespace-nowrap rounded-xl bg-slate-100 px-3 py-2.5 text-[13px] font-bold text-[#0866FF] transition hover:bg-blue-50 active:scale-[0.98]"
                     >
                       <FacebookGlyph className="h-4 w-4" />
                       Xem bài viết trên Facebook
