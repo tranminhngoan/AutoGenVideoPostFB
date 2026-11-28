@@ -116,7 +116,7 @@ function UtmBuilder() {
   const link = useMemo(() => {
     const q = new URLSearchParams({ utm_source: source || 'facebook', utm_medium: 'group', utm_campaign: campaign || 'campaign_01' });
     if (content) q.set('utm_content', content);
-    return `https://comment-follow-cheo-uy-tinh.vercel.app/cheo-uy-tinh?${q.toString()}`;
+    return `https://www.tuongtaccheo.xyz/cheo-uy-tinh?${q.toString()}`;
   }, [campaign, content, source]);
   return (
     <Card>

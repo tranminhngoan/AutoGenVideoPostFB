@@ -53,7 +53,7 @@ public partial class OutreachService
     private HashSet<string> HelperPageIds => (_config["Outreach:HelperPageIds"] ?? "")
         .Split(new[] { ',', ';', ' ' }, StringSplitOptions.RemoveEmptyEntries).ToHashSet();
     private bool IsHelper(string pageId) => pageId != MainPageId && (HelperPageIds.Count == 0 || HelperPageIds.Contains(pageId));
-    private string PublicBaseUrl => (_config["Outreach:PublicBaseUrl"] ?? "https://comment-follow-cheo-uy-tinh.vercel.app").TrimEnd('/');
+    private string PublicBaseUrl => (_config["Outreach:PublicBaseUrl"] ?? "https://www.tuongtaccheo.xyz").TrimEnd('/');
 
     // ═════════════════════════ Pages ═════════════════════════
 
