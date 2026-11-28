@@ -49,6 +49,38 @@ public class OutreachLogicTests
         OutreachService.Similarity(a, b).Should().BeGreaterThan(80);
         OutreachService.Similarity(a, "Hôm nay trời đẹp quá, đi cà phê không cả nhà?").Should().BeLessThan(15);
     }
+
+    [Theory]
+    [InlineData("Nhóm Công khai · 12K thành viên · 10+ bài viết mỗi ngày", 12_000)]
+    [InlineData("Private group · 3.4K members", 3_400)]
+    [InlineData("1,2 N thành viên", 1_200)]
+    [InlineData("12.345 thành viên", 12_345)]
+    [InlineData("2,5 triệu thành viên", 2_500_000)]
+    [InlineData("Không có số", null)]
+    public void MemberCountsAreReadFromSnippets(string text, int? expected) =>
+        OutreachService.ParseMembers(text).Should().Be(expected);
+
+    [Fact]
+    public void BraveResultsKeepOnlyGroupLinks()
+    {
+        using var doc = JsonDocument.Parse("""
+        {"web":{"results":[
+          {"title":"Hội Tương Tác Chéo Uy Tín | Facebook","url":"https://www.facebook.com/groups/tuongtaccheo/","description":"Nhóm Công khai · <strong>25K</strong> thành viên","extra_snippets":["Follow chéo mỗi ngày"]},
+          {"title":"Some Page | Facebook","url":"https://www.facebook.com/somepage","description":"A page"},
+          {"title":"Ký ức 8x 9x - Facebook","url":"https://m.facebook.com/groups/123456789/posts/987","description":"Private group · 3.4K members"},
+          {"title":"dup","url":"https://web.facebook.com/groups/tuongtaccheo","description":""}
+        ]}}
+        """);
+        var list = OutreachService.ParseBraveResults(doc.RootElement);
+        list.Should().HaveCount(2);
+        list[0].Name.Should().Be("Hội Tương Tác Chéo Uy Tín");
+        list[0].Url.Should().Be("https://www.facebook.com/groups/tuongtaccheo");
+        list[0].Members.Should().Be(25_000);
+        list[0].Privacy.Should().Be("public");
+        list[1].Name.Should().Be("Ký ức 8x 9x");
+        list[1].Url.Should().Be("https://www.facebook.com/groups/123456789");
+        list[1].Privacy.Should().Be("private");
+    }
 }
 
 /// <summary>Campaign menu: locked behind its own password, then the whole flow works.</summary>
@@ -62,7 +94,8 @@ public class OutreachApiTests : IClassFixture<WebApplicationFactory<Program>>
         _factory = factory.WithWebHostBuilder(b => b
             .UseSetting("Outreach:PasswordHash", OutreachAuth.HashPassword(Password))
             // test Pages have random ids: allow any connected Page except the main one as a helper
-            .UseSetting("Outreach:HelperPageIds", ""));
+            .UseSetting("Outreach:HelperPageIds", "")
+            .UseSetting("Outreach:BraveSearch:ApiKey", ""));
     }
 
     private async Task ResetSecurityAsync()
@@ -281,6 +314,28 @@ public class OutreachApiTests : IClassFixture<WebApplicationFactory<Program>>
             stats.Campaigns.Should().Contain(x => x.Key == slug && x.Views >= 1 && x.Clicks >= 1 && x.Label == "Thử " + tag);
             stats.Contents.Should().Contain(x => x.Key == link.UtmContent && x.Label!.Contains(g1.Name));
 
+            // ── Per-Page membership of a Group (set by hand) ──
+            var joined = await (await c.PutAsJsonAsync($"/api/outreach/groups/{g1.Id}/membership/{pageA.Id}", new OutreachMembershipInputDto { Status = "joined" }))
+                .Content.ReadFromJsonAsync<OutreachMembershipDto>();
+            joined!.Status.Should().Be("joined");
+            (await c.PutAsJsonAsync($"/api/outreach/groups/{g1.Id}/membership/{pageB.Id}", new OutreachMembershipInputDto { Status = "requested" }))
+                .StatusCode.Should().Be(HttpStatusCode.OK);
+            var g1Now = (await c.GetFromJsonAsync<List<OutreachGroupDto>>("/api/outreach/groups"))!.Single(g => g.Id == g1.Id);
+            g1Now.Memberships.Should().HaveCount(2).And.Contain(m => m.PageId == pageA.Id && m.Status == "joined");
+            var linkRows = await c.GetFromJsonAsync<List<OutreachCampaignLinkDto>>($"/api/outreach/campaigns/{campaignId}/links");
+            linkRows!.Single(l => l.GroupId == g1.Id && l.PageId == pageA.Id).Membership.Should().Be("joined");
+            linkRows!.Single(l => l.GroupId == g2.Id && l.PageId == pageA.Id).Membership.Should().BeNull();
+            (await c.PutAsJsonAsync($"/api/outreach/groups/{g1.Id}/membership/{pageB.Id}", new OutreachMembershipInputDto { Status = "none" }))
+                .StatusCode.Should().Be(HttpStatusCode.OK);
+            (await c.GetFromJsonAsync<List<OutreachGroupDto>>("/api/outreach/groups"))!.Single(g => g.Id == g1.Id).Memberships.Should().ContainSingle();
+            (await c.PutAsJsonAsync($"/api/outreach/groups/{g1.Id}/membership/{Guid.NewGuid()}", new OutreachMembershipInputDto { Status = "joined" }))
+                .StatusCode.Should().Be(HttpStatusCode.BadRequest);
+
+            // Group search needs the Brave key — a clear message, not a crash
+            var noKey = await c.GetAsync("/api/outreach/groups/discover?keyword=" + Uri.EscapeDataString("hoài niệm"));
+            noKey.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+            (await noKey.Content.ReadAsStringAsync()).Should().Contain("Brave");
+
             // ── Group post to answer by hand ──
             var task = await (await c.PostAsJsonAsync("/api/outreach/posts", new OutreachPostTaskInputDto
             {
@@ -318,6 +373,7 @@ public class OutreachApiTests : IClassFixture<WebApplicationFactory<Program>>
                 db.OutreachActivities.RemoveRange(await db.OutreachActivities.Where(a => a.CampaignId == cid).ToListAsync());
                 db.OutreachCampaigns.RemoveRange(await db.OutreachCampaigns.Where(x => x.Id == cid).ToListAsync());
             }
+            db.OutreachGroupMemberships.RemoveRange(await db.OutreachGroupMemberships.Where(m => createdGroups.Contains(m.GroupId)).ToListAsync());
             db.OutreachGroups.RemoveRange(await db.OutreachGroups.Where(g => createdGroups.Contains(g.Id)).ToListAsync());
             db.OutreachContents.RemoveRange(await db.OutreachContents.Where(x => x.Text.Contains(tag)).ToListAsync());
             db.LandingEvents.RemoveRange(await db.LandingEvents.Where(e => e.VisitorId == "v-" + tag).ToListAsync());

@@ -102,9 +102,37 @@ export interface Group {
   createdAtUtc: string;
   views: number;
   clicks: number;
+  /** Which helper Pages are in this Group (marked by hand). */
+  memberships: Membership[];
 }
 
-export type GroupInput = Partial<Omit<Group, 'id' | 'key' | 'createdAtUtc' | 'views' | 'clicks'>> & { name: string; url: string };
+export type MembershipStatus = 'requested' | 'joined' | 'rejected';
+
+export interface Membership {
+  pageId: string;
+  status: MembershipStatus;
+  updatedAtUtc: string;
+}
+
+export interface DiscoveredGroup {
+  name: string;
+  url: string;
+  description?: string | null;
+  members?: number | null;
+  privacy: 'public' | 'private' | 'unknown';
+  /** Already in the Group list. */
+  groupId?: string | null;
+}
+
+export interface DiscoverResult {
+  keyword: string;
+  page: number;
+  hasMore: boolean;
+  facebookSearchUrl: string;
+  results: DiscoveredGroup[];
+}
+
+export type GroupInput = Partial<Omit<Group, 'id' | 'key' | 'createdAtUtc' | 'views' | 'clicks' | 'memberships'>> & { name: string; url: string };
 
 export interface Content {
   id: string;
@@ -162,6 +190,8 @@ export interface CampaignLink {
   pageId?: string | null;
   pageName?: string | null;
   utmContent: string;
+  /** Is this helper Page in the Group: null = not asked yet. */
+  membership?: MembershipStatus | null;
   link: string;
   views: number;
   clicks: number;
@@ -263,6 +293,9 @@ export const outreach = {
   editGroup: (id: string, g: GroupInput) => call<Group>('PUT', `/groups/${id}`, g),
   deleteGroup: (id: string) => call<void>('DELETE', `/groups/${id}`),
   importCsv: (csv: string) => call<{ added: number; duplicates: number; invalid: string[] }>('POST', '/groups/import', { csv }),
+  discover: (keyword: string, page = 1) => call<DiscoverResult>('GET', `/groups/discover?keyword=${encodeURIComponent(keyword)}&page=${page}`),
+  setMembership: (groupId: string, pageId: string, status: MembershipStatus | 'none') =>
+    call<Membership>('PUT', `/groups/${groupId}/membership/${pageId}`, { status }),
   searchGroups: (keyword: string) =>
     call<{ keyword: string; facebookSearchUrl: string; relatedKeywords: string[] }>('GET', `/groups/search?keyword=${encodeURIComponent(keyword)}`),
 
@@ -326,3 +359,9 @@ export async function copyText(text: string) {
     return ok;
   }
 }
+
+export const MEMBERSHIP_LABEL: Record<MembershipStatus, string> = {
+  requested: 'Đã xin vào',
+  joined: 'Đã vào',
+  rejected: 'Bị từ chối',
+};

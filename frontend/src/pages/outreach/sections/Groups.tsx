@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { ExternalLink, Pencil, Plus, Search, ThumbsDown, ThumbsUp, Trash2, UsersRound } from 'lucide-react';
 import { Badge, Button, Card, EmptyState, Field, Input, Modal, Select, Skeleton, Textarea, cn } from '../../../components/ui';
 import { useConfirm, useToast } from '../../../components/feedback';
-import { EXCHANGE_TYPES, Group, GroupInput, outreach } from '../outreachApi';
+import { EXCHANGE_TYPES, Group, GroupInput, MEMBERSHIP_LABEL, outreach } from '../outreachApi';
 import { rate, useLoad } from '../shared';
 
 const empty: GroupInput = { name: '', url: '', topic: '', exchangeTypes: [], fit: 'unknown', privacy: 'unknown', rules: '', note: '' };
@@ -107,6 +107,8 @@ export function GroupsSection() {
   const toast = useToast();
   const confirm = useConfirm();
   const { data: groups, setData, loading } = useLoad(() => outreach.groups());
+  const { data: pages } = useLoad(() => outreach.pages());
+  const helpers = (pages ?? []).filter((p) => p.isHelper);
   const [q, setQ] = useState('');
   const [fit, setFit] = useState('all');
   const [type, setType] = useState('all');
@@ -126,7 +128,7 @@ export function GroupsSection() {
       .sort((a, b) => (sort === 'name' ? a.name.localeCompare(b.name, 'vi') : sort === 'clicks' ? b.clicks - a.clicks : b.createdAtUtc.localeCompare(a.createdAtUtc)));
   }, [groups, q, fit, type, topic, sort]);
 
-  const upsert = (g: Group) => setData((list) => (list?.some((x) => x.id === g.id) ? list.map((x) => (x.id === g.id ? { ...x, ...g } : x)) : [g, ...(list ?? [])]));
+  const upsert = (g: Group) => setData((list) => (list?.some((x) => x.id === g.id) ? list.map((x) => (x.id === g.id ? { ...x, ...g, memberships: g.memberships ?? x.memberships } : x)) : [{ ...g, memberships: g.memberships ?? [] }, ...(list ?? [])]));
 
   const quickFit = async (g: Group, value: Group['fit']) => {
     try {
@@ -198,6 +200,18 @@ export function GroupsSection() {
                     {g.exchangeTypes.map((t) => <Badge key={t}>{EXCHANGE_TYPES.find((x) => x.value === t)?.label ?? t}</Badge>)}
                     <span>{g.views} lượt xem · {g.clicks} lượt bấm · tỉ lệ {rate(g.clicks, g.views)}</span>
                   </div>
+                  {helpers.length > 0 && (
+                    <div className="mt-1.5 flex flex-wrap gap-1.5 text-[11px]">
+                      {helpers.map((p) => {
+                        const s = g.memberships.find((m) => m.pageId === p.id)?.status;
+                        return (
+                          <span key={p.id} className={cn('rounded-md px-1.5 py-0.5', s === 'joined' ? 'bg-success/10 text-success' : s === 'requested' ? 'bg-warning/10 text-warning' : s === 'rejected' ? 'bg-danger/10 text-danger' : 'bg-muted text-fg-subtle')}>
+                            {p.name.replace(/^Trạm Tin\s*/i, '')}: {s ? MEMBERSHIP_LABEL[s] : 'chưa vào'}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  )}
                   {(g.rules || g.note) && (
                     <p className="mt-1.5 line-clamp-2 text-xs text-fg-muted">
                       {g.rules && <><b>Quy định:</b> {g.rules} </>}

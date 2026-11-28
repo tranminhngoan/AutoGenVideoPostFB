@@ -6,6 +6,7 @@ import { OverviewSection } from './sections/Overview';
 import { CampaignsSection } from './sections/Campaigns';
 import { FinderSection } from './sections/Finder';
 import { GroupsSection } from './sections/Groups';
+import { JoinSection } from './sections/Join';
 import { AiSection } from './sections/AiOutreach';
 import { PostsSection } from './sections/Posts';
 import { PagesSection } from './sections/Pages';
@@ -15,7 +16,8 @@ import { SecuritySection } from './sections/Security';
 const SECTIONS: Record<string, { title: string; subtitle: string }> = {
   overview: { title: 'Tổng quan chiến dịch', subtitle: 'Toàn cảnh hoạt động kéo tương tác về Page chính qua trang /cheo-uy-tinh.' },
   campaigns: { title: 'Quản lý chiến dịch', subtitle: 'Mỗi chiến dịch: Page phụ, Group mục tiêu, nội dung, link theo dõi riêng cho từng Group × Page.' },
-  finder: { title: 'Group Finder', subtitle: 'Tìm Group phù hợp trên Facebook rồi thêm vào danh sách — thủ công, đúng chính sách Meta.' },
+  finder: { title: 'Group Finder', subtitle: 'Tìm Group công khai theo từ khoá, chọn nhiều Group rồi thêm vào danh sách bằng một lần bấm.' },
+  join: { title: 'Tham gia Group', subtitle: 'Danh sách Group cần tham gia của từng Page phụ — chuyển Page một lần, bấm hết danh sách.' },
   groups: { title: 'Danh sách Group', subtitle: 'Quản lý, phân loại và lọc các Group trao đổi tương tác.' },
   ai: { title: 'AI Outreach', subtitle: 'AI viết lời mời tự nhiên theo ngữ cảnh Group — bạn duyệt, copy và tự đăng.' },
   posts: { title: 'Quản lý bài viết Group', subtitle: 'Bài viết trong Group cần trả lời — AI gợi ý bình luận có giá trị, bạn tự đăng.' },
@@ -112,6 +114,7 @@ export function OutreachPage({ section }: { section: string }) {
       case 'campaigns': return <CampaignsSection />;
       case 'finder': return <FinderSection />;
       case 'groups': return <GroupsSection />;
+      case 'join': return <JoinSection />;
       case 'ai': return <AiSection />;
       case 'posts': return <PostsSection />;
       case 'pages': return <PagesSection />;

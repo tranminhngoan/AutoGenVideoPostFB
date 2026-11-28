@@ -78,6 +78,7 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
     public DbSet<OutreachCampaign> OutreachCampaigns => Set<OutreachCampaign>();
     public DbSet<OutreachActivity> OutreachActivities => Set<OutreachActivity>();
     public DbSet<OutreachPostTask> OutreachPostTasks => Set<OutreachPostTask>();
+    public DbSet<OutreachGroupMembership> OutreachGroupMemberships => Set<OutreachGroupMembership>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -156,6 +157,12 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
             e.Property(x => x.PostUrl).HasMaxLength(500);
             e.Property(x => x.Note).HasMaxLength(1000);
             e.HasIndex(x => x.CampaignId);
+        });
+        modelBuilder.Entity<OutreachGroupMembership>(e =>
+        {
+            e.ToTable("OutreachGroupMemberships");
+            e.Property(x => x.Status).HasMaxLength(10).IsRequired();
+            e.HasIndex(x => new { x.GroupId, x.FacebookAccountId }).IsUnique();
         });
         modelBuilder.Entity<OutreachPostTask>(e =>
         {

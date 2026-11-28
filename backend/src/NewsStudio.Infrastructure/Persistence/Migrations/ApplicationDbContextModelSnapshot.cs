@@ -3194,6 +3194,37 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                     b.ToTable("OutreachGroups", (string)null);
                 });
 
+            modelBuilder.Entity("NewsStudio.Domain.Entities.OutreachGroupMembership", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("FacebookAccountId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("GroupId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)");
+
+                    b.Property<DateTime?>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("GroupId", "FacebookAccountId")
+                        .IsUnique();
+
+                    b.ToTable("OutreachGroupMemberships", (string)null);
+                });
+
             modelBuilder.Entity("NewsStudio.Domain.Entities.OutreachPostTask", b =>
                 {
                     b.Property<Guid>("Id")

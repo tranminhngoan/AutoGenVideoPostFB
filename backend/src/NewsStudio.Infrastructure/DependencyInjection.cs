@@ -143,6 +143,7 @@ public static class DependencyInjection
         // "Chiến dịch kéo tương tác" (manual-first outreach, own password)
         services.AddScoped<NewsStudio.Infrastructure.Outreach.OutreachAuth>();
         services.AddScoped<NewsStudio.Infrastructure.Outreach.OutreachService>();
+        services.AddHttpClient("brave-search", c => c.Timeout = TimeSpan.FromSeconds(20));
         services.AddStudioServices();
 
         // AI Video Studio: reference-video analysis on the owner's PC (local Qwen3-VL + OpenCV + FFmpeg; queue "pc_local"),

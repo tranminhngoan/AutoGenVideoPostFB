@@ -165,6 +165,9 @@ function LinksDrawer({ campaign, onClose, onChanged }: { campaign: Campaign | nu
                   {row.groupName} <ExternalLink className="h-3 w-3" />
                 </a>
                 {row.pageName && <Badge tone="info">qua {row.pageName}</Badge>}
+                {row.pageName && (row.membership === 'joined'
+                  ? <Badge tone="success">Page đã vào Group</Badge>
+                  : <Badge tone="warning">{row.membership === 'requested' ? 'Page đang chờ duyệt' : row.membership === 'rejected' ? 'Page bị từ chối' : 'Page chưa vào Group'}</Badge>)}
                 <span className="ml-auto text-xs text-fg-muted">{row.views} xem · {row.clicks} bấm · {rate(row.clicks, row.views)}</span>
               </div>
               <div className="flex items-center gap-2 rounded-md bg-subtle px-2 py-1.5">

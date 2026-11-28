@@ -77,6 +77,7 @@ public interface IApplicationDbContext
     DbSet<OutreachCampaign> OutreachCampaigns { get; }
     DbSet<OutreachActivity> OutreachActivities { get; }
     DbSet<OutreachPostTask> OutreachPostTasks { get; }
+    DbSet<OutreachGroupMembership> OutreachGroupMemberships { get; }
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

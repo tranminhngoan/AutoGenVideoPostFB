@@ -73,6 +73,8 @@ public class OutreachGroupDto
     public string? Rules { get; set; }
     public string? Note { get; set; }
     public DateTime CreatedAtUtc { get; set; }
+    /// <summary>Which helper Pages are in this Group (set by hand).</summary>
+    public List<OutreachMembershipDto> Memberships { get; set; } = new();
     /// <summary>Visits / clicks that came from links posted in this group (utm_content).</summary>
     public int Views { get; set; }
     public int Clicks { get; set; }
@@ -194,6 +196,8 @@ public class OutreachCampaignLinkDto
     public Guid? PageId { get; set; }
     public string? PageName { get; set; }
     public string UtmContent { get; set; } = string.Empty;
+    /// <summary>Whether this helper Page is in the Group: null (not asked) | requested | joined | rejected.</summary>
+    public string? Membership { get; set; }
     /// <summary>Path + query, e.g. /cheo-uy-tinh?utm_source=facebook&amp;… (the frontend adds its own domain).</summary>
     public string Link { get; set; } = string.Empty;
     public int Views { get; set; }
@@ -293,4 +297,40 @@ public class OutreachOverviewDto
     public int OutreachViews7d { get; set; }
     public int OutreachClicks7d { get; set; }
     public List<OutreachPageDto> Pages { get; set; } = new();
+}
+
+// ── Group discovery (Brave Search) + per-Page membership ──
+public class OutreachMembershipDto
+{
+    public Guid PageId { get; set; }
+    /// <summary>requested | joined | rejected</summary>
+    public string Status { get; set; } = "requested";
+    public DateTime UpdatedAtUtc { get; set; }
+}
+
+public class OutreachMembershipInputDto
+{
+    /// <summary>requested | joined | rejected | none (forget)</summary>
+    public string Status { get; set; } = "requested";
+}
+
+public class OutreachDiscoveredGroupDto
+{
+    public string Name { get; set; } = string.Empty;
+    public string Url { get; set; } = string.Empty;
+    public string? Description { get; set; }
+    public int? Members { get; set; }
+    /// <summary>public | private | unknown (from the search snippet)</summary>
+    public string Privacy { get; set; } = "unknown";
+    /// <summary>Already in the Group list (its id).</summary>
+    public Guid? GroupId { get; set; }
+}
+
+public class OutreachDiscoverResultDto
+{
+    public string Keyword { get; set; } = string.Empty;
+    public int Page { get; set; }
+    public bool HasMore { get; set; }
+    public string FacebookSearchUrl { get; set; } = string.Empty;
+    public List<OutreachDiscoveredGroupDto> Results { get; set; } = new();
 }

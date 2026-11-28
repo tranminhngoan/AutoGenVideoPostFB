@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Net;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -34,11 +35,13 @@ public partial class OutreachService
     private readonly FilmGeminiClient _gemini;
     private readonly IMemoryCache _cache;
     private readonly IConfiguration _config;
+    private readonly IHttpClientFactory _http;
     private readonly ILogger<OutreachService> _logger;
 
     public OutreachService(IApplicationDbContext db, IFacebookPublishingService facebook, FilmGeminiClient gemini, IMemoryCache cache,
-        IConfiguration config, ILogger<OutreachService> logger)
+        IConfiguration config, IHttpClientFactory http, ILogger<OutreachService> logger)
     {
+        _http = http;
         _db = db;
         _facebook = facebook;
         _gemini = gemini;
@@ -146,10 +149,16 @@ public partial class OutreachService
     {
         var groups = await _db.OutreachGroups.AsNoTracking().OrderByDescending(g => g.CreatedAtUtc).ToListAsync(ct);
         var byContent = await CountsByContentAsync(DateTime.UtcNow.AddDays(-365), ct);
+        var memberships = (await _db.OutreachGroupMemberships.AsNoTracking().ToListAsync(ct)).ToLookup(m => m.GroupId);
         return groups.Select(g =>
         {
             var (views, clicks) = SumForGroup(byContent, g.Key);
-            return ToDto(g, views, clicks);
+            var dto = ToDto(g, views, clicks);
+            dto.Memberships = memberships[g.Id].Select(m => new OutreachMembershipDto
+            {
+                PageId = m.FacebookAccountId, Status = m.Status, UpdatedAtUtc = m.UpdatedAtUtc ?? m.CreatedAtUtc,
+            }).ToList();
+            return dto;
         }).ToList();
     }
 
@@ -196,8 +205,146 @@ public partial class OutreachService
         if (group == null) return false;
         _db.OutreachGroups.Remove(group);
         _db.OutreachActivities.RemoveRange(await _db.OutreachActivities.Where(a => a.GroupId == id).ToListAsync(ct));
+        _db.OutreachGroupMemberships.RemoveRange(await _db.OutreachGroupMemberships.Where(m => m.GroupId == id).ToListAsync(ct));
         await _db.SaveChangesAsync(ct);
         return true;
+    }
+
+    /// <summary>Records by hand whether a helper Page asked to join / is in / was refused by a Group ("none" forgets it).</summary>
+    public async Task<OutreachMembershipDto?> SetMembershipAsync(Guid groupId, Guid pageAccountId, string? status, CancellationToken ct)
+    {
+        if (!await _db.OutreachGroups.AnyAsync(g => g.Id == groupId, ct)) return null;
+        var page = await _db.FacebookAccounts.AsNoTracking().FirstOrDefaultAsync(a => a.Id == pageAccountId && a.IsActive, ct);
+        if (page == null || !IsHelper(page.PageId)) throw new OutreachInputException("Chỉ ghi trạng thái cho Page phụ của chiến dịch.");
+        var row = await _db.OutreachGroupMemberships.FirstOrDefaultAsync(m => m.GroupId == groupId && m.FacebookAccountId == pageAccountId, ct);
+        if (status is not ("requested" or "joined" or "rejected"))
+        {
+            if (row != null) { _db.OutreachGroupMemberships.Remove(row); await _db.SaveChangesAsync(ct); }
+            return new OutreachMembershipDto { PageId = pageAccountId, Status = "none", UpdatedAtUtc = DateTime.UtcNow };
+        }
+        if (row == null)
+        {
+            row = new OutreachGroupMembership { GroupId = groupId, FacebookAccountId = pageAccountId };
+            _db.OutreachGroupMemberships.Add(row);
+        }
+        row.Status = status;
+        row.UpdatedAtUtc = DateTime.UtcNow;
+        await _db.SaveChangesAsync(ct);
+        return new OutreachMembershipDto { PageId = pageAccountId, Status = row.Status, UpdatedAtUtc = row.UpdatedAtUtc.Value };
+    }
+
+    // ───────── Group discovery through Brave Search (the owner joins by hand on Facebook) ─────────
+
+    /// <summary>"12K thành viên" / "1,2 N thành viên" / "3.4K members" / "12.345 thành viên" → number.</summary>
+    public static int? ParseMembers(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return null;
+        var m = MembersPattern().Match(text);
+        if (!m.Success) return null;
+        var num = m.Groups[1].Value.Replace(" ", "");
+        var unit = m.Groups[2].Value.ToLowerInvariant();
+        double value;
+        // with a unit "1,2" / "1.2" is a decimal; without one "12.345" / "12,345" groups thousands
+        if (unit.Length > 0)
+        {
+            if (!double.TryParse(num.Replace(',', '.'), NumberStyles.Float, CultureInfo.InvariantCulture, out value)) return null;
+        }
+        else if (!double.TryParse(num.Replace(".", "").Replace(",", ""), NumberStyles.Float, CultureInfo.InvariantCulture, out value)) return null;
+        var factor = unit switch { "k" or "n" or "nghìn" or "ngàn" => 1_000, "m" or "tr" or "triệu" => 1_000_000, _ => 1 };
+        var total = value * factor;
+        return total is > 0 and < int.MaxValue ? (int)Math.Round(total) : null;
+    }
+
+    [GeneratedRegex(@"(\d[\d.,]*)\s*(k|n|nghìn|ngàn|m|tr|triệu)?\s*(?:thành viên|members?)\b", RegexOptions.IgnoreCase)]
+    private static partial Regex MembersPattern();
+
+    private static string CleanTitle(string title)
+    {
+        var t = WebUtility.HtmlDecode(title ?? "").Trim();
+        foreach (var tail in new[] { " | Facebook", " - Facebook", "| Facebook" })
+            if (t.EndsWith(tail, StringComparison.OrdinalIgnoreCase)) t = t[..^tail.Length].Trim();
+        return t;
+    }
+
+    /// <summary>Brave web results → Facebook Group links only (deduplicated; snippet read for members / privacy).</summary>
+    public static List<OutreachDiscoveredGroupDto> ParseBraveResults(JsonElement body)
+    {
+        var list = new List<OutreachDiscoveredGroupDto>();
+        if (!body.TryGetProperty("web", out var web) || !web.TryGetProperty("results", out var results) || results.ValueKind != JsonValueKind.Array) return list;
+        var seen = new HashSet<string>();
+        foreach (var r in results.EnumerateArray())
+        {
+            var url = NormalizeGroupUrl(r.TryGetProperty("url", out var u) ? u.GetString() : null);
+            if (url == null || !seen.Add(url)) continue;
+            var title = CleanTitle(r.TryGetProperty("title", out var t) ? t.GetString() ?? "" : "");
+            var desc = WebUtility.HtmlDecode(r.TryGetProperty("description", out var d) ? d.GetString() ?? "" : "");
+            desc = Regex.Replace(desc, "<[^>]+>", "").Trim();
+            var extra = r.TryGetProperty("extra_snippets", out var ex) && ex.ValueKind == JsonValueKind.Array
+                ? string.Join(" ", ex.EnumerateArray().Select(x => x.GetString())) : "";
+            var all = (title + " " + desc + " " + extra).ToLowerInvariant();
+            list.Add(new OutreachDiscoveredGroupDto
+            {
+                Name = title.Length > 0 ? title : url["https://www.facebook.com/groups/".Length..],
+                Url = url,
+                Description = desc.Length > 300 ? desc[..300] + "…" : (desc.Length > 0 ? desc : null),
+                Members = ParseMembers(desc + " " + extra),
+                Privacy = all.Contains("nhóm riêng tư") || all.Contains("private group") ? "private"
+                    : all.Contains("nhóm công khai") || all.Contains("public group") ? "public" : "unknown",
+            });
+        }
+        return list;
+    }
+
+    public async Task<OutreachDiscoverResultDto> DiscoverGroupsAsync(string keyword, int page, CancellationToken ct)
+    {
+        var k = (keyword ?? "").Trim();
+        if (k.Length is < 2 or > 100) throw new OutreachInputException("Nhập từ khoá 2–100 ký tự.");
+        page = Math.Clamp(page, 1, 10);
+        var apiKey = _config["Outreach:BraveSearch:ApiKey"];
+        if (string.IsNullOrWhiteSpace(apiKey))
+            throw new OutreachInputException("Chưa cấu hình khoá Brave Search. Đăng ký tại api-dashboard.search.brave.com rồi thêm biến Outreach__BraveSearch__ApiKey trên Railway.");
+
+        var cacheKey = $"outreach:discover:{k.ToLowerInvariant()}:{page}";
+        if (!_cache.TryGetValue(cacheKey, out List<OutreachDiscoveredGroupDto>? found) || found == null)
+        {
+            var q = Uri.EscapeDataString($"site:facebook.com/groups {k}");
+            using var req = new HttpRequestMessage(HttpMethod.Get,
+                $"https://api.search.brave.com/res/v1/web/search?q={q}&count=20&offset={page - 1}&country=VN&search_lang=vi&safesearch=moderate&extra_snippets=true");
+            req.Headers.Add("Accept", "application/json");
+            req.Headers.Add("X-Subscription-Token", apiKey.Trim());
+            using var res = await _http.CreateClient("brave-search").SendAsync(req, ct);
+            if (!res.IsSuccessStatusCode)
+            {
+                var detail = await res.Content.ReadAsStringAsync(ct);
+                _logger.LogWarning("Brave search failed {Status}: {Body}", (int)res.StatusCode, detail.Length > 300 ? detail[..300] : detail);
+                throw new InvalidOperationException((int)res.StatusCode switch
+                {
+                    401 or 403 => "Khoá Brave Search không hợp lệ hoặc đã bị khoá.",
+                    402 => "Hết tín dụng Brave Search tháng này (xem api-dashboard.search.brave.com).",
+                    429 => "Tìm quá nhanh hoặc hết hạn mức Brave Search, thử lại sau ít phút.",
+                    _ => $"Brave Search lỗi {(int)res.StatusCode}.",
+                });
+            }
+            using var doc = JsonDocument.Parse(await res.Content.ReadAsStringAsync(ct));
+            found = ParseBraveResults(doc.RootElement);
+            _cache.Set(cacheKey, found, TimeSpan.FromHours(6));
+            _logger.LogInformation("Outreach group search {Keyword} page {Page}: {Count} groups", k, page, found.Count);
+        }
+
+        var urls = found.Select(f => f.Url).ToList();
+        var known = await _db.OutreachGroups.AsNoTracking().Where(g => urls.Contains(g.Url)).ToDictionaryAsync(g => g.Url, g => g.Id, ct);
+        return new OutreachDiscoverResultDto
+        {
+            Keyword = k,
+            Page = page,
+            HasMore = found.Count >= 5 && page < 10,
+            FacebookSearchUrl = "https://www.facebook.com/search/groups/?q=" + Uri.EscapeDataString(k),
+            Results = found.Select(f => new OutreachDiscoveredGroupDto
+            {
+                Name = f.Name, Url = f.Url, Description = f.Description, Members = f.Members, Privacy = f.Privacy,
+                GroupId = known.TryGetValue(f.Url, out var id) ? id : null,
+            }).ToList(),
+        };
     }
 
     /// <summary>
@@ -581,6 +728,7 @@ Trả về JSON: {{ ""texts"": [""..."", ""...""] }}");
         var groups = await _db.OutreachGroups.AsNoTracking().Where(g => groupIds.Contains(g.Id)).ToListAsync(ct);
         var pages = await _db.FacebookAccounts.AsNoTracking().Where(a => pageIds.Contains(a.Id)).ToListAsync(ct);
         var activities = await _db.OutreachActivities.AsNoTracking().Where(a => a.CampaignId == id).OrderByDescending(a => a.DoneAtUtc).ToListAsync(ct);
+        var memberships = await _db.OutreachGroupMemberships.AsNoTracking().Where(m => groupIds.Contains(m.GroupId)).ToListAsync(ct);
         var counts = await _db.LandingEvents.AsNoTracking()
             .Where(e => e.Slug == LandingSlug && e.UtmCampaign == c.Slug && e.UtmContent != null && (e.Type == "view" || e.Type == "open_page"))
             .GroupBy(e => new { e.UtmContent, e.Type }).Select(g => new { g.Key.UtmContent, g.Key.Type, Count = g.Count() }).ToListAsync(ct);
@@ -596,6 +744,7 @@ Trả về JSON: {{ ""texts"": [""..."", ""...""] }}");
                 rows.Add(new OutreachCampaignLinkDto
                 {
                     GroupId = g.Id, GroupName = g.Name, GroupUrl = g.Url, PageId = p?.Id, PageName = p?.PageName, UtmContent = content,
+                    Membership = p == null ? null : memberships.FirstOrDefault(m => m.GroupId == g.Id && m.FacebookAccountId == p.Id)?.Status,
                     Link = LandingUrl(query),
                     Views = counts.Where(x => x.UtmContent == content && x.Type == "view").Sum(x => x.Count),
                     Clicks = counts.Where(x => x.UtmContent == content && x.Type == "open_page").Sum(x => x.Count),

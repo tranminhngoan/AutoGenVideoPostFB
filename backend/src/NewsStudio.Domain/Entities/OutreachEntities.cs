@@ -103,3 +103,12 @@ public class OutreachPostTask : BaseEntity
     public DateTime? DoneAtUtc { get; set; }
     public string? Note { get; set; }
 }
+
+/// <summary>Whether one helper Page is in one Group — set by hand (Meta gives no API to join or check).</summary>
+public class OutreachGroupMembership : BaseEntity
+{
+    public Guid GroupId { get; set; }
+    public Guid FacebookAccountId { get; set; }
+    /// <summary>requested (asked to join) | joined | rejected</summary>
+    public string Status { get; set; } = "requested";
+}

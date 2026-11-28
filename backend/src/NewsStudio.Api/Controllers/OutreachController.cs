@@ -112,6 +112,8 @@ public class OutreachController : ControllerBase
     [HttpPut("groups/{id:guid}")] public Task<ActionResult> EditGroup(Guid id, [FromBody] OutreachGroupInputDto input, CancellationToken ct) => Run(() => _svc.UpdateGroupAsync(id, input, ct));
     [HttpDelete("groups/{id:guid}")] public Task<ActionResult> DeleteGroup(Guid id, CancellationToken ct) => Done(() => _svc.DeleteGroupAsync(id, ct));
     [HttpPost("groups/import")] public Task<ActionResult> Import([FromBody] OutreachCsvDto body, CancellationToken ct) => Run(() => _svc.ImportGroupsCsvAsync(body?.Csv ?? "", ct))!;
+    [HttpGet("groups/discover")] public Task<ActionResult> Discover([FromQuery] string keyword, [FromQuery] int page = 1, CancellationToken ct = default) => Run(() => _svc.DiscoverGroupsAsync(keyword, page, ct))!;
+    [HttpPut("groups/{id:guid}/membership/{pageId:guid}")] public Task<ActionResult> Membership(Guid id, Guid pageId, [FromBody] OutreachMembershipInputDto body, CancellationToken ct) => Run(() => _svc.SetMembershipAsync(id, pageId, body?.Status, ct));
     [HttpGet("groups/search")] public Task<ActionResult> Search([FromQuery] string keyword) => Run(() => Task.FromResult<OutreachGroupSearchDto?>(OutreachService.GroupSearch(keyword)));
 
     // ── contents / AI ──
