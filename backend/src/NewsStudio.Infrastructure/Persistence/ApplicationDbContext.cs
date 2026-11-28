@@ -70,10 +70,28 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
     public DbSet<FilmShot> FilmShots => Set<FilmShot>();
     public DbSet<FilmCostRecord> FilmCostRecords => Set<FilmCostRecord>();
     public DbSet<FilmPublishingRecord> FilmPublishingRecords => Set<FilmPublishingRecord>();
+    public DbSet<LandingEvent> LandingEvents => Set<LandingEvent>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
+
+        // Public landing pages (/cheo-uy-tinh …): anonymous visit / click counters
+        modelBuilder.Entity<LandingEvent>(entity =>
+        {
+            entity.ToTable("LandingEvents");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Slug).HasMaxLength(60).IsRequired();
+            entity.Property(e => e.Type).HasMaxLength(20).IsRequired();
+            entity.Property(e => e.Target).HasMaxLength(200);
+            entity.Property(e => e.Device).HasMaxLength(10).IsRequired();
+            entity.Property(e => e.VisitorId).HasMaxLength(64);
+            entity.Property(e => e.UtmSource).HasMaxLength(100);
+            entity.Property(e => e.UtmMedium).HasMaxLength(100);
+            entity.Property(e => e.UtmCampaign).HasMaxLength(100);
+            entity.Property(e => e.ReferrerHost).HasMaxLength(200);
+            entity.HasIndex(e => new { e.Slug, e.CreatedAtUtc });
+        });
 
         // "Tự động đăng"
         modelBuilder.Entity<AutoPostSettings>(entity =>

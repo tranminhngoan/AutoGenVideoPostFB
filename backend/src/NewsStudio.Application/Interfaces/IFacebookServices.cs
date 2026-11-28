@@ -86,4 +86,10 @@ public interface IFacebookPublishingService
 
     /// <summary>Posts a (≤ 60 s, 9:16) video as a Page Story; returns the story's post id.</summary>
     Task<string> PublishVideoStoryAsync(Guid facebookAccountId, string videoPath, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Public display info + latest posts of a connected, active Page (for public landing pages).
+    /// Null when the page is not connected. Never returns tokens.
+    /// </summary>
+    Task<PageShowcaseDto?> GetPageShowcaseAsync(string pageId, int postLimit, CancellationToken cancellationToken = default);
 }

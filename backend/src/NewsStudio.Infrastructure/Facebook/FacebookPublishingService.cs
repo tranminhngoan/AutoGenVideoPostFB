@@ -1563,6 +1563,66 @@ public class FacebookPublishingService : IFacebookPublishingService
         return stats;
     }
 
+    public async Task<PageShowcaseDto?> GetPageShowcaseAsync(string pageId, int postLimit, CancellationToken cancellationToken = default)
+    {
+        var account = await _context.FacebookAccounts.AsNoTracking()
+            .FirstOrDefaultAsync(a => a.PageId == pageId && a.IsActive, cancellationToken);
+        if (account == null || string.IsNullOrWhiteSpace(account.EncryptedAccessToken)) return null;
+
+        var token = Uri.EscapeDataString(_tokenProtection.DecryptToken(account.EncryptedAccessToken));
+        var result = new PageShowcaseDto
+        {
+            PageId = account.PageId,
+            Name = account.PageName,
+            PictureUrl = $"https://graph.facebook.com/{account.PageId}/picture?type=large",
+            Link = $"https://www.facebook.com/{account.PageId}",
+        };
+        static string? Str(JsonElement e, string name) =>
+            e.ValueKind == JsonValueKind.Object && e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
+
+        var (ok, body, error) = await GetGraphAsync(
+            $"https://graph.facebook.com/{_graphApiVersion}/{account.PageId}?fields=name,about,link,cover%7Bsource%7D,followers_count,fan_count&access_token={token}", cancellationToken);
+        if (ok)
+        {
+            result.Name = Str(body, "name") ?? result.Name;
+            result.About = Str(body, "about");
+            result.Link = Str(body, "link") ?? result.Link;
+            if (body.TryGetProperty("cover", out var cover)) result.CoverUrl = Str(cover, "source");
+            foreach (var n in new[] { "followers_count", "fan_count" })
+                if (body.TryGetProperty(n, out var c) && c.TryGetInt64(out var count)) { result.Followers = count; break; }
+        }
+        else _logger.LogInformation("Showcase info of page {Page}: {Error}", account.PageId, error);
+
+        var limit = Math.Clamp(postLimit, 1, 12);
+        var (postsOk, posts, postsError) = await GetGraphAsync(
+            $"https://graph.facebook.com/{_graphApiVersion}/{account.PageId}/posts?fields=id,message,full_picture,permalink_url,created_time,attachments%7Bmedia_type%7D&limit={limit}&access_token={token}", cancellationToken);
+        if (postsOk && posts.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var p in data.EnumerateArray())
+            {
+                var permalink = Str(p, "permalink_url");
+                var message = Str(p, "message");
+                var picture = Str(p, "full_picture");
+                if (string.IsNullOrWhiteSpace(permalink) || (string.IsNullOrWhiteSpace(message) && string.IsNullOrWhiteSpace(picture))) continue;
+                var isVideo = false;
+                if (p.TryGetProperty("attachments", out var att) && att.TryGetProperty("data", out var attData) && attData.ValueKind == JsonValueKind.Array)
+                    isVideo = attData.EnumerateArray().Any(a => (Str(a, "media_type") ?? "").Contains("video", StringComparison.OrdinalIgnoreCase));
+                result.Posts.Add(new ShowcasePostDto
+                {
+                    Id = Str(p, "id") ?? permalink,
+                    Message = message,
+                    ImageUrl = picture,
+                    IsVideo = isVideo,
+                    PermalinkUrl = permalink,
+                    CreatedTime = DateTime.TryParse(Str(p, "created_time"), CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal, out var t) ? t : null,
+                });
+            }
+        }
+        else if (!postsOk) _logger.LogInformation("Showcase posts of page {Page}: {Error}", account.PageId, postsError);
+
+        return result;
+    }
+
     private async Task<(bool Ok, JsonElement Body, string? Error)> GetGraphAsync(string url, CancellationToken ct)
     {
         using var response = await _httpClient.GetAsync(url, ct);

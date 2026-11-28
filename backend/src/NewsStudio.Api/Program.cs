@@ -95,15 +95,36 @@ try
     });
 
     // Rate Limiting (Production Hardening)
+    builder.Services.AddMemoryCache();
     builder.Services.AddRateLimiter(options =>
     {
         options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
-        options.AddFixedWindowLimiter("global", opt =>
+        // Admin app: the same single shared 120/min window as before. Public landing endpoints
+        // (/api/public/…) get their own small window per visitor IP, so outside traffic can
+        // never use up the admin app's budget.
+        options.AddPolicy("global", context =>
         {
-            opt.PermitLimit = 120;
-            opt.Window = TimeSpan.FromMinutes(1);
-            opt.QueueProcessingOrder = QueueProcessingOrder.OldestFirst;
-            opt.QueueLimit = 30;
+            var path = context.Request.Path.Value ?? string.Empty;
+            if (path.StartsWith("/api/public/", StringComparison.OrdinalIgnoreCase))
+            {
+                var forwarded = context.Request.Headers["X-Forwarded-For"].ToString();
+                var ip = !string.IsNullOrWhiteSpace(forwarded)
+                    ? forwarded.Split(',')[0].Trim()
+                    : context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+                return RateLimitPartition.GetFixedWindowLimiter("public:" + ip, _ => new FixedWindowRateLimiterOptions
+                {
+                    PermitLimit = 30,
+                    Window = TimeSpan.FromMinutes(1),
+                    QueueLimit = 0,
+                });
+            }
+            return RateLimitPartition.GetFixedWindowLimiter("admin", _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 120,
+                Window = TimeSpan.FromMinutes(1),
+                QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+                QueueLimit = 30,
+            });
         });
     });
 
@@ -192,7 +213,8 @@ try
             if (path == "/" || 
                 path.StartsWith("/health") || 
                 path.StartsWith("/swagger") || 
-                path.StartsWith("/hangfire"))
+                path.StartsWith("/hangfire") ||
+                path.StartsWith("/api/public/"))   // public landing pages: display data + anonymous counters only
             {
                 await next();
                 return;

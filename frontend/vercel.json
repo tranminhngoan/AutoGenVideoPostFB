@@ -4,6 +4,8 @@
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "rewrites": [
+    { "source": "/cheo-uy-tinh", "destination": "/cheo-uy-tinh/index.html" },
+    { "source": "/cheo-uy-tinh/", "destination": "/cheo-uy-tinh/index.html" },
     { "source": "/api/:path*", "destination": "https://postnewsauto.up.railway.app/api/:path*" },
     { "source": "/health", "destination": "https://postnewsauto.up.railway.app/health" },
     { "source": "/health/:path*", "destination": "https://postnewsauto.up.railway.app/health/:path*" }
