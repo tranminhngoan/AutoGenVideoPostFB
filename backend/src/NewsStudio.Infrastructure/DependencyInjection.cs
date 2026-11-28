@@ -26,6 +26,9 @@ public static class DependencyInjection
         this IServiceCollection services,
         IConfiguration configuration)
     {
+        // Every outbound HTTP client: IPv4 first, a few seconds per address (a dead IPv6 route made each new
+        // connection to Gemini wait ~3 minutes).
+        services.ConfigureHttpClientDefaults(b => b.ConfigurePrimaryHttpMessageHandler(() => FastConnect.CreateHandler()));
         // Support standard .NET connection string OR Railway DATABASE_URL (postgresql://...)
         var connectionString = ConnectionStringHelper.ResolveConnectionString(configuration);
 
