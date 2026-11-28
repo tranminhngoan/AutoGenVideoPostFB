@@ -91,6 +91,7 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
             entity.Property(e => e.UtmCampaign).HasMaxLength(100);
             entity.Property(e => e.ReferrerHost).HasMaxLength(200);
             entity.HasIndex(e => new { e.Slug, e.CreatedAtUtc });
+            entity.HasIndex(e => new { e.Slug, e.Type, e.CreatedAtUtc });
         });
 
         // "Tự động đăng"

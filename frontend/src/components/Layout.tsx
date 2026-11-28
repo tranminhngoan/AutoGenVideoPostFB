@@ -16,6 +16,7 @@ import {
   Moon,
   Monitor,
   MessageCircle,
+  HeartHandshake,
   Wand2,
   TrendingUp,
   CalendarDays,
@@ -101,6 +102,7 @@ function SidebarContent({
     { id: 'drama-scripts', path: '/drama-scripts', label: 'Lên kịch bản', icon: Sparkles },
     { id: 'studio', path: '/studio', label: 'Studio Video AI', icon: Clapperboard },
     { id: 'comments', path: '/comments', label: 'Bình luận', icon: MessageCircle },
+    { id: 'cheo-lai', path: '/cheo-lai', label: 'Chéo lại', icon: HeartHandshake },
   ];
   const local: NavItem[] = [{ id: 'ai-studio', path: '/ai-studio', label: 'AI Video Studio', icon: Wand2 }];
   const growthNav: NavItem[] = [

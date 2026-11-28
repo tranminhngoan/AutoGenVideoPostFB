@@ -55,3 +55,23 @@ public class LandingCountDto
     public string Key { get; set; } = string.Empty;
     public int Count { get; set; }
 }
+
+/// <summary>One click on "Mở Facebook – ủng hộ Page" (the "Chéo lại" list).</summary>
+public class LandingClickDto
+{
+    public Guid Id { get; set; }
+    public DateTime ClickedAtUtc { get; set; }
+    public string Device { get; set; } = "desktop";
+    /// <summary>utm_source, else the referring site, else null (opened directly).</summary>
+    public string? Source { get; set; }
+    /// <summary>Short anonymous id of the browser (same person = same id), for spotting repeat clicks.</summary>
+    public string? Visitor { get; set; }
+    /// <summary>How many times this browser clicked the button in total.</summary>
+    public int VisitorClicks { get; set; }
+    public DateTime? HandledAtUtc { get; set; }
+}
+
+public class LandingClickHandledDto
+{
+    public bool Handled { get; set; }
+}

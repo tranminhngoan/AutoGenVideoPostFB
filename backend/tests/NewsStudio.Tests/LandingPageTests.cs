@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
@@ -75,6 +76,50 @@ public class LandingPageTests : IClassFixture<WebApplicationFactory<Program>>
         finally
         {
             using var scope = guarded.Services.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<IApplicationDbContext>();
+            db.LandingEvents.RemoveRange(await db.LandingEvents.Where(e => e.Slug == slug).ToListAsync());
+            await db.SaveChangesAsync();
+        }
+    }
+
+    [Fact]
+    public async Task ClicksOnTheFacebookButtonAreListedAndCanBeMarkedAsInteractedBack()
+    {
+        var client = _factory.CreateClient();
+        var slug = "test-clicks-" + Guid.NewGuid().ToString("N")[..8];
+        try
+        {
+            foreach (var (visitor, device) in new[] { ("aaaa1111-x", "mobile"), ("aaaa1111-x", "mobile"), ("bbbb2222-y", "desktop") })
+                (await client.PostAsJsonAsync("/api/public/landing/events", new LandingEventRequestDto
+                {
+                    Slug = slug, Type = "open_page", Device = device, VisitorId = visitor, UtmSource = "zalo",
+                })).StatusCode.Should().Be(HttpStatusCode.NoContent);
+            // a page view is not a click
+            await client.PostAsJsonAsync("/api/public/landing/events", new LandingEventRequestDto { Slug = slug, Type = "view", VisitorId = "cccc" });
+
+            var all = await client.GetFromJsonAsync<List<LandingClickDto>>($"/api/landing/{slug}/clicks");
+            all.Should().HaveCount(3);
+            all!.Should().OnlyContain(c => c.HandledAtUtc == null && c.Source == "zalo");
+            all.Where(c => c.Visitor == "AAAA11").Should().HaveCount(2).And.OnlyContain(c => c.VisitorClicks == 2 && c.Device == "mobile");
+            all.Should().ContainSingle(c => c.Visitor == "BBBB22" && c.VisitorClicks == 1);
+            all.Select(c => c.ClickedAtUtc).Should().BeInDescendingOrder();
+
+            var first = all[0];
+            (await client.PutAsJsonAsync($"/api/landing/clicks/{first.Id}/handled", new LandingClickHandledDto { Handled = true }))
+                .StatusCode.Should().Be(HttpStatusCode.NoContent);
+            (await client.GetFromJsonAsync<List<LandingClickDto>>($"/api/landing/{slug}/clicks?status=done"))!
+                .Should().ContainSingle(c => c.Id == first.Id && c.HandledAtUtc != null);
+            (await client.GetFromJsonAsync<List<LandingClickDto>>($"/api/landing/{slug}/clicks?status=waiting"))!.Should().HaveCount(2);
+
+            (await client.PutAsJsonAsync($"/api/landing/clicks/{first.Id}/handled", new LandingClickHandledDto { Handled = false }))
+                .StatusCode.Should().Be(HttpStatusCode.NoContent);
+            (await client.GetFromJsonAsync<List<LandingClickDto>>($"/api/landing/{slug}/clicks?status=waiting"))!.Should().HaveCount(3);
+            (await client.PutAsJsonAsync($"/api/landing/clicks/{Guid.NewGuid()}/handled", new LandingClickHandledDto { Handled = true }))
+                .StatusCode.Should().Be(HttpStatusCode.NotFound);
+        }
+        finally
+        {
+            using var scope = _factory.Services.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<IApplicationDbContext>();
             db.LandingEvents.RemoveRange(await db.LandingEvents.Where(e => e.Slug == slug).ToListAsync());
             await db.SaveChangesAsync();

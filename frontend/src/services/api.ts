@@ -130,6 +130,28 @@ export const api = {
     }
   },
 
+  // ── Chéo lại: lượt bấm "Mở Facebook – ủng hộ Page" trên trang public ──
+  async getLandingClicks(slug: string, status: 'waiting' | 'done' | 'all', days = 30): Promise<LandingClickDto[]> {
+    const res = await fetch(`${API_BASE}/landing/${encodeURIComponent(slug)}/clicks?status=${status}&days=${days}`);
+    if (!res.ok) throw new Error(await apiError(res, 'Không tải được danh sách lượt bấm'));
+    return await res.json();
+  },
+
+  async setLandingClickHandled(id: string, handled: boolean): Promise<void> {
+    const res = await fetch(`${API_BASE}/landing/clicks/${id}/handled`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ handled }),
+    });
+    if (!res.ok) throw new Error(await apiError(res, 'Chưa lưu được'));
+  },
+
+  async getLandingStats(slug: string, days = 30): Promise<LandingStatsDto> {
+    const res = await fetch(`${API_BASE}/landing/${encodeURIComponent(slug)}/stats?days=${days}`);
+    if (!res.ok) throw new Error(await apiError(res, 'Không tải được thống kê'));
+    return await res.json();
+  },
+
   // ── Lượt xem theo Page ──
   async getComments(status: string): Promise<PostCommentDto[]> {
     const res = await fetch(`${API_BASE}/engagement/comments?status=${encodeURIComponent(status)}`);
@@ -1329,6 +1351,27 @@ export interface PageViewStatsDto {
 }
 
 /** A viewer's comment with the reply drafted by AI. */
+/** One click on "Mở Facebook – ủng hộ Page" on the public page /cheo-uy-tinh. */
+export interface LandingClickDto {
+  id: string;
+  clickedAtUtc: string;
+  device: 'mobile' | 'desktop';
+  source?: string | null;
+  /** Short anonymous browser id — same id = same person. */
+  visitor?: string | null;
+  visitorClicks: number;
+  handledAtUtc?: string | null;
+}
+
+export interface LandingStatsDto {
+  views: number;
+  uniqueVisitors: number;
+  openPageClicks: number;
+  postClicks: number;
+  mobileViews: number;
+  desktopViews: number;
+}
+
 export interface PostCommentDto {
   id: string;
   network: 'facebook' | 'instagram' | string;

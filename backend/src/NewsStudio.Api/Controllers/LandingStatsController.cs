@@ -43,4 +43,49 @@ public class LandingStatsController : ControllerBase
                 .OrderByDescending(x => x.Count).Take(10).ToListAsync(ct),
         });
     }
+
+    /// <summary>
+    /// "Chéo lại": every click on "Mở Facebook – ủng hộ Page", newest first, so the owner can match the time
+    /// with the Page's follow notifications and interact back. status = waiting | done | all.
+    /// </summary>
+    [HttpGet("{slug}/clicks")]
+    public async Task<ActionResult<List<LandingClickDto>>> GetClicks(string slug, [FromQuery] string status = "all", [FromQuery] int days = 30, CancellationToken ct = default)
+    {
+        days = Math.Clamp(days, 1, 365);
+        var since = DateTime.UtcNow.AddDays(-days);
+        var q = _db.LandingEvents.AsNoTracking().Where(e => e.Slug == slug && e.Type == "open_page" && e.CreatedAtUtc >= since);
+        if (status == "waiting") q = q.Where(e => e.HandledAtUtc == null);
+        else if (status == "done") q = q.Where(e => e.HandledAtUtc != null);
+        var clicks = await q.OrderByDescending(e => e.CreatedAtUtc).Take(500).ToListAsync(ct);
+
+        var visitors = clicks.Where(e => e.VisitorId != null).Select(e => e.VisitorId!).Distinct().ToList();
+        var perVisitor = await _db.LandingEvents.AsNoTracking()
+            .Where(e => e.Slug == slug && e.Type == "open_page" && e.VisitorId != null && visitors.Contains(e.VisitorId))
+            .GroupBy(e => e.VisitorId!)
+            .Select(g => new { g.Key, Count = g.Count() })
+            .ToDictionaryAsync(x => x.Key, x => x.Count, ct);
+
+        return Ok(clicks.Select(e => new LandingClickDto
+        {
+            Id = e.Id,
+            ClickedAtUtc = e.CreatedAtUtc,
+            Device = e.Device,
+            Source = e.UtmSource ?? e.ReferrerHost,
+            Visitor = e.VisitorId is { Length: > 0 } v ? v.Replace("-", "")[..Math.Min(6, v.Replace("-", "").Length)].ToUpperInvariant() : null,
+            VisitorClicks = e.VisitorId != null && perVisitor.TryGetValue(e.VisitorId, out var n) ? n : 1,
+            HandledAtUtc = e.HandledAtUtc,
+        }).ToList());
+    }
+
+    /// <summary>Marks one click as "đã trả lại" (interacted back) or back to waiting.</summary>
+    [HttpPut("clicks/{id:guid}/handled")]
+    public async Task<IActionResult> SetHandled(Guid id, [FromBody] LandingClickHandledDto body, CancellationToken ct)
+    {
+        var click = await _db.LandingEvents.FirstOrDefaultAsync(e => e.Id == id && e.Type == "open_page", ct);
+        if (click == null) return NotFound();
+        click.HandledAtUtc = body?.Handled == true ? DateTime.UtcNow : null;
+        click.UpdatedAtUtc = DateTime.UtcNow;
+        await _db.SaveChangesAsync(ct);
+        return NoContent();
+    }
 }

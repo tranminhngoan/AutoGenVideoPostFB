@@ -23,4 +23,6 @@ public class LandingEvent : BaseEntity
     public string? UtmCampaign { get; set; }
     /// <summary>Host of the referring site only (e.g. m.facebook.com).</summary>
     public string? ReferrerHost { get; set; }
+    /// <summary>For an open_page click: when the owner marked it "đã trả lại" (interacted back). Null = waiting.</summary>
+    public DateTime? HandledAtUtc { get; set; }
 }

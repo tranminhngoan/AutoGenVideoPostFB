@@ -2921,6 +2921,9 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                         .HasMaxLength(10)
                         .HasColumnType("character varying(10)");
 
+                    b.Property<DateTime?>("HandledAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<string>("ReferrerHost")
                         .HasMaxLength(200)
                         .HasColumnType("character varying(200)");
@@ -2961,6 +2964,8 @@ namespace NewsStudio.Infrastructure.Persistence.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("Slug", "CreatedAtUtc");
+
+                    b.HasIndex("Slug", "Type", "CreatedAtUtc");
 
                     b.ToTable("LandingEvents", (string)null);
                 });

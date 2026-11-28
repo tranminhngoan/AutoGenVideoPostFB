@@ -13,6 +13,7 @@ import { AutoPostPage } from './pages/AutoPostPage';
 import { StudioPage } from './pages/StudioPage';
 import { DramaScriptsPage } from './pages/DramaScriptsPage';
 import { CommentsPage } from './pages/CommentsPage';
+import { CheoLaiPage } from './pages/CheoLaiPage';
 import { AiStudioPage } from './pages/ai-studio/AiStudioPage';
 // Chiến dịch tăng trưởng: its own chunk, so the existing pages load exactly as before
 const GrowthPage = lazy(() => import('./pages/growth/GrowthPage').then((m) => ({ default: m.GrowthPage })));
@@ -32,6 +33,7 @@ const TITLES: Record<string, string> = {
   studio: 'Studio Video AI',
   'drama-scripts': 'Lên kịch bản',
   comments: 'Bình luận',
+  'cheo-lai': 'Chéo lại',
   'ai-studio': 'AI Video Studio',
   growth: 'Chiến dịch tăng trưởng',
 };
@@ -120,6 +122,9 @@ export function App() {
         break;
       case 'drama-scripts':
         page = <DramaScriptsPage />;
+        break;
+      case 'cheo-lai':
+        page = <CheoLaiPage />;
         break;
       case 'comments':
         page = <CommentsPage />;
