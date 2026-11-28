@@ -296,6 +296,27 @@ public partial class OutreachService
         return list;
     }
 
+    /// <summary>Brave's own reason from an error body ({"error":{"detail":…,"meta":{…}}}), short.</summary>
+    public static string BraveErrorDetail(string body)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            if (doc.RootElement.TryGetProperty("error", out var err))
+            {
+                var detail = err.TryGetProperty("detail", out var d) ? d.GetString() : null;
+                var meta = err.TryGetProperty("meta", out var m) ? m.GetRawText() : null;
+                var text = string.Join(" ", new[] { detail, meta }.Where(x => !string.IsNullOrWhiteSpace(x)));
+                if (text.Length > 0) return text.Length > 300 ? text[..300] : text;
+            }
+        }
+        catch (JsonException)
+        {
+            // not JSON
+        }
+        return body.Length > 200 ? body[..200] : body;
+    }
+
     public async Task<OutreachDiscoverResultDto> DiscoverGroupsAsync(string keyword, int page, CancellationToken ct)
     {
         var k = (keyword ?? "").Trim();
@@ -309,24 +330,34 @@ public partial class OutreachService
         if (!_cache.TryGetValue(cacheKey, out List<OutreachDiscoveredGroupDto>? found) || found == null)
         {
             var q = Uri.EscapeDataString($"site:facebook.com/groups {k}");
-            using var req = new HttpRequestMessage(HttpMethod.Get,
-                $"https://api.search.brave.com/res/v1/web/search?q={q}&count=20&offset={page - 1}&country=VN&search_lang=vi&safesearch=moderate&extra_snippets=true");
-            req.Headers.Add("Accept", "application/json");
-            req.Headers.Add("X-Subscription-Token", apiKey.Trim());
-            using var res = await _http.CreateClient("brave-search").SendAsync(req, ct);
-            if (!res.IsSuccessStatusCode)
+            // Brave answers 422 to options it doesn't accept (country list, plan-only extras): ask with Vietnamese
+            // results first, then with the bare query.
+            var urlsToTry = new[]
             {
-                var detail = await res.Content.ReadAsStringAsync(ct);
-                _logger.LogWarning("Brave search failed {Status}: {Body}", (int)res.StatusCode, detail.Length > 300 ? detail[..300] : detail);
-                throw new InvalidOperationException((int)res.StatusCode switch
+                $"https://api.search.brave.com/res/v1/web/search?q={q}&count=20&offset={page - 1}&search_lang=vi&safesearch=moderate",
+                $"https://api.search.brave.com/res/v1/web/search?q={q}&count=20&offset={page - 1}",
+            };
+            string? body = null;
+            foreach (var url in urlsToTry)
+            {
+                using var req = new HttpRequestMessage(HttpMethod.Get, url);
+                req.Headers.Add("Accept", "application/json");
+                req.Headers.Add("X-Subscription-Token", apiKey.Trim());
+                using var res = await _http.CreateClient("brave-search").SendAsync(req, ct);
+                var text = await res.Content.ReadAsStringAsync(ct);
+                if (res.IsSuccessStatusCode) { body = text; break; }
+                var status = (int)res.StatusCode;
+                _logger.LogWarning("Brave search failed {Status} for {Url}: {Body}", status, url.Split('?')[1], text.Length > 400 ? text[..400] : text);
+                if (status == 422 && url != urlsToTry[^1]) continue;
+                throw new InvalidOperationException(status switch
                 {
                     401 or 403 => "Khoá Brave Search không hợp lệ hoặc đã bị khoá.",
                     402 => "Hết tín dụng Brave Search tháng này (xem api-dashboard.search.brave.com).",
                     429 => "Tìm quá nhanh hoặc hết hạn mức Brave Search, thử lại sau ít phút.",
-                    _ => $"Brave Search lỗi {(int)res.StatusCode}.",
+                    _ => $"Brave Search lỗi {status}: {BraveErrorDetail(text)}",
                 });
             }
-            using var doc = JsonDocument.Parse(await res.Content.ReadAsStringAsync(ct));
+            using var doc = JsonDocument.Parse(body!);
             found = ParseBraveResults(doc.RootElement);
             _cache.Set(cacheKey, found, TimeSpan.FromHours(6));
             _logger.LogInformation("Outreach group search {Keyword} page {Page}: {Count} groups", k, page, found.Count);
