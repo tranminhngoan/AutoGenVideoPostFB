@@ -423,7 +423,8 @@ public class OutreachApiTests : IClassFixture<WebApplicationFactory<Program>>
             // Publishing checks its input before calling Facebook
             using (var form = new MultipartFormDataContent { { new StringContent(Guid.NewGuid().ToString()), "pageId" }, { new StringContent("x"), "message" }, { new ByteArrayContent(new byte[] { 1, 2, 3 }), "image", "a.jpg" } })
                 (await c.PostAsync("/api/outreach/wall-posts", form)).StatusCode.Should().Be(HttpStatusCode.BadRequest);
-            using (var form = new MultipartFormDataContent { { new StringContent(pageA.Id.ToString()), "pageId" }, { new StringContent("x"), "message" } })
+            // a text-only post still needs text
+            using (var form = new MultipartFormDataContent { { new StringContent(pageA.Id.ToString()), "pageId" }, { new StringContent(" "), "message" } })
                 (await c.PostAsync("/api/outreach/wall-posts", form)).StatusCode.Should().Be(HttpStatusCode.BadRequest);
 
             // Group search needs the Brave key — a clear message, not a crash

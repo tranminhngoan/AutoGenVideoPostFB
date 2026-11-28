@@ -154,7 +154,9 @@ public class OutreachController : ControllerBase
     [RequestSizeLimit(10 * 1024 * 1024)]
     public async Task<ActionResult> PublishWallPost([FromForm] Guid pageId, [FromForm] Guid? campaignId, [FromForm] string? message, IFormFile? image, CancellationToken ct)
     {
-        if (image == null || image.Length == 0) return BadRequest(new { error = "Thiếu ảnh bài đăng." });
+        // picture post when an image comes with it, text-only post otherwise
+        if (image == null || image.Length == 0)
+            return await Run(() => _svc.PublishWallPostAsync(pageId, campaignId, message, null, null, ct))!;
         await using var stream = image.OpenReadStream();
         return await Run(() => _svc.PublishWallPostAsync(pageId, campaignId, message, stream, image.FileName, ct))!;
     }

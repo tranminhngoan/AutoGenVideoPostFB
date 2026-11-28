@@ -338,7 +338,7 @@ export const outreach = {
   deleteActivity: (id: string) => call<void>('DELETE', `/activities/${id}`),
 
   /** Publishes picture + text on a helper Page's wall (Graph API). Sharing into Groups is then done by hand. */
-  async publishWallPost(pageId: string, message: string, image: Blob, campaignId?: string | null): Promise<WallPost> {
+  async publishWallPost(pageId: string, message: string, image: Blob | null, campaignId?: string | null): Promise<WallPost> {
     const session = getSession();
     if (!session) {
       clearSession();
@@ -348,7 +348,7 @@ export const outreach = {
     form.append('pageId', pageId);
     form.append('message', message);
     if (campaignId) form.append('campaignId', campaignId);
-    form.append('image', image, 'bai-dang.jpg');
+    if (image) form.append('image', image, 'bai-dang.jpg');
     const res = await fetch(`${BASE}/wall-posts`, { method: 'POST', headers: { 'X-Outreach-Session': session.token }, body: form });
     if (res.status === 401) {
       clearSession();

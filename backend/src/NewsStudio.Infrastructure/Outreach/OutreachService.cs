@@ -910,27 +910,34 @@ TUYỆT ĐỐI KHÔNG: nhắc tới tài khoản nuôi / clone / nick phụ / t�
     /// Publishes a picture + text on a helper Page's wall through the Graph API (allowed). Sharing it into Groups is
     /// then done by hand on Facebook — Meta has no API for Groups.
     /// </summary>
-    public async Task<OutreachWallPostDto> PublishWallPostAsync(Guid pageAccountId, Guid? campaignId, string? message, Stream image, string fileName, CancellationToken ct)
+    public async Task<OutreachWallPostDto> PublishWallPostAsync(Guid pageAccountId, Guid? campaignId, string? message, Stream? image, string? fileName, CancellationToken ct)
     {
         var page = await _db.FacebookAccounts.AsNoTracking().FirstOrDefaultAsync(a => a.Id == pageAccountId && a.IsActive, ct);
         if (page == null || !IsHelper(page.PageId)) throw new OutreachInputException("Chỉ đăng lên tường Page phụ của chiến dịch.");
         if (campaignId is { } cid && !await _db.OutreachCampaigns.AnyAsync(c => c.Id == cid, ct)) throw new OutreachInputException("Chiến dịch không còn tồn tại.");
         var text = Clip(message, 3000) ?? throw new OutreachInputException("Bài đăng cần có chữ.");
-        var ext = Path.GetExtension(fileName).ToLowerInvariant() is ".png" or ".jpg" or ".jpeg" or ".webp" ? Path.GetExtension(fileName).ToLowerInvariant() : ".jpg";
-
-        var dir = Path.Combine(Path.GetTempPath(), "outreach-wall");
-        Directory.CreateDirectory(dir);
-        var path = Path.Combine(dir, Guid.NewGuid().ToString("N") + ext);
         string postId;
-        try
+        if (image == null)
         {
-            await using (var file = File.Create(path)) await image.CopyToAsync(file, ct);
-            if (new FileInfo(path).Length is 0 or > 8 * 1024 * 1024) throw new OutreachInputException("Ảnh trống hoặc quá 8MB.");
-            postId = await _facebook.PublishPhotoPostAsync(pageAccountId, new[] { path }, text, ct);
+            // text-only post (AI invitation / own text)
+            postId = await _facebook.PublishTextPostAsync(pageAccountId, text, ct);
         }
-        finally
+        else
         {
-            try { File.Delete(path); } catch (IOException) { /* temp file, ignore */ }
+            var ext = Path.GetExtension(fileName ?? "").ToLowerInvariant() is ".png" or ".jpg" or ".jpeg" or ".webp" ? Path.GetExtension(fileName!).ToLowerInvariant() : ".jpg";
+            var dir = Path.Combine(Path.GetTempPath(), "outreach-wall");
+            Directory.CreateDirectory(dir);
+            var path = Path.Combine(dir, Guid.NewGuid().ToString("N") + ext);
+            try
+            {
+                await using (var file = File.Create(path)) await image.CopyToAsync(file, ct);
+                if (new FileInfo(path).Length is 0 or > 8 * 1024 * 1024) throw new OutreachInputException("Ảnh trống hoặc quá 8MB.");
+                postId = await _facebook.PublishPhotoPostAsync(pageAccountId, new[] { path }, text, ct);
+            }
+            finally
+            {
+                try { File.Delete(path); } catch (IOException) { /* temp file, ignore */ }
+            }
         }
 
         var post = new OutreachWallPost

@@ -5,6 +5,7 @@ import { useConfirm, useToast } from '../../../components/feedback';
 import { Draft, outreach } from '../outreachApi';
 import { CopyButton, fmtDate, useLoad } from '../shared';
 import { PostImagesCard } from './PostImages';
+import { PublishToPage } from './PublishToPage';
 
 const STYLE_LABEL: Record<string, string> = { friendly: 'Thân thiện', short: 'Ngắn gọn', funny: 'Hài hước', custom: 'Tự viết', post: 'Bài ảnh chữ' };
 
@@ -34,6 +35,8 @@ export function AiSection() {
   const toast = useToast();
   const confirm = useConfirm();
   const { data: groups } = useLoad(() => outreach.groups());
+  const { data: pages } = useLoad(() => outreach.pages());
+  const { data: campaigns } = useLoad(() => outreach.campaigns());
   const { data: library, setData: setLibrary, loading, reload: reloadLibrary } = useLoad(() => outreach.contents());
   const [style, setStyle] = useState('friendly');
   const [topic, setTopic] = useState('');
@@ -129,6 +132,7 @@ export function AiSection() {
                     Lưu vào thư viện
                   </Button>
                 </div>
+                <PublishToPage text={d.text} pages={pages ?? []} campaigns={campaigns ?? []} />
               </Card>
             ))}
           </div>
@@ -150,13 +154,14 @@ export function AiSection() {
                 Lưu vào thư viện
               </Button>
             </div>
+            <PublishToPage text={manual} pages={pages ?? []} campaigns={campaigns ?? []} />
           </div>
         </Card>
       </div>
 
       <Card className="self-start">
         <CardHeader title={<span className="flex items-center gap-2"><Library className="h-4 w-4" /> Thư viện nội dung</span>}
-          description="Mẫu đã duyệt — bấm Copy rồi tự đăng vào Group. Hệ thống không tự đăng."
+          description="Mẫu đã lưu — Copy, hoặc chọn Page rồi “Đăng lên tường” để chia sẻ vào nhóm."
           actions={
             <Select size="sm" value={filter} onChange={(e) => setFilter(e.target.value)} className="w-auto">
               <option value="all">Tất cả</option>
@@ -189,6 +194,7 @@ export function AiSection() {
                   }} />
                 </span>
               </div>
+              <div className="mt-2"><PublishToPage text={c.text} pages={pages ?? []} campaigns={campaigns ?? []} /></div>
             </div>
           ))}
           <Alert tone="neutral" className="mt-2">Không đăng hàng loạt cùng một nội dung vào nhiều Group — Facebook có thể coi là spam. Mỗi Group nên dùng một phiên bản khác.</Alert>

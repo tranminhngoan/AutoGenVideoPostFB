@@ -1309,6 +1309,18 @@ public class FacebookPublishingService : IFacebookPublishingService
         return (account.PageId, _tokenProtection.DecryptToken(account.EncryptedAccessToken));
     }
 
+    public async Task<string> PublishTextPostAsync(Guid facebookAccountId, string message, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(message)) throw new ArgumentException("Bài đăng cần có chữ.");
+        var (pageId, token) = await PageTokenAsync(facebookAccountId, cancellationToken);
+        var fields = new List<KeyValuePair<string, string>> { new("access_token", token), new("message", message) };
+        using var post = await _httpClient.PostAsync($"https://graph.facebook.com/{_graphApiVersion}/{pageId}/feed", new FormUrlEncodedContent(fields), cancellationToken);
+        if (!post.IsSuccessStatusCode)
+            throw new InvalidOperationException($"Đăng bài viết thất bại. {await ReadGraphErrorAsync(post, cancellationToken)}");
+        var body = await post.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: cancellationToken);
+        return body.GetProperty("id").GetString()!;
+    }
+
     public async Task<string> PublishPhotoPostAsync(Guid facebookAccountId, IReadOnlyList<string> imagePaths, string message, CancellationToken cancellationToken = default)
     {
         if (imagePaths.Count == 0) throw new ArgumentException("Bài đăng cần ít nhất một ảnh.");
