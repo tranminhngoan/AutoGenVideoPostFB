@@ -26,7 +26,7 @@ export function OverviewSection() {
         <Stat label="Lượt xem /cheo-uy-tinh · 7 ngày" value={o.views7d} hint={`${o.outreachViews7d} từ link chiến dịch`} accent />
         <Stat label="Bấm sang Facebook · 7 ngày" value={o.clicks7d} hint={`${o.outreachClicks7d} từ link chiến dịch · tỉ lệ ${rate(o.clicks7d, o.views7d)}`} accent />
         <Stat label="Group trong danh sách" value={o.groups} hint={`${o.groupsFit} nhóm phù hợp`} />
-        <Stat label="Chiến dịch đang chạy" value={o.campaignsRunning} hint={`${o.campaigns} chiến dịch · ${o.postTasksTodo} bài chờ trả lời`} />
+        <Stat label="Chiến dịch đang chạy" value={o.campaignsRunning} hint={`${o.campaigns} chiến dịch`} />
       </div>
       <p className="-mt-2 text-xs text-fg-subtle">Lượt bấm là lượt mở Facebook, không phải lượt Follow — Facebook không cho biết ai đã Follow.</p>
 

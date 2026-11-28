@@ -9,7 +9,6 @@ import { GroupsSection } from './sections/Groups';
 import { JoinSection } from './sections/Join';
 import { ShareSection } from './sections/Share';
 import { AiSection } from './sections/AiOutreach';
-import { PostsSection } from './sections/Posts';
 import { PagesSection } from './sections/Pages';
 import { StatsSection } from './sections/Stats';
 import { SecuritySection } from './sections/Security';
@@ -22,7 +21,6 @@ const SECTIONS: Record<string, { title: string; subtitle: string }> = {
   share: { title: 'Chia sẻ vào nhóm', subtitle: 'Bài đã đăng trên tường Page phụ → chia sẻ vào các nhóm Page đó đã vào, tích lại để theo dõi.' },
   groups: { title: 'Danh sách Group', subtitle: 'Quản lý, phân loại và lọc các Group trao đổi tương tác.' },
   ai: { title: 'AI Outreach', subtitle: 'AI viết bài ảnh chữ (mỗi bài một kiểu chữ, cùng ý) và đăng lên tường Page phụ.' },
-  posts: { title: 'Quản lý bài viết Group', subtitle: 'Bài viết trong Group cần trả lời — AI gợi ý bình luận có giá trị, bạn tự đăng.' },
   pages: { title: 'Quản lý Page phụ', subtitle: 'Kết nối Facebook hiện có — kiểm tra quyền, không cần nhập lại token.' },
   stats: { title: 'Thống kê hiệu quả', subtitle: 'Lượt truy cập /cheo-uy-tinh và lượt bấm sang Facebook, theo ngày, nguồn, chiến dịch, Group.' },
   security: { title: 'Cấu hình bảo mật', subtitle: 'Mật khẩu chiến dịch, thời hạn phiên và nhật ký mở khoá.' },
@@ -119,7 +117,6 @@ export function OutreachPage({ section }: { section: string }) {
       case 'join': return <JoinSection />;
       case 'share': return <ShareSection />;
       case 'ai': return <AiSection />;
-      case 'posts': return <PostsSection />;
       case 'pages': return <PagesSection />;
       case 'stats': return <StatsSection />;
       case 'security': return <SecuritySection />;

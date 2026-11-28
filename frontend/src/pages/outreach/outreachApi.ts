@@ -213,20 +213,6 @@ export interface WallPost {
   shares: { groupId: string; sharedAtUtc: string }[];
 }
 
-export interface PostTask {
-  id: string;
-  groupId?: string | null;
-  groupName?: string | null;
-  campaignId?: string | null;
-  postUrl: string;
-  postText?: string | null;
-  suggestedComment?: string | null;
-  status: 'todo' | 'done' | 'skipped';
-  doneAtUtc?: string | null;
-  note?: string | null;
-  createdAtUtc: string;
-}
-
 export interface Breakdown {
   key: string;
   label?: string | null;
@@ -354,12 +340,6 @@ export const outreach = {
   wallPosts: (pageId?: string) => call<WallPost[]>('GET', `/wall-posts${pageId ? `?pageId=${pageId}` : ''}`),
   setShare: (wallPostId: string, groupId: string, shared: boolean) =>
     call<{ groupId: string; sharedAtUtc: string }>('PUT', `/wall-posts/${wallPostId}/shares/${groupId}`, { shared }),
-
-  posts: (status?: string) => call<PostTask[]>('GET', `/posts${status ? `?status=${status}` : ''}`),
-  addPost: (p: Partial<PostTask> & { postUrl: string }) => call<PostTask>('POST', '/posts', p),
-  editPost: (id: string, p: Partial<PostTask> & { postUrl: string }) => call<PostTask>('PUT', `/posts/${id}`, p),
-  deletePost: (id: string) => call<void>('DELETE', `/posts/${id}`),
-  suggest: (id: string) => call<string[]>('POST', `/posts/${id}/suggest`),
 
   stats: (days: number) => call<Stats>('GET', `/stats?days=${days}`),
 
