@@ -196,6 +196,38 @@ public class OutreachApiTests : IClassFixture<WebApplicationFactory<Program>>
     }
 
     [Fact]
+    public async Task StatsCanBeResetOnlyWithSessionAndConfirmation()
+    {
+        await ResetSecurityAsync();
+        var visitor = _factory.CreateClient();
+        foreach (var type in new[] { "view", "view", "open_page" })
+            (await visitor.PostAsJsonAsync("/api/public/landing/events", new LandingEventRequestDto { Slug = "cheo-uy-tinh", Type = type, VisitorId = "reset-test" }))
+                .StatusCode.Should().Be(HttpStatusCode.NoContent);
+        // other pages' numbers are not touched
+        (await visitor.PostAsJsonAsync("/api/public/landing/events", new LandingEventRequestDto { Slug = "other-page-keep", Type = "view", VisitorId = "reset-test" }))
+            .StatusCode.Should().Be(HttpStatusCode.NoContent);
+
+        (await Client("10.0.3.9").PostAsJsonAsync("/api/outreach/stats/reset", new { confirm = "XOA" })).StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        var c = await UnlockedAsync("10.0.3.1");
+        (await c.PostAsJsonAsync("/api/outreach/stats/reset", new { confirm = "no" })).StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        var res = await c.PostAsJsonAsync("/api/outreach/stats/reset", new { confirm = "XOA" });
+        res.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await res.Content.ReadFromJsonAsync<JsonElement>();
+        body.GetProperty("deletedViews").GetInt32().Should().BeGreaterThanOrEqualTo(2);
+        body.GetProperty("deletedClicks").GetInt32().Should().BeGreaterThanOrEqualTo(1);
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<IApplicationDbContext>();
+            (await db.LandingEvents.CountAsync(e => e.Slug == "cheo-uy-tinh")).Should().Be(0);
+            (await db.LandingEvents.CountAsync(e => e.Slug == "other-page-keep")).Should().Be(1);
+            db.LandingEvents.RemoveRange(await db.LandingEvents.Where(e => e.Slug == "other-page-keep").ToListAsync());
+            await db.SaveChangesAsync();
+        }
+        await ResetSecurityAsync();
+    }
+
+    [Fact]
     public async Task AiWritersRunInTheBackgroundAndReportTheirOutcome()
     {
         await ResetSecurityAsync();

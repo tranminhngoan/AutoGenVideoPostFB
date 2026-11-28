@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
-import { Link2, Table2, BarChart3 } from 'lucide-react';
+import { Link2, Table2, BarChart3, RotateCcw } from 'lucide-react';
 import { Button, Card, CardHeader, Field, Input, Segmented, Skeleton } from '../../../components/ui';
+import { useConfirm, useToast } from '../../../components/feedback';
 import { Breakdown, outreach, Stats } from '../outreachApi';
 import { CopyButton, rate, Stat, useLoad } from '../shared';
 
@@ -137,13 +138,38 @@ function UtmBuilder() {
 
 export function StatsSection() {
   const [days, setDays] = useState(14);
-  const { data: s, loading } = useLoad(() => outreach.stats(days), [days]);
+  const { data: s, loading, reload } = useLoad(() => outreach.stats(days), [days]);
+  const confirm = useConfirm();
+  const toast = useToast();
+  const [resetting, setResetting] = useState(false);
+
+  const reset = async () => {
+    if (!(await confirm({
+      title: 'Xoá toàn bộ thống kê trang công khai?',
+      description: 'Xoá vĩnh viễn mọi lượt xem và lượt bấm “Mở Facebook” đã ghi (cả danh sách giờ bấm và đánh dấu “Đã trả lại” ở trang Chéo lại), để đếm lại từ đầu. Không khôi phục được. Group, chiến dịch, bài đã đăng vẫn giữ nguyên.',
+      confirmLabel: 'Xoá vĩnh viễn',
+      danger: true,
+    }))) return;
+    setResetting(true);
+    try {
+      const r = await outreach.resetStats();
+      toast.success('Đã xoá thống kê, bắt đầu đếm lại từ đầu', `Đã xoá ${r.deletedViews} lượt xem và ${r.deletedClicks} lượt bấm.`);
+      reload();
+    } catch (e) {
+      toast.error('Chưa xoá được', (e as Error).message);
+    } finally {
+      setResetting(false);
+    }
+  };
 
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <Segmented value={days} onChange={setDays} options={[{ value: 7, label: '7 ngày' }, { value: 14, label: '14 ngày' }, { value: 30, label: '30 ngày' }, { value: 90, label: '90 ngày' }]} />
-        <p className="text-xs text-fg-subtle">Lượt bấm = lượt mở Facebook, không phải lượt Follow đã xác nhận.</p>
+        <div className="flex flex-wrap items-center gap-3">
+          <p className="text-xs text-fg-subtle">Lượt bấm = lượt mở Facebook, không phải lượt Follow đã xác nhận.</p>
+          <Button size="sm" variant="danger-soft" icon={<RotateCcw className="h-3.5 w-3.5" />} loading={resetting} onClick={reset}>Xoá toàn bộ thống kê</Button>
+        </div>
       </div>
       {loading && !s ? <Skeleton className="h-72 w-full" /> : s && (
         <>

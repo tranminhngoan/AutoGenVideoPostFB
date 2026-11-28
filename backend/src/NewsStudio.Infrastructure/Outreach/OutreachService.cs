@@ -1062,6 +1062,21 @@ Trả về JSON: {{ ""comments"": [""..."", ""..."", ""...""] }}";
 
     // ═════════════════════════ Stats ═════════════════════════
 
+    /// <summary>
+    /// Starts the numbers of the public page over: deletes every visit / click recorded for it (also the "Chéo lại"
+    /// click list and its "đã trả lại" marks). Groups, campaigns, wall posts and shares are kept. Cannot be undone.
+    /// </summary>
+    public async Task<(int Views, int Clicks)> ResetLandingStatsAsync(CancellationToken ct)
+    {
+        var events = await _db.LandingEvents.Where(e => e.Slug == LandingSlug).ToListAsync(ct);
+        var views = events.Count(e => e.Type == "view");
+        var clicks = events.Count(e => e.Type == "open_page");
+        _db.LandingEvents.RemoveRange(events);
+        await _db.SaveChangesAsync(ct);
+        _logger.LogWarning("Outreach: landing stats of /{Slug} reset — {Count} events deleted ({Views} views, {Clicks} clicks)", LandingSlug, events.Count, views, clicks);
+        return (views, clicks);
+    }
+
     private async Task<Dictionary<string, (int Views, int Clicks)>> CountsByContentAsync(DateTime since, CancellationToken ct)
     {
         var rows = await _db.LandingEvents.AsNoTracking()

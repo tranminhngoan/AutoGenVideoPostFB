@@ -171,6 +171,15 @@ public class OutreachController : ControllerBase
     // ── numbers ──
     [HttpGet("stats")] public Task<ActionResult> Stats([FromQuery] int days = 14, CancellationToken ct = default) => Run(() => _svc.StatsAsync(days, ct))!;
 
+    /// <summary>Deletes every visit / click of the public page (start counting again). Needs body { "confirm": "XOA" }.</summary>
+    [HttpPost("stats/reset")]
+    public async Task<ActionResult> ResetStats([FromBody] OutreachResetDto body, CancellationToken ct)
+    {
+        if (body?.Confirm != "XOA") return BadRequest(new { error = "Thiếu xác nhận xoá." });
+        var (views, clicks) = await _svc.ResetLandingStatsAsync(ct);
+        return Ok(new { deletedViews = views, deletedClicks = clicks });
+    }
+
     // ── security ──
     [HttpGet("security")] public Task<ActionResult> Security(CancellationToken ct) => Run(() => _auth.StatusAsync(true, ct))!;
 
@@ -190,3 +199,5 @@ public class OutreachController : ControllerBase
 }
 
 public class OutreachCsvDto { public string Csv { get; set; } = string.Empty; }
+
+public class OutreachResetDto { public string? Confirm { get; set; } }

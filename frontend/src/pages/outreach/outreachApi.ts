@@ -362,6 +362,8 @@ export const outreach = {
     call<{ groupId: string; sharedAtUtc: string }>('PUT', `/wall-posts/${wallPostId}/shares/${groupId}`, { shared }),
 
   stats: (days: number) => call<Stats>('GET', `/stats?days=${days}`),
+  /** Deletes every visit / click of the public page (cannot be undone). */
+  resetStats: () => call<{ deletedViews: number; deletedClicks: number }>('POST', '/stats/reset', { confirm: 'XOA' }),
 
   security: () => call<Security>('GET', '/security'),
   changeSecurity: (b: { currentPassword: string; newPassword?: string; sessionHours?: number }) => call<void>('PUT', '/security', b),
