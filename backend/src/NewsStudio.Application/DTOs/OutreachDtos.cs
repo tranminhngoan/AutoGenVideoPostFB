@@ -48,6 +48,8 @@ public class OutreachPageDto
     public string PictureUrl { get; set; } = string.Empty;
     /// <summary>The Page promoted by /cheo-uy-tinh (not a helper).</summary>
     public bool IsMain { get; set; }
+    /// <summary>One of the helper Pages allowed in campaigns (Outreach:HelperPageIds).</summary>
+    public bool IsHelper { get; set; }
     public string Status { get; set; } = "Active";
     /// <summary>ok | warning | error — from Meta's own check of the stored token.</summary>
     public string Health { get; set; } = "ok";

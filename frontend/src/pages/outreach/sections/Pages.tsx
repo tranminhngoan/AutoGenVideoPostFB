@@ -35,13 +35,13 @@ export function PagesSection() {
       ) : (
         <div className="grid gap-3 md:grid-cols-2">
           {(pages ?? []).map((p) => (
-            <Card key={p.id} className={`p-4 ${p.isMain ? 'border-rose-500/40' : ''}`}>
+            <Card key={p.id} className={`p-4 ${p.isMain ? 'border-rose-500/40' : p.isHelper ? 'border-accent/40' : 'opacity-60'}`}>
               <div className="flex items-start gap-3">
                 <PageAvatar url={p.pictureUrl} name={p.name} size={48} />
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-1.5">
                     <p className="truncate font-semibold text-fg">{p.name}</p>
-                    {p.isMain ? <Badge tone="danger">Page chính</Badge> : <Badge tone="info">Page phụ</Badge>}
+                    {p.isMain ? <Badge tone="danger">Page chính</Badge> : p.isHelper ? <Badge tone="info">Page phụ chiến dịch</Badge> : <Badge>Không dùng cho chiến dịch</Badge>}
                   </div>
                   <p className="text-xs text-fg-subtle">Page ID {p.pageId} · token hết hạn: {p.tokenExpiresAtUtc ? fmtDate(p.tokenExpiresAtUtc) : 'không hết hạn'}</p>
                 </div>

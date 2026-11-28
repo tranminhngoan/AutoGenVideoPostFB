@@ -17,7 +17,7 @@ export function OverviewSection() {
 
   if (loading && !o) return <Skeleton className="h-64 w-full" />;
   if (!o) return null;
-  const helpers = o.pages.filter((p) => !p.isMain);
+  const helpers = o.pages.filter((p) => p.isHelper);
   const running = (campaigns ?? []).filter((c) => c.status === 'Running' || c.status === 'PendingApproval');
 
   return (

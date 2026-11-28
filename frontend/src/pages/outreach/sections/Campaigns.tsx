@@ -31,14 +31,14 @@ function CampaignForm({ open, initial, pages, groups, onClose, onSaved }: {
     if (open)
       setForm(initial
         ? { ...initial, startDate: initial.startDate?.slice(0, 10) ?? null, endDate: initial.endDate?.slice(0, 10) ?? null }
-        : { name: '', status: 'Draft', pageIds: pages.filter((p) => !p.isMain && p.health !== 'error').map((p) => p.id), groupIds: [] });
+        : { name: '', status: 'Draft', pageIds: pages.filter((p) => p.isHelper && p.health !== 'error').map((p) => p.id), groupIds: [] });
   }
   const set = (p: Partial<CampaignInput>) => setForm((f) => ({ ...f, ...p }));
   const toggle = (key: 'pageIds' | 'groupIds', id: string) => {
     const list = form[key] ?? [];
     set({ [key]: list.includes(id) ? list.filter((x) => x !== id) : [...list, id] });
   };
-  const helpers = pages.filter((p) => !p.isMain);
+  const helpers = pages.filter((p) => p.isHelper);
   const shownGroups = groups.filter((g) => g.fit !== 'unfit' && (!groupFilter || g.name.toLowerCase().includes(groupFilter.toLowerCase()) || (g.topic ?? '').toLowerCase().includes(groupFilter.toLowerCase())));
 
   const save = async () => {

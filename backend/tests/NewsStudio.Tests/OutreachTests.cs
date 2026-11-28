@@ -59,7 +59,10 @@ public class OutreachApiTests : IClassFixture<WebApplicationFactory<Program>>
 
     public OutreachApiTests(WebApplicationFactory<Program> factory)
     {
-        _factory = factory.WithWebHostBuilder(b => b.UseSetting("Outreach:PasswordHash", OutreachAuth.HashPassword(Password)));
+        _factory = factory.WithWebHostBuilder(b => b
+            .UseSetting("Outreach:PasswordHash", OutreachAuth.HashPassword(Password))
+            // test Pages have random ids: allow any connected Page except the main one as a helper
+            .UseSetting("Outreach:HelperPageIds", ""));
     }
 
     private async Task ResetSecurityAsync()

@@ -71,6 +71,8 @@ export interface OutreachPage {
   name: string;
   pictureUrl: string;
   isMain: boolean;
+  /** One of the campaign's helper Pages (Trạm Tin Showbiz / Trạm Tin Công Nghệ). */
+  isHelper: boolean;
   status: string;
   health: 'ok' | 'warning' | 'error';
   problem?: string | null;

@@ -49,6 +49,10 @@ public partial class OutreachService
 
     private string LandingSlug => _config["Outreach:LandingSlug"] ?? "cheo-uy-tinh";
     private string MainPageId => _config["Outreach:MainPageId"] ?? "1358397297367678";
+    /// <summary>Page ids usable as helpers (comma list). Empty = every connected Page except the main one.</summary>
+    private HashSet<string> HelperPageIds => (_config["Outreach:HelperPageIds"] ?? "")
+        .Split(new[] { ',', ';', ' ' }, StringSplitOptions.RemoveEmptyEntries).ToHashSet();
+    private bool IsHelper(string pageId) => pageId != MainPageId && (HelperPageIds.Count == 0 || HelperPageIds.Contains(pageId));
     private string PublicBaseUrl => (_config["Outreach:PublicBaseUrl"] ?? "https://comment-follow-cheo-uy-tinh.vercel.app").TrimEnd('/');
 
     // ═════════════════════════ Pages ═════════════════════════
@@ -75,6 +79,7 @@ public partial class OutreachService
                 Name = a.PageName,
                 PictureUrl = a.PageId.All(char.IsDigit) ? $"https://graph.facebook.com/{a.PageId}/picture?type=large" : "",
                 IsMain = a.PageId == MainPageId,
+                IsHelper = IsHelper(a.PageId),
                 Status = a.Status,
                 Health = !valid ? "error" : missing.Count > 0 || (expires != null && expires < DateTime.UtcNow.AddDays(7)) ? "warning" : "ok",
                 Problem = !valid ? (error ?? "Meta báo token không còn hiệu lực.")
@@ -84,7 +89,7 @@ public partial class OutreachService
                 TokenExpiresAtUtc = expires,
             });
         }
-        return result;
+        return result.OrderByDescending(p => p.IsMain).ThenByDescending(p => p.IsHelper).ThenBy(p => p.Name).ToList();
     }
 
     // ═════════════════════════ Groups ═════════════════════════
@@ -480,7 +485,7 @@ Trả về JSON: {{ ""texts"": [""..."", ""...""] }}");
         {
             var known = await _db.FacebookAccounts.Where(a => pageIds.Contains(a.Id) && a.IsActive).Select(a => new { a.Id, a.PageId }).ToListAsync(ct);
             if (known.Count != pageIds.Count) throw new OutreachInputException("Có Page không còn kết nối.");
-            if (known.Any(k => k.PageId == MainPageId)) throw new OutreachInputException("Chỉ chọn Page phụ (Page chính là trang được quảng bá).");
+            if (known.Any(k => !IsHelper(k.PageId))) throw new OutreachInputException("Chỉ chọn Page phụ của chiến dịch (Trạm Tin Showbiz / Trạm Tin Công Nghệ).");
         }
         var groupIds = (input.GroupIds ?? new()).Distinct().ToList();
         if (groupIds.Count > 0 && await _db.OutreachGroups.CountAsync(g => groupIds.Contains(g.Id), ct) != groupIds.Count)
