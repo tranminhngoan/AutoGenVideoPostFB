@@ -281,7 +281,7 @@ export function PostImagesCard({ onSaved }: { onSaved: () => void }) {
         <div className="grid gap-3 sm:grid-cols-[120px_minmax(0,1fr)_200px_auto] sm:items-end">
           <Field label="Số bài">
             <Select value={count} onChange={(e) => setCount(Number(e.target.value))}>
-              {[3, 5, 8, 10].map((n) => <option key={n} value={n}>{n}</option>)}
+              {[1, 2, 3, 5, 8, 10].map((n) => <option key={n} value={n}>{n}</option>)}
             </Select>
           </Field>
           <Field label="Yêu cầu thêm" optional>
