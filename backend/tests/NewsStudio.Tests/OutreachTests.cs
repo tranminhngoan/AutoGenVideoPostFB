@@ -232,6 +232,16 @@ public class OutreachApiTests : IClassFixture<WebApplicationFactory<Program>>
             (await c.PostAsJsonAsync("/api/outreach/campaigns", new OutreachCampaignInputDto { Name = "Sai ngày", StartDate = DateTime.UtcNow, EndDate = DateTime.UtcNow.AddDays(-2) }))
                 .StatusCode.Should().Be(HttpStatusCode.BadRequest);
 
+            // Exactly what the browser's date pickers send: "yyyy-MM-dd" with no time zone
+            var fromForm = await c.PostAsync("/api/outreach/campaigns", new StringContent(
+                $"{{\"name\":\"Ngày từ form {tag}\",\"status\":\"Draft\",\"pageIds\":[\"{pageA.Id}\"],\"groupIds\":[\"{g1.Id}\"],\"owner\":\"NgoanTM\",\"startDate\":\"2026-11-28\",\"endDate\":\"2027-10-28\",\"contentId\":null,\"contentText\":\"abc\"}}",
+                System.Text.Encoding.UTF8, "application/json"));
+            fromForm.StatusCode.Should().Be(HttpStatusCode.OK, await fromForm.Content.ReadAsStringAsync());
+            var formCampaign = await fromForm.Content.ReadFromJsonAsync<OutreachCampaignDto>();
+            formCampaign!.StartDate!.Value.ToString("yyyy-MM-dd").Should().Be("2026-11-28");
+            formCampaign.EndDate!.Value.ToString("yyyy-MM-dd").Should().Be("2027-10-28");
+            (await c.DeleteAsync($"/api/outreach/campaigns/{formCampaign.Id}")).StatusCode.Should().Be(HttpStatusCode.NoContent);
+
             var links = await c.GetFromJsonAsync<List<OutreachCampaignLinkDto>>($"/api/outreach/campaigns/{campaignId}/links");
             links.Should().HaveCount(4);
             var link = links!.First(l => l.GroupId == g1.Id && l.PageId == pageA.Id);

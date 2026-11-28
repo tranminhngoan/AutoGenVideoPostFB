@@ -44,7 +44,7 @@ function CampaignForm({ open, initial, pages, groups, onClose, onSaved }: {
   const save = async () => {
     setBusy(true);
     try {
-      const body: CampaignInput = { ...form, startDate: form.startDate || null, endDate: form.endDate || null };
+      const body: CampaignInput = { ...form, slug: form.slug || undefined, contentId: form.contentId || null, startDate: form.startDate || null, endDate: form.endDate || null };
       const c = initial ? await outreach.editCampaign(initial.id, body) : await outreach.addCampaign(body);
       toast.success(initial ? 'Đã lưu chiến dịch' : 'Đã tạo chiến dịch');
       onSaved(c);

@@ -35,7 +35,14 @@ export function clearSession() {
 async function errorText(res: Response, fallback: string) {
   try {
     const body = await res.json();
-    return String(body.error || body.message || fallback);
+    if (body.error || body.message) return String(body.error || body.message);
+    // ASP.NET validation / server errors: say which field or what failed instead of a generic message
+    if (body.errors && typeof body.errors === 'object') {
+      const first = Object.values(body.errors as Record<string, string[]>).flat()[0];
+      if (first) return `Dữ liệu không hợp lệ: ${first}`;
+    }
+    if (body.detail) return `Lỗi máy chủ: ${body.detail}`;
+    return String(body.title || fallback);
   } catch {
     return res.status >= 500 ? 'Máy chủ đang bận hoặc đang khởi động lại, thử lại sau giây lát.' : fallback;
   }

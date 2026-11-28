@@ -497,8 +497,9 @@ Trả về JSON: {{ ""texts"": [""..."", ""...""] }}");
         c.GroupIdsJson = JsonSerializer.Serialize(groupIds);
         c.ContentId = input.ContentId;
         c.ContentText = Clip(input.ContentText, 3000);
-        c.StartDate = input.StartDate?.Date;
-        c.EndDate = input.EndDate?.Date;
+        // Date pickers send "2026-11-28" (no time zone): store as a UTC calendar day — PostgreSQL refuses Kind=Unspecified
+        c.StartDate = input.StartDate is { } start ? DateTime.SpecifyKind(start.Date, DateTimeKind.Utc) : null;
+        c.EndDate = input.EndDate is { } end ? DateTime.SpecifyKind(end.Date, DateTimeKind.Utc) : null;
         c.Status = CampaignStatuses.Contains(input.Status) ? input.Status! : c.Status;
         c.Owner = Clip(input.Owner, 100);
         c.ResultNote = Clip(input.ResultNote, 3000);
