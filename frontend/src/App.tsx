@@ -84,7 +84,7 @@ export function App() {
     const base = second && first === 'videos' ? 'Chi tiết video' : TITLES[active];
     // (AI Video Studio sets its own sub-page titles)
     if (active === 'ai-studio' || active === 'growth') return;
-    document.title = base ? `${base} · Trạm Tin 24/7` : 'Trạm Tin 24/7';
+    document.title = base ? `${base} · Facebook chéo uy tính` : 'Facebook chéo uy tính';
   }, [active, first, second]);
 
   const awaitingCount = (projects ?? []).filter((p) => p.status === 'AwaitingApproval').length;

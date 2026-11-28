@@ -26,7 +26,7 @@ export function StudioPage({ segments }: { segments: string[] }) {
   const [settings, setSettings] = useState<StudioSettings | null>(null);
 
   useEffect(() => {
-    document.title = (creating ? 'Video mới' : editingId ? 'Chỉnh video' : 'Studio Video AI') + ' · Trạm Tin 24/7';
+    document.title = (creating ? 'Video mới' : editingId ? 'Chỉnh video' : 'Studio Video AI') + ' · Facebook chéo uy tính';
   }, [creating, editingId]);
 
   useEffect(() => {

@@ -317,7 +317,7 @@ export const api = {
       if (!res.ok) throw new Error('System info failed');
       return await res.json();
     } catch (e) {
-      return { appName: 'Trạm Tin 24/7', version: '1.0.0', dotnetVersion: '8.0' };
+      return { appName: 'Facebook chéo uy tính', version: '1.0.0', dotnetVersion: '8.0' };
     }
   },
 

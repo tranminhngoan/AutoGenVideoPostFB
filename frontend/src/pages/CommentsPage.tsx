@@ -28,7 +28,7 @@ export function CommentsPage() {
   };
 
   useEffect(() => {
-    document.title = 'Bình luận · Trạm Tin 24/7';
+    document.title = 'Bình luận · Facebook chéo uy tính';
     api.getEngagementSettings().then((s) => setFirstComment(s.firstComment)).catch(() => undefined);
   }, []);
   useEffect(() => {

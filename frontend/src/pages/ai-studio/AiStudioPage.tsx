@@ -37,7 +37,7 @@ export function AiStudioPage({ segments }: { segments: string[] }) {
   }, [refreshOverview]);
 
   useEffect(() => {
-    document.title = 'AI Video Studio · Trạm Tin 24/7';
+    document.title = 'AI Video Studio · Facebook chéo uy tính';
   }, []);
 
   const tabs = [
