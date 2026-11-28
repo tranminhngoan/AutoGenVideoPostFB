@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
-import { ArrowUp, Heart, MessageCircle, Play, Share2, ThumbsUp, UserPlus, Users } from 'lucide-react';
+import { ArrowUp, Heart, Play, Users } from 'lucide-react';
 import type { FeaturedPost, LandingConfig } from './cheoUyTinh.config';
 import { openFacebook } from './facebookLink';
 import { track } from './track';
@@ -130,54 +130,34 @@ export function CheoUyTinhPage({ config }: { config: LandingConfig }) {
             <div className="absolute inset-0 bg-gradient-to-t from-black/30 to-transparent" />
           </div>
           <div className="relative px-5 pb-6">
-            <div className="-mt-12 flex items-end justify-between gap-3">
+            <div className="-mt-12">
               <img
                 src={avatar}
                 alt={name}
                 className="h-24 w-24 shrink-0 rounded-full border-4 border-white bg-slate-100 object-cover shadow-lg"
               />
-              {data?.followers != null && data.followers > 0 && (
-                <span className="mb-1 inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">
-                  <Users className="h-3.5 w-3.5" /> {compact(data.followers)} người theo dõi
-                </span>
-              )}
             </div>
             <h1 className="mt-3 text-2xl font-extrabold tracking-tight text-slate-900 sm:text-3xl">{name}</h1>
             {description && <p className="mt-1.5 text-[15px] leading-relaxed text-slate-600">{description}</p>}
-            <p className="mt-4 inline-flex rounded-2xl bg-blue-50 px-4 py-2.5 text-[15px] font-medium text-[#0a4fc4]">{config.greeting}</p>
-          </div>
-        </section>
+            <p className="mt-3 text-[15px] font-semibold text-[#0a4fc4]">{config.greeting}</p>
 
-        {/* ── Call to action ── */}
-        <section ref={ctaRef} className="mt-5 rounded-3xl bg-gradient-to-br from-[#0866FF] to-[#7b3fe4] p-[2px] shadow-xl shadow-blue-900/40">
-          <div className="rounded-[22px] bg-white px-5 py-6 text-center">
-            <h2 className="text-lg font-extrabold leading-snug text-slate-900 sm:text-xl">{config.cta.title}</h2>
-            <p className="mx-auto mt-3 max-w-md text-[15px] leading-relaxed text-slate-600">{config.cta.body}</p>
-
-            <div className="mt-5 grid grid-cols-4 gap-2 text-[11px] font-semibold text-slate-600">
-              {[
-                { icon: UserPlus, label: 'Follow' },
-                { icon: ThumbsUp, label: 'Like' },
-                { icon: MessageCircle, label: 'Bình luận' },
-                { icon: Share2, label: 'Chia sẻ' },
-              ].map(({ icon: Icon, label }) => (
-                <div key={label} className="flex flex-col items-center gap-1.5 rounded-2xl bg-slate-50 py-3">
-                  <Icon className="h-5 w-5 text-[#0866FF]" />
-                  {label}
-                </div>
-              ))}
+            {/* Followers + main button side by side (wraps under each other on narrow phones) */}
+            <div ref={ctaRef} className="mt-4 flex flex-wrap items-center gap-2.5">
+              {data?.followers != null && data.followers > 0 && (
+                <span className="inline-flex h-11 w-full shrink-0 items-center justify-center gap-1.5 rounded-xl bg-slate-100 px-3 text-sm font-semibold text-slate-700 sm:w-auto">
+                  <Users className="h-4 w-4" /> {compact(data.followers)} người theo dõi
+                </span>
+              )}
+              <a
+                href={pageUrl}
+                onClick={onOpenPage}
+                rel="noopener noreferrer"
+                className="inline-flex h-11 min-w-[250px] flex-1 items-center justify-center gap-2 whitespace-nowrap rounded-xl bg-[#0866FF] px-5 text-[13px] font-extrabold text-white shadow-md shadow-blue-600/30 transition hover:bg-[#0759e0] active:scale-[0.98]"
+              >
+                <FacebookGlyph className="h-5 w-5 shrink-0" />
+                {config.cta.button}
+              </a>
             </div>
-
-            <a
-              href={pageUrl}
-              onClick={onOpenPage}
-              rel="noopener noreferrer"
-              className="mt-6 flex min-h-[56px] w-full items-center justify-center gap-2.5 rounded-2xl bg-[#0866FF] px-5 py-4 text-[15px] font-extrabold tracking-wide text-white shadow-lg shadow-blue-600/40 transition active:scale-[0.98] hover:bg-[#0759e0] sm:text-base"
-            >
-              <FacebookGlyph className="h-6 w-6 shrink-0" />
-              {config.cta.button}
-            </a>
-            <p className="mt-3 text-xs text-slate-400">Mở bằng ứng dụng Facebook nếu máy bạn có cài.</p>
           </div>
         </section>
 

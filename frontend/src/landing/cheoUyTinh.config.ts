@@ -32,7 +32,8 @@ export interface LandingConfig {
   /** null = phần "Giới thiệu" của Page trên Facebook. */
   description: string | null;
   greeting: string;
-  cta: { title: string; body: string; button: string };
+  /** Chữ trên nút mở Facebook Page (nằm cạnh số người theo dõi). */
+  cta: { button: string };
   /** Bài nổi bật chọn tay (3–6 bài). Để trống = tự lấy các bài mới nhất của Page. */
   featuredPosts: FeaturedPost[];
   /** Số bài mới nhất lấy tự động khi featuredPosts trống. */
@@ -48,11 +49,8 @@ export const cheoUyTinhConfig: LandingConfig = {
   avatarUrl: null,
   coverUrl: null,
   description: null,
-  greeting: 'Xin chào! Cảm ơn bạn đã ghé thăm 👋',
+  greeting: 'Bên mình hứa chéo lại uy tính khi page nhận được thông báo ạ',
   cta: {
-    title: '❤️ CÙNG NHAU ỦNG HỘ VÀ PHÁT TRIỂN PAGE NHÉ!',
-    body:
-      'Mình đang xây dựng và phát triển Page. Rất mong mọi người ghé thăm, Follow, Like, xem video và để lại bình luận ủng hộ. Mỗi lượt tương tác của mọi người đều rất đáng quý. Cảm ơn mọi người thật nhiều!',
     button: 'MỞ FACEBOOK – ỦNG HỘ PAGE NGAY',
   },
   featuredPosts: [],
