@@ -1608,6 +1608,13 @@ public class FacebookPublishingService : IFacebookPublishingService
                      .Select(r => r.StoryPostId!).ToListAsync(cancellationToken))
             storyIds.Add(Tail(id));
         static bool StoryLink(string? url) => url != null && url.Contains("/stories/", StringComparison.OrdinalIgnoreCase);
+        // …plus the Page's live stories as Facebook lists them (covers stories posted by hand too)
+        var (storiesOk, stories, _) = await GetGraphAsync(
+            $"https://graph.facebook.com/{_graphApiVersion}/{account.PageId}/stories?fields=post_id,media_id&limit=50&access_token={token}", cancellationToken);
+        if (storiesOk && stories.TryGetProperty("data", out var storyData) && storyData.ValueKind == JsonValueKind.Array)
+            foreach (var s in storyData.EnumerateArray())
+                foreach (var f in new[] { "post_id", "media_id", "id" })
+                    if (Str(s, f) is { Length: > 0 } sid) storyIds.Add(Tail(sid));
 
         var limit = Math.Clamp(postLimit, 1, 12);
         var (postsOk, posts, postsError) = await GetGraphAsync(

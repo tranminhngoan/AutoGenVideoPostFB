@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
-import { ArrowUp, Heart, Play, Users } from 'lucide-react';
+import { ArrowUp, BadgeCheck, Heart, Play, ShieldCheck, Users } from 'lucide-react';
 import type { FeaturedPost, LandingConfig } from './cheoUyTinh.config';
 import { openFacebook } from './facebookLink';
 import { track } from './track';
@@ -139,7 +139,21 @@ export function CheoUyTinhPage({ config }: { config: LandingConfig }) {
             </div>
             <h1 className="mt-3 text-2xl font-extrabold tracking-tight text-slate-900 sm:text-3xl">{name}</h1>
             {description && <p className="mt-1.5 text-[15px] leading-relaxed text-slate-600">{description}</p>}
-            <p className="mt-3 text-[15px] font-semibold text-[#0a4fc4]">{config.greeting}</p>
+            {/* Trust promise — the one line visitors must notice */}
+            <div className="relative mt-4 overflow-hidden rounded-2xl bg-gradient-to-r from-emerald-500 via-emerald-500 to-teal-500 p-[2px] shadow-lg shadow-emerald-500/25">
+              <div className="flex items-center gap-3 rounded-[14px] bg-gradient-to-r from-emerald-50 to-teal-50 px-3.5 py-3">
+                <span className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-emerald-500 to-teal-600 text-white shadow-md shadow-emerald-600/40">
+                  <span className="absolute inset-0 animate-ping rounded-full bg-emerald-400/40 [animation-duration:2.4s]" />
+                  <ShieldCheck className="relative h-6 w-6" strokeWidth={2.4} />
+                </span>
+                <div className="min-w-0">
+                  <p className="flex items-center gap-1 text-[11px] font-extrabold uppercase tracking-[0.12em] text-emerald-700">
+                    <BadgeCheck className="h-3.5 w-3.5" /> Cam kết uy tín
+                  </p>
+                  <p className="mt-0.5 text-[15px] font-extrabold leading-snug text-slate-900 sm:text-base">{config.greeting}</p>
+                </div>
+              </div>
+            </div>
 
             {/* Followers + main button side by side (wraps under each other on narrow phones) */}
             <div ref={ctaRef} className="mt-4 flex flex-wrap items-center gap-2.5">
