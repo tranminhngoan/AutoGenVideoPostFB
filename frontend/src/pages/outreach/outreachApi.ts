@@ -167,6 +167,10 @@ export interface Campaign {
   createdAtUtc: string;
   views: number;
   clicks: number;
+  /** Different visitors of the landing page during the campaign's dates. */
+  visitors: number;
+  todayViews: number;
+  todayClicks: number;
   activitiesDone: number;
   activitiesPlanned: number;
 }

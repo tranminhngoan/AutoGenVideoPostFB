@@ -209,6 +209,24 @@ export function CampaignsSection() {
                 </div>
                 <Badge tone={STATUS_TONE[c.status]} dot={c.status === 'Running'} pulse={c.status === 'Running'}>{STATUS_LABEL[c.status]}</Badge>
               </div>
+              <div className="rounded-lg border border-rose-500/20 bg-rose-500/[0.03] p-2.5">
+                <div className="grid grid-cols-2 gap-2 text-center">
+                  <div>
+                    <p className="text-2xl font-semibold tabular-nums text-fg">{c.views}</p>
+                    <p className="text-[11px] text-fg-muted">Lượt vào trang · {c.visitors} người</p>
+                    <p className="text-[11px] font-medium text-success">Hôm nay +{c.todayViews}</p>
+                  </div>
+                  <div>
+                    <p className="text-2xl font-semibold tabular-nums text-fg">{c.clicks}</p>
+                    <p className="text-[11px] text-fg-muted">Bấm “Mở Facebook” · {rate(c.clicks, c.views)}</p>
+                    <p className="text-[11px] font-medium text-success">Hôm nay +{c.todayClicks}</p>
+                  </div>
+                </div>
+                <div className="mt-1.5 flex flex-wrap items-center justify-between gap-1 border-t border-line pt-1.5 text-[11px] text-fg-subtle">
+                  <span>Tính trên trang tuongtaccheo.xyz trong thời gian chạy chiến dịch</span>
+                  <a href={href('/cheo-lai')} className="font-medium text-accent">Xem giờ từng lượt bấm →</a>
+                </div>
+              </div>
               <div className="grid grid-cols-3 gap-2 text-center">
                 {[{ l: 'Nhóm mục tiêu', v: c.groupIds.length }, { l: 'Page phụ', v: c.pageIds.length }, { l: 'Đã chia sẻ', v: `${c.activitiesDone}/${c.activitiesPlanned}` }].map((x) => (
                   <div key={x.l} className="rounded-lg bg-subtle py-2">

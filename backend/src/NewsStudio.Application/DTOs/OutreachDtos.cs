@@ -175,6 +175,10 @@ public class OutreachCampaignDto
     public DateTime CreatedAtUtc { get; set; }
     public int Views { get; set; }
     public int Clicks { get; set; }
+    /// <summary>Different visitors (browsers) of the landing page during the campaign's dates.</summary>
+    public int Visitors { get; set; }
+    public int TodayViews { get; set; }
+    public int TodayClicks { get; set; }
     public int ActivitiesDone { get; set; }
     /// <summary>Group × Page pairs to work through.</summary>
     public int ActivitiesPlanned { get; set; }

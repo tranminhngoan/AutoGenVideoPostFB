@@ -779,26 +779,41 @@ TUYỆT ĐỐI KHÔNG: nhắc tới tài khoản nuôi / clone / nick phụ / t�
     public async Task<List<OutreachCampaignDto>> ListCampaignsAsync(CancellationToken ct)
     {
         var campaigns = await _db.OutreachCampaigns.AsNoTracking().OrderByDescending(c => c.CreatedAtUtc).ToListAsync(ct);
-        var byCampaign = await _db.LandingEvents.AsNoTracking()
-            .Where(e => e.Slug == LandingSlug && e.UtmCampaign != null && (e.Type == "view" || e.Type == "open_page"))
-            .GroupBy(e => new { e.UtmCampaign, e.Type })
-            .Select(g => new { g.Key.UtmCampaign, g.Key.Type, Count = g.Count() })
-            .ToListAsync(ct);
         var done = await _db.OutreachActivities.AsNoTracking().GroupBy(a => a.CampaignId).Select(g => new { g.Key, Count = g.Count() }).ToDictionaryAsync(x => x.Key, x => x.Count, ct);
         var sharedPairs = (await _db.OutreachShares.AsNoTracking().Where(s => s.CampaignId != null)
                 .Select(s => new { s.CampaignId, s.GroupId, s.FacebookAccountId }).Distinct().ToListAsync(ct))
             .GroupBy(s => s.CampaignId!.Value).ToDictionary(g => g.Key, g => g.Count());
+
+        // Posts carry no link any more (visitors type the site), so a visit can't be tied to one campaign:
+        // count every visit / "Mở Facebook" click on the landing page during the campaign's dates.
+        var nowUtc = DateTime.UtcNow;
+        var todayStartUtc = (nowUtc + VietnamOffset).Date - VietnamOffset;
+        DateTime FromUtc(OutreachCampaign c) => c.StartDate is { } s ? s.Date - VietnamOffset : c.CreatedAtUtc;
+        DateTime ToUtc(OutreachCampaign c) => c.EndDate is { } e ? e.Date.AddDays(1) - VietnamOffset : nowUtc.AddMinutes(1);
+        var earliest = campaigns.Count == 0 ? nowUtc : campaigns.Min(FromUtc);
+        if (earliest < nowUtc.AddDays(-400)) earliest = nowUtc.AddDays(-400);
+        var visits = campaigns.Count == 0 ? new() : await _db.LandingEvents.AsNoTracking()
+            .Where(e => e.Slug == LandingSlug && e.CreatedAtUtc >= earliest && (e.Type == "view" || e.Type == "open_page"))
+            .Select(e => new { e.Type, e.CreatedAtUtc, e.VisitorId })
+            .ToListAsync(ct);
+
         return campaigns.Select(c =>
         {
             var pages = Ids(c.PageIdsJson);
             var groups = Ids(c.GroupIdsJson);
+            var from = FromUtc(c);
+            var to = ToUtc(c);
+            var inPeriod = visits.Where(v => v.CreatedAtUtc >= from && v.CreatedAtUtc < to).ToList();
             return new OutreachCampaignDto
             {
                 Id = c.Id, Name = c.Name, Slug = c.Slug, PageIds = pages, GroupIds = groups, TargetPath = c.TargetPath,
                 ContentId = c.ContentId, ContentText = c.ContentText, StartDate = c.StartDate, EndDate = c.EndDate,
                 Status = c.Status, Owner = c.Owner, ResultNote = c.ResultNote, CreatedAtUtc = c.CreatedAtUtc,
-                Views = byCampaign.Where(x => x.UtmCampaign == c.Slug && x.Type == "view").Sum(x => x.Count),
-                Clicks = byCampaign.Where(x => x.UtmCampaign == c.Slug && x.Type == "open_page").Sum(x => x.Count),
+                Views = inPeriod.Count(v => v.Type == "view"),
+                Clicks = inPeriod.Count(v => v.Type == "open_page"),
+                Visitors = inPeriod.Where(v => v.Type == "view" && v.VisitorId != null).Select(v => v.VisitorId).Distinct().Count(),
+                TodayViews = inPeriod.Count(v => v.Type == "view" && v.CreatedAtUtc >= todayStartUtc),
+                TodayClicks = inPeriod.Count(v => v.Type == "open_page" && v.CreatedAtUtc >= todayStartUtc),
                 ActivitiesDone = Math.Min(groups.Count * Math.Max(1, pages.Count), sharedPairs.GetValueOrDefault(c.Id) + done.GetValueOrDefault(c.Id)),
                 ActivitiesPlanned = groups.Count * Math.Max(1, pages.Count),
             };

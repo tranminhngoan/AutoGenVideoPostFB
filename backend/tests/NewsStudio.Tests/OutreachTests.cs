@@ -305,8 +305,11 @@ public class OutreachApiTests : IClassFixture<WebApplicationFactory<Program>>
             after.Clicks.Should().Be(1);
             after.Activities.Should().ContainSingle(a => a.Kind == "post");
             var listed = (await c.GetFromJsonAsync<List<OutreachCampaignDto>>("/api/outreach/campaigns"))!.Single(x => x.Id == campaignId);
-            listed.Views.Should().Be(1);
-            listed.Clicks.Should().Be(1);
+            // counted over the campaign's dates (posts carry no link): at least this visitor's view + click
+            listed.Views.Should().BeGreaterThanOrEqualTo(1);
+            listed.Clicks.Should().BeGreaterThanOrEqualTo(1);
+            listed.TodayClicks.Should().BeGreaterThanOrEqualTo(1);
+            listed.Visitors.Should().BeGreaterThanOrEqualTo(1);
             listed.ActivitiesDone.Should().Be(1);
             (await c.GetFromJsonAsync<List<OutreachGroupDto>>("/api/outreach/groups"))!.Single(g => g.Id == g1.Id).Clicks.Should().Be(1);
             var stats = await c.GetFromJsonAsync<OutreachStatsDto>("/api/outreach/stats?days=7");
