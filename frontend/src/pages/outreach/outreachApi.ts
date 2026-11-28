@@ -303,6 +303,7 @@ export const outreach = {
   saveContent: (c: { text: string; style?: string; topic?: string | null; origin?: string }) => call<Content>('POST', '/contents', c),
   deleteContent: (id: string) => call<void>('DELETE', `/contents/${id}`),
   copied: (id: string) => call<void>('POST', `/contents/${id}/copied`),
+  variants: (count: number, extra?: string) => call<Draft[]>('POST', '/contents/variants', { count, extra }),
   write: (r: { style: string; topic?: string; groupId?: string; count: number; extra?: string }) => call<Draft[]>('POST', '/contents/write', r),
   check: (text: string) => call<Draft>('POST', '/contents/check', { text }),
 

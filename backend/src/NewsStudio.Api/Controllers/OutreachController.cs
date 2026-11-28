@@ -121,6 +121,7 @@ public class OutreachController : ControllerBase
     [HttpPost("contents")] public Task<ActionResult> SaveContent([FromBody] OutreachContentInputDto input, CancellationToken ct) => Run(() => _svc.SaveContentAsync(input, ct))!;
     [HttpDelete("contents/{id:guid}")] public Task<ActionResult> DeleteContent(Guid id, CancellationToken ct) => Done(() => _svc.DeleteContentAsync(id, ct));
     [HttpPost("contents/{id:guid}/copied")] public Task<ActionResult> Copied(Guid id, CancellationToken ct) => Done(() => _svc.MarkCopiedAsync(id, ct));
+    [HttpPost("contents/variants")] public Task<ActionResult> Variants([FromBody] OutreachVariantsRequestDto input, CancellationToken ct) => Run(() => _svc.WriteVariantsAsync(input ?? new(), ct))!;
     [HttpPost("contents/write")] public Task<ActionResult> Write([FromBody] OutreachWriteRequestDto input, CancellationToken ct) => Run(() => _svc.WriteAsync(input, ct))!;
     [HttpPost("contents/check")] public Task<ActionResult> Check([FromBody] OutreachTextCheckDto input, CancellationToken ct) => Run(() => _svc.CheckTextAsync(input?.Text ?? "", ct))!;
 

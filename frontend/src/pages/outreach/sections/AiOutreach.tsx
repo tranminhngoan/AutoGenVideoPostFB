@@ -4,8 +4,9 @@ import { Alert, Badge, Button, Card, CardHeader, EmptyState, Field, Input, Segme
 import { useConfirm, useToast } from '../../../components/feedback';
 import { Draft, outreach } from '../outreachApi';
 import { CopyButton, fmtDate, useLoad } from '../shared';
+import { PostImagesCard } from './PostImages';
 
-const STYLE_LABEL: Record<string, string> = { friendly: 'Thân thiện', short: 'Ngắn gọn', funny: 'Hài hước', custom: 'Tự viết' };
+const STYLE_LABEL: Record<string, string> = { friendly: 'Thân thiện', short: 'Ngắn gọn', funny: 'Hài hước', custom: 'Tự viết', post: 'Bài ảnh chữ' };
 
 function SimilarityBadge({ d }: { d: Draft }) {
   if (d.similarity >= 70) return <Badge tone="danger" dot>Trùng {d.similarity}% với mẫu đã có</Badge>;
@@ -33,7 +34,7 @@ export function AiSection() {
   const toast = useToast();
   const confirm = useConfirm();
   const { data: groups } = useLoad(() => outreach.groups());
-  const { data: library, setData: setLibrary, loading } = useLoad(() => outreach.contents());
+  const { data: library, setData: setLibrary, loading, reload: reloadLibrary } = useLoad(() => outreach.contents());
   const [style, setStyle] = useState('friendly');
   const [topic, setTopic] = useState('');
   const [groupId, setGroupId] = useState('');
@@ -71,6 +72,8 @@ export function AiSection() {
   const shown = (library ?? []).filter((c) => filter === 'all' || c.style === filter || c.origin === filter);
 
   return (
+    <div className="space-y-4">
+    <PostImagesCard onSaved={reloadLibrary} />
     <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
       <div className="space-y-4">
         <Card>
@@ -188,6 +191,7 @@ export function AiSection() {
           <Alert tone="neutral" className="mt-2">Không đăng hàng loạt cùng một nội dung vào nhiều Group — Facebook có thể coi là spam. Mỗi Group nên dùng một phiên bản khác.</Alert>
         </div>
       </Card>
+    </div>
     </div>
   );
 }

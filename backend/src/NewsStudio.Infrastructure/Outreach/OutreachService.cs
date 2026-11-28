@@ -565,6 +565,55 @@ Trả về JSON: {{ ""texts"": [""..."", ""...""] }}");
         return list;
     }
 
+
+    /// <summary>
+    /// The owner's standard Group post, rewritten N times with different words and the same meaning: visit the site
+    /// (written as plain text, since many Groups refuse links), follow / like / comment, comment "done", and the Page
+    /// interacts back. Never promises fake accounts, multiplied returns, gifts or money.
+    /// </summary>
+    public async Task<List<OutreachDraftDto>> WriteVariantsAsync(OutreachVariantsRequestDto input, CancellationToken ct)
+    {
+        var count = Math.Clamp(input.Count, 1, 10);
+        var domain = new Uri(PublicBaseUrl).Host.Replace("www.", "");
+        var recent = await _db.OutreachContents.AsNoTracking().OrderByDescending(c => c.CreatedAtUtc).Take(15).Select(c => c.Text).ToListAsync(ct);
+
+        var prompt = new StringBuilder()
+            .AppendLine($@"Viết {count} bài đăng NGẮN (2–4 câu) để đăng vào các Group Facebook trao đổi tương tác. Mỗi bài viết KHÁC HẲN nhau về câu chữ, cách mở đầu, thứ tự ý, nhưng CÙNG MỘT Ý:")
+            .AppendLine($"1. Mời mọi người vào trang {domain} (viết đúng chữ \"{domain}\", dạng chữ thường, KHÔNG có https, KHÔNG phải link).")
+            .AppendLine("2. Ở đó bấm follow / like / comment ủng hộ Page.")
+            .AppendLine("3. Comment \"done\" (hoặc \"xong\") dưới bài để mình biết.")
+            .AppendLine("4. Mình nhận được thông báo sẽ ghé tương tác lại đầy đủ, uy tín.")
+            .AppendLine(@"
+Giọng: thân thiện, tự nhiên như người thật trong nhóm; có thể dùng từ quen thuộc của dân chéo tương tác (follow, like, cmt, chéo, uy tín); 0–2 emoji; không viết hoa toàn bộ.
+TUYỆT ĐỐI KHÔNG: nhắc tới tài khoản nuôi / clone / nick phụ / tài khoản ảo; hứa trả gấp nhiều lần (""1 trả 5"", ""trả x2""…); hứa quà, tiền, số lượng; giả danh người khác; hashtag.")
+            .AppendLine(!string.IsNullOrWhiteSpace(input.Extra) ? $"Yêu cầu thêm của chủ Page: {Clip(input.Extra, 300)}" : "")
+            .AppendLine(recent.Count > 0 ? "Tránh lặp lại câu chữ của các bài đã dùng gần đây:\n- " + string.Join("\n- ", recent.Select(r => r.Length > 160 ? r[..160] : r)) : "")
+            .AppendLine(@"Trả về JSON: { ""texts"": [""..."", ""...""] }");
+
+        var system = "Bạn viết bài đăng mạng xã hội tiếng Việt ngắn, tự nhiên, trung thực, không spam. Chỉ trả về JSON hợp lệ.";
+        var result = await _gemini.GenerateJsonAsync(system, prompt.ToString(), 3072, 1.0, ct, null, true);
+        _logger.LogInformation("Outreach AI wrote {Count} post variants (cost ${Cost})", count, result.CostUsd);
+        var banned = new[] { "tài khoản nuôi", "nick nuôi", "clone", "nick phụ", "tài khoản ảo", "trả gấp", "1 trả", "x2", "x3", "x5" };
+        var texts = ParseStrings(result.Text, "texts")
+            .Select(t => t.Trim())
+            .Where(t => t.Length > 0 && !banned.Any(b => t.Contains(b, StringComparison.OrdinalIgnoreCase)))
+            .ToList();
+        if (texts.Count == 0) throw new InvalidOperationException("AI không trả về bài viết dùng được. Thử lại.");
+
+        var drafts = new List<OutreachDraftDto>();
+        foreach (var text in texts.Take(count))
+        {
+            var (score, similar) = await MostSimilarAsync(text, null, ct);
+            foreach (var d in drafts)
+            {
+                var s = Similarity(text, d.Text);
+                if (s > score) { score = s; similar = d.Text; }
+            }
+            drafts.Add(new OutreachDraftDto { Text = text, Similarity = score, SimilarTo = similar });
+        }
+        return drafts;
+    }
+
     public async Task<List<OutreachContentDto>> ListContentsAsync(CancellationToken ct) =>
         await _db.OutreachContents.AsNoTracking().OrderByDescending(c => c.CreatedAtUtc)
             .Select(c => new OutreachContentDto { Id = c.Id, Text = c.Text, Style = c.Style, Topic = c.Topic, Origin = c.Origin, CopiedCount = c.CopiedCount, CreatedAtUtc = c.CreatedAtUtc })
@@ -578,7 +627,7 @@ Trả về JSON: {{ ""texts"": [""..."", ""...""] }}");
         var c = new OutreachContent
         {
             Text = text,
-            Style = input.Style is "friendly" or "short" or "funny" ? input.Style : "custom",
+            Style = input.Style is "friendly" or "short" or "funny" or "post" ? input.Style : "custom",
             Topic = Clip(input.Topic, 100),
             Origin = input.Origin == "ai" ? "ai" : "manual",
         };

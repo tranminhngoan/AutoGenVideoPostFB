@@ -109,6 +109,14 @@ public class OutreachGroupSearchDto
 }
 
 // ── AI outreach / content library ──
+/// <summary>Many differently-worded posts with the same message (for text-on-picture posts in Groups).</summary>
+public class OutreachVariantsRequestDto
+{
+    public int Count { get; set; } = 5;
+    /// <summary>Optional extra wish of the owner (tone, emoji, length…).</summary>
+    public string? Extra { get; set; }
+}
+
 public class OutreachWriteRequestDto
 {
     /// <summary>friendly | short | funny</summary>
